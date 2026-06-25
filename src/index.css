@@ -1,0 +1,5 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root { color-scheme: dark; }
+html, body, #root { margin: 0; min-height: 100%; background: #05070d; color: #e8eef7; font-family: 'Rajdhani', sans-serif; }
