@@ -85,6 +85,33 @@ const fmt=(iso)=>iso?new Date(iso).toLocaleDateString(undefined,{weekday:"short"
 
 /* ══════════════ SCORING (tunable) ══════════════ */
 const SCORING = { winBonus:100, acsDivisor:4, perKill:1, perAssist:0.5 };
+
+/* ══════════════ DRAFT PRICING (ported verbatim from old app) ══════════════ */
+const RANKS = {
+  Iron:      { bid: 300,  c: "#8d97a8", glow: "rgba(141,151,168,0.45)" },
+  Bronze:    { bid: 500,  c: "#c08a52", glow: "rgba(192,138,82,0.45)" },
+  Silver:    { bid: 800,  c: "#d7e1ee", glow: "rgba(215,225,238,0.40)" },
+  Gold:      { bid: 1100, c: "#f5c453", glow: "rgba(245,196,83,0.45)" },
+  Platinum:  { bid: 1500, c: "#3be8d8", glow: "rgba(59,232,216,0.45)" },
+  Diamond:   { bid: 2000, c: "#c08bff", glow: "rgba(192,139,255,0.50)" },
+  Ascendant: { bid: 2600, c: "#3ddc84", glow: "rgba(61,220,132,0.50)" },
+  Immortal:  { bid: 3500, c: "#ff4d6d", glow: "rgba(255,77,109,0.55)" },
+  Radiant:   { bid: 4500, c: "#fff3b0", glow: "rgba(255,243,176,0.60)" },
+};
+const RANK_LIST = Object.keys(RANKS);
+const DRAFT_SLOTS = 4;              // players each captain drafts (old app)
+const START_BUDGET = 10000;        // starting purse (old app)
+const fmtMoney = (n)=> "$" + (n||0).toLocaleString();
+const playerBidValue = (p)=> (RANKS[p.rank]?.bid ?? 0);
+// reserve: the cheapest remaining slots a captain must still afford after this pick
+const reserveFor = (t, availablePlayers)=>{
+  const slotsAfterThisPick = Math.max(DRAFT_SLOTS - t.roster.length - 1, 0);
+  if (slotsAfterThisPick === 0) return 0;
+  const cheapest = availablePlayers.map(playerBidValue).sort((a,b)=>a-b).slice(0, slotsAfterThisPick);
+  return cheapest.reduce((s,v)=>s+v, 0);
+};
+const maxAllowedBid = (t, availablePlayers=[])=> t.budget - reserveFor(t, availablePlayers);
+const requiredBid = (b)=> (b.leaderId ? b.currentBid + 100 : b.startingBid);
 function matchPoints(r){
   return (r.won?SCORING.winBonus:0) + ((r.acs||0)/SCORING.acsDivisor) + ((r.k||0)*SCORING.perKill) + ((r.a||0)*SCORING.perAssist);
 }
@@ -224,6 +251,19 @@ if (HAS_SUPABASE) {
     // name-map memory persisted on the community row (jsonb settings)
     async getNameMap(cid){const{data}=await sb.from("communities").select("name_map").eq("id",cid).maybeSingle();return data?.name_map||{};},
     async setNameMap(cid,map){return sb.from("communities").update({name_map:map}).eq("id",cid);},
+
+    // ── draft (Stage 1: load teams + ranked players for a weekend) ──
+    async draftPlayers(eventId){
+      // registered players with their per-weekend rank
+      const{data}=await sb.from("registrations").select("user_id, rank, is_captain, users(display_name)").eq("event_id",eventId);
+      return (data||[]).map(r=>({id:r.user_id, name:r.users?.display_name, rank:r.rank, isCaptain:r.is_captain}));
+    },
+    async draftTeams(eventId){
+      const{data}=await sb.from("teams").select("id, name, budget, captain_user_id, users:captain_user_id(display_name), team_players(user_id, draft_price)").eq("event_id",eventId);
+      return (data||[]).map(t=>({id:t.id, name:t.name, budget:t.budget, captainId:t.captain_user_id, captain:t.users?.display_name, roster:(t.team_players||[]).map(tp=>tp.user_id)}));
+    },
+    async setPlayerRank(eventId,userId,rank){return sb.from("registrations").update({rank}).eq("event_id",eventId).eq("user_id",userId);},
+    async createTeamForCaptain(cid,eventId,captainUserId,name){return sb.from("teams").insert({community_id:cid,event_id:eventId,captain_user_id:captainUserId,name,budget:START_BUDGET}).select().single();},
   };
 } else {
   // Mock backend for preview. In-memory; resets on reload.
@@ -274,6 +314,22 @@ if (HAS_SUPABASE) {
     userIdByName:(cid,name)=>Promise.resolve(name), // mock: name IS the id
     getNameMap:()=>Promise.resolve(store.nameMap||{}),
     setNameMap:(cid,map)=>{store.nameMap=map;return ok({});},
+
+    // ── draft (mock) ──
+    draftPlayers:(eventId)=>{
+      const regs=store.regs[eventId]||[];
+      const seedRank={Vex:"Immortal",Kiro:"Diamond",Nova:"Platinum",Echo:"Gold",Riot:"Ascendant",test:"Silver"};
+      return Promise.resolve(regs.map(r=>({id:r.id||r.name,name:r.name,rank:r.rank||seedRank[r.name]||"Gold",isCaptain:r.isCaptain})));
+    },
+    draftTeams:(eventId)=>{
+      if(!store.teams)store.teams=[
+        {id:"tm1",name:"CRIMSON PULSE",budget:START_BUDGET,captainId:"m1",captain:"Vex",roster:[]},
+        {id:"tm2",name:"NEON SYNDICATE",budget:START_BUDGET,captainId:"m2",captain:"Kiro",roster:[]},
+      ];
+      return Promise.resolve(store.teams);
+    },
+    setPlayerRank:(eventId,userId,rank)=>{const r=(store.regs[eventId]||[]).find(x=>(x.id||x.name)===userId);if(r)r.rank=rank;return ok({});},
+    createTeamForCaptain:(cid,eventId,capId,name)=>{if(!store.teams)store.teams=[];const t={id:"tm"+(store.teams.length+1),name,budget:START_BUDGET,captainId:capId,captain:capId,roster:[]};store.teams.push(t);return ok(t);},
     _store:store, _seedRegs:seedRegs,
   };
   // On season create, seed demo regs + a couple weekends of results so previews aren't empty.
@@ -532,12 +588,13 @@ function CreateSeason({profile,onCreated}){
 /* ══════════════ WEEKEND DETAIL (registration) ══════════════ */
 function WeekendDetail({profile,eventId,onBack,onSignOut}){
   const isHost=profile.role==="host";
-  const [ev,setEv]=useState(null),[loading,setLoading]=useState(true),[tick,setTick]=useState(0);
+  const [ev,setEv]=useState(null),[loading,setLoading]=useState(true),[tick,setTick]=useState(0),[showDraft,setShowDraft]=useState(false);
   useEffect(()=>{
     (async()=>{setLoading(true);const {data:s}=await DB.seasonsActive();if(s){const {data:e}=await DB.eventsForSeason(s.id);setEv((e||[]).find(x=>x.id===eventId)||null);}setLoading(false);})();
   },[eventId]);
   if(loading)return <Shell><div className="page-wrap" style={{paddingTop:30}}><TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>LOADING…</p></TPanel></div></Shell>;
   if(!ev)return <Shell><div className="page-wrap" style={{paddingTop:30}}><TPanel><p style={{margin:0,color:MUTE}}>Weekend not found.</p><button className="ea-btn" style={{...notchBtn(false),marginTop:12}} onClick={onBack}>‹ Back</button></TPanel></div></Shell>;
+  if(showDraft)return <Draft profile={profile} ev={ev} onBack={()=>setShowDraft(false)} onSignOut={onSignOut}/>;
   const phase=computeAutoPhase(ev),b=phaseBadge(phase);
   return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:50}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
@@ -550,6 +607,7 @@ function WeekendDetail({profile,eventId,onBack,onSignOut}){
       <p style={{color:MUTE,marginTop:10,fontFamily:FONT_MONO,fontSize:12,letterSpacing:"0.04em"}}>REG {fmt(ev.reg_opens)}–{fmt(ev.reg_closes)} · DRAFT {fmt(ev.draft_at)} · MATCHES {fmt(ev.matches_start)}–{fmt(ev.matches_end)}</p>
       <div style={{marginTop:12}}><span style={{padding:"5px 13px",fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:b.color,border:`1px solid ${b.color}66`,background:`${b.color}1a`,clipPath:notch(7),fontFamily:FONT_LABEL}}>{b.label}</span></div>
     </TPanel>
+    {isHost && <div style={{marginBottom:14}}><button className="ea-btn" onClick={()=>setShowDraft(true)} style={{...notchBtn(true),padding:"12px 20px"}}>⚡ Open Draft</button></div>}
     {isHost?<HostRoster profile={profile} ev={ev} tick={tick}/>:<PlayerReg profile={profile} ev={ev} phase={phase} onChange={()=>setTick(t=>t+1)}/>}
   </div></Shell>;
 }
@@ -828,4 +886,80 @@ function ImportPanel({profile,events,liveId,nameMap,setNameMap,onDone}){
       <button className="ea-btn" onClick={()=>commitAll()} style={{...notchBtn(true),marginTop:10,background:"rgba(61,220,132,0.18)",borderColor:"#3ddc8488",color:"#9af5c2"}}>✓ Save all {queue.length} queued</button>
     </div>}
   </div>);
+}
+
+/* ══════════════ DRAFT (Stage 1 — shell on real data) ══════════════ */
+function Draft({profile,ev,onBack,onSignOut}){
+  const isHost=profile.role==="host";
+  const [players,setPlayers]=useState(null);
+  const [teams,setTeams]=useState([]);
+  const [tick,setTick]=useState(0);
+
+  async function load(){
+    setPlayers(await DB.draftPlayers(ev.id));
+    setTeams(await DB.draftTeams(ev.id));
+  }
+  useEffect(()=>{load();},[ev.id,tick]);
+
+  if(players===null)return <Shell><div className="page-wrap" style={{paddingTop:40}}><TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>LOADING DRAFT…</p></TPanel></div></Shell>;
+
+  // pool = non-captain players available to be drafted
+  const pool=players.filter(p=>!p.isCaptain);
+  const captains=players.filter(p=>p.isCaptain);
+  const unranked=pool.filter(p=>!p.rank).length;
+
+  async function setRank(userId,rank){ await DB.setPlayerRank(ev.id,userId,rank); setTick(t=>t+1); }
+
+  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:60}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <Brand/><button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
+    </div>
+    <button className="ea-btn" style={{...notchBtn(false),marginBottom:16}} onClick={onBack}>‹ Back to weekend</button>
+
+    <Eyebrow>Auction Draft</Eyebrow>
+    <TungstenHead word1="Auction" word2="Block"/>
+    <p style={{color:MUTE,fontSize:14,margin:"6px 0 18px",fontFamily:FONT_LABEL}}>
+      {ev.weekend_label} · {captains.length} captains · {fmtMoney(START_BUDGET)} each · {DRAFT_SLOTS} slots to fill. Players priced by rank.
+    </p>
+
+    {/* Stage-1 notice */}
+    <TPanel style={{marginBottom:16,borderColor:"rgba(245,196,83,0.4)",background:"rgba(245,196,83,0.06)"}}>
+      <p style={{margin:0,color:"#f5c453",fontFamily:FONT_LABEL,fontSize:13}}>
+        ⚡ Draft shell — live bidding, the fate wheel and War Rooms come next. Right now you can see the real teams and the ranked player pool, and assign ranks below.
+      </p>
+    </TPanel>
+
+    {/* TEAMS */}
+    <SectionLabel>Captains &amp; Budgets</SectionLabel>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10,marginBottom:24}}>
+      {teams.length===0 && <TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>No teams yet. Teams are created from captains when the draft begins.</p></TPanel>}
+      {teams.map(t=>(
+        <div key={t.id} style={{padding:"14px 16px",background:"rgba(255,255,255,0.025)",border:"1px solid rgba(120,150,220,0.18)",clipPath:notch(10)}}>
+          <div style={{fontFamily:FONT_LABEL,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",color:"#ecf3ff",fontSize:15}}>{t.name||"—"}</div>
+          <div style={{fontFamily:FONT_MONO,fontSize:12,color:"rgba(200,215,255,0.5)",marginTop:3}}>Capt. {t.captain}</div>
+          <div style={{fontFamily:FONT_MONO,fontSize:22,fontWeight:700,color:"#5b8dff",textShadow:"0 0 14px rgba(61,123,255,0.5)",marginTop:8}}>{fmtMoney(t.budget)}</div>
+          <div style={{fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL,marginTop:4}}>{t.roster.length}/{DRAFT_SLOTS} slots filled</div>
+        </div>
+      ))}
+    </div>
+
+    {/* PLAYER POOL */}
+    <SectionLabel>Player Pool {unranked>0 && isHost ? `· ${unranked} need a rank` : ""}</SectionLabel>
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+      {pool.length===0 && <TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>No registered players for this weekend yet.</p></TPanel>}
+      {pool.map(p=>{
+        const r=RANKS[p.rank];
+        return <div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",background:"rgba(255,255,255,0.025)",border:`1px solid ${r?r.c+"55":"rgba(120,150,220,0.16)"}`,clipPath:notch(9)}}>
+          <span style={{fontFamily:FONT_LABEL,fontWeight:700,fontSize:16,color:"#dce6ff",letterSpacing:"0.02em",flex:1}}>{p.name}</span>
+          {p.rank
+            ? <span style={{fontFamily:FONT_MONO,fontSize:12,color:r.c,textShadow:`0 0 10px ${r.glow}`}}>{p.rank} · {fmtMoney(r.bid)}</span>
+            : <span style={{fontFamily:FONT_MONO,fontSize:12,color:"rgba(255,138,148,0.8)"}}>unranked</span>}
+          {isHost && <select value={p.rank||""} onChange={e=>setRank(p.id,e.target.value)} style={{...fieldStyle,maxWidth:130,padding:"6px 8px"}}>
+            <option value="">— rank —</option>
+            {RANK_LIST.map(rk=><option key={rk} value={rk}>{rk}</option>)}
+          </select>}
+        </div>;
+      })}
+    </div>
+  </div></Shell>;
 }
