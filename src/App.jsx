@@ -17,6 +17,7 @@ function Fonts(){
   return <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
     .view-in{animation:viewin .4s ease;} @keyframes viewin{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+    @keyframes voltpop{from{opacity:0;transform:scale(0.85);}to{opacity:1;transform:scale(1);}}
     .grid-bg{background-image:linear-gradient(rgba(157,107,255,0.06) 1px,transparent 1px),linear-gradient(90deg,rgba(157,107,255,0.06) 1px,transparent 1px);background-size:44px 44px;}
     .page-wrap{max-width:1100px;margin:0 auto;padding:0 5vw;}
     input,select{font-family:'Rajdhani',sans-serif;} input::placeholder{color:rgba(160,180,210,0.4);}
@@ -264,6 +265,28 @@ if (HAS_SUPABASE) {
     },
     async setPlayerRank(eventId,userId,rank){return sb.from("registrations").update({rank}).eq("event_id",eventId).eq("user_id",userId);},
     async createTeamForCaptain(cid,eventId,captainUserId,name){return sb.from("teams").insert({community_id:cid,event_id:eventId,captain_user_id:captainUserId,name,budget:START_BUDGET}).select().single();},
+
+    // ── live draft state (realtime) ──
+    async getDraftState(eventId){const{data}=await sb.from("draft_state").select("state").eq("event_id",eventId).maybeSingle();return data?.state||null;},
+    async setDraftState(cid,eventId,state){return sb.from("draft_state").upsert({event_id:eventId,community_id:cid,state,updated_at:new Date().toISOString()},{onConflict:"event_id"});},
+    subscribeDraft(eventId,onState){
+      const ch=sb.channel("draft_"+eventId)
+        .on("postgres_changes",{event:"*",schema:"public",table:"draft_state",filter:"event_id=eq."+eventId},(payload)=>{
+          if(payload.new&&payload.new.state)onState(payload.new.state);
+        }).subscribe();
+      return ()=>{sb.removeChannel(ch);};
+    },
+    // commit a finished draft: write team_players rows + final budgets
+    async commitDraftResults(cid,eventId,teams){
+      for(const t of teams){
+        await sb.from("teams").update({budget:t.budget,name:t.name}).eq("id",t.id);
+        for(const pid of t.roster){
+          const price=(t.prices&&t.prices[pid])||0;
+          await sb.from("team_players").upsert({team_id:t.id,user_id:pid,community_id:cid,draft_price:price},{onConflict:"team_id,user_id"});
+        }
+      }
+      return {ok:true};
+    },
   };
 } else {
   // Mock backend for preview. In-memory; resets on reload.
@@ -330,6 +353,13 @@ if (HAS_SUPABASE) {
     },
     setPlayerRank:(eventId,userId,rank)=>{const r=(store.regs[eventId]||[]).find(x=>(x.id||x.name)===userId);if(r)r.rank=rank;return ok({});},
     createTeamForCaptain:(cid,eventId,capId,name)=>{if(!store.teams)store.teams=[];const t={id:"tm"+(store.teams.length+1),name,budget:START_BUDGET,captainId:capId,captain:capId,roster:[]};store.teams.push(t);return ok(t);},
+
+    // ── live draft state (mock; same-tab realtime via callback registry) ──
+    _draftState:null, _draftSubs:[],
+    getDraftState:function(){return Promise.resolve(this._draftState);},
+    setDraftState:function(cid,eventId,state){this._draftState=state;this._draftSubs.forEach(cb=>{try{cb(state);}catch(e){}});return ok({});},
+    subscribeDraft:function(eventId,onState){this._draftSubs.push(onState);return ()=>{this._draftSubs=this._draftSubs.filter(c=>c!==onState);};},
+    commitDraftResults:function(cid,eventId,teams){store.teams=teams;return ok({ok:true});},
     _store:store, _seedRegs:seedRegs,
   };
   // On season create, seed demo regs + a couple weekends of results so previews aren't empty.
@@ -888,78 +918,229 @@ function ImportPanel({profile,events,liveId,nameMap,setNameMap,onDone}){
   </div>);
 }
 
-/* ══════════════ DRAFT (Stage 1 — shell on real data) ══════════════ */
+/* ══════════════ DRAFT (Stage 2 — live realtime auction) ══════════════ */
+const SPIN_MS = 2600, REVEAL_MS = 1100;
+const emptySlots = (t)=> Math.max(DRAFT_SLOTS - t.roster.length, 0);
+
 function Draft({profile,ev,onBack,onSignOut}){
-  const isHost=profile.role==="host";
-  const [players,setPlayers]=useState(null);
-  const [teams,setTeams]=useState([]);
-  const [tick,setTick]=useState(0);
+  const isHost = profile.role==="host";
+  const myId = profile.id;
+  const [players,setPlayers]=useState(null);   // registered pool (with ranks)
+  const [st,setSt]=useState(null);              // live draft_state
+  const [busy,setBusy]=useState(false);
+  const [spinView,setSpinView]=useState(null);  // local spin animation overlay
+  const stRef = useRef(null);
 
-  async function load(){
-    setPlayers(await DB.draftPlayers(ev.id));
-    setTeams(await DB.draftTeams(ev.id));
+  // load static players once, plus current live state, then subscribe
+  useEffect(()=>{
+    let unsub=()=>{};
+    (async()=>{
+      setPlayers(await DB.draftPlayers(ev.id));
+      const existing = await DB.getDraftState(ev.id);
+      if(existing){ setSt(existing); stRef.current=existing; }
+      unsub = DB.subscribeDraft(ev.id,(state)=>{ setSt(state); stRef.current=state; maybeSpin(state); });
+    })();
+    return ()=>unsub();
+  },[ev.id]);
+
+  // write helper: host (or captain bidding) pushes new state to everyone
+  async function push(next){ stRef.current=next; setSt(next); await DB.setDraftState(profile.community_id, ev.id, next); }
+
+  // trigger local spin overlay when a new spin appears
+  function maybeSpin(state){
+    if(state?.spin && (!spinView || spinView.startTs!==state.spin.startTs)){
+      setSpinView(state.spin);
+      setTimeout(()=>setSpinView(null), SPIN_MS+REVEAL_MS);
+    }
   }
-  useEffect(()=>{load();},[ev.id,tick]);
 
-  if(players===null)return <Shell><div className="page-wrap" style={{paddingTop:40}}><TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>LOADING DRAFT…</p></TPanel></div></Shell>;
+  if(players===null) return <Shell><div className="page-wrap" style={{paddingTop:40}}><TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>LOADING DRAFT…</p></TPanel></div></Shell>;
 
-  // pool = non-captain players available to be drafted
-  const pool=players.filter(p=>!p.isCaptain);
-  const captains=players.filter(p=>p.isCaptain);
-  const unranked=pool.filter(p=>!p.rank).length;
+  const captains = players.filter(p=>p.isCaptain);
+  const started = !!st?.started;
 
-  async function setRank(userId,rank){ await DB.setPlayerRank(ev.id,userId,rank); setTick(t=>t+1); }
+  // ── START DRAFT: create teams from captains, seed live state ──
+  async function startDraft(){
+    if(busy) return; setBusy(true);
+    const teams=[];
+    for(const c of captains){
+      const teamName = c.name ? c.name : `${c.name||c.id}'s Team`;
+      const res = await DB.createTeamForCaptain(profile.community_id, ev.id, c.id, c.name ? c.name+"'s Squad" : (captains.indexOf(c)===0?"CRIMSON PULSE":"NEON SYNDICATE"));
+      const t = res?.data || res; // real returns {data}, mock returns team
+      teams.push({ id:t.id, name:t.name, captainId:c.id, captain:c.name, budget:START_BUDGET, roster:[], prices:{} });
+    }
+    const poolPlayers = players.filter(p=>!p.isCaptain).map(p=>({ id:p.id, name:p.name, rank:p.rank, status:"pool" }));
+    const next = { started:true, teams, players:poolPlayers, block:null, bidHistory:[], spin:null, log:["Draft started — spin to nominate the first player"], recentSales:[] };
+    await push(next); setBusy(false);
+  }
+
+  // ── NOMINATE (fate wheel) ──
+  async function spinNominate(){
+    const s = structuredClone(stRef.current); if(!s||s.block) return;
+    const pool = s.players.filter(p=>p.status==="pool");
+    if(!pool.length) return;
+    const winner = pool[Math.floor(Math.random()*pool.length)];
+    winner.status="block";
+    s.block = { playerId:winner.id, startingBid:RANKS[winner.rank]?.bid||0, currentBid:RANKS[winner.rank]?.bid||0, leaderId:null, ts:Date.now() };
+    s.spin = { playerId:winner.id, pool:pool.map(p=>p.id), startTs:Date.now() };
+    s.bidHistory=[];
+    s.log=[`Fate chose ${winner.name} — opening at ${fmtMoney(s.block.startingBid)}`,...s.log].slice(0,8);
+    await push(s);
+  }
+
+  // ── BID ──
+  async function placeBid(teamId){
+    const s = structuredClone(stRef.current); const b=s.block; if(!b||b.leaderId===teamId) return;
+    const team = s.teams.find(t=>t.id===teamId); if(!team||emptySlots(team)===0) return;
+    const availablePool = s.players.filter(p=>p.status==="pool");
+    const req = requiredBid(b);
+    if(maxAllowedBid(team, availablePool) < req) return;
+    b.currentBid=req; b.leaderId=teamId; b.ts=Date.now();
+    s.bidHistory=[{teamId,amount:req,ts:Date.now()},...s.bidHistory].slice(0,12);
+    const p=s.players.find(x=>x.id===b.playerId);
+    s.log=[`${team.name} bids ${fmtMoney(req)} on ${p?.name}`,...s.log].slice(0,8);
+    await push(s);
+  }
+
+  // ── SELL ──
+  async function sell(){
+    const s = structuredClone(stRef.current); const b=s.block; if(!b||!b.leaderId) return;
+    const team=s.teams.find(t=>t.id===b.leaderId), p=s.players.find(x=>x.id===b.playerId);
+    if(!team||!p) return;
+    team.budget-=b.currentBid; team.roster.push(p.id); team.prices=team.prices||{}; team.prices[p.id]=b.currentBid;
+    p.status="sold"; p.soldTo=team.id; p.soldPrice=b.currentBid;
+    s.recentSales=[{playerId:p.id,name:p.name,teamId:team.id,price:b.currentBid,ts:Date.now()},...(s.recentSales||[])].slice(0,10);
+    s.log=[`SOLD — ${p.name} → ${team.name} for ${fmtMoney(b.currentBid)}`,...s.log].slice(0,8);
+    s.block=null; s.bidHistory=[];
+    await push(s);
+    // persist this team's roster immediately
+    await DB.commitDraftResults(profile.community_id, ev.id, [team]);
+  }
+
+  // ── PASS ──
+  async function passPlayer(){
+    const s = structuredClone(stRef.current); const b=s.block; if(!b) return;
+    const p=s.players.find(x=>x.id===b.playerId); if(p) p.status="pool";
+    s.log=[`${p?.name} passed — back to the pool`,...s.log].slice(0,8);
+    s.block=null; s.bidHistory=[]; await push(s);
+  }
+
+  const myTeam = st?.teams?.find(t=>t.captainId===myId) || null;
+  const block = st?.block || null;
+  const blockPlayer = block ? st.players.find(p=>p.id===block.playerId) : null;
+  const leaderTeam = block?.leaderId ? st.teams.find(t=>t.id===block.leaderId) : null;
+  const poolLeft = st?.players?.filter(p=>p.status==="pool").length || 0;
+  const allDone = started && poolLeft===0 && !block;
 
   return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:60}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
       <Brand/><button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
     </div>
     <button className="ea-btn" style={{...notchBtn(false),marginBottom:16}} onClick={onBack}>‹ Back to weekend</button>
-
     <Eyebrow>Auction Draft</Eyebrow>
     <TungstenHead word1="Auction" word2="Block"/>
-    <p style={{color:MUTE,fontSize:14,margin:"6px 0 18px",fontFamily:FONT_LABEL}}>
-      {ev.weekend_label} · {captains.length} captains · {fmtMoney(START_BUDGET)} each · {DRAFT_SLOTS} slots to fill. Players priced by rank.
-    </p>
+    <p style={{color:MUTE,fontSize:14,margin:"6px 0 18px",fontFamily:FONT_LABEL}}>{ev.weekend_label} · {captains.length} captains · {fmtMoney(START_BUDGET)} each · {DRAFT_SLOTS} slots.</p>
 
-    {/* Stage-1 notice */}
-    <TPanel style={{marginBottom:16,borderColor:"rgba(245,196,83,0.4)",background:"rgba(245,196,83,0.06)"}}>
-      <p style={{margin:0,color:"#f5c453",fontFamily:FONT_LABEL,fontSize:13}}>
-        ⚡ Draft shell — live bidding, the fate wheel and War Rooms come next. Right now you can see the real teams and the ranked player pool, and assign ranks below.
-      </p>
-    </TPanel>
+    {/* START */}
+    {!started && <TPanel style={{marginBottom:16}}>
+      <p style={{margin:"0 0 12px",color:MUTE,fontFamily:FONT_LABEL}}>Ready with {captains.length} captains and {players.filter(p=>!p.isCaptain).length} players in the pool.{captains.length<2?" You need at least 2 captains to draft.":""}</p>
+      {isHost && captains.length>=2 && <button className="ea-btn" disabled={busy} onClick={startDraft} style={{...notchBtn(true),padding:"12px 22px"}}>{busy?"Starting…":"⚡ Start the draft"}</button>}
+      {!isHost && <p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL,fontSize:13}}>Waiting for the host to start the draft…</p>}
+    </TPanel>}
 
-    {/* TEAMS */}
-    <SectionLabel>Captains &amp; Budgets</SectionLabel>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10,marginBottom:24}}>
-      {teams.length===0 && <TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>No teams yet. Teams are created from captains when the draft begins.</p></TPanel>}
-      {teams.map(t=>(
-        <div key={t.id} style={{padding:"14px 16px",background:"rgba(255,255,255,0.025)",border:"1px solid rgba(120,150,220,0.18)",clipPath:notch(10)}}>
-          <div style={{fontFamily:FONT_LABEL,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",color:"#ecf3ff",fontSize:15}}>{t.name||"—"}</div>
-          <div style={{fontFamily:FONT_MONO,fontSize:12,color:"rgba(200,215,255,0.5)",marginTop:3}}>Capt. {t.captain}</div>
-          <div style={{fontFamily:FONT_MONO,fontSize:22,fontWeight:700,color:"#5b8dff",textShadow:"0 0 14px rgba(61,123,255,0.5)",marginTop:8}}>{fmtMoney(t.budget)}</div>
-          <div style={{fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL,marginTop:4}}>{t.roster.length}/{DRAFT_SLOTS} slots filled</div>
+    {/* SPIN OVERLAY */}
+    {spinView && blockPlayer && <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(4,7,15,0.85)",backdropFilter:"blur(6px)"}}>
+      <div style={{textAlign:"center",animation:"voltpop 0.5s ease"}}>
+        <div style={{fontFamily:FONT_LABEL,letterSpacing:"0.3em",textTransform:"uppercase",color:CYAN,fontSize:13,marginBottom:14}}>Fate selects</div>
+        <div style={{fontFamily:FONT_HEAD,fontSize:"clamp(3rem,9vw,6rem)",fontWeight:700,textTransform:"uppercase",color:"#fff",textShadow:"0 0 40px rgba(61,123,255,0.7)"}}>{blockPlayer.name}</div>
+        <div style={{fontFamily:FONT_MONO,fontSize:18,marginTop:10,color:RANKS[blockPlayer.rank]?.c}}>{blockPlayer.rank} · opens {fmtMoney(RANKS[blockPlayer.rank]?.bid)}</div>
+      </div>
+    </div>}
+
+    {started && <>
+      {/* LIVE BLOCK */}
+      {block && blockPlayer ? <div style={{marginBottom:18,padding:"22px 20px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.35)",clipPath:notch(14)}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:14}}>
+          <div>
+            <div style={{fontSize:11,letterSpacing:"0.2em",textTransform:"uppercase",color:CYAN,fontFamily:FONT_LABEL}}>On the block</div>
+            <div style={{fontFamily:FONT_HEAD,fontSize:"clamp(2rem,5vw,3rem)",fontWeight:700,textTransform:"uppercase",color:"#fff"}}>{blockPlayer.name}</div>
+            <div style={{fontFamily:FONT_MONO,fontSize:13,color:RANKS[blockPlayer.rank]?.c}}>{blockPlayer.rank}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:11,letterSpacing:"0.15em",textTransform:"uppercase",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>{block.leaderId?"Top bid":"Opening"}</div>
+            <div style={{fontFamily:FONT_MONO,fontSize:"clamp(2rem,5vw,3rem)",fontWeight:700,color:"#5b8dff",textShadow:"0 0 18px rgba(61,123,255,0.6)"}}>{fmtMoney(block.currentBid)}</div>
+            {leaderTeam && <div style={{fontFamily:FONT_LABEL,fontSize:13,color:"#9af5c2"}}>{leaderTeam.name} leads</div>}
+          </div>
         </div>
-      ))}
-    </div>
 
-    {/* PLAYER POOL */}
-    <SectionLabel>Player Pool {unranked>0 && isHost ? `· ${unranked} need a rank` : ""}</SectionLabel>
-    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
-      {pool.length===0 && <TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>No registered players for this weekend yet.</p></TPanel>}
-      {pool.map(p=>{
-        const r=RANKS[p.rank];
-        return <div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",background:"rgba(255,255,255,0.025)",border:`1px solid ${r?r.c+"55":"rgba(120,150,220,0.16)"}`,clipPath:notch(9)}}>
-          <span style={{fontFamily:FONT_LABEL,fontWeight:700,fontSize:16,color:"#dce6ff",letterSpacing:"0.02em",flex:1}}>{p.name}</span>
-          {p.rank
-            ? <span style={{fontFamily:FONT_MONO,fontSize:12,color:r.c,textShadow:`0 0 10px ${r.glow}`}}>{p.rank} · {fmtMoney(r.bid)}</span>
-            : <span style={{fontFamily:FONT_MONO,fontSize:12,color:"rgba(255,138,148,0.8)"}}>unranked</span>}
-          {isHost && <select value={p.rank||""} onChange={e=>setRank(p.id,e.target.value)} style={{...fieldStyle,maxWidth:130,padding:"6px 8px"}}>
-            <option value="">— rank —</option>
-            {RANK_LIST.map(rk=><option key={rk} value={rk}>{rk}</option>)}
-          </select>}
-        </div>;
-      })}
-    </div>
+        {/* captain's own bid button */}
+        {myTeam && (()=>{
+          const availablePool = st.players.filter(p=>p.status==="pool");
+          const req = requiredBid(block);
+          const canBid = block.leaderId!==myTeam.id && emptySlots(myTeam)>0 && maxAllowedBid(myTeam,availablePool)>=req;
+          return <button className="ea-btn" disabled={!canBid} onClick={()=>placeBid(myTeam.id)} style={{...notchBtn(true),width:"100%",marginTop:16,padding:"16px",fontSize:18,
+            background:canBid?"linear-gradient(90deg,#2d6bff,#3d7bff)":"rgba(255,255,255,0.05)",color:canBid?"#fff":"rgba(236,243,255,0.3)",cursor:canBid?"pointer":"not-allowed"}}>
+            {block.leaderId===myTeam.id?"You're leading":canBid?`Bid ${fmtMoney(req)}`:"Can't bid"}</button>;
+        })()}
+
+        {/* host controls */}
+        {isHost && <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap"}}>
+          <button className="ea-btn" disabled={!block.leaderId} onClick={sell} style={{...notchBtn(true),flex:1,padding:"14px",fontSize:16,background:block.leaderId?"linear-gradient(90deg,#1fbf75,#3ddc84)":"rgba(255,255,255,0.05)",color:block.leaderId?"#062b18":"rgba(236,243,255,0.25)",cursor:block.leaderId?"pointer":"not-allowed"}}>SOLD</button>
+          <button className="ea-btn" onClick={passPlayer} style={{...notchBtn(false),padding:"14px 18px"}}>Pass</button>
+        </div>}
+
+        {/* host can also bid on behalf of any team (table) */}
+        {isHost && <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+          {st.teams.map(t=>{
+            const availablePool = st.players.filter(p=>p.status==="pool");
+            const req=requiredBid(block);
+            const canBid = block.leaderId!==t.id && emptySlots(t)>0 && maxAllowedBid(t,availablePool)>=req;
+            return <button key={t.id} className="ea-btn" disabled={!canBid} onClick={()=>placeBid(t.id)} style={{...notchBtn(false),fontSize:12,opacity:canBid?1:0.4}}>{t.name} +{fmtMoney(req)}</button>;
+          })}
+        </div>}
+      </div>
+      : <div style={{marginBottom:18,textAlign:"center"}}>
+          {isHost && poolLeft>0 && <button className="ea-btn" onClick={spinNominate} style={{...notchBtn(true),padding:"16px 30px",fontSize:18}}>🎯 Spin to nominate</button>}
+          {allDone && <TPanel><p style={{margin:0,color:"#9af5c2",fontFamily:FONT_LABEL,fontSize:15}}>✓ Draft complete — every player has been sold. Rosters are saved.</p></TPanel>}
+          {!isHost && poolLeft>0 && <p style={{color:MUTE,fontFamily:FONT_LABEL}}>Waiting for the host to nominate the next player…</p>}
+        </div>}
+
+      {/* TEAMS */}
+      <SectionLabel>Teams</SectionLabel>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:10,margin:"8px 0 24px"}}>
+        {st.teams.map(t=>{
+          const mine = t.captainId===myId;
+          return <div key={t.id} style={{padding:"14px 16px",background:mine?"rgba(61,123,255,0.08)":"rgba(255,255,255,0.025)",border:`1px solid ${mine?"rgba(61,123,255,0.5)":"rgba(120,150,220,0.18)"}`,clipPath:notch(10)}}>
+            <div style={{fontFamily:FONT_LABEL,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",color:"#ecf3ff"}}>{t.name}{mine&&<span style={{color:CYAN,fontSize:11,marginLeft:6}}>YOU</span>}</div>
+            <div style={{fontFamily:FONT_MONO,fontSize:12,color:"rgba(200,215,255,0.5)",marginTop:3}}>Capt. {t.captain}</div>
+            <div style={{fontFamily:FONT_MONO,fontSize:20,fontWeight:700,color:"#5b8dff",marginTop:6}}>{fmtMoney(t.budget)}</div>
+            <div style={{fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL,marginTop:2}}>{t.roster.length}/{DRAFT_SLOTS} slots</div>
+            {t.roster.length>0 && <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:3}}>
+              {t.roster.map(pid=>{const pl=st.players.find(p=>p.id===pid);return <div key={pid} style={{fontFamily:FONT_MONO,fontSize:11,color:"rgba(220,230,255,0.7)",display:"flex",justifyContent:"space-between"}}><span>{pl?.name}</span><span style={{color:RANKS[pl?.rank]?.c}}>{fmtMoney(t.prices?.[pid])}</span></div>;})}
+            </div>}
+          </div>;
+        })}
+      </div>
+
+      {/* POOL + FEED */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:18}}>
+        <div>
+          <SectionLabel>Player Pool · {poolLeft} left</SectionLabel>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:8}}>
+            {st.players.filter(p=>p.status==="pool").map(p=>{const r=RANKS[p.rank];return <div key={p.id} style={{padding:"8px 12px",background:"rgba(255,255,255,0.03)",border:`1px solid ${r?r.c+"44":"rgba(120,150,220,0.16)"}`,clipPath:notch(7)}}>
+              <span style={{fontFamily:FONT_LABEL,fontWeight:700,color:"#dce6ff",fontSize:14}}>{p.name}</span>
+              <span style={{fontFamily:FONT_MONO,fontSize:11,color:r?.c,marginLeft:8}}>{p.rank} · {fmtMoney(r?.bid)}</span>
+            </div>;})}
+            {poolLeft===0 && <p style={{color:MUTE,fontFamily:FONT_LABEL,fontSize:13}}>Pool empty — all players drafted.</p>}
+          </div>
+        </div>
+        <div>
+          <SectionLabel>Auction Feed</SectionLabel>
+          <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
+            {(st.log||[]).map((line,i)=><div key={i} style={{fontFamily:FONT_MONO,fontSize:12,color:i===0?"#dce6ff":"rgba(200,215,255,0.5)",padding:"5px 10px",background:i===0?"rgba(61,123,255,0.06)":"transparent"}}>{line}</div>)}
+          </div>
+        </div>
+      </div>
+    </>}
   </div></Shell>;
 }
