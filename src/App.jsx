@@ -104,12 +104,13 @@ function seasonBoardFrom(rows){
 const CONF_THRESHOLD = 0.85;
 const lowConf = (v)=> typeof v==="number" && v<CONF_THRESHOLD;
 
-/* ══════════════ AI SCOREBOARD READ (real vision call) ══════════════ */
-// Sends the screenshot to Claude vision and returns structured JSON.
-// Only runs in the deployed app (needs the Anthropic API). Falls back to
-// a thrown error the UI can catch and show.
-async function aiReadScoreboard(base64, mediaType){
-  // Preview has no Anthropic API — return a simulated read so the flow is clickable.
+/* ══════════════ AI SCOREBOARD READ (free, via Puter → Claude) ══════════════ */
+// Calls Claude through Puter.js (loaded from index.html). No API key, runs in
+// the browser, no CORS. Puter's image-passing signature isn't documented, so we
+// try several call shapes and use whichever returns. Throws on total failure so
+// the UI shows an error the host can act on.
+async function aiReadScoreboard(dataUrl){
+  // Preview (no Supabase env) returns a simulated read so the flow is clickable.
   if(!HAS_SUPABASE){
     await new Promise(r=>setTimeout(r,1200));
     return {
@@ -124,21 +125,37 @@ async function aiReadScoreboard(base64, mediaType){
       ]
     };
   }
+  if(typeof window==="undefined" || !window.puter || !window.puter.ai){
+    throw new Error("Puter not loaded — check the script tag in index.html.");
+  }
   const prompt = `You are reading a Valorant end-of-game scoreboard screenshot. Return ONLY valid JSON, no prose, no markdown fences. Shape:
 {"map":string,"scoreA":number,"scoreB":number,"winningTeam":"A"|"B","rows":[{"scoreName":string,"team":"A"|"B","k":number,"d":number,"a":number,"acs":number,"conf":{"k":number,"a":number,"acs":number}}]}
 "team" A = the winning side's table, B = the other. conf values are your 0..1 confidence per field. If a value is unreadable, give your best guess and a low conf. scoreName is the player's in-game name exactly as shown.`;
-  const res = await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      model:"claude-sonnet-4-6", max_tokens:1500,
-      messages:[{role:"user",content:[
-        {type:"image",source:{type:"base64",media_type:mediaType,data:base64}},
-        {type:"text",text:prompt}
-      ]}]
-    })
-  });
-  const data = await res.json();
-  const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").replace(/```json|```/g,"").trim();
+  const model = "claude-sonnet-4-6";
+  const p = window.puter.ai;
+  // Ordered call-shape attempts (Puter's vision signature is under-documented).
+  const attempts = [
+    ()=> p.chat(prompt, dataUrl, { model }),
+    ()=> p.chat(prompt, { model, image: dataUrl }),
+    ()=> p.chat([{ role:"user", content:[ {type:"text",text:prompt}, {type:"image_url",image_url:{url:dataUrl}} ]}], { model }),
+    ()=> p.chat([{ role:"user", content:[ {type:"text",text:prompt}, {type:"file",puter_path:dataUrl} ]}], { model }),
+  ];
+  let resp=null, lastErr=null;
+  for(const tryCall of attempts){
+    try{ resp = await tryCall(); if(resp) break; }
+    catch(e){ lastErr=e; }
+  }
+  if(!resp) throw new Error("Vision read failed: "+(lastErr&&lastErr.message?lastErr.message:String(lastErr)));
+  // Normalise Puter's response shape into plain text.
+  let text="";
+  if(typeof resp==="string") text=resp;
+  else if(resp.message&&resp.message.content){
+    const c=resp.message.content;
+    text = Array.isArray(c) ? c.map(b=>b.text||"").join("") : String(c);
+  }
+  else if(resp.text) text=resp.text;
+  else text=JSON.stringify(resp);
+  text = text.replace(/```json|```/g,"").trim();
   return JSON.parse(text);
 }
 function resolveName(scoreName, registered, nameMap){
@@ -706,8 +723,8 @@ function ImportPanel({profile,events,liveId,nameMap,setNameMap,onDone}){
     const f=e.target.files?.[0]; if(!f)return;
     setErr("");setStage("reading");
     try{
-      const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);r.onerror=rej;r.readAsDataURL(f);});
-      const result=await aiReadScoreboard(b64,f.type||"image/png");
+      const dataUrl=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(f);});
+      const result=await aiReadScoreboard(dataUrl);
       const regs=await DB.regsForEvent(evId);
       const un=[];
       result.rows.forEach(r=>{r.resolved=resolveName(r.scoreName,regs,nameMap);if(!r.resolved)un.push(r);});
