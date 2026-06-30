@@ -193,6 +193,35 @@ function resolveName(scoreName, registered, nameMap){
   return hit?hit.name:null;
 }
 
+/* ══════════════ AI TRACKER-PROFILE READ (Puter → Claude vision) ══════════════ */
+// Reads a Valorant tracker profile screenshot (tracker.gg / blitz / etc.)
+// into the player's scouting stats. Same Puter path as the scoreboard reader.
+async function aiReadTracker(dataUrl){
+  if(!HAS_SUPABASE){
+    await new Promise(r=>setTimeout(r,1200));
+    return { rank:"Diamond", role:"Duelist", agent:"Jett", kda:1.31, acs:243, hs:27, win:54,
+      conf:{rank:0.97,kda:0.92,acs:0.88,hs:0.71,win:0.9} };
+  }
+  if(typeof window==="undefined" || !window.puter || !window.puter.ai) throw new Error("Puter not loaded — check the script tag in index.html.");
+  const prompt = `You are reading a Valorant stats tracker profile screenshot (e.g. tracker.gg, blitz.gg). Return ONLY valid JSON, no prose, no markdown fences. Shape:
+{"rank":string,"role":string,"agent":string,"kda":number,"acs":number,"hs":number,"win":number,"conf":{"rank":number,"kda":number,"acs":number,"hs":number,"win":number}}
+rank must be one of: Iron,Bronze,Silver,Gold,Platinum,Diamond,Ascendant,Immortal,Radiant. role is one of: Duelist,Initiator,Controller,Sentinel,Flex (infer from the main agent if not shown). agent is their most-played agent. kda is the K/D/A ratio number (e.g. 1.31). acs is average combat score. hs is headshot percentage as an integer. win is win-rate percentage as an integer. conf values are your 0..1 confidence per field. If a value isn't visible, give your best estimate and a low conf.`;
+  const model="claude-sonnet-4-6"; const p=window.puter.ai;
+  const attempts=[
+    ()=>p.chat(prompt,dataUrl,{model}),
+    ()=>p.chat(prompt,{model,image:dataUrl}),
+    ()=>p.chat([{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:dataUrl}}]}],{model}),
+    ()=>p.chat([{role:"user",content:[{type:"text",text:prompt},{type:"file",puter_path:dataUrl}]}],{model}),
+  ];
+  let resp=null,lastErr=null;
+  for(const c of attempts){ try{ resp=await c(); if(resp)break; }catch(e){lastErr=e;} }
+  if(!resp) throw new Error("Tracker read failed: "+(lastErr&&lastErr.message?lastErr.message:String(lastErr)));
+  let text=""; if(typeof resp==="string")text=resp;
+  else if(resp.message&&resp.message.content){const c=resp.message.content;text=Array.isArray(c)?c.map(b=>b.text||"").join(""):String(c);}
+  else if(resp.text)text=resp.text; else text=JSON.stringify(resp);
+  return JSON.parse(text.replace(/```json|```/g,"").trim());
+}
+
 /* ══════════════ DATA LAYER — real Supabase OR mock ══════════════ */
 const HAS_SUPABASE = !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
 
@@ -287,6 +316,19 @@ if (HAS_SUPABASE) {
       }
       return {ok:true};
     },
+
+    // ── player profiles (tracker-derived scouting stats) ──
+    async getProfile(userId){const{data}=await sb.from("player_profiles").select("*").eq("user_id",userId).maybeSingle();return data||null;},
+    async profilesForCommunity(cid){const{data}=await sb.from("player_profiles").select("*, users(display_name)").eq("community_id",cid);return (data||[]).map(p=>({...p,name:p.users?.display_name}));},
+    async saveProfile(cid,userId,prof){
+      return sb.from("player_profiles").upsert({
+        user_id:userId, community_id:cid,
+        rank:prof.rank, role:prof.role, agent:prof.agent,
+        kda:prof.kda, acs:prof.acs, hs:prof.hs, win:prof.win,
+        badges:prof.badges||[], tracker_url:prof.tracker_url||null,
+        updated_at:new Date().toISOString()
+      },{onConflict:"user_id"});
+    },
   };
 } else {
   // Mock backend for preview. In-memory; resets on reload.
@@ -360,6 +402,19 @@ if (HAS_SUPABASE) {
     setDraftState:function(cid,eventId,state){this._draftState=state;this._draftSubs.forEach(cb=>{try{cb(state);}catch(e){}});return ok({});},
     subscribeDraft:function(eventId,onState){this._draftSubs.push(onState);return ()=>{this._draftSubs=this._draftSubs.filter(c=>c!==onState);};},
     commitDraftResults:function(cid,eventId,teams){store.teams=teams;return ok({ok:true});},
+
+    // ── player profiles (mock) ──
+    _profiles:{
+      Nova:{rank:"Immortal",role:"Duelist",agent:"Jett",kda:1.42,acs:268,hs:31,win:58,badges:["Winter Tourney Winner","MVP"]},
+      Echo:{rank:"Diamond",role:"Controller",agent:"Omen",kda:1.18,acs:221,hs:24,win:52,badges:["IGL"]},
+      Riot:{rank:"Ascendant",role:"Initiator",agent:"Sova",kda:1.27,acs:240,hs:27,win:55,badges:["Clutch King"]},
+      Pulse:{rank:"Platinum",role:"Sentinel",agent:"Killjoy",kda:1.09,acs:198,hs:22,win:49,badges:[]},
+      Saint:{rank:"Gold",role:"Flex",agent:"Clove",kda:1.02,acs:187,hs:19,win:47,badges:["Community Pick"]},
+      Drift:{rank:"Silver",role:"Duelist",agent:"Raze",kda:1.33,acs:252,hs:26,win:54,badges:["Frag Leader"]},
+    },
+    getProfile:function(userId){const p=this._profiles[userId];return Promise.resolve(p?{user_id:userId,...p}:null);},
+    profilesForCommunity:function(){return Promise.resolve(Object.entries(this._profiles).map(([name,p])=>({user_id:name,name,...p})));},
+    saveProfile:function(cid,userId,prof){this._profiles[userId]={rank:prof.rank,role:prof.role,agent:prof.agent,kda:prof.kda,acs:prof.acs,hs:prof.hs,win:prof.win,badges:prof.badges||[]};return ok({});},
     _store:store, _seedRegs:seedRegs,
   };
   // On season create, seed demo regs + a couple weekends of results so previews aren't empty.
@@ -644,25 +699,97 @@ function WeekendDetail({profile,eventId,onBack,onSignOut}){
 function PlayerReg({profile,ev,phase,onChange}){
   const regOpen=phase==="registration_open";
   const [reg,setReg]=useState(undefined);
-  async function load(){setReg(await DB.myReg(ev.id));}
+  const [prof,setProf]=useState(undefined);
+  async function load(){setReg(await DB.myReg(ev.id));setProf(await DB.getProfile(profile.id));}
   useEffect(()=>{load();},[ev.id]);
   if(reg===undefined)return <TPanel><p style={{margin:0,color:MUTE}}>…</p></TPanel>;
   const isIn=!!reg;
   if(!regOpen)return <TPanel><SectionLabel>Registration</SectionLabel><p style={{color:MUTE,fontSize:15,margin:0,fontFamily:FONT_LABEL}}>{isIn?"You're registered for this weekend. Registration is now closed.":"Registration for this weekend is closed."}</p></TPanel>;
   async function toggle(){if(isIn){await DB.unregister(ev.id);}else{await DB.register(profile.community_id,ev.id);}await load();onChange&&onChange();}
   async function setCap(v){await DB.setMyWantsCaptain(v);await load();onChange&&onChange();}
+  return <>
+    <TPanel>
+      <SectionLabel>Your registration</SectionLabel>
+      {isIn?<>
+        <div style={okBox}>✓ You're in for this weekend.</div>
+        <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",color:"#cfe0f0",fontSize:15,margin:"6px 0 16px",fontFamily:FONT_LABEL}}>
+          <input type="checkbox" checked={!!reg.wantsCaptain} onChange={e=>setCap(e.target.checked)}/>Raise my hand to be a captain</label>
+        <button className="ea-btn" style={{...notchBtn(false),width:"100%"}} onClick={toggle}>Drop out of this weekend</button>
+      </>:<>
+        <p style={{color:MUTE,fontSize:15,margin:"0 0 16px",fontFamily:FONT_LABEL}}>Available this weekend? Register to be in the draft pool.</p>
+        <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} onClick={toggle}>I'm in for this weekend →</button>
+      </>}
+    </TPanel>
+    {isIn && <div style={{marginTop:14}}><ScoutingProfile profile={profile} prof={prof} onSaved={load}/></div>}
+  </>;
+}
+
+// Player's own scouting profile — built from a Valorant tracker screenshot.
+function ScoutingProfile({profile,prof,onSaved}){
+  const hasProfile = prof && prof.rank;
   return <TPanel>
-    <SectionLabel>Your registration</SectionLabel>
-    {isIn?<>
-      <div style={okBox}>✓ You're in for this weekend.</div>
-      <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",color:"#cfe0f0",fontSize:15,margin:"6px 0 16px",fontFamily:FONT_LABEL}}>
-        <input type="checkbox" checked={!!reg.wantsCaptain} onChange={e=>setCap(e.target.checked)}/>Raise my hand to be a captain</label>
-      <button className="ea-btn" style={{...notchBtn(false),width:"100%"}} onClick={toggle}>Drop out of this weekend</button>
-    </>:<>
-      <p style={{color:MUTE,fontSize:15,margin:"0 0 16px",fontFamily:FONT_LABEL}}>Available this weekend? Register to be in the draft pool.</p>
-      <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} onClick={toggle}>I'm in for this weekend →</button>
-    </>}
+    <SectionLabel>Your scouting profile</SectionLabel>
+    <p style={{color:MUTE,fontSize:13,margin:"0 0 14px",fontFamily:FONT_LABEL}}>Captains study this before the draft. Upload a screenshot of your Valorant tracker profile (tracker.gg, blitz.gg, etc.) and I'll read your rank, KDA, ACS, headshot % and win rate automatically.</p>
+    {hasProfile && <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+      {[["RANK",prof.rank],["KDA",prof.kda],["ACS",prof.acs],["HS%",prof.hs+"%"],["WIN%",prof.win+"%"],["AGENT",prof.agent]].map(([k,v])=>(
+        <div key={k} style={{padding:"7px 12px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.22)",clipPath:notch(7)}}>
+          <div style={{fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL}}>{k}</div>
+          <div style={{fontFamily:FONT_MONO,fontSize:15,color:"#ecf3ff",fontWeight:700}}>{v}</div>
+        </div>))}
+    </div>}
+    <TrackerImport profile={profile} existing={prof} onSaved={onSaved} relabel={hasProfile?"Update from a new screenshot":"Upload tracker screenshot"}/>
   </TPanel>;
+}
+
+function TrackerImport({profile,existing,onSaved,relabel}){
+  const [stage,setStage]=useState("idle"); // idle | reading | review
+  const [data,setData]=useState(null);
+  const [err,setErr]=useState("");
+  const fileRef=useRef(null);
+
+  async function onFile(e){
+    const f=e.target.files?.[0]; if(!f)return; setErr("");setStage("reading");
+    try{
+      const dataUrl=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(f);});
+      const result=await aiReadTracker(dataUrl);
+      setData(result); setStage("review");
+    }catch(ex){ setErr("Couldn't read that screenshot. Try a clearer full tracker-profile image."); setStage("idle"); }
+  }
+  async function save(){
+    await DB.saveProfile(profile.community_id, profile.id, data);
+    setStage("idle"); setData(null); onSaved&&onSaved();
+  }
+
+  if(stage==="reading")return <div style={{display:"flex",alignItems:"center",gap:12}}>
+    <div style={{fontFamily:FONT_MONO,color:CYAN,fontSize:14}}>◢ Reading your tracker…</div>
+    <span style={{color:MUTE,fontSize:12,fontFamily:FONT_LABEL}}>rank · KDA · ACS · HS% · win%</span></div>;
+
+  if(stage==="review"&&data){
+    const fields=[["rank","RANK","text"],["agent","AGENT","text"],["role","ROLE","text"],["kda","KDA","num"],["acs","ACS","num"],["hs","HS %","num"],["win","WIN %","num"]];
+    const low=(k)=>data.conf&&typeof data.conf[k]==="number"&&data.conf[k]<CONF_THRESHOLD;
+    return <div>
+      <p style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600,margin:"0 0 8px"}}>Review your stats</p>
+      {fields.some(([k])=>low(k)) && <div style={{marginBottom:10,padding:"7px 11px",background:"rgba(245,196,83,0.08)",border:"1px solid rgba(245,196,83,0.4)",color:"#f5c453",fontSize:12,fontFamily:FONT_LABEL,clipPath:notch(8)}}>⚑ Amber fields are ones I wasn't fully sure about — give them a glance.</div>}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:10,marginBottom:14}}>
+        {fields.map(([k,label,type])=>(<div key={k} style={{display:"flex",flexDirection:"column",gap:3}}>
+          <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>{label}</span>
+          {k==="rank"
+            ? <select value={data.rank||""} onChange={e=>setData({...data,rank:e.target.value})} style={{...fieldStyle,padding:"7px 8px",...(low(k)?{borderColor:"#f5c453"}:{})}}>{RANK_LIST.map(r=><option key={r} value={r}>{r}</option>)}</select>
+            : <input value={data[k]??""} onChange={e=>setData({...data,[k]:type==="num"?(e.target.value.replace(/[^0-9.]/g,"")):e.target.value})} style={{...fieldStyle,padding:"8px 9px",...(low(k)?{borderColor:"#f5c453",background:"rgba(245,196,83,0.1)"}:{})}}/>}
+        </div>))}
+      </div>
+      <div style={{display:"flex",gap:10}}>
+        <button className="ea-btn" onClick={save} style={{...notchBtn(true),background:"rgba(61,220,132,0.18)",borderColor:"#3ddc8488",color:"#9af5c2"}}>✓ Save my profile</button>
+        <button className="ea-btn" onClick={()=>{setStage("idle");setData(null);}} style={notchBtn(false)}>Cancel</button>
+      </div>
+    </div>;
+  }
+
+  return <div>
+    <button className="ea-btn" onClick={()=>fileRef.current?.click()} style={notchBtn(true)}>⤓ {relabel}</button>
+    <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={onFile}/>
+    {err&&<p style={{color:"#ff8a94",fontSize:12,margin:"8px 0 0",fontFamily:FONT_LABEL}}>{err}</p>}
+  </div>;
 }
 function HostRoster({profile,ev,tick}){
   const [regs,setRegs]=useState(null);
