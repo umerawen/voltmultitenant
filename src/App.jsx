@@ -1,269 +1,814 @@
-import { useState, useEffect } from "react";
-import { auth, onboarding, me } from "./supabase.js";
-
-/* ════════════════════════════════════════════════════════════════════
-   VOLT League — front door
-   Three states:
-     1. Not signed in       → Auth screen (email+password or magic link)
-     2. Signed in, no community → Onboarding (host create / player join)
-     3. Signed in + onboarded   → Home (placeholder; the app grows here)
-   ════════════════════════════════════════════════════════════════════ */
-
-const HAS_SUPABASE =
-  !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-// ── tiny styled bits ───────────────────────────────────────────────
-const card = {
-  width: "100%", maxWidth: 440, margin: "0 auto",
-  background: "rgba(13,18,30,0.85)", border: "1px solid rgba(0,229,255,0.18)",
-  borderRadius: 14, padding: "28px 26px",
-  boxShadow: "0 0 40px rgba(0,229,255,0.06)",
-};
-const label = { fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#7fa8c9", marginBottom: 6, display: "block" };
-const input = {
-  width: "100%", boxSizing: "border-box", padding: "11px 13px", marginBottom: 14,
-  background: "rgba(5,9,16,0.9)", border: "1px solid rgba(0,229,255,0.22)",
-  borderRadius: 8, color: "#e8eef7", fontSize: 15, fontFamily: "'Rajdhani',sans-serif",
-};
-const btn = (primary = true) => ({
-  width: "100%", padding: "12px", border: "none", borderRadius: 8, cursor: "pointer",
-  fontFamily: "'Oswald',sans-serif", fontWeight: 600, fontSize: 15,
-  letterSpacing: "0.1em", textTransform: "uppercase",
-  background: primary ? "linear-gradient(135deg,#00e5ff,#0090ff)" : "transparent",
-  color: primary ? "#04121c" : "#7fa8c9",
-  outline: primary ? "none" : "1px solid rgba(0,229,255,0.25)",
-  marginTop: 4,
-});
-const wrap = { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 };
-const head = { fontFamily: "'Oswald',sans-serif", fontSize: 30, fontWeight: 700, letterSpacing: "0.06em", margin: "0 0 4px", color: "#fff" };
-const sub = { color: "#6f8bab", fontSize: 14, margin: "0 0 22px" };
-const err = { background: "rgba(255,70,85,0.1)", border: "1px solid rgba(255,70,85,0.4)", color: "#ff9aa3", padding: "9px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 };
-const note = { background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.35)", color: "#86e6b0", padding: "9px 12px", borderRadius: 8, fontSize: 13, marginBottom: 14 };
-
 // ════════════════════════════════════════════════════════════════════
-export default function App() {
-  const [session, setSession] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+// VOLT // LEAGUE — single self-contained app.
+// Renders on MOCK data when no Supabase env is present (e.g. local preview
+// or an inline artifact), and talks to REAL Supabase when the env vars
+// exist (e.g. on Vercel). Screens call DB.* and don't know the difference.
+// ════════════════════════════════════════════════════════════════════
+import React, { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-  useEffect(() => {
-    if (!HAS_SUPABASE) { setLoading(false); return; }
-    auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: listener } = auth.onChange((s) => setSession(s));
-    return () => listener?.subscription?.unsubscribe();
-  }, []);
+/* ══════════════ THEME (was theme.jsx) ══════════════ */
+const HUE="#3d7bff", CYAN="#00e5ff", TEXT="#ecf3ff", MUTE="rgba(200,215,255,0.55)";
+const FONT_BODY="'Space Grotesk',sans-serif", FONT_HEAD="'Tungsten','Rajdhani',sans-serif",
+      FONT_LABEL="'Rajdhani',sans-serif", FONT_MONO="'IBM Plex Mono',monospace";
+const notch=(n=16)=>`polygon(0 0, calc(100% - ${n}px) 0, 100% ${n}px, 100% 100%, ${n}px 100%, 0 calc(100% - ${n}px))`;
 
-  // when signed in, load the profile (tells us if they have a community yet)
-  useEffect(() => {
-    if (!HAS_SUPABASE) return;
-    if (!session) { setProfile(null); setLoading(false); return; }
+function Fonts(){
+  return <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
+    .view-in{animation:viewin .4s ease;} @keyframes viewin{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+    .grid-bg{background-image:linear-gradient(rgba(157,107,255,0.06) 1px,transparent 1px),linear-gradient(90deg,rgba(157,107,255,0.06) 1px,transparent 1px);background-size:44px 44px;}
+    .page-wrap{max-width:1100px;margin:0 auto;padding:0 5vw;}
+    input,select{font-family:'Rajdhani',sans-serif;} input::placeholder{color:rgba(160,180,210,0.4);}
+    ::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:4px;}
+    .ea-btn{transition:transform .18s,box-shadow .18s,background .18s,border-color .18s;}
+    .ea-btn:hover{transform:translateY(-2px);box-shadow:0 0 30px rgba(61,123,255,0.4);}
+    .ea-btn:active{transform:translateY(0) scale(0.98);}
+    @media(prefers-reduced-motion:reduce){.view-in,.ea-btn{animation:none;transition:none;}}
+  `}</style>;
+}
+function Shell({children}){
+  return <div style={{minHeight:"100vh",color:TEXT,fontFamily:FONT_BODY,background:"#0a0d18",overflowX:"hidden"}}>
+    <Fonts/>
+    <div style={{position:"fixed",inset:0,pointerEvents:"none",background:"radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)"}}/>
+    <div className="grid-bg" style={{position:"fixed",inset:0,pointerEvents:"none",opacity:0.5}}/>
+    <div style={{position:"relative",minHeight:"100vh"}}>{children}</div>
+  </div>;
+}
+function TPanel({children,hue=HUE,style={},onClick,className=""}){
+  return <div onClick={onClick} className={"view-in "+className} style={{position:"relative",padding:22,background:"linear-gradient(160deg, rgba(61,123,255,0.05), rgba(10,15,28,0.5))",border:`1px solid ${hue}33`,clipPath:notch(16),backdropFilter:"blur(8px)",...style}}>
+    <span style={{position:"absolute",left:0,top:0,width:11,height:11,borderLeft:`2px solid ${hue}`,borderTop:`2px solid ${hue}`}}/>
+    {children}
+  </div>;
+}
+function TungstenHead({word1,word2,size="clamp(2.4rem,5vw,3.6rem)"}){
+  return <h2 style={{fontFamily:FONT_HEAD,fontWeight:700,textTransform:"uppercase",fontSize:size,lineHeight:0.9,letterSpacing:"0.04em",color:"#f4f8ff",margin:0,textShadow:"0 0 40px rgba(61,123,255,0.22)"}}>
+    {word1} {word2&&<span style={{color:HUE}}>{word2}</span>}</h2>;
+}
+function Eyebrow({children}){
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:8}}>
+    <span style={{width:18,height:2,background:HUE}}/>
+    <p style={{textTransform:"uppercase",fontSize:12,fontWeight:600,color:"#5b8dff",fontFamily:FONT_LABEL,letterSpacing:"0.34em",margin:0}}>{children}</p>
+    <span style={{width:18,height:2,background:HUE}}/></div>;
+}
+function SectionLabel({children}){
+  return <p style={{textTransform:"uppercase",fontSize:13,fontWeight:700,letterSpacing:"0.12em",color:"#7da6ff",fontFamily:FONT_LABEL,margin:"0 0 12px"}}>{children}</p>;
+}
+const fieldStyle={width:"100%",boxSizing:"border-box",padding:"11px 13px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.25)",color:"#ecf3ff",fontSize:15,fontFamily:FONT_LABEL,outline:"none",clipPath:notch(8)};
+function notchBtn(active=true,hue=HUE){
+  return {padding:"12px 22px",cursor:"pointer",textTransform:"uppercase",fontFamily:FONT_LABEL,fontWeight:700,fontSize:14,letterSpacing:"0.14em",color:active?"#eaf1ff":"rgba(200,215,255,0.6)",background:active?"rgba(61,123,255,0.18)":"rgba(255,255,255,0.03)",border:`1px solid ${active?hue:"rgba(120,150,220,0.25)"}`,clipPath:notch(10)};
+}
+function phaseBadge(phase){
+  const m={registration_open:{label:"Registration open",color:"#3ddc84"},registration_closed:{label:"Registration closed",color:"#f5c453"},drafting:{label:"Draft day",color:"#9d6bff"},matches_live:{label:"Matches live",color:CYAN},settled:{label:"Finished",color:"rgba(200,215,255,0.5)"}};
+  return m[phase]||m.registration_open;
+}
+const errBox={background:"rgba(255,70,85,0.1)",border:"1px solid rgba(255,70,85,0.4)",color:"#ff9aa3",padding:"9px 13px",clipPath:notch(8),fontSize:13,marginBottom:14,fontFamily:FONT_LABEL};
+const okBox={background:"rgba(61,220,132,0.08)",border:"1px solid rgba(61,220,132,0.4)",color:"#86e6b0",padding:"9px 13px",clipPath:notch(8),fontSize:13,marginBottom:14,fontFamily:FONT_LABEL};
+const labelTxt={fontSize:12,letterSpacing:"0.14em",textTransform:"uppercase",color:"#7da6ff",marginBottom:6,display:"block",fontFamily:FONT_LABEL,fontWeight:600};
+
+/* ══════════════ HELPERS (was in supabase.js) ══════════════ */
+function weekendWindows(sat){
+  const d=new Date(sat+"T18:00:00");
+  const day=(o,h,m=0)=>{const x=new Date(d);x.setDate(d.getDate()+o);x.setHours(h,m,0,0);return x.toISOString();};
+  return {reg_opens:day(-5,0,0),reg_closes:day(-2,23,59),draft_at:day(-1,20,0),matches_start:day(0,18,0),matches_end:day(1,23,59)};
+}
+function computeAutoPhase(ev,now=new Date()){
+  if(ev.phase_overridden)return ev.phase;
+  const t=(d)=>d?new Date(d).getTime():null,n=now.getTime();
+  if(t(ev.matches_end)&&n>t(ev.matches_end))return"settled";
+  if(t(ev.matches_start)&&n>=t(ev.matches_start))return"matches_live";
+  if(t(ev.draft_at)&&n>=t(ev.draft_at))return"drafting";
+  if(t(ev.reg_closes)&&n>=t(ev.reg_closes))return"registration_closed";
+  return"registration_open";
+}
+const fmt=(iso)=>iso?new Date(iso).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}):"—";
+
+/* ══════════════ SCORING (tunable) ══════════════ */
+const SCORING = { winBonus:100, acsDivisor:4, perKill:1, perAssist:0.5 };
+function matchPoints(r){
+  return (r.won?SCORING.winBonus:0) + ((r.acs||0)/SCORING.acsDivisor) + ((r.k||0)*SCORING.perKill) + ((r.a||0)*SCORING.perAssist);
+}
+// roll per-match rows into a season board ranked by AVERAGE points/match
+function seasonBoardFrom(rows){
+  const by={};
+  rows.forEach(r=>{
+    if(!by[r.name])by[r.name]={name:r.name,games:0,pts:0,k:0,a:0,acsSum:0,wins:0,unverified:0};
+    const p=by[r.name];
+    p.games++; p.pts+=matchPoints(r); p.k+=r.k||0; p.a+=r.a||0; p.acsSum+=r.acs||0;
+    if(r.won)p.wins++; if(r.unverified)p.unverified++;
+  });
+  return Object.values(by).map(p=>{
+    p.avg=p.games?p.pts/p.games:0; p.acs=p.games?Math.round(p.acsSum/p.games):0; return p;
+  }).sort((a,b)=>b.avg-a.avg);
+}
+const CONF_THRESHOLD = 0.85;
+const lowConf = (v)=> typeof v==="number" && v<CONF_THRESHOLD;
+
+/* ══════════════ AI SCOREBOARD READ (real vision call) ══════════════ */
+// Sends the screenshot to Claude vision and returns structured JSON.
+// Only runs in the deployed app (needs the Anthropic API). Falls back to
+// a thrown error the UI can catch and show.
+async function aiReadScoreboard(base64, mediaType){
+  // Preview has no Anthropic API — return a simulated read so the flow is clickable.
+  if(!HAS_SUPABASE){
+    await new Promise(r=>setTimeout(r,1200));
+    return {
+      map:"Ascent", scoreA:13, scoreB:9, winningTeam:"A",
+      rows:[
+        {scoreName:"Vex#NA1",team:"A",k:22,d:13,a:5,acs:280,conf:{k:0.99,a:0.98,acs:0.96}},
+        {scoreName:"Kiro#2747",team:"A",k:18,d:15,a:7,acs:245,conf:{k:0.98,a:0.95,acs:0.71}},
+        {scoreName:"rumer#MIN",team:"A",k:17,d:14,a:8,acs:230,conf:{k:0.99,a:0.62,acs:0.97}},
+        {scoreName:"Nova#777",team:"B",k:15,d:18,a:9,acs:210,conf:{k:0.97,a:0.99,acs:0.94}},
+        {scoreName:"Echo#404",team:"B",k:12,d:19,a:6,acs:190,conf:{k:0.99,a:0.97,acs:0.99}},
+        {scoreName:"R1OT#xx",team:"B",k:25,d:16,a:4,acs:310,conf:{k:0.93,a:0.98,acs:0.9}},
+      ]
+    };
+  }
+  const prompt = `You are reading a Valorant end-of-game scoreboard screenshot. Return ONLY valid JSON, no prose, no markdown fences. Shape:
+{"map":string,"scoreA":number,"scoreB":number,"winningTeam":"A"|"B","rows":[{"scoreName":string,"team":"A"|"B","k":number,"d":number,"a":number,"acs":number,"conf":{"k":number,"a":number,"acs":number}}]}
+"team" A = the winning side's table, B = the other. conf values are your 0..1 confidence per field. If a value is unreadable, give your best guess and a low conf. scoreName is the player's in-game name exactly as shown.`;
+  const res = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      model:"claude-sonnet-4-6", max_tokens:1500,
+      messages:[{role:"user",content:[
+        {type:"image",source:{type:"base64",media_type:mediaType,data:base64}},
+        {type:"text",text:prompt}
+      ]}]
+    })
+  });
+  const data = await res.json();
+  const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").replace(/```json|```/g,"").trim();
+  return JSON.parse(text);
+}
+function resolveName(scoreName, registered, nameMap){
+  if(nameMap[scoreName]) return nameMap[scoreName];
+  const base=(scoreName||"").split("#")[0].toLowerCase();
+  const hit=registered.find(p=>(p.name||"").toLowerCase()===base);
+  return hit?hit.name:null;
+}
+
+/* ══════════════ DATA LAYER — real Supabase OR mock ══════════════ */
+const HAS_SUPABASE = !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+
+let DB;
+if (HAS_SUPABASE) {
+  // Real backend.
+  const sb = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
+  DB = {
+    live:true, sb,
+    auth:{
+      signUpEmail:(e,p)=>sb.auth.signUp({email:e,password:p}),
+      signInEmail:(e,p)=>sb.auth.signInWithPassword({email:e,password:p}),
+      sendMagicLink:(e)=>sb.auth.signInWithOtp({email:e,options:{shouldCreateUser:true}}),
+      signOut:()=>sb.auth.signOut(),
+      getSession:()=>sb.auth.getSession(),
+      onChange:(cb)=>sb.auth.onAuthStateChange((_e,s)=>cb(s)),
+    },
+    createCommunity:(name,slug,dn)=>sb.rpc("create_community",{p_name:name,p_slug:slug,p_display_name:dn}),
+    joinCommunity:(slug,dn,wc)=>sb.rpc("join_community",{p_slug:slug,p_display_name:dn,p_wants_captain:wc}),
+    async profile(){const{data:{user}}=await sb.auth.getUser();if(!user)return null;const{data}=await sb.from("users").select("*, communities(*)").eq("id",user.id).maybeSingle();return data;},
+    seasonsActive:()=>sb.from("seasons").select("*").eq("status","active").maybeSingle(),
+    seasonsCreate:(cid,p)=>sb.from("seasons").insert({community_id:cid,...p}).select().single(),
+    eventsForSeason:(sid)=>sb.from("events").select("*").eq("season_id",sid).order("reg_opens",{ascending:true}),
+    eventsCreate:(cid,sid,p)=>sb.from("events").insert({community_id:cid,season_id:sid,...p}).select().single(),
+    async regsForEvent(eventId){const{data}=await sb.from("registrations").select("*, users(display_name, wants_captain)").eq("event_id",eventId);return (data||[]).map(r=>({id:r.id,name:r.users?.display_name,wantsCaptain:r.users?.wants_captain,isCaptain:r.is_captain}));},
+    async myReg(eventId){const{data:{user}}=await sb.auth.getUser();if(!user)return null;const{data}=await sb.from("registrations").select("*").eq("event_id",eventId).eq("user_id",user.id).maybeSingle();return data;},
+    async register(cid,eventId){const{data:{user}}=await sb.auth.getUser();return sb.from("registrations").insert({community_id:cid,event_id:eventId,user_id:user.id}).select().single();},
+    async unregister(eventId){const{data:{user}}=await sb.auth.getUser();return sb.from("registrations").delete().eq("event_id",eventId).eq("user_id",user.id);},
+    async setMyWantsCaptain(val){const{data:{user}}=await sb.auth.getUser();return sb.from("users").update({wants_captain:val}).eq("id",user.id);},
+
+    // ── match results / leaderboard ──
+    async resultsForSeason(seasonId){
+      // join through events so we get this season's rows with player names
+      const{data:evs}=await sb.from("events").select("id").eq("season_id",seasonId);
+      const ids=(evs||[]).map(e=>e.id); if(!ids.length)return [];
+      const{data}=await sb.from("match_results").select("*, users(display_name), events(weekend_label)").in("event_id",ids);
+      return (data||[]).map(r=>({
+        id:r.id, eventId:r.event_id, name:r.users?.display_name,
+        weekend:r.events?.weekend_label,
+        k:r.stat_payload?.k||0, a:r.stat_payload?.a||0, acs:r.stat_payload?.acs||0,
+        won:r.team_won, unverified:!!r.stat_payload?.unverified,
+      }));
+    },
+    async addResult(cid,eventId,userId,row){
+      const stat={k:+row.k||0,a:+row.a||0,acs:+row.acs||0,unverified:!!row.unverified};
+      const pts=matchPoints({k:stat.k,a:stat.a,acs:stat.acs,won:!!row.won});
+      return sb.from("match_results").insert({community_id:cid,event_id:eventId,user_id:userId,stat_payload:stat,team_won:!!row.won,points_computed:pts}).select().single();
+    },
+    async removeResult(id){return sb.from("match_results").delete().eq("id",id);},
+    async verifyResult(id){
+      const{data:cur}=await sb.from("match_results").select("stat_payload").eq("id",id).single();
+      const sp={...(cur?.stat_payload||{}),unverified:false};
+      return sb.from("match_results").update({stat_payload:sp}).eq("id",id);
+    },
+    // resolve a display_name -> user_id within the community (for import save)
+    async userIdByName(cid,name){const{data}=await sb.from("users").select("id,display_name").eq("community_id",cid).eq("display_name",name).maybeSingle();return data?.id||null;},
+    // name-map memory persisted on the community row (jsonb settings)
+    async getNameMap(cid){const{data}=await sb.from("communities").select("name_map").eq("id",cid).maybeSingle();return data?.name_map||{};},
+    async setNameMap(cid,map){return sb.from("communities").update({name_map:map}).eq("id",cid);},
+  };
+} else {
+  // Mock backend for preview. In-memory; resets on reload.
+  const store = {
+    session:null, profile:null, role:null,
+    season:null, events:[], regs:{},
+  };
+  const seedRegs = ()=>{ store.regs={0:[
+    {id:"m1",name:"Vex",wantsCaptain:true,isCaptain:false},
+    {id:"m2",name:"Kiro",wantsCaptain:true,isCaptain:false},
+    {id:"m3",name:"Nova",wantsCaptain:false,isCaptain:false},
+    {id:"m4",name:"Echo",wantsCaptain:false,isCaptain:false},
+    {id:"m5",name:"Riot",wantsCaptain:true,isCaptain:false},
+  ]};};
+  const myName=()=>store.role==="host"?"Rumer":"test";
+  const ok=(data)=>Promise.resolve({data,error:null});
+  DB = {
+    live:false,
+    auth:{
+      signUpEmail:()=>ok({}), signInEmail:()=>{store.session={user:{id:"demo"}};return ok({});},
+      sendMagicLink:()=>ok({}), signOut:()=>{store.session=null;store.profile=null;store.role=null;return ok({});},
+      getSession:()=>ok({session:store.session}),
+      onChange:()=>({data:{subscription:{unsubscribe(){}}}}),
+    },
+    createCommunity:(name,slug,dn)=>{store.role="host";store.profile={display_name:dn||"Rumer",role:"host",community_id:"c1",communities:{name:name,slug:slug}};return ok({});},
+    joinCommunity:(slug,dn,wc)=>{store.role="player";store.profile={display_name:dn||"test",role:"player",community_id:"c1",communities:{name:"Minaal.GG",slug:slug}};return ok({});},
+    profile:()=>Promise.resolve(store.profile),
+    seasonsActive:()=>ok(store.season),
+    seasonsCreate:(cid,p)=>{store.season={id:"s1",...p};return ok(store.season);},
+    eventsForSeason:()=>ok(store.events),
+    eventsCreate:(cid,sid,p)=>{const ev={id:store.events.length,...p};store.events.push(ev);return ok(ev);},
+    regsForEvent:(eventId)=>Promise.resolve(store.regs[eventId]||[]),
+    myReg:(eventId)=>Promise.resolve((store.regs[eventId]||[]).find(r=>r.name===myName())||null),
+    register:(cid,eventId)=>{if(!store.regs[eventId])store.regs[eventId]=[];store.regs[eventId].push({id:"me",name:myName(),wantsCaptain:false,isCaptain:false});return ok({});},
+    unregister:(eventId)=>{const a=store.regs[eventId]||[];const i=a.findIndex(r=>r.name===myName());if(i>=0)a.splice(i,1);return ok({});},
+    setMyWantsCaptain:(val)=>{for(const id in store.regs){const r=store.regs[id].find(r=>r.name===myName());if(r)r.wantsCaptain=val;}return ok({});},
+
+    // ── match results / leaderboard (mock) ──
+    resultsForSeason:()=>Promise.resolve(store.results||[]),
+    addResult:(cid,eventId,userId,row)=>{
+      if(!store.results)store.results=[];
+      const ev=store.events.find(e=>e.id===eventId);
+      store.results.push({id:"r"+(store._rid=(store._rid||0)+1),eventId,name:userId,weekend:ev?ev.weekend_label:("Wk "+eventId),k:+row.k||0,a:+row.a||0,acs:+row.acs||0,won:!!row.won,unverified:!!row.unverified});
+      return ok({});
+    },
+    removeResult:(id)=>{store.results=(store.results||[]).filter(r=>r.id!==id);return ok({});},
+    verifyResult:(id)=>{const r=(store.results||[]).find(x=>x.id===id);if(r)r.unverified=false;return ok({});},
+    userIdByName:(cid,name)=>Promise.resolve(name), // mock: name IS the id
+    getNameMap:()=>Promise.resolve(store.nameMap||{}),
+    setNameMap:(cid,map)=>{store.nameMap=map;return ok({});},
+    _store:store, _seedRegs:seedRegs,
+  };
+  // On season create, seed demo regs + a couple weekends of results so previews aren't empty.
+  const origCreate = DB.seasonsCreate;
+  DB.seasonsCreate = (cid,p)=>{ const r=origCreate(cid,p); seedRegs(); seedResults(); return r; };
+  function seedResults(){
+    store.results=[
+      {id:"r1",eventId:0,name:"Vex",weekend:"Week 1",k:22,a:5,acs:280,won:true,unverified:false},
+      {id:"r2",eventId:0,name:"Kiro",weekend:"Week 1",k:18,a:7,acs:245,won:true,unverified:false},
+      {id:"r3",eventId:0,name:"Nova",weekend:"Week 1",k:15,a:9,acs:210,won:false,unverified:false},
+      {id:"r4",eventId:0,name:"Echo",weekend:"Week 1",k:12,a:6,acs:190,won:false,unverified:false},
+      {id:"r5",eventId:0,name:"Riot",weekend:"Week 1",k:25,a:4,acs:310,won:false,unverified:false},
+      {id:"r6",eventId:0,name:"test",weekend:"Week 1",k:17,a:8,acs:230,won:true,unverified:false},
+    ];
+    store._rid=6;
+  }
+}
+
+/* ══════════════ APP ROOT ══════════════ */
+export default function App(){
+  const [session,setSession]=useState(null);
+  const [profile,setProfile]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [openEvent,setOpenEvent]=useState(null);
+  const [showBoard,setShowBoard]=useState(false);
+
+  useEffect(()=>{
+    DB.auth.getSession().then(({data})=>setSession(data.session));
+    const {data:listener}=DB.auth.onChange((s)=>setSession(s));
+    return ()=>listener?.subscription?.unsubscribe();
+  },[]);
+  useEffect(()=>{
+    if(!session){setProfile(null);setLoading(false);return;}
     setLoading(true);
-    me.profile().then((p) => { setProfile(p); setLoading(false); });
-  }, [session]);
+    DB.profile().then((p)=>{setProfile(p);setLoading(false);});
+  },[session]);
 
-  if (!HAS_SUPABASE) return <ConfigNeeded />;
-  if (loading) return <Centered>Loading…</Centered>;
-  if (!session) return <AuthScreen />;
-  if (!profile) return <Onboarding onDone={() => me.profile().then(setProfile)} />;
-  return <Home profile={profile} />;
+  // demo helpers let the preview bar jump screens without real auth
+  const demo = !DB.live ? {
+    setSession,setProfile,
+    goOnboard:()=>{DB._store.session={user:{id:"demo"}};DB._store.profile=null;DB._store.role=null;setSession(DB._store.session);setProfile(null);setOpenEvent(null);},
+    goHost:()=>{DB.createCommunity("Minaal.GG","minaal-gg","Rumer").then(()=>{DB._store.session={user:{id:"demo"}};setSession(DB._store.session);DB.profile().then(setProfile);setOpenEvent(null);});},
+    goPlayer:()=>{DB.joinCommunity("minaal-gg","test",false).then(()=>{DB._store.session={user:{id:"demo"}};setSession(DB._store.session);DB.profile().then(setProfile);setOpenEvent(null);});},
+    signOut:()=>{DB.auth.signOut();setSession(null);setProfile(null);setOpenEvent(null);},
+  } : null;
+
+  let view;
+  if(loading) view=<Shell><div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><TPanel><p style={{margin:0,color:MUTE,letterSpacing:"0.1em",fontFamily:FONT_LABEL}}>LOADING…</p></TPanel></div></Shell>;
+  else if(!session) view=<AuthScreen onAuthed={()=>{ if(!DB.live){DB._store.session={user:{id:"demo"}};setSession(DB._store.session);} }}/>;
+  else if(!profile) view=<Onboarding onDone={()=>DB.profile().then(setProfile)} onSignOut={()=>{DB.auth.signOut();setSession(null);}}/>;
+  else if(openEvent!==null) view=<WeekendDetail profile={profile} eventId={openEvent} onBack={()=>setOpenEvent(null)} onSignOut={()=>{DB.auth.signOut();setSession(null);setProfile(null);}}/>;
+  else if(showBoard) view=<Leaderboard profile={profile} onBack={()=>setShowBoard(false)} onSignOut={()=>{DB.auth.signOut();setSession(null);setProfile(null);setShowBoard(false);}}/>;
+  else view=<Home profile={profile} onOpenEvent={setOpenEvent} onShowBoard={()=>setShowBoard(true)} onSignOut={()=>{DB.auth.signOut();setSession(null);setProfile(null);}}/>;
+
+  return <>{demo && <DemoBar session={session} profile={profile} openEvent={openEvent} demo={demo}/>}{view}</>;
 }
 
-// ── shown until Supabase keys are added (so it never looks broken) ──
-function ConfigNeeded() {
-  return (
-    <div style={wrap}><div style={card}>
-      <h1 style={head}>VOLT League</h1>
-      <p style={sub}>Almost there — the database isn't connected yet.</p>
-      <div style={note}>
-        Add your Supabase URL and anon key as environment variables
-        (<b>VITE_SUPABASE_URL</b> and <b>VITE_SUPABASE_ANON_KEY</b>), then redeploy.
-        See the README for the click-by-click steps.
-      </div>
-    </div></div>
-  );
+/* ══════════════ DEMO BAR (preview only) ══════════════ */
+function DemoBar({session,profile,openEvent,demo}){
+  const isHost=profile?.role==="host";
+  const stage = !session ? "auth" : !profile ? "onboard" : "home";
+  const sbtn=(txt,on,fn)=>(<button onClick={fn} className="ea-btn" style={{padding:"7px 13px",cursor:"pointer",textTransform:"uppercase",fontFamily:FONT_LABEL,fontWeight:700,fontSize:12,letterSpacing:"0.1em",background:on?"rgba(61,123,255,0.18)":"rgba(255,255,255,0.03)",color:on?"#eaf1ff":"rgba(200,215,255,0.6)",border:`1px solid ${on?HUE:"rgba(120,150,220,0.25)"}`,clipPath:notch(8)}}>{txt}</button>);
+  return <div style={{position:"sticky",top:0,zIndex:50,background:"rgba(8,11,20,0.94)",borderBottom:"1px solid rgba(61,123,255,0.3)",padding:"8px 14px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",fontFamily:FONT_LABEL}}>
+    <span style={{color:"#7da6ff",fontWeight:700,letterSpacing:"0.1em",fontSize:12,textTransform:"uppercase"}}>DEMO ·</span>
+    {sbtn("1 Sign in",stage==="auth",()=>demo.signOut())}
+    {sbtn("2 Onboard",stage==="onboard",demo.goOnboard)}
+    {sbtn("3 Host view",stage==="home"&&isHost,demo.goHost)}
+    {sbtn("4 Player view",stage==="home"&&!isHost,demo.goPlayer)}
+    <span style={{color:"rgba(200,215,255,0.4)",fontSize:11,marginLeft:"auto"}}>mock data · no database</span>
+  </div>;
 }
 
-const Centered = ({ children }) => (
-  <div style={wrap}><div style={{ ...card, textAlign: "center" }}>{children}</div></div>
-);
+function Brand(){
+  return <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18}}>
+    <div style={{width:6,height:30,background:CYAN,boxShadow:`0 0 12px ${CYAN}`}}/>
+    <div style={{fontFamily:FONT_HEAD,fontWeight:700,fontSize:30,letterSpacing:"0.04em",color:"#fff"}}>VOLT<span style={{color:CYAN}}> // </span>LEAGUE</div>
+  </div>;
+}
+const center={minHeight:"calc(100vh - 0px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20};
 
-// ════════════════ 1. AUTH ═══════════════════════════════════════════
-function AuthScreen() {
-  const [mode, setMode] = useState("signin"); // signin | signup | magic
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [msg, setMsg] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  async function go() {
-    setMsg(null); setBusy(true);
-    try {
-      if (mode === "magic") {
-        const { error } = await auth.sendMagicLink(email);
-        if (error) throw error;
-        setMsg({ ok: true, text: "Check your email for a login link." });
-      } else if (mode === "signup") {
-        const { error } = await auth.signUpEmail(email, pw);
-        if (error) throw error;
-        setMsg({ ok: true, text: "Account made! If asked, confirm via email, then sign in." });
-      } else {
-        const { error } = await auth.signInEmail(email, pw);
-        if (error) throw error;
-      }
-    } catch (e) { setMsg({ ok: false, text: e.message }); }
+/* ══════════════ AUTH ══════════════ */
+function AuthScreen({onAuthed}){
+  const [mode,setMode]=useState("signin");
+  const [email,setEmail]=useState(""),[pw,setPw]=useState(""),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false);
+  const linkBtn={background:"none",border:"none",color:CYAN,cursor:"pointer",padding:0,fontFamily:FONT_LABEL,fontSize:13,letterSpacing:"0.04em"};
+  async function go(){
+    setMsg(null);setBusy(true);
+    try{
+      if(mode==="magic"){const{error}=await DB.auth.sendMagicLink(email);if(error)throw error;setMsg({ok:true,text:"Check your email for a login link."});}
+      else if(mode==="signup"){const{error}=await DB.auth.signUpEmail(email,pw);if(error)throw error;setMsg({ok:true,text:"Account made. Confirm via email if asked, then sign in."});}
+      else{const{error}=await DB.auth.signInEmail(email,pw);if(error)throw error;onAuthed&&onAuthed();}
+    }catch(e){setMsg({ok:false,text:e.message});}
     setBusy(false);
   }
-
-  return (
-    <div style={wrap}><div style={card}>
-      <h1 style={head}>VOLT League</h1>
-      <p style={sub}>Sign in to run or join a league.</p>
-
-      {msg && <div style={msg.ok ? note : err}>{msg.text}</div>}
-
-      <label style={label}>Email</label>
-      <input style={input} type="email" value={email}
-        onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" />
-
-      {mode !== "magic" && (
-        <>
-          <label style={label}>Password</label>
-          <input style={input} type="password" value={pw}
-            onChange={(e) => setPw(e.target.value)} placeholder="••••••••" />
-        </>
-      )}
-
-      <button style={btn(true)} disabled={busy} onClick={go}>
-        {busy ? "…" :
-          mode === "magic" ? "Send login link" :
-          mode === "signup" ? "Create account" : "Sign in"}
-      </button>
-
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, fontSize: 13 }}>
-        <button onClick={() => setMode(mode === "signup" ? "signin" : "signup")}
-          style={{ background: "none", border: "none", color: "#00e5ff", cursor: "pointer", padding: 0 }}>
-          {mode === "signup" ? "Have an account? Sign in" : "New here? Create account"}
-        </button>
-        <button onClick={() => setMode(mode === "magic" ? "signin" : "magic")}
-          style={{ background: "none", border: "none", color: "#7fa8c9", cursor: "pointer", padding: 0 }}>
-          {mode === "magic" ? "Use password" : "Email me a link"}
-        </button>
+  return <Shell><div style={center}><div style={{width:"100%",maxWidth:440}}>
+    <Brand/>
+    <TPanel>
+      <p style={{color:MUTE,margin:"0 0 18px",fontFamily:FONT_LABEL,fontSize:14,letterSpacing:"0.04em"}}>Sign in to run or join a league.</p>
+      {msg&&<div style={msg.ok?okBox:errBox}>{msg.text}</div>}
+      <label style={labelTxt}>Email</label>
+      <input style={{...fieldStyle,marginBottom:14}} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@email.com"/>
+      {mode!=="magic"&&<><label style={labelTxt}>Password</label>
+        <input style={{...fieldStyle,marginBottom:14}} type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"/></>}
+      <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} disabled={busy} onClick={go}>{busy?"…":mode==="magic"?"Send Login Link →":mode==="signup"?"Create Account →":"Sign In →"}</button>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:16}}>
+        <button onClick={()=>setMode(mode==="signup"?"signin":"signup")} style={linkBtn}>{mode==="signup"?"Have an account? Sign in":"New here? Create account"}</button>
+        <button onClick={()=>setMode(mode==="magic"?"signin":"magic")} style={{...linkBtn,color:"#7da6ff"}}>{mode==="magic"?"Use password":"Email me a link"}</button>
       </div>
-    </div></div>
-  );
+    </TPanel>
+  </div></div></Shell>;
 }
 
-// ════════════════ 2. ONBOARDING ═════════════════════════════════════
-function Onboarding({ onDone }) {
-  const [tab, setTab] = useState("join"); // join | host
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [commName, setCommName] = useState("");
-  const [wantsCaptain, setWantsCaptain] = useState(false);
-  const [msg, setMsg] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const slugify = (s) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-
-  async function submit() {
-    setMsg(null); setBusy(true);
-    try {
-      if (!name.trim()) throw new Error("Enter your display name.");
-      if (tab === "host") {
-        if (!commName.trim()) throw new Error("Enter a community name.");
-        const { error } = await onboarding.createCommunity(commName, slugify(commName), name);
-        if (error) throw error;
-      } else {
-        if (!code.trim()) throw new Error("Enter the community code.");
-        const { error } = await onboarding.joinCommunity(slugify(code), name, wantsCaptain);
-        if (error) throw error;
-      }
+/* ══════════════ ONBOARDING ══════════════ */
+function Onboarding({onDone,onSignOut}){
+  const [tab,setTab]=useState("join");
+  const [name,setName]=useState(""),[code,setCode]=useState(""),[commName,setCommName]=useState("");
+  const [wantsCaptain,setWantsCaptain]=useState(false),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false);
+  const slugify=(s)=>s.toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+  async function submit(){
+    setMsg(null);setBusy(true);
+    try{
+      if(!name.trim())throw new Error("Enter your display name.");
+      if(tab==="host"){if(!commName.trim())throw new Error("Enter a community name.");const{error}=await DB.createCommunity(commName,slugify(commName),name);if(error)throw error;}
+      else{if(!code.trim())throw new Error("Enter the community code.");const{error}=await DB.joinCommunity(slugify(code),name,wantsCaptain);if(error)throw error;}
       onDone();
-    } catch (e) { setMsg({ ok: false, text: e.message }); setBusy(false); }
+    }catch(e){setMsg({ok:false,text:e.message});setBusy(false);}
   }
-
-  const tabBtn = (id, text) => (
-    <button onClick={() => setTab(id)} style={{
-      flex: 1, padding: "10px", cursor: "pointer", fontFamily: "'Oswald',sans-serif",
-      fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", fontSize: 13,
-      background: tab === id ? "rgba(0,229,255,0.12)" : "transparent",
-      color: tab === id ? "#00e5ff" : "#6f8bab",
-      border: "1px solid rgba(0,229,255,0.2)",
-      borderRadius: 8, marginRight: id === "join" ? 8 : 0,
-    }}>{text}</button>
-  );
-
-  return (
-    <div style={wrap}><div style={card}>
-      <h1 style={head}>Welcome</h1>
-      <p style={sub}>Join a community, or start your own league.</p>
-
-      <div style={{ display: "flex", marginBottom: 20 }}>
-        {tabBtn("join", "Join as player")}
-        {tabBtn("host", "Start a league")}
-      </div>
-
-      {msg && <div style={msg.ok ? note : err}>{msg.text}</div>}
-
-      <label style={label}>Your display name</label>
-      <input style={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Phoenix" />
-
-      {tab === "join" ? (
-        <>
-          <label style={label}>Community code</label>
-          <input style={input} value={code} onChange={(e) => setCode(e.target.value)} placeholder="given by your host" />
-          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", color: "#cfe0f0", fontSize: 14, marginBottom: 14 }}>
-            <input type="checkbox" checked={wantsCaptain} onChange={(e) => setWantsCaptain(e.target.checked)} />
-            I'm willing to be a captain
-          </label>
-        </>
-      ) : (
-        <>
-          <label style={label}>Community name</label>
-          <input style={input} value={commName} onChange={(e) => setCommName(e.target.value)} placeholder="e.g. Karachi Valorant Club" />
-          <div style={{ ...note, marginTop: 0 }}>
-            Your community starts inactive until it's activated. Players join using
-            the code: <b>{commName ? slugify(commName) : "your-name-here"}</b>
-          </div>
-        </>
-      )}
-
-      <button style={btn(true)} disabled={busy} onClick={submit}>
-        {busy ? "…" : tab === "host" ? "Create league" : "Join"}
-      </button>
-
-      <button onClick={() => auth.signOut()} style={{ ...btn(false), marginTop: 12 }}>Sign out</button>
-    </div></div>
-  );
+  const tabBtn=(id,text)=>(<button onClick={()=>setTab(id)} style={{flex:1,padding:"11px",cursor:"pointer",fontFamily:FONT_LABEL,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",fontSize:13,background:tab===id?"rgba(61,123,255,0.16)":"rgba(255,255,255,0.03)",color:tab===id?"#aec6ff":"rgba(200,215,255,0.55)",border:`1px solid ${tab===id?HUE:"rgba(120,150,220,0.2)"}`,clipPath:notch(9),marginRight:id==="join"?8:0}}>{text}</button>);
+  return <Shell><div style={center}><div style={{width:"100%",maxWidth:460}}>
+    <Brand/>
+    <TPanel>
+      <Eyebrow>Welcome</Eyebrow>
+      <TungstenHead word1="Join or" word2="Create"/>
+      <p style={{color:MUTE,margin:"10px 0 18px",fontFamily:FONT_LABEL,fontSize:14}}>Join a community, or start your own league.</p>
+      <div style={{display:"flex",marginBottom:20}}>{tabBtn("join","Join as player")}{tabBtn("host","Start a league")}</div>
+      {msg&&<div style={msg.ok?okBox:errBox}>{msg.text}</div>}
+      <label style={labelTxt}>Your display name</label>
+      <input style={{...fieldStyle,marginBottom:14}} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Phoenix"/>
+      {tab==="join"?<>
+        <label style={labelTxt}>Community code</label>
+        <input style={{...fieldStyle,marginBottom:14}} value={code} onChange={e=>setCode(e.target.value)} placeholder="given by your host"/>
+        <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",color:"#cfe0f0",fontSize:14,marginBottom:14,fontFamily:FONT_LABEL}}>
+          <input type="checkbox" checked={wantsCaptain} onChange={e=>setWantsCaptain(e.target.checked)}/>I'm willing to be a captain</label>
+      </>:<>
+        <label style={labelTxt}>Community name</label>
+        <input style={{...fieldStyle,marginBottom:14}} value={commName} onChange={e=>setCommName(e.target.value)} placeholder="e.g. Karachi Valorant Club"/>
+        <div style={okBox}>Players join using the code: <b style={{color:CYAN}}>{commName?slugify(commName):"your-name-here"}</b></div>
+      </>}
+      <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} disabled={busy} onClick={submit}>{busy?"…":tab==="host"?"Create League →":"Join →"}</button>
+      <button onClick={onSignOut} style={{...notchBtn(false),width:"100%",marginTop:12}}>Sign out</button>
+    </TPanel>
+  </div></div></Shell>;
 }
 
-// ════════════════ 3. HOME (placeholder — app grows here) ════════════
-function Home({ profile }) {
-  const isHost = profile.role === "host";
-  return (
-    <div style={{ minHeight: "100vh", padding: "40px 20px", maxWidth: 900, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
-        <h1 style={{ ...head, margin: 0 }}>VOLT League</h1>
-        <button onClick={() => auth.signOut()} style={{ ...btn(false), width: "auto", padding: "8px 18px", marginTop: 0 }}>Sign out</button>
-      </div>
-
-      <div style={card}>
-        <p style={sub}>
-          Signed in as <b style={{ color: "#fff" }}>{profile.display_name}</b>
-          {" · "}<span style={{ color: isHost ? "#f5c453" : "#00e5ff" }}>{isHost ? "HOST" : "PLAYER"}</span>
-        </p>
-        <p style={{ color: "#cfe0f0", lineHeight: 1.6, fontSize: 15 }}>
-          Community: <b style={{ color: "#fff" }}>{profile.communities?.name}</b><br />
-          Status: <b style={{ color: "#86e6b0" }}>{profile.communities?.subscription_status}</b>
-          {isHost && (<><br /><br />
-            Share this code so players can join: <b style={{ color: "#00e5ff" }}>{profile.communities?.slug}</b>
-          </>)}
-        </p>
-        <div style={{ ...note, marginTop: 18 }}>
-          🎉 The foundation works! Next we'll add seasons, weekend registration,
-          the draft, leaderboard, and tournament — building on this exact screen.
-        </div>
+/* ══════════════ HOME (season hub) ══════════════ */
+function Home({profile,onOpenEvent,onShowBoard,onSignOut}){
+  const isHost=profile.role==="host";
+  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:50}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <Brand/>
+      <div style={{display:"flex",gap:8}}>
+        <button className="ea-btn" onClick={onShowBoard} style={notchBtn(false)}>Leaderboard</button>
+        <button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
       </div>
     </div>
-  );
+    <TPanel style={{padding:"14px 18px",marginBottom:16}}>
+      <p style={{margin:0,fontFamily:FONT_MONO,fontSize:13,letterSpacing:"0.04em",color:"rgba(200,215,255,0.75)"}}>
+        <b style={{color:"#fff"}}>{profile.display_name}</b> · <span style={{color:isHost?"#f5c453":CYAN}}>{isHost?"HOST":"PLAYER"}</span> · {profile.communities?.name}{isHost&&<> · CODE <b style={{color:CYAN}}>{profile.communities?.slug}</b></>}</p>
+    </TPanel>
+    <SeasonScreen profile={profile} onOpenEvent={onOpenEvent}/>
+  </div></Shell>;
+}
+
+/* ══════════════ SEASON ══════════════ */
+function SeasonScreen({profile,onOpenEvent}){
+  const isHost=profile.role==="host";
+  const [season,setSeason]=useState(null),[evs,setEvs]=useState([]),[loading,setLoading]=useState(true),[counts,setCounts]=useState({});
+  async function load(){
+    setLoading(true);
+    const {data:s}=await DB.seasonsActive();setSeason(s||null);
+    if(s){const {data:e}=await DB.eventsForSeason(s.id);const list=e||[];setEvs(list);
+      const c={};for(const ev of list){c[ev.id]=(await DB.regsForEvent(ev.id)).length;}setCounts(c);}
+    else setEvs([]);
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[]);
+  if(loading)return <TPanel><p style={{textAlign:"center",color:MUTE,margin:0,fontFamily:FONT_LABEL,letterSpacing:"0.1em"}}>LOADING SEASON…</p></TPanel>;
+  if(!season)return isHost?<CreateSeason profile={profile} onCreated={load}/>:<TPanel><Eyebrow>Season</Eyebrow><TungstenHead word1="No Active" word2="Season"/><p style={{color:MUTE,marginTop:12,fontFamily:FONT_LABEL,fontSize:15}}>Your host hasn't started a season yet. Check back soon.</p></TPanel>;
+  return <div style={{display:"flex",flexDirection:"column",gap:14}}>
+    <TPanel>
+      <Eyebrow>Active Season</Eyebrow>
+      <TungstenHead word1={season.name.split(" ")[0]||season.name} word2={season.name.split(" ").slice(1).join(" ")}/>
+      <p style={{color:MUTE,marginTop:10,fontFamily:FONT_MONO,fontSize:13,letterSpacing:"0.06em"}}>{evs.length} WEEKEND{evs.length===1?"":"S"} · {fmt(season.starts_at)} → {fmt(season.ends_at)}</p>
+    </TPanel>
+    <SectionLabel>Weekend Schedule</SectionLabel>
+    {evs.map(ev=><WeekendRow key={ev.id} ev={ev} count={counts[ev.id]||0} onOpen={()=>onOpenEvent(ev.id)}/>)}
+  </div>;
+}
+function WeekendRow({ev,count,onOpen}){
+  const phase=computeAutoPhase(ev),b=phaseBadge(phase),settled=phase==="settled";
+  return <TPanel hue={settled?"#5a6b80":b.color} onClick={onOpen} className="ea-btn" style={{padding:16,opacity:settled?0.7:1,borderLeft:`3px solid ${b.color}`,cursor:"pointer"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+      <div>
+        <div style={{fontFamily:FONT_HEAD,fontWeight:700,fontSize:22,color:"#f4f8ff",letterSpacing:"0.04em",textTransform:"uppercase"}}>{ev.weekend_label}</div>
+        <div style={{color:"rgba(200,215,255,0.6)",fontSize:12,marginTop:4,fontFamily:FONT_MONO,letterSpacing:"0.02em"}}>REG {fmt(ev.reg_opens)}–{fmt(ev.reg_closes)} · DRAFT {fmt(ev.draft_at)} · MATCHES {fmt(ev.matches_start)}–{fmt(ev.matches_end)}</div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        {count>0&&<span style={{fontFamily:FONT_MONO,color:"#7da6ff",fontSize:12,letterSpacing:"0.05em"}}>{count} IN</span>}
+        <span style={{padding:"5px 13px",fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:b.color,border:`1px solid ${b.color}66`,background:`${b.color}1a`,clipPath:notch(7),fontFamily:FONT_LABEL,whiteSpace:"nowrap"}}>{b.label}</span>
+        <span style={{color:"#7da6ff",fontSize:18}}>›</span>
+      </div>
+    </div>
+  </TPanel>;
+}
+function CreateSeason({profile,onCreated}){
+  const [name,setName]=useState(""),[count,setCount]=useState(4),[dates,setDates]=useState(["","","",""]),[busy,setBusy]=useState(false),[error,setError]=useState(null);
+  function setCountSafe(n){const v=Math.max(1,Math.min(8,n));setCount(v);setDates(p=>{const x=p.slice(0,v);while(x.length<v)x.push("");return x;});}
+  async function create(){
+    setError(null);
+    if(!name.trim())return setError("Give the season a name.");
+    if(dates.some(d=>!d))return setError("Pick a Saturday date for every weekend.");
+    setBusy(true);
+    try{
+      const sorted=[...dates].sort();
+      const first=weekendWindows(sorted[0]),last=weekendWindows(sorted[sorted.length-1]);
+      const {data:s,error:se}=await DB.seasonsCreate(profile.community_id,{name:name.trim(),status:"active",starts_at:first.reg_opens.slice(0,10),ends_at:last.matches_end.slice(0,10)});
+      if(se)throw se;
+      for(let i=0;i<sorted.length;i++){const w=weekendWindows(sorted[i]);const {error:ee}=await DB.eventsCreate(profile.community_id,s.id,{weekend_label:`Week ${i+1}`,phase:"registration_open",...w});if(ee)throw ee;}
+      onCreated();
+    }catch(e){setError(e.message);setBusy(false);}
+  }
+  return <TPanel>
+    <Eyebrow>Setup</Eyebrow>
+    <TungstenHead word1="Start a" word2="Season"/>
+    <p style={{color:MUTE,margin:"10px 0 20px",fontFamily:FONT_LABEL,fontSize:15}}>Name it, choose how many weekends, and pick each weekend's Saturday (match day). The rest of the schedule fills in automatically.</p>
+    {error&&<div style={errBox}>{error}</div>}
+    <SectionLabel>1 · Season name</SectionLabel>
+    <input style={{...fieldStyle,marginBottom:20}} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. June Season"/>
+    <SectionLabel>2 · Number of weekends</SectionLabel>
+    <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
+      <button className="ea-btn" style={notchBtn(false)} onClick={()=>setCountSafe(count-1)}>–</button>
+      <span style={{fontFamily:FONT_MONO,fontSize:22,fontWeight:700,minWidth:30,textAlign:"center",color:"#aec6ff"}}>{count}</span>
+      <button className="ea-btn" style={notchBtn(false)} onClick={()=>setCountSafe(count+1)}>+</button>
+    </div>
+    <SectionLabel>3 · Match Saturday for each weekend</SectionLabel>
+    {Array.from({length:count}).map((_,i)=>(
+      <div key={i} style={{display:"flex",alignItems:"center",gap:12,marginBottom:9}}>
+        <span style={{color:"#7da6ff",fontSize:13,minWidth:64,fontFamily:FONT_LABEL,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.08em"}}>Week {i+1}</span>
+        <input type="date" style={fieldStyle} value={dates[i]||""} onChange={e=>setDates(d=>d.map((x,j)=>j===i?e.target.value:x))}/>
+      </div>
+    ))}
+    <button className="ea-btn" style={{...notchBtn(true),marginTop:18,width:"100%"}} disabled={busy} onClick={create}>{busy?"Creating…":"Create Season →"}</button>
+  </TPanel>;
+}
+
+/* ══════════════ WEEKEND DETAIL (registration) ══════════════ */
+function WeekendDetail({profile,eventId,onBack,onSignOut}){
+  const isHost=profile.role==="host";
+  const [ev,setEv]=useState(null),[loading,setLoading]=useState(true),[tick,setTick]=useState(0);
+  useEffect(()=>{
+    (async()=>{setLoading(true);const {data:s}=await DB.seasonsActive();if(s){const {data:e}=await DB.eventsForSeason(s.id);setEv((e||[]).find(x=>x.id===eventId)||null);}setLoading(false);})();
+  },[eventId]);
+  if(loading)return <Shell><div className="page-wrap" style={{paddingTop:30}}><TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>LOADING…</p></TPanel></div></Shell>;
+  if(!ev)return <Shell><div className="page-wrap" style={{paddingTop:30}}><TPanel><p style={{margin:0,color:MUTE}}>Weekend not found.</p><button className="ea-btn" style={{...notchBtn(false),marginTop:12}} onClick={onBack}>‹ Back</button></TPanel></div></Shell>;
+  const phase=computeAutoPhase(ev),b=phaseBadge(phase);
+  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:50}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <Brand/><button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
+    </div>
+    <button className="ea-btn" style={{...notchBtn(false),marginBottom:16}} onClick={onBack}>‹ Back to schedule</button>
+    <TPanel style={{marginBottom:14}}>
+      <Eyebrow>Weekend</Eyebrow>
+      <TungstenHead word1={ev.weekend_label.split(" ")[0]} word2={ev.weekend_label.split(" ").slice(1).join(" ")}/>
+      <p style={{color:MUTE,marginTop:10,fontFamily:FONT_MONO,fontSize:12,letterSpacing:"0.04em"}}>REG {fmt(ev.reg_opens)}–{fmt(ev.reg_closes)} · DRAFT {fmt(ev.draft_at)} · MATCHES {fmt(ev.matches_start)}–{fmt(ev.matches_end)}</p>
+      <div style={{marginTop:12}}><span style={{padding:"5px 13px",fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:b.color,border:`1px solid ${b.color}66`,background:`${b.color}1a`,clipPath:notch(7),fontFamily:FONT_LABEL}}>{b.label}</span></div>
+    </TPanel>
+    {isHost?<HostRoster profile={profile} ev={ev} tick={tick}/>:<PlayerReg profile={profile} ev={ev} phase={phase} onChange={()=>setTick(t=>t+1)}/>}
+  </div></Shell>;
+}
+function PlayerReg({profile,ev,phase,onChange}){
+  const regOpen=phase==="registration_open";
+  const [reg,setReg]=useState(undefined);
+  async function load(){setReg(await DB.myReg(ev.id));}
+  useEffect(()=>{load();},[ev.id]);
+  if(reg===undefined)return <TPanel><p style={{margin:0,color:MUTE}}>…</p></TPanel>;
+  const isIn=!!reg;
+  if(!regOpen)return <TPanel><SectionLabel>Registration</SectionLabel><p style={{color:MUTE,fontSize:15,margin:0,fontFamily:FONT_LABEL}}>{isIn?"You're registered for this weekend. Registration is now closed.":"Registration for this weekend is closed."}</p></TPanel>;
+  async function toggle(){if(isIn){await DB.unregister(ev.id);}else{await DB.register(profile.community_id,ev.id);}await load();onChange&&onChange();}
+  async function setCap(v){await DB.setMyWantsCaptain(v);await load();onChange&&onChange();}
+  return <TPanel>
+    <SectionLabel>Your registration</SectionLabel>
+    {isIn?<>
+      <div style={okBox}>✓ You're in for this weekend.</div>
+      <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",color:"#cfe0f0",fontSize:15,margin:"6px 0 16px",fontFamily:FONT_LABEL}}>
+        <input type="checkbox" checked={!!reg.wantsCaptain} onChange={e=>setCap(e.target.checked)}/>Raise my hand to be a captain</label>
+      <button className="ea-btn" style={{...notchBtn(false),width:"100%"}} onClick={toggle}>Drop out of this weekend</button>
+    </>:<>
+      <p style={{color:MUTE,fontSize:15,margin:"0 0 16px",fontFamily:FONT_LABEL}}>Available this weekend? Register to be in the draft pool.</p>
+      <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} onClick={toggle}>I'm in for this weekend →</button>
+    </>}
+  </TPanel>;
+}
+function HostRoster({profile,ev,tick}){
+  const [regs,setRegs]=useState(null);
+  useEffect(()=>{DB.regsForEvent(ev.id).then(setRegs);},[ev.id,tick]);
+  if(!regs)return <TPanel><p style={{margin:0,color:MUTE}}>…</p></TPanel>;
+  const captains=regs.filter(r=>r.wantsCaptain);
+  const stat=(n,label)=>(<div style={{flex:1,minWidth:120,padding:"12px 16px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.2)",clipPath:notch(9)}}>
+    <div style={{fontFamily:FONT_MONO,fontSize:28,fontWeight:700,color:"#aec6ff",lineHeight:1}}>{n}</div>
+    <div style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600,marginTop:5}}>{label}</div></div>);
+  return <TPanel>
+    <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>{stat(regs.length,"Registered")}{stat(captains.length,"Captain volunteers")}</div>
+    <SectionLabel>Roster</SectionLabel>
+    {regs.length?<div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {regs.map((r,i)=>(<div key={r.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",background:"rgba(255,255,255,0.025)",border:"1px solid rgba(120,150,220,0.16)",clipPath:notch(9)}}>
+        <span style={{fontFamily:FONT_LABEL,fontWeight:600,fontSize:16,color:"#dce6ff",letterSpacing:"0.02em"}}>{r.name}</span>
+        {r.wantsCaptain?<span style={{padding:"5px 13px",fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:"#f5c453",border:"1px solid #f5c45366",background:"#f5c4531a",clipPath:notch(7),fontFamily:FONT_LABEL}}>★ Captain volunteer</span>:<span style={{fontFamily:FONT_MONO,color:"rgba(200,215,255,0.4)",fontSize:12}}>player</span>}
+      </div>))}
+    </div>:<p style={{color:MUTE,fontSize:15,margin:0,fontFamily:FONT_LABEL}}>No one has registered yet.</p>}
+  </TPanel>;
+}
+
+/* ══════════════ LEADERBOARD (season standings + match logging + AI import) ══════════════ */
+function Leaderboard({profile,onBack,onSignOut}){
+  const isHost=profile.role==="host";
+  const [rows,setRows]=useState(null);     // raw match rows for the season
+  const [events,setEvents]=useState([]);
+  const [openName,setOpenName]=useState(null);
+  const [nameMap,setNameMap]=useState({});
+
+  async function load(){
+    const {data:s}=await DB.seasonsActive();
+    if(!s){setRows([]);setEvents([]);return;}
+    const {data:e}=await DB.eventsForSeason(s.id);
+    setEvents(e||[]);
+    setRows(await DB.resultsForSeason(s.id));
+    setNameMap(await DB.getNameMap(profile.community_id));
+  }
+  useEffect(()=>{load();},[]);
+
+  if(rows===null)return <Shell><div className="page-wrap" style={{paddingTop:40}}><TPanel><p style={{margin:0,color:MUTE}}>LOADING…</p></TPanel></div></Shell>;
+
+  const board=seasonBoardFrom(rows);
+  const unverified=rows.filter(r=>r.unverified).length;
+  const liveId=(()=>{
+    if(!events.length)return null;
+    const byPhase=ph=>events.find(ev=>computeAutoPhase(ev)===ph);
+    const hit=byPhase("matches_live")||byPhase("drafting");
+    if(hit)return hit.id;
+    const open=events.filter(ev=>computeAutoPhase(ev)!=="settled");
+    return open.length?open[0].id:events[0].id;
+  })();
+
+  const medal=["#ffd75e","#cdd7e6","#e0985a"];
+  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:50}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <Brand/>
+      <button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
+    </div>
+    <button className="ea-btn" onClick={onBack} style={{...notchBtn(false),marginBottom:16}}>‹ Back to schedule</button>
+    <Eyebrow>Season Standings</Eyebrow>
+    <TungstenHead word1="Leader" word2="board"/>
+    <p style={{color:MUTE,fontSize:14,margin:"6px 0 18px",fontFamily:FONT_LABEL}}>Ranked by average points per match. Win = 100 · ACS÷4 · kills + ½ assists.{isHost&&" Tap a player to log a match."}</p>
+
+    {isHost && <ImportPanel profile={profile} events={events} liveId={liveId} nameMap={nameMap} setNameMap={setNameMap} onDone={load}/>}
+
+    {isHost && unverified>0 && <div style={{marginBottom:14,padding:"9px 13px",background:"rgba(245,196,83,0.08)",border:"1px solid rgba(245,196,83,0.4)",color:"#f5c453",fontFamily:FONT_LABEL,fontSize:13,clipPath:notch(8)}}>⚑ {unverified} AI-read match{unverified===1?"":"es"} awaiting confirmation — tap a player to review.</div>}
+
+    <div style={{display:"grid",gridTemplateColumns:"38px 1fr 56px 56px 64px 70px",gap:10,padding:"6px 16px",fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>
+      <span>#</span><span>Player</span><span style={{textAlign:"center"}}>K</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>ACS</span><span style={{textAlign:"center"}}>AVG</span>
+    </div>
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {board.length===0 && <div style={{padding:"14px 16px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.25)",color:"rgba(200,215,255,0.6)",clipPath:notch(12),fontFamily:FONT_LABEL}}>{isHost?"No match stats yet. Upload a scoreboard above, or tap a player to log one by hand.":"No match stats logged yet. The board fills in as weekends are played."}</div>}
+      {board.map((p,i)=>{
+        const top=i<3;
+        return <React.Fragment key={p.name}>
+          <div onClick={isHost?()=>setOpenName(openName===p.name?null:p.name):undefined}
+            style={{display:"grid",gridTemplateColumns:"38px 1fr 56px 56px 64px 70px",alignItems:"center",gap:10,padding:"13px 16px",cursor:isHost?"pointer":"default",
+              background:top?`linear-gradient(90deg,${medal[i]}14,rgba(10,15,28,0.5))`:"rgba(255,255,255,0.025)",
+              border:`1px solid ${top?medal[i]+"55":"rgba(120,150,220,0.14)"}`,clipPath:notch(12)}}>
+            <span style={{fontFamily:FONT_MONO,fontSize:18,fontWeight:700,color:top?medal[i]:"rgba(200,215,255,0.5)",textShadow:top?`0 0 10px ${medal[i]}88`:"none"}}>{i+1}</span>
+            <span style={{fontFamily:FONT_LABEL,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.02em",color:"#ecf3ff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}{p.unverified>0&&<span style={{marginLeft:8,color:"#f5c453",fontSize:11}} title="has unverified matches">⚑</span>}</span>
+            <span style={{fontFamily:FONT_MONO,textAlign:"center",color:"#9af5c2"}}>{p.k}</span>
+            <span style={{fontFamily:FONT_MONO,textAlign:"center",color:"rgba(200,215,255,0.7)"}}>{p.a}</span>
+            <span style={{fontFamily:FONT_MONO,textAlign:"center",color:"#5b8dff",textShadow:"0 0 12px rgba(61,123,255,0.5)"}}>{p.acs}</span>
+            <span style={{fontFamily:FONT_MONO,textAlign:"center",fontWeight:700,fontSize:17,color:"#fff"}}>{p.avg.toFixed(0)}</span>
+          </div>
+          {isHost&&openName===p.name && <LogPanel profile={profile} name={p.name} events={events} rows={rows.filter(r=>r.name===p.name)} liveId={liveId} onChange={load}/>}
+        </React.Fragment>;
+      })}
+    </div>
+  </div></Shell>;
+}
+
+function LogPanel({profile,name,events,rows,liveId,onChange}){
+  const [k,setK]=useState(""),[a,setA]=useState(""),[acs,setAcs]=useState(""),[won,setWon]=useState(false);
+  const [evId,setEvId]=useState(liveId??(events[0]?.id));
+  const fld=(label,val,set)=>(<div style={{display:"flex",flexDirection:"column",gap:3}}>
+    <span style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>{label}</span>
+    <input value={val} inputMode="numeric" onChange={e=>set(e.target.value.replace(/[^0-9]/g,""))} style={{...fieldStyle,width:60,padding:"7px 8px",textAlign:"center"}} placeholder="0"/>
+  </div>);
+  async function add(){
+    if(k===""&&a===""&&acs==="")return;
+    const uid=await DB.userIdByName(profile.community_id,name);
+    if(!uid)return;
+    await DB.addResult(profile.community_id,evId,uid,{k,a,acs,won,unverified:false});
+    setK("");setA("");setAcs("");setWon(false);onChange&&onChange();
+  }
+  return <div style={{padding:"14px 16px",background:"rgba(7,12,22,0.7)",border:"1px solid rgba(61,123,255,0.25)",clipPath:notch(12)}}>
+    <div style={{display:"flex",alignItems:"flex-end",gap:10,flexWrap:"wrap",marginBottom:12}}>
+      <div style={{display:"flex",flexDirection:"column",gap:3}}>
+        <span style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>Weekend</span>
+        <select value={evId} onChange={e=>setEvId(e.target.value)} style={{...fieldStyle,padding:"7px 8px"}}>{events.map(ev=><option key={ev.id} value={ev.id}>{ev.weekend_label}</option>)}</select>
+      </div>
+      {fld("K",k,setK)}{fld("A",a,setA)}{fld("ACS",acs,setAcs)}
+      <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",color:"#cfe0f0",fontSize:13,fontFamily:FONT_LABEL,paddingBottom:6}}>
+        <input type="checkbox" checked={won} onChange={e=>setWon(e.target.checked)}/>Won</label>
+      <button className="ea-btn" onClick={add} style={{padding:"8px 14px",fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:FONT_LABEL,background:"rgba(61,220,132,0.18)",border:"1px solid #3ddc8488",color:"#9af5c2",cursor:"pointer",clipPath:notch(8)}}>+ Add match</button>
+    </div>
+    {rows.length>0 && <div>
+      <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"rgba(200,215,255,0.4)",marginBottom:5,fontFamily:FONT_LABEL}}>Logged matches</div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {rows.map(r=>(<div key={r.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:12,padding:"6px 10px",background:r.unverified?"rgba(245,196,83,0.07)":"rgba(255,255,255,0.03)",fontFamily:FONT_MONO,color:"rgba(220,230,255,0.75)",borderLeft:r.unverified?"2px solid #f5c453":"none"}}>
+          <span style={{color:"rgba(200,215,255,0.4)",minWidth:60}}>{r.weekend}</span>
+          <span style={{color:r.won?"#3ddc84":"rgba(255,138,148,0.8)"}}>{r.won?"WON":"lost"}</span>
+          <span style={{color:"#9af5c2"}}>{r.k}K</span><span>{r.a}A</span><span style={{color:"#5b8dff"}}>{r.acs} ACS</span>
+          <span style={{marginLeft:"auto",color:"#fff",fontWeight:700}}>{Math.round(matchPoints(r))} pts</span>
+          {r.unverified&&<button className="ea-btn" onClick={async()=>{await DB.verifyResult(r.id);onChange&&onChange();}} style={{color:"#f5c453",border:"1px solid rgba(245,196,83,0.5)",padding:"1px 7px",cursor:"pointer",background:"none",fontSize:11}}>⚑ confirm</button>}
+          <button className="ea-btn" onClick={async()=>{await DB.removeResult(r.id);onChange&&onChange();}} style={{color:"#ff8a94",border:"1px solid rgba(255,70,85,0.4)",padding:"1px 7px",cursor:"pointer",background:"none"}}>✕</button>
+        </div>))}
+      </div>
+    </div>}
+  </div>;
+}
+
+function ImportPanel({profile,events,liveId,nameMap,setNameMap,onDone}){
+  const [stage,setStage]=useState("idle"); // idle | reading | matching | review
+  const [evId,setEvId]=useState(liveId??(events[0]?.id));
+  const [ai,setAi]=useState(null);
+  const [unresolved,setUnresolved]=useState([]);
+  const [queue,setQueue]=useState([]);
+  const [err,setErr]=useState("");
+  const [regsForPick,setRegsForPick]=useState([]);
+  const fileRef=useRef(null);
+
+  async function onFile(e){
+    const f=e.target.files?.[0]; if(!f)return;
+    setErr("");setStage("reading");
+    try{
+      const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);r.onerror=rej;r.readAsDataURL(f);});
+      const result=await aiReadScoreboard(b64,f.type||"image/png");
+      const regs=await DB.regsForEvent(evId);
+      const un=[];
+      result.rows.forEach(r=>{r.resolved=resolveName(r.scoreName,regs,nameMap);if(!r.resolved)un.push(r);});
+      setAi(result);setUnresolved(un);setRegsForPick(regs);
+      setStage(un.length?"matching":"review");
+    }catch(ex){ setErr("Couldn't read that screenshot. Try a clearer full-scoreboard image."); setStage("idle"); }
+  }
+
+  async function confirmNames(){
+    const map={...nameMap};
+    unresolved.forEach(u=>{ if(u._pick){map[u.scoreName]=u._pick; u.resolved=u._pick;} });
+    setNameMap(map); await DB.setNameMap(profile.community_id,map);
+    setStage("review");
+  }
+
+  function pushQueue(){
+    const rows=ai.rows.filter(r=>r.resolved).map(r=>({name:r.resolved,k:r.k,a:r.a,acs:r.acs,won:r.team===ai.winningTeam}));
+    setQueue(q=>[...q,{event:evId,map:ai.map,scoreA:ai.scoreA,scoreB:ai.scoreB,rows}]);
+    setAi(null);
+  }
+  async function commitAll(extra){
+    const all=extra?[...queue,extra]:queue;
+    for(const q of all){
+      for(const r of q.rows){
+        const uid=await DB.userIdByName(profile.community_id,r.name);
+        if(uid)await DB.addResult(profile.community_id,q.event,uid,{k:r.k,a:r.a,acs:r.acs,won:r.won,unverified:true});
+      }
+    }
+    setQueue([]);setAi(null);setStage("idle");onDone&&onDone();
+  }
+
+  const wrap=(kids)=>(<TPanel style={{marginBottom:16}}>{kids}</TPanel>);
+
+  if(stage==="reading")return wrap(<div style={{display:"flex",alignItems:"center",gap:12}}>
+    <div style={{fontFamily:FONT_MONO,color:CYAN,fontSize:14}}>◢ Reading scoreboard…</div>
+    <span style={{color:MUTE,fontSize:12,fontFamily:FONT_LABEL}}>map · round score · every player's K / A / ACS</span></div>);
+
+  if(stage==="matching")return wrap(<div>
+    <p style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#f5c453",fontFamily:FONT_LABEL,fontWeight:600,margin:"0 0 10px"}}>Who are these players?</p>
+    <p style={{color:MUTE,fontSize:12,margin:"0 0 12px",fontFamily:FONT_LABEL}}>A few scoreboard names didn't match your roster. Match them once and I'll remember next time.</p>
+    {unresolved.map((u,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+      <span style={{fontFamily:FONT_MONO,minWidth:120,color:"#dce6ff"}}>{u.scoreName}</span><span style={{color:"rgba(200,215,255,0.4)"}}>→</span>
+      <select defaultValue="" onChange={e=>u._pick=e.target.value} style={{...fieldStyle,maxWidth:160}}>
+        <option value="">— skip —</option>
+        {regsForPick.map(p=><option key={p.id||p.name} value={p.name}>{p.name}</option>)}
+      </select>
+    </div>))}
+    <button className="ea-btn" onClick={confirmNames} style={{...notchBtn(true),marginTop:8}}>Continue to review</button>
+  </div>);
+
+  if(stage==="review"&&ai)return wrap(<div>
+    <p style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600,margin:"0 0 10px"}}>Review · {events.find(e=>e.id===evId)?.weekend_label}</p>
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+      <span style={{fontFamily:FONT_MONO,color:"#9fb8e8",fontSize:13}}>MAP</span>
+      <span style={{fontFamily:FONT_LABEL,fontWeight:700,color:"#ecf3ff",textTransform:"uppercase",letterSpacing:"0.04em"}}>{ai.map}</span>
+      <span style={{width:1,height:16,background:"rgba(120,150,220,0.3)"}}/>
+      <span style={{fontFamily:FONT_MONO,color:"#9fb8e8",fontSize:13}}>SCORE</span>
+      <span style={{fontFamily:FONT_MONO,color:"#3ddc84",fontWeight:700,fontSize:16}}>{ai.scoreA}</span>
+      <span style={{color:"rgba(200,215,255,0.4)"}}>–</span>
+      <span style={{fontFamily:FONT_MONO,color:"#ff8a94",fontWeight:700,fontSize:16}}>{ai.scoreB}</span>
+      <span style={{color:MUTE,fontSize:12,marginLeft:6,fontFamily:FONT_LABEL}}>Team {ai.winningTeam} wins</span>
+    </div>
+    {ai.rows.some(r=>lowConf(r.conf?.k)||lowConf(r.conf?.a)||lowConf(r.conf?.acs))
+      ? <div style={{marginBottom:10,padding:"7px 11px",background:"rgba(245,196,83,0.08)",border:"1px solid rgba(245,196,83,0.4)",color:"#f5c453",fontSize:12,fontFamily:FONT_LABEL,clipPath:notch(8)}}>⚑ Amber fields are ones I wasn't fully sure about — give them a glance.</div>
+      : <p style={{margin:"0 0 10px",color:"#86e6b0",fontSize:12,fontFamily:FONT_LABEL}}>✓ Clean read — all fields high-confidence.</p>}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 56px 56px 56px 54px",gap:8,padding:"0 2px 6px",fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>
+      <span>Player</span><span style={{textAlign:"center"}}>K</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>ACS</span><span style={{textAlign:"center"}}>Won</span></div>
+    {ai.rows.map((r,i)=>{
+      const won=r.team===ai.winningTeam;
+      const box=(val,low,set)=>(<input defaultValue={val} inputMode="numeric" onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,"");e.target.value=v;set(+v||0);}} style={{...fieldStyle,width:56,padding:"6px 7px",textAlign:"center",...(low?{borderColor:"#f5c453",background:"rgba(245,196,83,0.12)",boxShadow:"0 0 0 1px rgba(245,196,83,0.4)"}:{})}}/>);
+      return <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 56px 56px 56px 54px",gap:8,alignItems:"center",padding:"5px 2px"}}>
+        {r.resolved?<span style={{fontFamily:FONT_LABEL,fontWeight:700,color:"#ecf3ff",textTransform:"uppercase",fontSize:13,letterSpacing:"0.02em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.resolved}</span>:<span style={{fontFamily:FONT_MONO,color:"rgba(255,138,148,0.7)",fontSize:12}}>{r.scoreName} · skipped</span>}
+        {box(r.k,lowConf(r.conf?.k),v=>r.k=v)}
+        {box(r.a,lowConf(r.conf?.a),v=>r.a=v)}
+        {box(r.acs,lowConf(r.conf?.acs),v=>r.acs=v)}
+        <span style={{textAlign:"center",color:won?"#3ddc84":"rgba(255,138,148,0.7)",fontFamily:FONT_LABEL,fontWeight:700,fontSize:12}}>{won?"W":"L"}</span>
+      </div>;
+    })}
+    <div style={{display:"flex",gap:10,marginTop:14,flexWrap:"wrap"}}>
+      <button className="ea-btn" onClick={()=>{pushQueue();setStage("idle");}} style={notchBtn(true)}>＋ Add another match</button>
+      <button className="ea-btn" onClick={()=>{const rows=ai.rows.filter(r=>r.resolved).map(r=>({name:r.resolved,k:r.k,a:r.a,acs:r.acs,won:r.team===ai.winningTeam}));commitAll({event:evId,map:ai.map,scoreA:ai.scoreA,scoreB:ai.scoreB,rows});}} style={{...notchBtn(true),background:"rgba(61,220,132,0.18)",borderColor:"#3ddc8488",color:"#9af5c2"}}>✓ Save {queue.length?("all "+(queue.length+1)):"match"}</button>
+    </div>
+  </div>);
+
+  // idle
+  return wrap(<div>
+    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+      <span style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600}}>Auto-import results</span>
+      <select value={evId} onChange={e=>setEvId(e.target.value)} style={{...fieldStyle,maxWidth:170}}>{events.map(ev=><option key={ev.id} value={ev.id}>{ev.weekend_label}{ev.id===liveId?" · live":""}</option>)}</select>
+      <button className="ea-btn" onClick={()=>fileRef.current?.click()} style={notchBtn(true)}>⤓ Upload scoreboard</button>
+      <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={onFile}/>
+    </div>
+    <p style={{color:MUTE,fontSize:12,margin:"8px 0 0",fontFamily:FONT_LABEL}}>Defaults to the live weekend. Upload a full scoreboard — I read every player, the map and the round score, then you eyeball anything I'm unsure about before it saves.{queue.length>0&&` ${queue.length} match${queue.length>1?"es":""} queued.`}</p>
+    {err&&<p style={{color:"#ff8a94",fontSize:12,margin:"8px 0 0",fontFamily:FONT_LABEL}}>{err}</p>}
+    {queue.length>0 && <div style={{marginTop:12}}>
+      <p style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"rgba(200,215,255,0.4)",margin:"0 0 7px",fontFamily:FONT_LABEL}}>Queued to save</p>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>{queue.map((q,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 11px",background:"rgba(0,229,255,0.06)",border:"1px solid rgba(0,229,255,0.25)",fontSize:12,fontFamily:FONT_MONO,color:"#bfe9f5",clipPath:notch(8)}}>
+        <span style={{color:"#7fdff0"}}>{events.find(e=>e.id===q.event)?.weekend_label}</span><span>{q.map} {q.scoreA}–{q.scoreB}</span><span style={{color:"rgba(200,215,255,0.5)"}}>{q.rows.length}p</span>
+        <button className="ea-btn" onClick={()=>setQueue(qq=>qq.filter((_,j)=>j!==i))} style={{marginLeft:4,color:"#ff8a94",border:"1px solid rgba(255,70,85,0.4)",padding:"0 6px",cursor:"pointer",background:"none"}}>✕</button>
+      </div>))}</div>
+      <button className="ea-btn" onClick={()=>commitAll()} style={{...notchBtn(true),marginTop:10,background:"rgba(61,220,132,0.18)",borderColor:"#3ddc8488",color:"#9af5c2"}}>✓ Save all {queue.length} queued</button>
+    </div>}
+  </div>);
 }
