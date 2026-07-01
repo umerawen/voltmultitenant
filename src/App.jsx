@@ -186,25 +186,50 @@ rank must be one of: Iron,Bronze,Silver,Gold,Platinum,Diamond,Ascendant,Immortal
   return parsePuterJSON(await puterVisionChat(prompt, file));
 }
 
-// Shared Puter vision call: pass the File object directly; if that fails,
-// upload to Puter FS and reference by path. Surfaces the real error.
+// Ensure the user is signed into Puter. Puter's AI is "user-pays" — without a
+// signed-in account, ai.chat HANGS FOREVER instead of erroring. Must be called
+// from a user gesture (the upload click) so the sign-in popup is allowed.
+async function ensurePuterAuth(){
+  if(!window.puter || !window.puter.auth) throw new Error("Puter not loaded.");
+  let signedIn=false;
+  try{ signedIn = await window.puter.auth.isSignedIn(); }catch(e){}
+  if(signedIn) return true;
+  // Opens Puter's sign-in popup; resolves once the user completes it.
+  await window.puter.auth.signIn();
+  try{ signedIn = await window.puter.auth.isSignedIn(); }catch(e){}
+  if(!signedIn) throw new Error("Puter sign-in was not completed. The screenshot reader needs a (free) Puter account to run the AI.");
+  return true;
+}
+
+// Wrap any promise so it can never hang forever again.
+function withTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error((label||"Puter call")+" timed out after "+Math.round(ms/1000)+"s. Try again, or sign into Puter if prompted.")), ms)),
+  ]);
+}
+
+// Shared Puter vision call: ensure auth, then pass the File object directly;
+// if that fails, upload to Puter FS and reference by path. Every call is
+// timeout-guarded and surfaces the real error.
 async function puterVisionChat(prompt, file){
+  await ensurePuterAuth();
   const p = window.puter.ai;
   const model = "claude-sonnet-4-6";
   let lastErr=null;
   // 1) File/Blob object directly as the image arg (documented for img2txt & chat)
-  try{ const r = await p.chat(prompt, file, { model }); if(r) return r; }
+  try{ const r = await withTimeout(p.chat(prompt, file, { model }), 45000, "Vision read"); if(r) return r; }
   catch(e){ lastErr=e; }
   // 2) Upload to Puter FS, then reference by puter_path in a file content block
   try{
     if(window.puter.fs && window.puter.fs.write){
       const path = "volt-tmp-"+Date.now()+"-"+(file.name||"img.png");
-      await window.puter.fs.write(path, file);
-      const r = await p.chat([{role:"user",content:[{type:"file",puter_path:path},{type:"text",text:prompt}]}],{model});
+      await withTimeout(window.puter.fs.write(path, file), 30000, "Upload");
+      const r = await withTimeout(p.chat([{role:"user",content:[{type:"file",puter_path:path},{type:"text",text:prompt}]}],{model}), 45000, "Vision read");
       if(r) return r;
     }
   }catch(e){ lastErr=e; }
-  throw new Error("Puter vision failed: "+(lastErr&&lastErr.message?lastErr.message:String(lastErr)));
+  throw new Error(lastErr&&lastErr.message?lastErr.message:"Puter vision failed.");
 }
 
 function parsePuterJSON(resp){
@@ -752,9 +777,13 @@ function TrackerImport({profile,existing,onSaved,relabel}){
     setStage("idle"); setData(null); onSaved&&onSaved();
   }
 
-  if(stage==="reading")return <div style={{display:"flex",alignItems:"center",gap:12}}>
-    <div style={{fontFamily:FONT_MONO,color:CYAN,fontSize:14}}>◢ Reading your tracker…</div>
-    <span style={{color:MUTE,fontSize:12,fontFamily:FONT_LABEL}}>rank · KDA · ACS · HS% · win%</span></div>;
+  if(stage==="reading")return <div>
+    <div style={{display:"flex",alignItems:"center",gap:12}}>
+      <div style={{fontFamily:FONT_MONO,color:CYAN,fontSize:14}}>◢ Reading your tracker…</div>
+      <span style={{color:MUTE,fontSize:12,fontFamily:FONT_LABEL}}>rank · KDA · ACS · HS% · win%</span>
+    </div>
+    <p style={{color:MUTE,fontSize:11,fontFamily:FONT_LABEL,margin:"8px 0 0"}}>First time? A Puter sign-in window may pop up — it's free and one-time, just approve it.</p>
+  </div>;
 
   if(stage==="review"&&data){
     const fields=[["rank","RANK","text"],["agent","AGENT","text"],["role","ROLE","text"],["kda","KDA","num"],["acs","ACS","num"],["hs","HS %","num"],["win","WIN %","num"]];
