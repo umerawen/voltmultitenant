@@ -746,71 +746,66 @@ function PlayerReg({profile,ev,phase,onChange}){
 // Player's own scouting profile — built from a Valorant tracker screenshot.
 function ScoutingProfile({profile,prof,onSaved}){
   const hasProfile = prof && prof.rank;
+  const [editing,setEditing]=useState(false);
   return <TPanel>
     <SectionLabel>Your scouting profile</SectionLabel>
-    <p style={{color:MUTE,fontSize:13,margin:"0 0 14px",fontFamily:FONT_LABEL}}>Captains study this before the draft. Upload a screenshot of your Valorant tracker profile (tracker.gg, blitz.gg, etc.) and I'll read your rank, KDA, ACS, headshot % and win rate automatically.</p>
-    {hasProfile && <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+    <p style={{color:MUTE,fontSize:13,margin:"0 0 14px",fontFamily:FONT_LABEL}}>Captains study this before the draft. Enter your Valorant stats from your tracker (tracker.gg, blitz.gg) — rank, KDA, ACS, headshot % and win rate.</p>
+    {hasProfile && !editing && <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
       {[["RANK",prof.rank],["KDA",prof.kda],["ACS",prof.acs],["HS%",prof.hs+"%"],["WIN%",prof.win+"%"],["AGENT",prof.agent]].map(([k,v])=>(
         <div key={k} style={{padding:"7px 12px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.22)",clipPath:notch(7)}}>
           <div style={{fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL}}>{k}</div>
           <div style={{fontFamily:FONT_MONO,fontSize:15,color:"#ecf3ff",fontWeight:700}}>{v}</div>
         </div>))}
     </div>}
-    <TrackerImport profile={profile} existing={prof} onSaved={onSaved} relabel={hasProfile?"Update from a new screenshot":"Upload tracker screenshot"}/>
+    {editing
+      ? <ProfileForm profile={profile} existing={prof} onSaved={()=>{setEditing(false);onSaved&&onSaved();}} onCancel={()=>setEditing(false)}/>
+      : <button className="ea-btn" onClick={()=>setEditing(true)} style={notchBtn(true)}>{hasProfile?"Edit my stats":"Set up my stats"}</button>}
   </TPanel>;
 }
 
-function TrackerImport({profile,existing,onSaved,relabel}){
-  const [stage,setStage]=useState("idle"); // idle | reading | review
-  const [data,setData]=useState(null);
-  const [err,setErr]=useState("");
-  const fileRef=useRef(null);
-
-  async function onFile(e){
-    const f=e.target.files?.[0]; if(!f)return; setErr("");setStage("reading");
-    try{
-      const result=await aiReadTracker(f);
-      setData(result); setStage("review");
-    }catch(ex){ setErr((ex&&ex.message)?ex.message:"Couldn't read that screenshot. Try a clearer full tracker-profile image."); setStage("idle"); }
-  }
+// Manual stat entry — reliable, no external AI, works for every player instantly.
+function ProfileForm({profile,existing,onSaved,onCancel}){
+  const [d,setD]=useState({
+    rank: existing?.rank||"", role: existing?.role||"", agent: existing?.agent||"",
+    kda: existing?.kda??"", acs: existing?.acs??"", hs: existing?.hs??"", win: existing?.win??"",
+  });
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setD(s=>({...s,[k]:v}));
+  const ready = d.rank && d.kda!=="" && d.acs!=="";
   async function save(){
-    await DB.saveProfile(profile.community_id, profile.id, data);
-    setStage("idle"); setData(null); onSaved&&onSaved();
+    if(!ready||saving)return; setSaving(true);
+    await DB.saveProfile(profile.community_id, profile.id, {
+      rank:d.rank, role:d.role||"Flex", agent:d.agent||"—",
+      kda:parseFloat(d.kda)||0, acs:parseInt(d.acs)||0, hs:parseInt(d.hs)||0, win:parseInt(d.win)||0, badges:existing?.badges||[],
+    });
+    setSaving(false); onSaved&&onSaved();
   }
-
-  if(stage==="reading")return <div>
-    <div style={{display:"flex",alignItems:"center",gap:12}}>
-      <div style={{fontFamily:FONT_MONO,color:CYAN,fontSize:14}}>◢ Reading your tracker…</div>
-      <span style={{color:MUTE,fontSize:12,fontFamily:FONT_LABEL}}>rank · KDA · ACS · HS% · win%</span>
-    </div>
-    <p style={{color:MUTE,fontSize:11,fontFamily:FONT_LABEL,margin:"8px 0 0"}}>First time? A Puter sign-in window may pop up — it's free and one-time, just approve it.</p>
-  </div>;
-
-  if(stage==="review"&&data){
-    const fields=[["rank","RANK","text"],["agent","AGENT","text"],["role","ROLE","text"],["kda","KDA","num"],["acs","ACS","num"],["hs","HS %","num"],["win","WIN %","num"]];
-    const low=(k)=>data.conf&&typeof data.conf[k]==="number"&&data.conf[k]<CONF_THRESHOLD;
-    return <div>
-      <p style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600,margin:"0 0 8px"}}>Review your stats</p>
-      {fields.some(([k])=>low(k)) && <div style={{marginBottom:10,padding:"7px 11px",background:"rgba(245,196,83,0.08)",border:"1px solid rgba(245,196,83,0.4)",color:"#f5c453",fontSize:12,fontFamily:FONT_LABEL,clipPath:notch(8)}}>⚑ Amber fields are ones I wasn't fully sure about — give them a glance.</div>}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:10,marginBottom:14}}>
-        {fields.map(([k,label,type])=>(<div key={k} style={{display:"flex",flexDirection:"column",gap:3}}>
-          <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>{label}</span>
-          {k==="rank"
-            ? <select value={data.rank||""} onChange={e=>setData({...data,rank:e.target.value})} style={{...fieldStyle,padding:"7px 8px",...(low(k)?{borderColor:"#f5c453"}:{})}}>{RANK_LIST.map(r=><option key={r} value={r}>{r}</option>)}</select>
-            : <input value={data[k]??""} onChange={e=>setData({...data,[k]:type==="num"?(e.target.value.replace(/[^0-9.]/g,"")):e.target.value})} style={{...fieldStyle,padding:"8px 9px",...(low(k)?{borderColor:"#f5c453",background:"rgba(245,196,83,0.1)"}:{})}}/>}
-        </div>))}
-      </div>
-      <div style={{display:"flex",gap:10}}>
-        <button className="ea-btn" onClick={save} style={{...notchBtn(true),background:"rgba(61,220,132,0.18)",borderColor:"#3ddc8488",color:"#9af5c2"}}>✓ Save my profile</button>
-        <button className="ea-btn" onClick={()=>{setStage("idle");setData(null);}} style={notchBtn(false)}>Cancel</button>
-      </div>
-    </div>;
-  }
-
+  const ROLES=["Duelist","Initiator","Controller","Sentinel","Flex"];
   return <div>
-    <button className="ea-btn" onClick={()=>fileRef.current?.click()} style={notchBtn(true)}>⤓ {relabel}</button>
-    <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={onFile}/>
-    {err&&<p style={{color:"#ff8a94",fontSize:12,margin:"8px 0 0",fontFamily:FONT_LABEL}}>{err}</p>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:12,marginBottom:14}}>
+      <label style={{display:"flex",flexDirection:"column",gap:4}}>
+        <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>Rank *</span>
+        <select value={d.rank} onChange={e=>set("rank",e.target.value)} style={{...fieldStyle,padding:"9px 8px"}}>
+          <option value="">— select —</option>{RANK_LIST.map(r=><option key={r} value={r}>{r}</option>)}
+        </select>
+      </label>
+      <label style={{display:"flex",flexDirection:"column",gap:4}}>
+        <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>Role</span>
+        <select value={d.role} onChange={e=>set("role",e.target.value)} style={{...fieldStyle,padding:"9px 8px"}}>
+          <option value="">— select —</option>{ROLES.map(r=><option key={r} value={r}>{r}</option>)}
+        </select>
+      </label>
+      {[["agent","Main agent","text","e.g. Jett"],["kda","KDA *","num","1.850000"],["acs","ACS *","num","240"],["hs","HS %","num","24"],["win","Win %","num","54"]].map(([k,label,type,ph])=>(
+        <label key={k} style={{display:"flex",flexDirection:"column",gap:4}}>
+          <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>{label}</span>
+          <input value={d[k]} placeholder={ph} onChange={e=>set(k,type==="num"?e.target.value.replace(/[^0-9.]/g,""):e.target.value)} style={{...fieldStyle,padding:"9px 9px"}}/>
+        </label>))}
+    </div>
+    <p style={{fontSize:11,color:MUTE,fontFamily:FONT_LABEL,margin:"0 0 12px"}}>* Rank, KDA and ACS are required — they drive your draft value.</p>
+    <div style={{display:"flex",gap:10}}>
+      <button className="ea-btn" disabled={!ready||saving} onClick={save} style={{...notchBtn(true),background:ready?"rgba(61,220,132,0.18)":"rgba(255,255,255,0.05)",borderColor:ready?"#3ddc8488":"rgba(120,150,220,0.2)",color:ready?"#9af5c2":"rgba(236,243,255,0.3)",cursor:ready?"pointer":"not-allowed"}}>{saving?"Saving…":"✓ Save my profile"}</button>
+      <button className="ea-btn" onClick={onCancel} style={notchBtn(false)}>Cancel</button>
+    </div>
   </div>;
 }
 function HostRoster({profile,ev,tick}){
