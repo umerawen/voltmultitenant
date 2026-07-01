@@ -137,7 +137,7 @@ const lowConf = (v)=> typeof v==="number" && v<CONF_THRESHOLD;
 // the browser, no CORS. Puter's image-passing signature isn't documented, so we
 // try several call shapes and use whichever returns. Throws on total failure so
 // the UI shows an error the host can act on.
-async function aiReadScoreboard(dataUrl){
+async function aiReadScoreboard(file){
   // Preview (no Supabase env) returns a simulated read so the flow is clickable.
   if(!HAS_SUPABASE){
     await new Promise(r=>setTimeout(r,1200));
@@ -159,32 +159,7 @@ async function aiReadScoreboard(dataUrl){
   const prompt = `You are reading a Valorant end-of-game scoreboard screenshot. Return ONLY valid JSON, no prose, no markdown fences. Shape:
 {"map":string,"scoreA":number,"scoreB":number,"winningTeam":"A"|"B","rows":[{"scoreName":string,"team":"A"|"B","k":number,"d":number,"a":number,"acs":number,"conf":{"k":number,"a":number,"acs":number}}]}
 "team" A = the winning side's table, B = the other. conf values are your 0..1 confidence per field. If a value is unreadable, give your best guess and a low conf. scoreName is the player's in-game name exactly as shown.`;
-  const model = "claude-sonnet-4-6";
-  const p = window.puter.ai;
-  // Ordered call-shape attempts (Puter's vision signature is under-documented).
-  const attempts = [
-    ()=> p.chat(prompt, dataUrl, { model }),
-    ()=> p.chat(prompt, { model, image: dataUrl }),
-    ()=> p.chat([{ role:"user", content:[ {type:"text",text:prompt}, {type:"image_url",image_url:{url:dataUrl}} ]}], { model }),
-    ()=> p.chat([{ role:"user", content:[ {type:"text",text:prompt}, {type:"file",puter_path:dataUrl} ]}], { model }),
-  ];
-  let resp=null, lastErr=null;
-  for(const tryCall of attempts){
-    try{ resp = await tryCall(); if(resp) break; }
-    catch(e){ lastErr=e; }
-  }
-  if(!resp) throw new Error("Vision read failed: "+(lastErr&&lastErr.message?lastErr.message:String(lastErr)));
-  // Normalise Puter's response shape into plain text.
-  let text="";
-  if(typeof resp==="string") text=resp;
-  else if(resp.message&&resp.message.content){
-    const c=resp.message.content;
-    text = Array.isArray(c) ? c.map(b=>b.text||"").join("") : String(c);
-  }
-  else if(resp.text) text=resp.text;
-  else text=JSON.stringify(resp);
-  text = text.replace(/```json|```/g,"").trim();
-  return JSON.parse(text);
+  return parsePuterJSON(await puterVisionChat(prompt, file));
 }
 function resolveName(scoreName, registered, nameMap){
   if(nameMap[scoreName]) return nameMap[scoreName];
@@ -194,9 +169,11 @@ function resolveName(scoreName, registered, nameMap){
 }
 
 /* ══════════════ AI TRACKER-PROFILE READ (Puter → Claude vision) ══════════════ */
-// Reads a Valorant tracker profile screenshot (tracker.gg / blitz / etc.)
-// into the player's scouting stats. Same Puter path as the scoreboard reader.
-async function aiReadTracker(dataUrl){
+// Reads a Valorant tracker profile screenshot into the player's scouting stats.
+// IMPORTANT: Puter's vision API takes a URL, a Puter file path, or a File/Blob —
+// NOT a base64 data URL. We pass the File object directly (documented), and fall
+// back to uploading the file to Puter's FS and referencing it by path.
+async function aiReadTracker(file){
   if(!HAS_SUPABASE){
     await new Promise(r=>setTimeout(r,1200));
     return { rank:"Diamond", role:"Duelist", agent:"Jett", kda:1.31, acs:243, hs:27, win:54,
@@ -206,17 +183,33 @@ async function aiReadTracker(dataUrl){
   const prompt = `You are reading a Valorant stats tracker profile screenshot (e.g. tracker.gg, blitz.gg). Return ONLY valid JSON, no prose, no markdown fences. Shape:
 {"rank":string,"role":string,"agent":string,"kda":number,"acs":number,"hs":number,"win":number,"conf":{"rank":number,"kda":number,"acs":number,"hs":number,"win":number}}
 rank must be one of: Iron,Bronze,Silver,Gold,Platinum,Diamond,Ascendant,Immortal,Radiant. role is one of: Duelist,Initiator,Controller,Sentinel,Flex (infer from the main agent if not shown). agent is their most-played agent. kda is the K/D/A ratio number (e.g. 1.31). acs is average combat score. hs is headshot percentage as an integer. win is win-rate percentage as an integer. conf values are your 0..1 confidence per field. If a value isn't visible, give your best estimate and a low conf.`;
-  const model="claude-sonnet-4-6"; const p=window.puter.ai;
-  const attempts=[
-    ()=>p.chat(prompt,dataUrl,{model}),
-    ()=>p.chat(prompt,{model,image:dataUrl}),
-    ()=>p.chat([{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:dataUrl}}]}],{model}),
-    ()=>p.chat([{role:"user",content:[{type:"text",text:prompt},{type:"file",puter_path:dataUrl}]}],{model}),
-  ];
-  let resp=null,lastErr=null;
-  for(const c of attempts){ try{ resp=await c(); if(resp)break; }catch(e){lastErr=e;} }
-  if(!resp) throw new Error("Tracker read failed: "+(lastErr&&lastErr.message?lastErr.message:String(lastErr)));
-  let text=""; if(typeof resp==="string")text=resp;
+  return parsePuterJSON(await puterVisionChat(prompt, file));
+}
+
+// Shared Puter vision call: pass the File object directly; if that fails,
+// upload to Puter FS and reference by path. Surfaces the real error.
+async function puterVisionChat(prompt, file){
+  const p = window.puter.ai;
+  const model = "claude-sonnet-4-6";
+  let lastErr=null;
+  // 1) File/Blob object directly as the image arg (documented for img2txt & chat)
+  try{ const r = await p.chat(prompt, file, { model }); if(r) return r; }
+  catch(e){ lastErr=e; }
+  // 2) Upload to Puter FS, then reference by puter_path in a file content block
+  try{
+    if(window.puter.fs && window.puter.fs.write){
+      const path = "volt-tmp-"+Date.now()+"-"+(file.name||"img.png");
+      await window.puter.fs.write(path, file);
+      const r = await p.chat([{role:"user",content:[{type:"file",puter_path:path},{type:"text",text:prompt}]}],{model});
+      if(r) return r;
+    }
+  }catch(e){ lastErr=e; }
+  throw new Error("Puter vision failed: "+(lastErr&&lastErr.message?lastErr.message:String(lastErr)));
+}
+
+function parsePuterJSON(resp){
+  let text="";
+  if(typeof resp==="string")text=resp;
   else if(resp.message&&resp.message.content){const c=resp.message.content;text=Array.isArray(c)?c.map(b=>b.text||"").join(""):String(c);}
   else if(resp.text)text=resp.text; else text=JSON.stringify(resp);
   return JSON.parse(text.replace(/```json|```/g,"").trim());
@@ -750,10 +743,9 @@ function TrackerImport({profile,existing,onSaved,relabel}){
   async function onFile(e){
     const f=e.target.files?.[0]; if(!f)return; setErr("");setStage("reading");
     try{
-      const dataUrl=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(f);});
-      const result=await aiReadTracker(dataUrl);
+      const result=await aiReadTracker(f);
       setData(result); setStage("review");
-    }catch(ex){ setErr("Couldn't read that screenshot. Try a clearer full tracker-profile image."); setStage("idle"); }
+    }catch(ex){ setErr((ex&&ex.message)?ex.message:"Couldn't read that screenshot. Try a clearer full tracker-profile image."); setStage("idle"); }
   }
   async function save(){
     await DB.saveProfile(profile.community_id, profile.id, data);
@@ -938,14 +930,13 @@ function ImportPanel({profile,events,liveId,nameMap,setNameMap,onDone}){
     const f=e.target.files?.[0]; if(!f)return;
     setErr("");setStage("reading");
     try{
-      const dataUrl=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(f);});
-      const result=await aiReadScoreboard(dataUrl);
+      const result=await aiReadScoreboard(f);
       const regs=await DB.regsForEvent(evId);
       const un=[];
       result.rows.forEach(r=>{r.resolved=resolveName(r.scoreName,regs,nameMap);if(!r.resolved)un.push(r);});
       setAi(result);setUnresolved(un);setRegsForPick(regs);
       setStage(un.length?"matching":"review");
-    }catch(ex){ setErr("Couldn't read that screenshot. Try a clearer full-scoreboard image."); setStage("idle"); }
+    }catch(ex){ setErr((ex&&ex.message)?ex.message:"Couldn't read that screenshot. Try a clearer full-scoreboard image."); setStage("idle"); }
   }
 
   async function confirmNames(){
