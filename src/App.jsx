@@ -1,98 +1,105 @@
-// ════════════════════════════════════════════════════════════════════
-// VOLT // LEAGUE — single self-contained app.
-// Renders on MOCK data when no Supabase env is present (e.g. local preview
-// or an inline artifact), and talks to REAL Supabase when the env vars
-// exist (e.g. on Vercel). Screens call DB.* and don't know the difference.
-// ════════════════════════════════════════════════════════════════════
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-/* ══════════════ THEME (was theme.jsx) ══════════════ */
-const HUE="#3d7bff", CYAN="#00e5ff", TEXT="#ecf3ff", MUTE="rgba(200,215,255,0.55)";
-const FONT_BODY="'Space Grotesk',sans-serif", FONT_HEAD="'Tungsten','Rajdhani',sans-serif",
-      FONT_LABEL="'Rajdhani',sans-serif", FONT_MONO="'IBM Plex Mono',monospace";
-const notch=(n=16)=>`polygon(0 0, calc(100% - ${n}px) 0, 100% ${n}px, 100% 100%, ${n}px 100%, 0 calc(100% - ${n}px))`;
+// ── Multi-tenant storage layer ──────────────────────────────────────────
+// The old app talks to `window.storage.get/set(key, shared)`. We keep that
+// exact interface but back it with Supabase, scoped to the current community.
+// Everything downstream (readState/writeState, war rooms, presence) is
+// untouched — only where the bytes live changes.
+//
+// `shared=true`  → community-wide state (the draft board, presence)
+// `shared=false` → per-user private state (a captain's war room)
+//
+// Rows live in `community_kv (community_id, k, val, shared, user_id, updated_at)`.
+const HAS_SUPABASE = !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+let __sb = null;
+if (HAS_SUPABASE) __sb = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
 
-function Fonts(){
-  return <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
-    .view-in{animation:viewin .4s ease;} @keyframes viewin{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
-    @keyframes voltpop{from{opacity:0;transform:scale(0.85);}to{opacity:1;transform:scale(1);}}
-    .grid-bg{background-image:linear-gradient(rgba(157,107,255,0.06) 1px,transparent 1px),linear-gradient(90deg,rgba(157,107,255,0.06) 1px,transparent 1px);background-size:44px 44px;}
-    .page-wrap{max-width:1100px;margin:0 auto;padding:0 5vw;}
-    input,select{font-family:'Rajdhani',sans-serif;} input::placeholder{color:rgba(160,180,210,0.4);}
-    ::-webkit-scrollbar{width:8px;height:8px;}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:4px;}
-    .ea-btn{transition:transform .18s,box-shadow .18s,background .18s,border-color .18s;}
-    .ea-btn:hover{transform:translateY(-2px);box-shadow:0 0 30px rgba(61,123,255,0.4);}
-    .ea-btn:active{transform:translateY(0) scale(0.98);}
-    @media(prefers-reduced-motion:reduce){.view-in,.ea-btn{animation:none;transition:none;}}
-  `}</style>;
-}
-function Shell({children}){
-  return <div style={{minHeight:"100vh",color:TEXT,fontFamily:FONT_BODY,background:"#0a0d18",overflowX:"hidden"}}>
-    <Fonts/>
-    <div style={{position:"fixed",inset:0,pointerEvents:"none",background:"radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)"}}/>
-    <div className="grid-bg" style={{position:"fixed",inset:0,pointerEvents:"none",opacity:0.5}}/>
-    <div style={{position:"relative",minHeight:"100vh"}}>{children}</div>
-  </div>;
-}
-function TPanel({children,hue=HUE,style={},onClick,className=""}){
-  return <div onClick={onClick} className={"view-in "+className} style={{position:"relative",padding:22,background:"linear-gradient(160deg, rgba(61,123,255,0.05), rgba(10,15,28,0.5))",border:`1px solid ${hue}33`,clipPath:notch(16),backdropFilter:"blur(8px)",...style}}>
-    <span style={{position:"absolute",left:0,top:0,width:11,height:11,borderLeft:`2px solid ${hue}`,borderTop:`2px solid ${hue}`}}/>
-    {children}
-  </div>;
-}
-function TungstenHead({word1,word2,size="clamp(2.4rem,5vw,3.6rem)"}){
-  return <h2 style={{fontFamily:FONT_HEAD,fontWeight:700,textTransform:"uppercase",fontSize:size,lineHeight:0.9,letterSpacing:"0.04em",color:"#f4f8ff",margin:0,textShadow:"0 0 40px rgba(61,123,255,0.22)"}}>
-    {word1} {word2&&<span style={{color:HUE}}>{word2}</span>}</h2>;
-}
-function Eyebrow({children}){
-  return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:8}}>
-    <span style={{width:18,height:2,background:HUE}}/>
-    <p style={{textTransform:"uppercase",fontSize:12,fontWeight:600,color:"#5b8dff",fontFamily:FONT_LABEL,letterSpacing:"0.34em",margin:0}}>{children}</p>
-    <span style={{width:18,height:2,background:HUE}}/></div>;
-}
-function SectionLabel({children}){
-  return <p style={{textTransform:"uppercase",fontSize:13,fontWeight:700,letterSpacing:"0.12em",color:"#7da6ff",fontFamily:FONT_LABEL,margin:"0 0 12px"}}>{children}</p>;
-}
-const fieldStyle={width:"100%",boxSizing:"border-box",padding:"11px 13px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.25)",color:"#ecf3ff",fontSize:15,fontFamily:FONT_LABEL,outline:"none",clipPath:notch(8)};
-function notchBtn(active=true,hue=HUE){
-  return {padding:"12px 22px",cursor:"pointer",textTransform:"uppercase",fontFamily:FONT_LABEL,fontWeight:700,fontSize:14,letterSpacing:"0.14em",color:active?"#eaf1ff":"rgba(200,215,255,0.6)",background:active?"rgba(61,123,255,0.18)":"rgba(255,255,255,0.03)",border:`1px solid ${active?hue:"rgba(120,150,220,0.25)"}`,clipPath:notch(10)};
-}
-function phaseBadge(phase){
-  const m={registration_open:{label:"Registration open",color:"#3ddc84"},registration_closed:{label:"Registration closed",color:"#f5c453"},drafting:{label:"Draft day",color:"#9d6bff"},matches_live:{label:"Matches live",color:CYAN},settled:{label:"Finished",color:"rgba(200,215,255,0.5)"}};
-  return m[phase]||m.registration_open;
-}
-const errBox={background:"rgba(255,70,85,0.1)",border:"1px solid rgba(255,70,85,0.4)",color:"#ff9aa3",padding:"9px 13px",clipPath:notch(8),fontSize:13,marginBottom:14,fontFamily:FONT_LABEL};
-const okBox={background:"rgba(61,220,132,0.08)",border:"1px solid rgba(61,220,132,0.4)",color:"#86e6b0",padding:"9px 13px",clipPath:notch(8),fontSize:13,marginBottom:14,fontFamily:FONT_LABEL};
-const labelTxt={fontSize:12,letterSpacing:"0.14em",textTransform:"uppercase",color:"#7da6ff",marginBottom:6,display:"block",fontFamily:FONT_LABEL,fontWeight:600};
+// Set after login/community-select. Until then, storage is a no-op-ish memory map.
+window.__VOLT = window.__VOLT || { communityId: null, userId: null };
 
-/* ══════════════ HELPERS (was in supabase.js) ══════════════ */
-function weekendWindows(sat){
-  const d=new Date(sat+"T18:00:00");
-  const day=(o,h,m=0)=>{const x=new Date(d);x.setDate(d.getDate()+o);x.setHours(h,m,0,0);return x.toISOString();};
-  return {reg_opens:day(-5,0,0),reg_closes:day(-2,23,59),draft_at:day(-1,20,0),matches_start:day(0,18,0),matches_end:day(1,23,59)};
-}
-function computeAutoPhase(ev,now=new Date()){
-  if(ev.phase_overridden)return ev.phase;
-  const t=(d)=>d?new Date(d).getTime():null,n=now.getTime();
-  if(t(ev.matches_end)&&n>t(ev.matches_end))return"settled";
-  if(t(ev.matches_start)&&n>=t(ev.matches_start))return"matches_live";
-  if(t(ev.draft_at)&&n>=t(ev.draft_at))return"drafting";
-  if(t(ev.reg_closes)&&n>=t(ev.reg_closes))return"registration_closed";
-  return"registration_open";
-}
-const fmt=(iso)=>iso?new Date(iso).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}):"—";
+if (typeof window !== "undefined") {
+  const __mem = new Map();
+  const memKey = (key, shared) => (shared ? "s:" : "p:") + (shared ? "" : (window.__VOLT.userId || "anon") + ":") + key;
+  const memGet = (key, shared) => { const v = __mem.get(memKey(key, shared)); return v === undefined ? null : { key, value: v, shared: !!shared }; };
+  const memSet = (key, value, shared) => { __mem.set(memKey(key, shared), value); return { key, value, shared: !!shared }; };
 
-/* ══════════════ SCORING (tunable) ══════════════ */
-const SCORING = { winBonus:100, acsDivisor:4, perKill:1, perAssist:0.5 };
+  window.storage = {
+    async get(key, shared) {
+      const cid = window.__VOLT.communityId;
+      if (!HAS_SUPABASE || !cid) return memGet(key, shared);
+      try {
+        let q = __sb.from("community_kv").select("val").eq("community_id", cid).eq("k", key).eq("shared", !!shared);
+        if (!shared) q = q.eq("user_id", window.__VOLT.userId);
+        const { data } = await q.maybeSingle();
+        return data ? { key, value: data.val, shared: !!shared } : null;
+      } catch (e) { console.error("storage.get", e); return memGet(key, shared); }
+    },
+    async set(key, value, shared) {
+      const cid = window.__VOLT.communityId;
+      if (!HAS_SUPABASE || !cid) return memSet(key, value, shared);
+      try {
+        const row = { community_id: cid, k: key, val: value, shared: !!shared, user_id: shared ? null : window.__VOLT.userId, updated_at: new Date().toISOString() };
+        await __sb.from("community_kv").upsert(row, { onConflict: shared ? "community_id,k,shared" : "community_id,k,shared,user_id" });
+        return { key, value, shared: !!shared };
+      } catch (e) { console.error("storage.set", e); return memSet(key, value, shared); }
+    },
+    async delete(key, shared) {
+      const cid = window.__VOLT.communityId;
+      if (!HAS_SUPABASE || !cid) { const had = __mem.delete(memKey(key, shared)); return { key, deleted: had, shared: !!shared }; }
+      try {
+        let q = __sb.from("community_kv").delete().eq("community_id", cid).eq("k", key).eq("shared", !!shared);
+        if (!shared) q = q.eq("user_id", window.__VOLT.userId);
+        await q; return { key, deleted: true, shared: !!shared };
+      } catch (e) { console.error("storage.delete", e); return { key, deleted: false, shared: !!shared }; }
+    },
+    async list(prefix, shared) {
+      const cid = window.__VOLT.communityId;
+      if (!HAS_SUPABASE || !cid) {
+        const pfx = (shared ? "s:" : "p:") + (prefix || "");
+        const keys = [...__mem.keys()].filter(x => x.startsWith(pfx)).map(x => x.slice(2));
+        return { keys, prefix, shared: !!shared };
+      }
+      try {
+        let q = __sb.from("community_kv").select("k").eq("community_id", cid).eq("shared", !!shared).like("k", (prefix || "") + "%");
+        if (!shared) q = q.eq("user_id", window.__VOLT.userId);
+        const { data } = await q;
+        return { keys: (data || []).map(r => r.k), prefix, shared: !!shared };
+      } catch (e) { console.error("storage.list", e); return { keys: [], prefix, shared: !!shared }; }
+    },
+  };
+}
 
-/* ══════════════ DRAFT PRICING (ported verbatim from old app) ══════════════ */
+
+/* ── embedded agent artwork (data URIs, self-contained) ── */
+const IMG_HERO = "data:image/webp;base64,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";
+const HUD_TOP = "data:image/png;base64,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";
+const HUD_BOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA3oAAAAUCAYAAADbRU/PAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAAATJJREFUeAHt3UFOg0AUBuCHsiMeQc+mV+gFpBcg3kCPolchnsDELdoaF8UmpqXQwsv3bQgkMAvCDH/eZKYIjna3+nzcHOo4n7ptqvXA9nv3AgAAw42YBfb+08d89lUAAACQiqAHAACQTPFbHvxhih8AAMDyldGfAyroAQAALJypmwAAAMkIegAAAMkIegAAAMkIegAAAMmUuye7K3BOpeu6t/enm9cAAGZhxA16T/XSNtVDcJDb1cd9EdfPcXneG8zQdnuFrwAAACCLuvx7ISamogcA86Kit0wqesB/ehW9zUdaBAAAAItmMRYAAIBkBD0AAIBkBD0AAIBkBD0AAIBktqtu1sFRLrA6Wd021Xpg+717AU4xYv+31zdN+WwAGMtSxsLSYAgAAJCLqZsAAADJfAM85F803mXy6gAAAABJRU5ErkJggg==";
+const IMG_NEON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Crect width='800' height='800' fill='%231a1f2e'/%3E%3Ctext x='400' y='400' fill='%2300e5ff' font-family='sans-serif' font-size='40' text-anchor='middle'%3ENEON%3C/text%3E%3C/svg%3E";
+const IMG_KILLJOY = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='800'%3E%3Crect width='800' height='800' fill='%231a1f2e'/%3E%3Ctext x='400' y='400' fill='%23ffd700' font-family='sans-serif' font-size='36' text-anchor='middle'%3EKILLJOY%3C/text%3E%3C/svg%3E";
+
+
+/* ════════════════════════════════════════════════════════════════════
+   VOLT PROTOCOL — Community Valorant Auction Draft
+   4 routed screens · live-synced via shared storage
+   Lobby · Scout Hub · Auction Block · Locker Room
+   ════════════════════════════════════════════════════════════════════ */
+
+const STORE_KEY = "volt-auction-v2";
+const POLL_MS = 1500;
+
+// Hardcoded access codes (baked into the build — nobody sets these in-app).
+// Commissioner: 1218.  Captains: by seat order, seat 1 → "0001" ... seat 8 → "0008".
+const COMMISH_CODE = "1218";
+const seatCode = (seatIndex) => String(seatIndex + 1).padStart(4, "0"); // 0-based index → "0001".."0008"
+
+
+
 const RANKS = {
   Iron:      { bid: 300,  c: "#8d97a8", glow: "rgba(141,151,168,0.45)" },
   Bronze:    { bid: 500,  c: "#c08a52", glow: "rgba(192,138,82,0.45)" },
   Silver:    { bid: 800,  c: "#d7e1ee", glow: "rgba(215,225,238,0.40)" },
-  Gold:      { bid: 1100, c: "#f5c453", glow: "rgba(245,196,83,0.45)" },
+  Gold:      { bid: 1100,  c: "#f5c453", glow: "rgba(245,196,83,0.45)" },
   Platinum:  { bid: 1500, c: "#3be8d8", glow: "rgba(59,232,216,0.45)" },
   Diamond:   { bid: 2000, c: "#c08bff", glow: "rgba(192,139,255,0.50)" },
   Ascendant: { bid: 2600, c: "#3ddc84", glow: "rgba(61,220,132,0.50)" },
@@ -100,1190 +107,3991 @@ const RANKS = {
   Radiant:   { bid: 4500, c: "#fff3b0", glow: "rgba(255,243,176,0.60)" },
 };
 const RANK_LIST = Object.keys(RANKS);
-const DRAFT_SLOTS = 4;              // players each captain drafts (old app)
-const START_BUDGET = 10000;        // starting purse (old app)
-const fmtMoney = (n)=> "$" + (n||0).toLocaleString();
-const playerBidValue = (p)=> (RANKS[p.rank]?.bid ?? 0);
-// reserve: the cheapest remaining slots a captain must still afford after this pick
-const reserveFor = (t, availablePlayers)=>{
-  const slotsAfterThisPick = Math.max(DRAFT_SLOTS - t.roster.length - 1, 0);
-  if (slotsAfterThisPick === 0) return 0;
-  const cheapest = availablePlayers.map(playerBidValue).sort((a,b)=>a-b).slice(0, slotsAfterThisPick);
-  return cheapest.reduce((s,v)=>s+v, 0);
-};
-const maxAllowedBid = (t, availablePlayers=[])=> t.budget - reserveFor(t, availablePlayers);
-const requiredBid = (b)=> (b.leaderId ? b.currentBid + 100 : b.startingBid);
-function matchPoints(r){
-  return (r.won?SCORING.winBonus:0) + ((r.acs||0)/SCORING.acsDivisor) + ((r.k||0)*SCORING.perKill) + ((r.a||0)*SCORING.perAssist);
-}
-// roll per-match rows into a season board ranked by AVERAGE points/match
-function seasonBoardFrom(rows){
-  const by={};
-  rows.forEach(r=>{
-    if(!by[r.name])by[r.name]={name:r.name,games:0,pts:0,k:0,a:0,acsSum:0,wins:0,unverified:0};
-    const p=by[r.name];
-    p.games++; p.pts+=matchPoints(r); p.k+=r.k||0; p.a+=r.a||0; p.acsSum+=r.acs||0;
-    if(r.won)p.wins++; if(r.unverified)p.unverified++;
-  });
-  return Object.values(by).map(p=>{
-    p.avg=p.games?p.pts/p.games:0; p.acs=p.games?Math.round(p.acsSum/p.games):0; return p;
-  }).sort((a,b)=>b.avg-a.avg);
-}
-const CONF_THRESHOLD = 0.85;
-const lowConf = (v)=> typeof v==="number" && v<CONF_THRESHOLD;
+const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
+const ROLE_GLYPH = { Duelist: "◆", Initiator: "▲", Controller: "●", Sentinel: "■", Flex: "✦" };
+const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brimstone","Viper","Astra","Harbor","Clove","Sova","Skye","Breach","Fade","KAY/O","Gekko","Killjoy","Cypher","Sage","Chamber","Deadlock","Vyse"];
 
-/* ══════════════ AI SCOREBOARD READ (free, via Puter → Claude) ══════════════ */
-// Calls Claude through Puter.js (loaded from index.html). No API key, runs in
-// the browser, no CORS. Puter's image-passing signature isn't documented, so we
-// try several call shapes and use whichever returns. Throws on total failure so
-// the UI shows an error the host can act on.
-async function aiReadScoreboard(file){
-  // Preview (no Supabase env) returns a simulated read so the flow is clickable.
-  if(!HAS_SUPABASE){
-    await new Promise(r=>setTimeout(r,1200));
-    return {
-      map:"Ascent", scoreA:13, scoreB:9, winningTeam:"A",
-      rows:[
-        {scoreName:"Vex#NA1",team:"A",k:22,d:13,a:5,acs:280,conf:{k:0.99,a:0.98,acs:0.96}},
-        {scoreName:"Kiro#2747",team:"A",k:18,d:15,a:7,acs:245,conf:{k:0.98,a:0.95,acs:0.71}},
-        {scoreName:"rumer#MIN",team:"A",k:17,d:14,a:8,acs:230,conf:{k:0.99,a:0.62,acs:0.97}},
-        {scoreName:"Nova#777",team:"B",k:15,d:18,a:9,acs:210,conf:{k:0.97,a:0.99,acs:0.94}},
-        {scoreName:"Echo#404",team:"B",k:12,d:19,a:6,acs:190,conf:{k:0.99,a:0.97,acs:0.99}},
-        {scoreName:"R1OT#xx",team:"B",k:25,d:16,a:4,acs:310,conf:{k:0.93,a:0.98,acs:0.9}},
-      ]
-    };
+const TEAM_HUES = ["#ff4655", "#00e5ff", "#9d6bff", "#5ad1ff", "#ff8a3d", "#e35cff", "#3ddc84", "#f5c453", "#ff6fae", "#7c9cff", "#ffd24a", "#4dd6c1"];
+const MAX_TEAMS = 12, MIN_TEAMS = 2;
+
+const TEAM_SEEDS = [
+  { name: "CRIMSON PULSE",  captain: "Vex",     hue: "#ff4655" },
+  { name: "NEON SYNDICATE", captain: "Kiro",    hue: "#00e5ff" },
+  { name: "VOID WALKERS",   captain: "Mantra",  hue: "#9d6bff" },
+  { name: "GLACIER UNIT",   captain: "Frost",   hue: "#5ad1ff" },
+  { name: "EMBER PROTOCOL", captain: "Ash",     hue: "#ff8a3d" },
+  { name: "PHANTOM CELL",   captain: "Wraith",  hue: "#e35cff" },
+  { name: "APEX VANGUARD",  captain: "Striker", hue: "#3ddc84" },
+  { name: "IRON HALO",      captain: "Bastion", hue: "#f5c453" },
+];
+
+const SAMPLE_PLAYERS = [
+  { name: "Zephyr",   rank: "Immortal",  role: "Duelist",    agent: "Jett",   kda: 1.42, acs: 268, hs: 31, win: 58, badges: ["Winter Tourney Winner", "MVP"] },
+  { name: "Hexline",  rank: "Diamond",   role: "Controller", agent: "Omen",   kda: 1.18, acs: 221, hs: 24, win: 52, badges: ["IGL"] },
+  { name: "Mirage",   rank: "Ascendant", role: "Initiator",  agent: "Sova",   kda: 1.27, acs: 240, hs: 27, win: 55, badges: ["Clutch King"] },
+  { name: "Tessera",  rank: "Platinum",  role: "Sentinel",   agent: "Killjoy",kda: 1.09, acs: 198, hs: 22, win: 49, badges: [] },
+  { name: "Nocturne", rank: "Gold",      role: "Flex",       agent: "Clove",  kda: 1.02, acs: 187, hs: 19, win: 47, badges: ["Community Pick"] },
+  { name: "Razorwing",rank: "Diamond",   role: "Duelist",    agent: "Raze",   kda: 1.33, acs: 252, hs: 26, win: 54, badges: ["Frag Leader"] },
+  { name: "Cipher9",  rank: "Ascendant", role: "Sentinel",   agent: "Cypher", kda: 1.15, acs: 205, hs: 23, win: 51, badges: ["Lockdown"] },
+  { name: "Velvet",   rank: "Platinum",  role: "Initiator",  agent: "Skye",   kda: 1.11, acs: 210, hs: 21, win: 48, badges: [] },
+];
+
+
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+function freshState() {
+  return {
+    v: 2,
+    teams: TEAM_SEEDS.map((t, i) => ({ id: "t" + (i + 1), ...t, budget: 10000, roster: [] })),
+    players: SAMPLE_PLAYERS.map((p) => ({ id: uid(), status: "pool", soldTo: null, soldPrice: null, ...p })),
+    block: null,
+    spin: null,
+    draftAt: Date.now() + 1000 * 60 * 60 * 2, // draft opens 2h after first boot
+    commishCode: null, // set by the first Commissioner; required thereafter
+    teamCodes: {}, // { teamId: passcode } gating each captain's War Room; set once by that captain
+    bidHistory: [],   // [{teamId, amount, ts}] for active block
+    soldFlash: null,  // ts of last sale (for red flash)
+    lastSoldTo: null, // teamId that secured the most recent sale (for won/lost audio)
+    recentSales: [],  // [{playerId, name, teamId, price, bidCount, ts}] newest-first, for the auction feed ticker
+    tournament: null, // { format, matchType, groups, matches, slots, ... } — built by Commissioner
+    log: [],
+    stamp: Date.now(),
+  };
+}
+
+async function readState() {
+  try { const r = await window.storage.get(STORE_KEY, true); return r ? JSON.parse(r.value) : null; }
+  catch { return null; }
+}
+async function writeState(s) {
+  if (!s.stamp) s.stamp = Date.now();
+  try { await window.storage.set(STORE_KEY, JSON.stringify(s), true); } catch (e) { console.error(e); }
+  return s;
+}
+
+/* ── private (per-captain) war-room storage: shared=false keeps it off the synced board ── */
+const warRoomKey = (teamId) => `volt-warroom-${teamId}`;
+async function readWarRoom(teamId) {
+  try { const r = await window.storage.get(warRoomKey(teamId), false); return r ? JSON.parse(r.value) : null; }
+  catch { return null; }
+}
+async function writeWarRoom(teamId, data) {
+  try { await window.storage.set(warRoomKey(teamId), JSON.stringify(data), false); } catch (e) { console.error(e); }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TOURNAMENT ENGINE — pure helpers for groups, brackets & standings.
+   Formats: "group" (N groups, round-robin each, top advances to final),
+            "roundrobin" (one table, everyone plays once),
+            "single" (single-elimination bracket).
+   A match: { id, teamA, teamB, bo, maps:[{a,b}], done, winner }
+     - bo: 1 or 3 (best-of). maps holds per-map scores {a,b}.
+     - winner: teamId or null. For byes, teamB=null and winner=teamA.
+   ════════════════════════════════════════════════════════════════════ */
+const tuid = () => "m" + Math.random().toString(36).slice(2, 9);
+
+// round-robin pairing for a list of teamIds (each plays each once)
+function roundRobinMatches(teamIds, bo) {
+  const ms = [];
+  for (let i = 0; i < teamIds.length; i++)
+    for (let j = i + 1; j < teamIds.length; j++)
+      ms.push({ id: tuid(), teamA: teamIds[i], teamB: teamIds[j], bo, maps: [], done: false, winner: null });
+  return ms;
+}
+
+// next power of two >= n
+const nextPow2 = (n) => { let p = 1; while (p < n) p *= 2; return p; };
+
+// build a single-elim bracket from an ordered slot list (may contain nulls for empty slots)
+function buildSingleElim(slotIds, bo) {
+  const size = Math.max(nextPow2(slotIds.length || 2), 2);
+  const seeds = slotIds.slice(0, size);
+  while (seeds.length < size) seeds.push(null);
+  const rounds = [];
+  // round 0: pair 0-1, 2-3, ...
+  let r0 = [];
+  for (let i = 0; i < size; i += 2) {
+    const a = seeds[i], b = seeds[i + 1];
+    const m = { id: tuid(), teamA: a, teamB: b, bo, maps: [], done: false, winner: null };
+    if (a && !b) { m.done = true; m.winner = a; }       // bye
+    else if (!a && b) { m.done = true; m.winner = b; }   // bye
+    r0.push(m);
   }
-  if(typeof window==="undefined" || !window.puter || !window.puter.ai){
-    throw new Error("Puter not loaded — check the script tag in index.html.");
+  rounds.push(r0);
+  // subsequent rounds: empty matches fed by winners
+  let count = r0.length;
+  while (count > 1) {
+    const r = [];
+    for (let i = 0; i < count; i += 2)
+      r.push({ id: tuid(), teamA: null, teamB: null, bo, maps: [], done: false, winner: null, from: [count > 0 ? i : null, i + 1] });
+    rounds.push(r);
+    count = r.length;
   }
-  const prompt = `You are reading a Valorant end-of-game scoreboard screenshot. Return ONLY valid JSON, no prose, no markdown fences. Shape:
-{"map":string,"scoreA":number,"scoreB":number,"winningTeam":"A"|"B","rows":[{"scoreName":string,"team":"A"|"B","k":number,"d":number,"a":number,"acs":number,"conf":{"k":number,"a":number,"acs":number}}]}
-"team" A = the winning side's table, B = the other. conf values are your 0..1 confidence per field. If a value is unreadable, give your best guess and a low conf. scoreName is the player's in-game name exactly as shown.`;
-  return parsePuterJSON(await puterVisionChat(prompt, file));
-}
-function resolveName(scoreName, registered, nameMap){
-  if(nameMap[scoreName]) return nameMap[scoreName];
-  const base=(scoreName||"").split("#")[0].toLowerCase();
-  const hit=registered.find(p=>(p.name||"").toLowerCase()===base);
-  return hit?hit.name:null;
+  return rounds;
 }
 
-/* ══════════════ AI TRACKER-PROFILE READ (Puter → Claude vision) ══════════════ */
-// Reads a Valorant tracker profile screenshot into the player's scouting stats.
-// IMPORTANT: Puter's vision API takes a URL, a Puter file path, or a File/Blob —
-// NOT a base64 data URL. We pass the File object directly (documented), and fall
-// back to uploading the file to Puter's FS and referencing it by path.
-async function aiReadTracker(file){
-  if(!HAS_SUPABASE){
-    await new Promise(r=>setTimeout(r,1200));
-    return { rank:"Diamond", role:"Duelist", agent:"Jett", kda:1.31, acs:243, hs:27, win:54,
-      conf:{rank:0.97,kda:0.92,acs:0.88,hs:0.71,win:0.9} };
+// has this match been decided by its map scores? sets winner + returns it
+function resolveMatch(m) {
+  if (m.teamB == null) { m.done = !!m.teamA; m.winner = m.teamA || null; return m; }
+  const need = m.bo === 3 ? 2 : 1;
+  let aw = 0, bw = 0;
+  for (const mp of (m.maps || [])) {
+    if (mp.a == null || mp.b == null) continue;
+    if (mp.a > mp.b) aw++; else if (mp.b > mp.a) bw++;
   }
-  if(typeof window==="undefined" || !window.puter || !window.puter.ai) throw new Error("Puter not loaded — check the script tag in index.html.");
-  const prompt = `You are reading a Valorant stats tracker profile screenshot (e.g. tracker.gg, blitz.gg). Return ONLY valid JSON, no prose, no markdown fences. Shape:
-{"rank":string,"role":string,"agent":string,"kda":number,"acs":number,"hs":number,"win":number,"conf":{"rank":number,"kda":number,"acs":number,"hs":number,"win":number}}
-rank must be one of: Iron,Bronze,Silver,Gold,Platinum,Diamond,Ascendant,Immortal,Radiant. role is one of: Duelist,Initiator,Controller,Sentinel,Flex (infer from the main agent if not shown). agent is their most-played agent. kda is the K/D/A ratio number (e.g. 1.31). acs is average combat score. hs is headshot percentage as an integer. win is win-rate percentage as an integer. conf values are your 0..1 confidence per field. If a value isn't visible, give your best estimate and a low conf.`;
-  return parsePuterJSON(await puterVisionChat(prompt, file));
+  if (aw >= need) { m.done = true; m.winner = m.teamA; }
+  else if (bw >= need) { m.done = true; m.winner = m.teamB; }
+  else { m.done = false; m.winner = null; }
+  return m;
 }
 
-// Ensure the user is signed into Puter. Puter's AI is "user-pays" — without a
-// signed-in account, ai.chat HANGS FOREVER instead of erroring. Must be called
-// from a user gesture (the upload click) so the sign-in popup is allowed.
-async function ensurePuterAuth(){
-  if(!window.puter || !window.puter.auth) throw new Error("Puter not loaded.");
-  // NOTE: puter.auth.isSignedIn() returns a SYNCHRONOUS boolean (not a promise).
-  let signedIn=false;
-  try{ signedIn = !!window.puter.auth.isSignedIn(); }catch(e){}
-  if(signedIn) return true;
-  // Opens Puter's sign-in popup; resolves once the user completes it.
-  await window.puter.auth.signIn();
-  try{ signedIn = !!window.puter.auth.isSignedIn(); }catch(e){}
-  if(!signedIn) throw new Error("Puter sign-in was not completed. The screenshot reader needs a (free) Puter account to run the AI.");
-  return true;
+// round tallies for one team from one resolved match (sum of all map rounds)
+function matchTally(m, teamId) {
+  let rf = 0, ra = 0;
+  for (const mp of (m.maps || [])) {
+    if (mp.a == null || mp.b == null) continue;
+    if (m.teamA === teamId) { rf += mp.a; ra += mp.b; }
+    else if (m.teamB === teamId) { rf += mp.b; ra += mp.a; }
+  }
+  return { rf, ra };
 }
 
-// Wrap any promise so it can never hang forever again.
-function withTimeout(promise, ms, label){
-  return Promise.race([
-    promise,
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error((label||"Puter call")+" timed out after "+Math.round(ms/1000)+"s. Try again, or sign into Puter if prompted.")), ms)),
-  ]);
-}
-
-// Shared Puter vision call: ensure auth, then pass the File object directly;
-// if that fails, upload to Puter FS and reference by path. Every call is
-// timeout-guarded and surfaces the real error.
-async function puterVisionChat(prompt, file){
-  await ensurePuterAuth();
-  const p = window.puter.ai;
-  const model = "claude-sonnet-4-6";
-  let lastErr=null;
-  // 1) File/Blob object directly as the image arg (documented for img2txt & chat)
-  try{ const r = await withTimeout(p.chat(prompt, file, { model }), 45000, "Vision read"); if(r) return r; }
-  catch(e){ lastErr=e; }
-  // 2) Upload to Puter FS, then reference by puter_path in a file content block
-  try{
-    if(window.puter.fs && window.puter.fs.write){
-      const path = "volt-tmp-"+Date.now()+"-"+(file.name||"img.png");
-      await withTimeout(window.puter.fs.write(path, file), 30000, "Upload");
-      const r = await withTimeout(p.chat([{role:"user",content:[{type:"file",puter_path:path},{type:"text",text:prompt}]}],{model}), 45000, "Vision read");
-      if(r) return r;
-    }
-  }catch(e){ lastErr=e; }
-  throw new Error(lastErr&&lastErr.message?lastErr.message:"Puter vision failed.");
-}
-
-function parsePuterJSON(resp){
-  let text="";
-  if(typeof resp==="string")text=resp;
-  else if(resp.message&&resp.message.content){const c=resp.message.content;text=Array.isArray(c)?c.map(b=>b.text||"").join(""):String(c);}
-  else if(resp.text)text=resp.text; else text=JSON.stringify(resp);
-  return JSON.parse(text.replace(/```json|```/g,"").trim());
-}
-
-/* ══════════════ DATA LAYER — real Supabase OR mock ══════════════ */
-const HAS_SUPABASE = !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
-
-let DB;
-if (HAS_SUPABASE) {
-  // Real backend.
-  const sb = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
-  DB = {
-    live:true, sb,
-    auth:{
-      signUpEmail:(e,p)=>sb.auth.signUp({email:e,password:p}),
-      signInEmail:(e,p)=>sb.auth.signInWithPassword({email:e,password:p}),
-      sendMagicLink:(e)=>sb.auth.signInWithOtp({email:e,options:{shouldCreateUser:true}}),
-      signOut:()=>sb.auth.signOut(),
-      getSession:()=>sb.auth.getSession(),
-      onChange:(cb)=>sb.auth.onAuthStateChange((_e,s)=>cb(s)),
-    },
-    createCommunity:(name,slug,dn)=>sb.rpc("create_community",{p_name:name,p_slug:slug,p_display_name:dn}),
-    joinCommunity:(slug,dn,wc)=>sb.rpc("join_community",{p_slug:slug,p_display_name:dn,p_wants_captain:wc}),
-    async profile(){const{data:{user}}=await sb.auth.getUser();if(!user)return null;const{data}=await sb.from("users").select("*, communities(*)").eq("id",user.id).maybeSingle();return data;},
-    seasonsActive:()=>sb.from("seasons").select("*").eq("status","active").maybeSingle(),
-    seasonsCreate:(cid,p)=>sb.from("seasons").insert({community_id:cid,...p}).select().single(),
-    eventsForSeason:(sid)=>sb.from("events").select("*").eq("season_id",sid).order("reg_opens",{ascending:true}),
-    eventsCreate:(cid,sid,p)=>sb.from("events").insert({community_id:cid,season_id:sid,...p}).select().single(),
-    async regsForEvent(eventId){const{data}=await sb.from("registrations").select("*, users(display_name, wants_captain)").eq("event_id",eventId);return (data||[]).map(r=>({id:r.id,name:r.users?.display_name,wantsCaptain:r.users?.wants_captain,isCaptain:r.is_captain}));},
-    async myReg(eventId){const{data:{user}}=await sb.auth.getUser();if(!user)return null;const{data}=await sb.from("registrations").select("*").eq("event_id",eventId).eq("user_id",user.id).maybeSingle();return data;},
-    async register(cid,eventId){const{data:{user}}=await sb.auth.getUser();return sb.from("registrations").insert({community_id:cid,event_id:eventId,user_id:user.id}).select().single();},
-    async unregister(eventId){const{data:{user}}=await sb.auth.getUser();return sb.from("registrations").delete().eq("event_id",eventId).eq("user_id",user.id);},
-    async setMyWantsCaptain(val){const{data:{user}}=await sb.auth.getUser();return sb.from("users").update({wants_captain:val}).eq("id",user.id);},
-
-    // ── match results / leaderboard ──
-    async resultsForSeason(seasonId){
-      // join through events so we get this season's rows with player names
-      const{data:evs}=await sb.from("events").select("id").eq("season_id",seasonId);
-      const ids=(evs||[]).map(e=>e.id); if(!ids.length)return [];
-      const{data}=await sb.from("match_results").select("*, users(display_name), events(weekend_label)").in("event_id",ids);
-      return (data||[]).map(r=>({
-        id:r.id, eventId:r.event_id, name:r.users?.display_name,
-        weekend:r.events?.weekend_label,
-        k:r.stat_payload?.k||0, a:r.stat_payload?.a||0, acs:r.stat_payload?.acs||0,
-        won:r.team_won, unverified:!!r.stat_payload?.unverified,
-      }));
-    },
-    async addResult(cid,eventId,userId,row){
-      const stat={k:+row.k||0,a:+row.a||0,acs:+row.acs||0,unverified:!!row.unverified};
-      const pts=matchPoints({k:stat.k,a:stat.a,acs:stat.acs,won:!!row.won});
-      return sb.from("match_results").insert({community_id:cid,event_id:eventId,user_id:userId,stat_payload:stat,team_won:!!row.won,points_computed:pts}).select().single();
-    },
-    async removeResult(id){return sb.from("match_results").delete().eq("id",id);},
-    async verifyResult(id){
-      const{data:cur}=await sb.from("match_results").select("stat_payload").eq("id",id).single();
-      const sp={...(cur?.stat_payload||{}),unverified:false};
-      return sb.from("match_results").update({stat_payload:sp}).eq("id",id);
-    },
-    // resolve a display_name -> user_id within the community (for import save)
-    async userIdByName(cid,name){const{data}=await sb.from("users").select("id,display_name").eq("community_id",cid).eq("display_name",name).maybeSingle();return data?.id||null;},
-    // name-map memory persisted on the community row (jsonb settings)
-    async getNameMap(cid){const{data}=await sb.from("communities").select("name_map").eq("id",cid).maybeSingle();return data?.name_map||{};},
-    async setNameMap(cid,map){return sb.from("communities").update({name_map:map}).eq("id",cid);},
-
-    // ── draft (Stage 1: load teams + ranked players for a weekend) ──
-    async draftPlayers(eventId){
-      // registered players with their per-weekend rank
-      const{data}=await sb.from("registrations").select("user_id, rank, is_captain, users(display_name)").eq("event_id",eventId);
-      return (data||[]).map(r=>({id:r.user_id, name:r.users?.display_name, rank:r.rank, isCaptain:r.is_captain}));
-    },
-    async draftTeams(eventId){
-      const{data}=await sb.from("teams").select("id, name, budget, captain_user_id, users:captain_user_id(display_name), team_players(user_id, draft_price)").eq("event_id",eventId);
-      return (data||[]).map(t=>({id:t.id, name:t.name, budget:t.budget, captainId:t.captain_user_id, captain:t.users?.display_name, roster:(t.team_players||[]).map(tp=>tp.user_id)}));
-    },
-    async setPlayerRank(eventId,userId,rank){return sb.from("registrations").update({rank}).eq("event_id",eventId).eq("user_id",userId);},
-    async createTeamForCaptain(cid,eventId,captainUserId,name){return sb.from("teams").insert({community_id:cid,event_id:eventId,captain_user_id:captainUserId,name,budget:START_BUDGET}).select().single();},
-
-    // ── live draft state (realtime) ──
-    async getDraftState(eventId){const{data}=await sb.from("draft_state").select("state").eq("event_id",eventId).maybeSingle();return data?.state||null;},
-    async setDraftState(cid,eventId,state){return sb.from("draft_state").upsert({event_id:eventId,community_id:cid,state,updated_at:new Date().toISOString()},{onConflict:"event_id"});},
-    subscribeDraft(eventId,onState){
-      const ch=sb.channel("draft_"+eventId)
-        .on("postgres_changes",{event:"*",schema:"public",table:"draft_state",filter:"event_id=eq."+eventId},(payload)=>{
-          if(payload.new&&payload.new.state)onState(payload.new.state);
-        }).subscribe();
-      return ()=>{sb.removeChannel(ch);};
-    },
-    // commit a finished draft: write team_players rows + final budgets
-    async commitDraftResults(cid,eventId,teams){
-      for(const t of teams){
-        await sb.from("teams").update({budget:t.budget,name:t.name}).eq("id",t.id);
-        for(const pid of t.roster){
-          const price=(t.prices&&t.prices[pid])||0;
-          await sb.from("team_players").upsert({team_id:t.id,user_id:pid,community_id:cid,draft_price:price},{onConflict:"team_id,user_id"});
-        }
+// standings table for a set of teamIds across a set of matches
+// returns sorted rows: { teamId, played, won, lost, pts, rf, ra, diff }
+function computeStandings(teamIds, matches, overrides) {
+  const row = {};
+  teamIds.forEach((id) => { row[id] = { teamId: id, played: 0, won: 0, lost: 0, pts: 0, rf: 0, ra: 0, diff: 0 }; });
+  for (const m of matches) {
+    if (!m.done || m.teamA == null || m.teamB == null) continue;
+    if (!row[m.teamA] || !row[m.teamB]) continue;
+    const ta = matchTally(m, m.teamA), tb = matchTally(m, m.teamB);
+    row[m.teamA].rf += ta.rf; row[m.teamA].ra += ta.ra;
+    row[m.teamB].rf += tb.rf; row[m.teamB].ra += tb.ra;
+    row[m.teamA].played++; row[m.teamB].played++;
+    if (m.winner === m.teamA) { row[m.teamA].won++; row[m.teamA].pts += 3; row[m.teamB].lost++; }
+    else if (m.winner === m.teamB) { row[m.teamB].won++; row[m.teamB].pts += 3; row[m.teamA].lost++; }
+  }
+  let rows = teamIds.map((id) => { const r = row[id]; r.diff = r.rf - r.ra; return r; });
+  // apply manual overrides (commissioner can hand-edit pts/diff)
+  if (overrides) rows = rows.map((r) => overrides[r.teamId] ? { ...r, ...overrides[r.teamId], _ov: true } : r);
+  // head-to-head helper between two teams
+  const h2h = (x, y) => {
+    for (const m of matches) {
+      if (!m.done) continue;
+      if ((m.teamA === x && m.teamB === y) || (m.teamA === y && m.teamB === x)) {
+        if (m.winner === x) return -1; if (m.winner === y) return 1;
       }
-      return {ok:true};
-    },
-
-    // ── player profiles (tracker-derived scouting stats) ──
-    async getProfile(userId){const{data}=await sb.from("player_profiles").select("*").eq("user_id",userId).maybeSingle();return data||null;},
-    async profilesForCommunity(cid){const{data}=await sb.from("player_profiles").select("*, users(display_name)").eq("community_id",cid);return (data||[]).map(p=>({...p,name:p.users?.display_name}));},
-    async saveProfile(cid,userId,prof){
-      return sb.from("player_profiles").upsert({
-        user_id:userId, community_id:cid,
-        rank:prof.rank, role:prof.role, agent:prof.agent,
-        kda:prof.kda, acs:prof.acs, hs:prof.hs, win:prof.win,
-        badges:prof.badges||[], tracker_url:prof.tracker_url||null,
-        updated_at:new Date().toISOString()
-      },{onConflict:"user_id"});
-    },
+    }
+    return 0;
   };
-} else {
-  // Mock backend for preview. In-memory; resets on reload.
-  const store = {
-    session:null, profile:null, role:null,
-    season:null, events:[], regs:{},
-  };
-  const seedRegs = ()=>{ store.regs={0:[
-    {id:"m1",name:"Vex",wantsCaptain:true,isCaptain:false},
-    {id:"m2",name:"Kiro",wantsCaptain:true,isCaptain:false},
-    {id:"m3",name:"Nova",wantsCaptain:false,isCaptain:false},
-    {id:"m4",name:"Echo",wantsCaptain:false,isCaptain:false},
-    {id:"m5",name:"Riot",wantsCaptain:true,isCaptain:false},
-  ]};};
-  const myName=()=>store.role==="host"?"Rumer":"test";
-  const ok=(data)=>Promise.resolve({data,error:null});
-  DB = {
-    live:false,
-    auth:{
-      signUpEmail:()=>ok({}), signInEmail:()=>{store.session={user:{id:"demo"}};return ok({});},
-      sendMagicLink:()=>ok({}), signOut:()=>{store.session=null;store.profile=null;store.role=null;return ok({});},
-      getSession:()=>ok({session:store.session}),
-      onChange:()=>({data:{subscription:{unsubscribe(){}}}}),
-    },
-    createCommunity:(name,slug,dn)=>{store.role="host";store.profile={display_name:dn||"Rumer",role:"host",community_id:"c1",communities:{name:name,slug:slug}};return ok({});},
-    joinCommunity:(slug,dn,wc)=>{store.role="player";store.profile={display_name:dn||"test",role:"player",community_id:"c1",communities:{name:"Minaal.GG",slug:slug}};return ok({});},
-    profile:()=>Promise.resolve(store.profile),
-    seasonsActive:()=>ok(store.season),
-    seasonsCreate:(cid,p)=>{store.season={id:"s1",...p};return ok(store.season);},
-    eventsForSeason:()=>ok(store.events),
-    eventsCreate:(cid,sid,p)=>{const ev={id:store.events.length,...p};store.events.push(ev);return ok(ev);},
-    regsForEvent:(eventId)=>Promise.resolve(store.regs[eventId]||[]),
-    myReg:(eventId)=>Promise.resolve((store.regs[eventId]||[]).find(r=>r.name===myName())||null),
-    register:(cid,eventId)=>{if(!store.regs[eventId])store.regs[eventId]=[];store.regs[eventId].push({id:"me",name:myName(),wantsCaptain:false,isCaptain:false});return ok({});},
-    unregister:(eventId)=>{const a=store.regs[eventId]||[];const i=a.findIndex(r=>r.name===myName());if(i>=0)a.splice(i,1);return ok({});},
-    setMyWantsCaptain:(val)=>{for(const id in store.regs){const r=store.regs[id].find(r=>r.name===myName());if(r)r.wantsCaptain=val;}return ok({});},
-
-    // ── match results / leaderboard (mock) ──
-    resultsForSeason:()=>Promise.resolve(store.results||[]),
-    addResult:(cid,eventId,userId,row)=>{
-      if(!store.results)store.results=[];
-      const ev=store.events.find(e=>e.id===eventId);
-      store.results.push({id:"r"+(store._rid=(store._rid||0)+1),eventId,name:userId,weekend:ev?ev.weekend_label:("Wk "+eventId),k:+row.k||0,a:+row.a||0,acs:+row.acs||0,won:!!row.won,unverified:!!row.unverified});
-      return ok({});
-    },
-    removeResult:(id)=>{store.results=(store.results||[]).filter(r=>r.id!==id);return ok({});},
-    verifyResult:(id)=>{const r=(store.results||[]).find(x=>x.id===id);if(r)r.unverified=false;return ok({});},
-    userIdByName:(cid,name)=>Promise.resolve(name), // mock: name IS the id
-    getNameMap:()=>Promise.resolve(store.nameMap||{}),
-    setNameMap:(cid,map)=>{store.nameMap=map;return ok({});},
-
-    // ── draft (mock) ──
-    draftPlayers:(eventId)=>{
-      const regs=store.regs[eventId]||[];
-      const seedRank={Vex:"Immortal",Kiro:"Diamond",Nova:"Platinum",Echo:"Gold",Riot:"Ascendant",test:"Silver"};
-      return Promise.resolve(regs.map(r=>({id:r.id||r.name,name:r.name,rank:r.rank||seedRank[r.name]||"Gold",isCaptain:r.isCaptain})));
-    },
-    draftTeams:(eventId)=>{
-      if(!store.teams)store.teams=[
-        {id:"tm1",name:"CRIMSON PULSE",budget:START_BUDGET,captainId:"m1",captain:"Vex",roster:[]},
-        {id:"tm2",name:"NEON SYNDICATE",budget:START_BUDGET,captainId:"m2",captain:"Kiro",roster:[]},
-      ];
-      return Promise.resolve(store.teams);
-    },
-    setPlayerRank:(eventId,userId,rank)=>{const r=(store.regs[eventId]||[]).find(x=>(x.id||x.name)===userId);if(r)r.rank=rank;return ok({});},
-    createTeamForCaptain:(cid,eventId,capId,name)=>{if(!store.teams)store.teams=[];const t={id:"tm"+(store.teams.length+1),name,budget:START_BUDGET,captainId:capId,captain:capId,roster:[]};store.teams.push(t);return ok(t);},
-
-    // ── live draft state (mock; same-tab realtime via callback registry) ──
-    _draftState:null, _draftSubs:[],
-    getDraftState:function(){return Promise.resolve(this._draftState);},
-    setDraftState:function(cid,eventId,state){this._draftState=state;this._draftSubs.forEach(cb=>{try{cb(state);}catch(e){}});return ok({});},
-    subscribeDraft:function(eventId,onState){this._draftSubs.push(onState);return ()=>{this._draftSubs=this._draftSubs.filter(c=>c!==onState);};},
-    commitDraftResults:function(cid,eventId,teams){store.teams=teams;return ok({ok:true});},
-
-    // ── player profiles (mock) ──
-    _profiles:{
-      Nova:{rank:"Immortal",role:"Duelist",agent:"Jett",kda:1.42,acs:268,hs:31,win:58,badges:["Winter Tourney Winner","MVP"]},
-      Echo:{rank:"Diamond",role:"Controller",agent:"Omen",kda:1.18,acs:221,hs:24,win:52,badges:["IGL"]},
-      Riot:{rank:"Ascendant",role:"Initiator",agent:"Sova",kda:1.27,acs:240,hs:27,win:55,badges:["Clutch King"]},
-      Pulse:{rank:"Platinum",role:"Sentinel",agent:"Killjoy",kda:1.09,acs:198,hs:22,win:49,badges:[]},
-      Saint:{rank:"Gold",role:"Flex",agent:"Clove",kda:1.02,acs:187,hs:19,win:47,badges:["Community Pick"]},
-      Drift:{rank:"Silver",role:"Duelist",agent:"Raze",kda:1.33,acs:252,hs:26,win:54,badges:["Frag Leader"]},
-    },
-    getProfile:function(userId){const p=this._profiles[userId];return Promise.resolve(p?{user_id:userId,...p}:null);},
-    profilesForCommunity:function(){return Promise.resolve(Object.entries(this._profiles).map(([name,p])=>({user_id:name,name,...p})));},
-    saveProfile:function(cid,userId,prof){this._profiles[userId]={rank:prof.rank,role:prof.role,agent:prof.agent,kda:prof.kda,acs:prof.acs,hs:prof.hs,win:prof.win,badges:prof.badges||[]};return ok({});},
-    _store:store, _seedRegs:seedRegs,
-  };
-  // On season create, seed demo regs + a couple weekends of results so previews aren't empty.
-  const origCreate = DB.seasonsCreate;
-  DB.seasonsCreate = (cid,p)=>{ const r=origCreate(cid,p); seedRegs(); seedResults(); return r; };
-  function seedResults(){
-    store.results=[
-      {id:"r1",eventId:0,name:"Vex",weekend:"Week 1",k:22,a:5,acs:280,won:true,unverified:false},
-      {id:"r2",eventId:0,name:"Kiro",weekend:"Week 1",k:18,a:7,acs:245,won:true,unverified:false},
-      {id:"r3",eventId:0,name:"Nova",weekend:"Week 1",k:15,a:9,acs:210,won:false,unverified:false},
-      {id:"r4",eventId:0,name:"Echo",weekend:"Week 1",k:12,a:6,acs:190,won:false,unverified:false},
-      {id:"r5",eventId:0,name:"Riot",weekend:"Week 1",k:25,a:4,acs:310,won:false,unverified:false},
-      {id:"r6",eventId:0,name:"test",weekend:"Week 1",k:17,a:8,acs:230,won:true,unverified:false},
-    ];
-    store._rid=6;
-  }
+  rows.sort((a, b) =>
+    b.pts - a.pts || b.diff - a.diff || b.rf - a.rf || h2h(a.teamId, b.teamId) || 0
+  );
+  return rows;
 }
 
-/* ══════════════ APP ROOT ══════════════ */
-export default function App(){
-  const [session,setSession]=useState(null);
-  const [profile,setProfile]=useState(null);
-  const [loading,setLoading]=useState(true);
-  const [openEvent,setOpenEvent]=useState(null);
-  const [showBoard,setShowBoard]=useState(false);
-
-  useEffect(()=>{
-    DB.auth.getSession().then(({data})=>setSession(data.session));
-    const {data:listener}=DB.auth.onChange((s)=>setSession(s));
-    return ()=>listener?.subscription?.unsubscribe();
-  },[]);
-  useEffect(()=>{
-    if(!session){setProfile(null);setLoading(false);return;}
-    setLoading(true);
-    DB.profile().then((p)=>{setProfile(p);setLoading(false);});
-  },[session]);
-
-  // demo helpers let the preview bar jump screens without real auth
-  const demo = !DB.live ? {
-    setSession,setProfile,
-    goOnboard:()=>{DB._store.session={user:{id:"demo"}};DB._store.profile=null;DB._store.role=null;setSession(DB._store.session);setProfile(null);setOpenEvent(null);},
-    goHost:()=>{DB.createCommunity("Minaal.GG","minaal-gg","Rumer").then(()=>{DB._store.session={user:{id:"demo"}};setSession(DB._store.session);DB.profile().then(setProfile);setOpenEvent(null);});},
-    goPlayer:()=>{DB.joinCommunity("minaal-gg","test",false).then(()=>{DB._store.session={user:{id:"demo"}};setSession(DB._store.session);DB.profile().then(setProfile);setOpenEvent(null);});},
-    signOut:()=>{DB.auth.signOut();setSession(null);setProfile(null);setOpenEvent(null);},
-  } : null;
-
-  let view;
-  if(loading) view=<Shell><div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><TPanel><p style={{margin:0,color:MUTE,letterSpacing:"0.1em",fontFamily:FONT_LABEL}}>LOADING…</p></TPanel></div></Shell>;
-  else if(!session) view=<AuthScreen onAuthed={()=>{ if(!DB.live){DB._store.session={user:{id:"demo"}};setSession(DB._store.session);} }}/>;
-  else if(!profile) view=<Onboarding onDone={()=>DB.profile().then(setProfile)} onSignOut={()=>{DB.auth.signOut();setSession(null);}}/>;
-  else if(openEvent!==null) view=<WeekendDetail profile={profile} eventId={openEvent} onBack={()=>setOpenEvent(null)} onSignOut={()=>{DB.auth.signOut();setSession(null);setProfile(null);}}/>;
-  else if(showBoard) view=<Leaderboard profile={profile} onBack={()=>setShowBoard(false)} onSignOut={()=>{DB.auth.signOut();setSession(null);setProfile(null);setShowBoard(false);}}/>;
-  else view=<Home profile={profile} onOpenEvent={setOpenEvent} onShowBoard={()=>setShowBoard(true)} onSignOut={()=>{DB.auth.signOut();setSession(null);setProfile(null);}}/>;
-
-  return <>{demo && <DemoBar session={session} profile={profile} openEvent={openEvent} demo={demo}/>}{view}</>;
+// locate a match inside a tournament by locator: {kind, ...}
+//  group: {kind:"group", groupId, matchId}  | rr: {kind:"rr", matchId}
+//  final: {kind:"final"} | elim: {kind:"elim", round, idx}
+function findMatch(t, loc) {
+  if (!loc) return null;
+  if (loc.kind === "group") return (t.matches?.[loc.groupId] || []).find((m) => m.id === loc.matchId) || null;
+  if (loc.kind === "rr") return (t.matches || []).find((m) => m.id === loc.matchId) || null;
+  if (loc.kind === "final") return t.final || null;
+  if (loc.kind === "elim") return t.rounds?.[loc.round]?.[loc.idx] || null;
+  return null;
 }
 
-/* ══════════════ DEMO BAR (preview only) ══════════════ */
-function DemoBar({session,profile,openEvent,demo}){
-  const isHost=profile?.role==="host";
-  const stage = !session ? "auth" : !profile ? "onboard" : "home";
-  const sbtn=(txt,on,fn)=>(<button onClick={fn} className="ea-btn" style={{padding:"7px 13px",cursor:"pointer",textTransform:"uppercase",fontFamily:FONT_LABEL,fontWeight:700,fontSize:12,letterSpacing:"0.1em",background:on?"rgba(61,123,255,0.18)":"rgba(255,255,255,0.03)",color:on?"#eaf1ff":"rgba(200,215,255,0.6)",border:`1px solid ${on?HUE:"rgba(120,150,220,0.25)"}`,clipPath:notch(8)}}>{txt}</button>);
-  return <div style={{position:"sticky",top:0,zIndex:50,background:"rgba(8,11,20,0.94)",borderBottom:"1px solid rgba(61,123,255,0.3)",padding:"8px 14px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",fontFamily:FONT_LABEL}}>
-    <span style={{color:"#7da6ff",fontWeight:700,letterSpacing:"0.1em",fontSize:12,textTransform:"uppercase"}}>DEMO ·</span>
-    {sbtn("1 Sign in",stage==="auth",()=>demo.signOut())}
-    {sbtn("2 Onboard",stage==="onboard",demo.goOnboard)}
-    {sbtn("3 Host view",stage==="home"&&isHost,demo.goHost)}
-    {sbtn("4 Player view",stage==="home"&&!isHost,demo.goPlayer)}
-    <span style={{color:"rgba(200,215,255,0.4)",fontSize:11,marginLeft:"auto"}}>mock data · no database</span>
-  </div>;
-}
-
-function Brand(){
-  return <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18}}>
-    <div style={{width:6,height:30,background:CYAN,boxShadow:`0 0 12px ${CYAN}`}}/>
-    <div style={{fontFamily:FONT_HEAD,fontWeight:700,fontSize:30,letterSpacing:"0.04em",color:"#fff"}}>VOLT<span style={{color:CYAN}}> // </span>LEAGUE</div>
-  </div>;
-}
-const center={minHeight:"calc(100vh - 0px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20};
-
-/* ══════════════ AUTH ══════════════ */
-function AuthScreen({onAuthed}){
-  const [mode,setMode]=useState("signin");
-  const [email,setEmail]=useState(""),[pw,setPw]=useState(""),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false);
-  const linkBtn={background:"none",border:"none",color:CYAN,cursor:"pointer",padding:0,fontFamily:FONT_LABEL,fontSize:13,letterSpacing:"0.04em"};
-  async function go(){
-    setMsg(null);setBusy(true);
-    try{
-      if(mode==="magic"){const{error}=await DB.auth.sendMagicLink(email);if(error)throw error;setMsg({ok:true,text:"Check your email for a login link."});}
-      else if(mode==="signup"){const{error}=await DB.auth.signUpEmail(email,pw);if(error)throw error;setMsg({ok:true,text:"Account made. Confirm via email if asked, then sign in."});}
-      else{const{error}=await DB.auth.signInEmail(email,pw);if(error)throw error;onAuthed&&onAuthed();}
-    }catch(e){setMsg({ok:false,text:e.message});}
-    setBusy(false);
-  }
-  return <Shell><div style={center}><div style={{width:"100%",maxWidth:440}}>
-    <Brand/>
-    <TPanel>
-      <p style={{color:MUTE,margin:"0 0 18px",fontFamily:FONT_LABEL,fontSize:14,letterSpacing:"0.04em"}}>Sign in to run or join a league.</p>
-      {msg&&<div style={msg.ok?okBox:errBox}>{msg.text}</div>}
-      <label style={labelTxt}>Email</label>
-      <input style={{...fieldStyle,marginBottom:14}} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@email.com"/>
-      {mode!=="magic"&&<><label style={labelTxt}>Password</label>
-        <input style={{...fieldStyle,marginBottom:14}} type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"/></>}
-      <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} disabled={busy} onClick={go}>{busy?"…":mode==="magic"?"Send Login Link →":mode==="signup"?"Create Account →":"Sign In →"}</button>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:16}}>
-        <button onClick={()=>setMode(mode==="signup"?"signin":"signup")} style={linkBtn}>{mode==="signup"?"Have an account? Sign in":"New here? Create account"}</button>
-        <button onClick={()=>setMode(mode==="magic"?"signin":"magic")} style={{...linkBtn,color:"#7da6ff"}}>{mode==="magic"?"Use password":"Email me a link"}</button>
-      </div>
-    </TPanel>
-  </div></div></Shell>;
-}
-
-/* ══════════════ ONBOARDING ══════════════ */
-function Onboarding({onDone,onSignOut}){
-  const [tab,setTab]=useState("join");
-  const [name,setName]=useState(""),[code,setCode]=useState(""),[commName,setCommName]=useState("");
-  const [wantsCaptain,setWantsCaptain]=useState(false),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false);
-  const slugify=(s)=>s.toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
-  async function submit(){
-    setMsg(null);setBusy(true);
-    try{
-      if(!name.trim())throw new Error("Enter your display name.");
-      if(tab==="host"){if(!commName.trim())throw new Error("Enter a community name.");const{error}=await DB.createCommunity(commName,slugify(commName),name);if(error)throw error;}
-      else{if(!code.trim())throw new Error("Enter the community code.");const{error}=await DB.joinCommunity(slugify(code),name,wantsCaptain);if(error)throw error;}
-      onDone();
-    }catch(e){setMsg({ok:false,text:e.message});setBusy(false);}
-  }
-  const tabBtn=(id,text)=>(<button onClick={()=>setTab(id)} style={{flex:1,padding:"11px",cursor:"pointer",fontFamily:FONT_LABEL,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",fontSize:13,background:tab===id?"rgba(61,123,255,0.16)":"rgba(255,255,255,0.03)",color:tab===id?"#aec6ff":"rgba(200,215,255,0.55)",border:`1px solid ${tab===id?HUE:"rgba(120,150,220,0.2)"}`,clipPath:notch(9),marginRight:id==="join"?8:0}}>{text}</button>);
-  return <Shell><div style={center}><div style={{width:"100%",maxWidth:460}}>
-    <Brand/>
-    <TPanel>
-      <Eyebrow>Welcome</Eyebrow>
-      <TungstenHead word1="Join or" word2="Create"/>
-      <p style={{color:MUTE,margin:"10px 0 18px",fontFamily:FONT_LABEL,fontSize:14}}>Join a community, or start your own league.</p>
-      <div style={{display:"flex",marginBottom:20}}>{tabBtn("join","Join as player")}{tabBtn("host","Start a league")}</div>
-      {msg&&<div style={msg.ok?okBox:errBox}>{msg.text}</div>}
-      <label style={labelTxt}>Your display name</label>
-      <input style={{...fieldStyle,marginBottom:14}} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Phoenix"/>
-      {tab==="join"?<>
-        <label style={labelTxt}>Community code</label>
-        <input style={{...fieldStyle,marginBottom:14}} value={code} onChange={e=>setCode(e.target.value)} placeholder="given by your host"/>
-        <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",color:"#cfe0f0",fontSize:14,marginBottom:14,fontFamily:FONT_LABEL}}>
-          <input type="checkbox" checked={wantsCaptain} onChange={e=>setWantsCaptain(e.target.checked)}/>I'm willing to be a captain</label>
-      </>:<>
-        <label style={labelTxt}>Community name</label>
-        <input style={{...fieldStyle,marginBottom:14}} value={commName} onChange={e=>setCommName(e.target.value)} placeholder="e.g. Karachi Valorant Club"/>
-        <div style={okBox}>Players join using the code: <b style={{color:CYAN}}>{commName?slugify(commName):"your-name-here"}</b></div>
-      </>}
-      <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} disabled={busy} onClick={submit}>{busy?"…":tab==="host"?"Create League →":"Join →"}</button>
-      <button onClick={onSignOut} style={{...notchBtn(false),width:"100%",marginTop:12}}>Sign out</button>
-    </TPanel>
-  </div></div></Shell>;
-}
-
-/* ══════════════ HOME (season hub) ══════════════ */
-function Home({profile,onOpenEvent,onShowBoard,onSignOut}){
-  const isHost=profile.role==="host";
-  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:50}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <Brand/>
-      <div style={{display:"flex",gap:8}}>
-        <button className="ea-btn" onClick={onShowBoard} style={notchBtn(false)}>Leaderboard</button>
-        <button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
-      </div>
-    </div>
-    <TPanel style={{padding:"14px 18px",marginBottom:16}}>
-      <p style={{margin:0,fontFamily:FONT_MONO,fontSize:13,letterSpacing:"0.04em",color:"rgba(200,215,255,0.75)"}}>
-        <b style={{color:"#fff"}}>{profile.display_name}</b> · <span style={{color:isHost?"#f5c453":CYAN}}>{isHost?"HOST":"PLAYER"}</span> · {profile.communities?.name}{isHost&&<> · CODE <b style={{color:CYAN}}>{profile.communities?.slug}</b></>}</p>
-    </TPanel>
-    <SeasonScreen profile={profile} onOpenEvent={onOpenEvent}/>
-  </div></Shell>;
-}
-
-/* ══════════════ SEASON ══════════════ */
-function SeasonScreen({profile,onOpenEvent}){
-  const isHost=profile.role==="host";
-  const [season,setSeason]=useState(null),[evs,setEvs]=useState([]),[loading,setLoading]=useState(true),[counts,setCounts]=useState({});
-  async function load(){
-    setLoading(true);
-    const {data:s}=await DB.seasonsActive();setSeason(s||null);
-    if(s){const {data:e}=await DB.eventsForSeason(s.id);const list=e||[];setEvs(list);
-      const c={};for(const ev of list){c[ev.id]=(await DB.regsForEvent(ev.id)).length;}setCounts(c);}
-    else setEvs([]);
-    setLoading(false);
-  }
-  useEffect(()=>{load();},[]);
-  if(loading)return <TPanel><p style={{textAlign:"center",color:MUTE,margin:0,fontFamily:FONT_LABEL,letterSpacing:"0.1em"}}>LOADING SEASON…</p></TPanel>;
-  if(!season)return isHost?<CreateSeason profile={profile} onCreated={load}/>:<TPanel><Eyebrow>Season</Eyebrow><TungstenHead word1="No Active" word2="Season"/><p style={{color:MUTE,marginTop:12,fontFamily:FONT_LABEL,fontSize:15}}>Your host hasn't started a season yet. Check back soon.</p></TPanel>;
-  return <div style={{display:"flex",flexDirection:"column",gap:14}}>
-    <TPanel>
-      <Eyebrow>Active Season</Eyebrow>
-      <TungstenHead word1={season.name.split(" ")[0]||season.name} word2={season.name.split(" ").slice(1).join(" ")}/>
-      <p style={{color:MUTE,marginTop:10,fontFamily:FONT_MONO,fontSize:13,letterSpacing:"0.06em"}}>{evs.length} WEEKEND{evs.length===1?"":"S"} · {fmt(season.starts_at)} → {fmt(season.ends_at)}</p>
-    </TPanel>
-    <SectionLabel>Weekend Schedule</SectionLabel>
-    {evs.map(ev=><WeekendRow key={ev.id} ev={ev} count={counts[ev.id]||0} onOpen={()=>onOpenEvent(ev.id)}/>)}
-  </div>;
-}
-function WeekendRow({ev,count,onOpen}){
-  const phase=computeAutoPhase(ev),b=phaseBadge(phase),settled=phase==="settled";
-  return <TPanel hue={settled?"#5a6b80":b.color} onClick={onOpen} className="ea-btn" style={{padding:16,opacity:settled?0.7:1,borderLeft:`3px solid ${b.color}`,cursor:"pointer"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-      <div>
-        <div style={{fontFamily:FONT_HEAD,fontWeight:700,fontSize:22,color:"#f4f8ff",letterSpacing:"0.04em",textTransform:"uppercase"}}>{ev.weekend_label}</div>
-        <div style={{color:"rgba(200,215,255,0.6)",fontSize:12,marginTop:4,fontFamily:FONT_MONO,letterSpacing:"0.02em"}}>REG {fmt(ev.reg_opens)}–{fmt(ev.reg_closes)} · DRAFT {fmt(ev.draft_at)} · MATCHES {fmt(ev.matches_start)}–{fmt(ev.matches_end)}</div>
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
-        {count>0&&<span style={{fontFamily:FONT_MONO,color:"#7da6ff",fontSize:12,letterSpacing:"0.05em"}}>{count} IN</span>}
-        <span style={{padding:"5px 13px",fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:b.color,border:`1px solid ${b.color}66`,background:`${b.color}1a`,clipPath:notch(7),fontFamily:FONT_LABEL,whiteSpace:"nowrap"}}>{b.label}</span>
-        <span style={{color:"#7da6ff",fontSize:18}}>›</span>
-      </div>
-    </div>
-  </TPanel>;
-}
-function CreateSeason({profile,onCreated}){
-  const [name,setName]=useState(""),[count,setCount]=useState(4),[dates,setDates]=useState(["","","",""]),[busy,setBusy]=useState(false),[error,setError]=useState(null);
-  function setCountSafe(n){const v=Math.max(1,Math.min(8,n));setCount(v);setDates(p=>{const x=p.slice(0,v);while(x.length<v)x.push("");return x;});}
-  async function create(){
-    setError(null);
-    if(!name.trim())return setError("Give the season a name.");
-    if(dates.some(d=>!d))return setError("Pick a Saturday date for every weekend.");
-    setBusy(true);
-    try{
-      const sorted=[...dates].sort();
-      const first=weekendWindows(sorted[0]),last=weekendWindows(sorted[sorted.length-1]);
-      const {data:s,error:se}=await DB.seasonsCreate(profile.community_id,{name:name.trim(),status:"active",starts_at:first.reg_opens.slice(0,10),ends_at:last.matches_end.slice(0,10)});
-      if(se)throw se;
-      for(let i=0;i<sorted.length;i++){const w=weekendWindows(sorted[i]);const {error:ee}=await DB.eventsCreate(profile.community_id,s.id,{weekend_label:`Week ${i+1}`,phase:"registration_open",...w});if(ee)throw ee;}
-      onCreated();
-    }catch(e){setError(e.message);setBusy(false);}
-  }
-  return <TPanel>
-    <Eyebrow>Setup</Eyebrow>
-    <TungstenHead word1="Start a" word2="Season"/>
-    <p style={{color:MUTE,margin:"10px 0 20px",fontFamily:FONT_LABEL,fontSize:15}}>Name it, choose how many weekends, and pick each weekend's Saturday (match day). The rest of the schedule fills in automatically.</p>
-    {error&&<div style={errBox}>{error}</div>}
-    <SectionLabel>1 · Season name</SectionLabel>
-    <input style={{...fieldStyle,marginBottom:20}} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. June Season"/>
-    <SectionLabel>2 · Number of weekends</SectionLabel>
-    <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
-      <button className="ea-btn" style={notchBtn(false)} onClick={()=>setCountSafe(count-1)}>–</button>
-      <span style={{fontFamily:FONT_MONO,fontSize:22,fontWeight:700,minWidth:30,textAlign:"center",color:"#aec6ff"}}>{count}</span>
-      <button className="ea-btn" style={notchBtn(false)} onClick={()=>setCountSafe(count+1)}>+</button>
-    </div>
-    <SectionLabel>3 · Match Saturday for each weekend</SectionLabel>
-    {Array.from({length:count}).map((_,i)=>(
-      <div key={i} style={{display:"flex",alignItems:"center",gap:12,marginBottom:9}}>
-        <span style={{color:"#7da6ff",fontSize:13,minWidth:64,fontFamily:FONT_LABEL,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.08em"}}>Week {i+1}</span>
-        <input type="date" style={fieldStyle} value={dates[i]||""} onChange={e=>setDates(d=>d.map((x,j)=>j===i?e.target.value:x))}/>
-      </div>
-    ))}
-    <button className="ea-btn" style={{...notchBtn(true),marginTop:18,width:"100%"}} disabled={busy} onClick={create}>{busy?"Creating…":"Create Season →"}</button>
-  </TPanel>;
-}
-
-/* ══════════════ WEEKEND DETAIL (registration) ══════════════ */
-function WeekendDetail({profile,eventId,onBack,onSignOut}){
-  const isHost=profile.role==="host";
-  const [ev,setEv]=useState(null),[loading,setLoading]=useState(true),[tick,setTick]=useState(0),[showDraft,setShowDraft]=useState(false);
-  useEffect(()=>{
-    (async()=>{setLoading(true);const {data:s}=await DB.seasonsActive();if(s){const {data:e}=await DB.eventsForSeason(s.id);setEv((e||[]).find(x=>x.id===eventId)||null);}setLoading(false);})();
-  },[eventId]);
-  if(loading)return <Shell><div className="page-wrap" style={{paddingTop:30}}><TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>LOADING…</p></TPanel></div></Shell>;
-  if(!ev)return <Shell><div className="page-wrap" style={{paddingTop:30}}><TPanel><p style={{margin:0,color:MUTE}}>Weekend not found.</p><button className="ea-btn" style={{...notchBtn(false),marginTop:12}} onClick={onBack}>‹ Back</button></TPanel></div></Shell>;
-  if(showDraft)return <Draft profile={profile} ev={ev} onBack={()=>setShowDraft(false)} onSignOut={onSignOut}/>;
-  const phase=computeAutoPhase(ev),b=phaseBadge(phase);
-  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:50}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <Brand/><button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
-    </div>
-    <button className="ea-btn" style={{...notchBtn(false),marginBottom:16}} onClick={onBack}>‹ Back to schedule</button>
-    <TPanel style={{marginBottom:14}}>
-      <Eyebrow>Weekend</Eyebrow>
-      <TungstenHead word1={ev.weekend_label.split(" ")[0]} word2={ev.weekend_label.split(" ").slice(1).join(" ")}/>
-      <p style={{color:MUTE,marginTop:10,fontFamily:FONT_MONO,fontSize:12,letterSpacing:"0.04em"}}>REG {fmt(ev.reg_opens)}–{fmt(ev.reg_closes)} · DRAFT {fmt(ev.draft_at)} · MATCHES {fmt(ev.matches_start)}–{fmt(ev.matches_end)}</p>
-      <div style={{marginTop:12}}><span style={{padding:"5px 13px",fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:b.color,border:`1px solid ${b.color}66`,background:`${b.color}1a`,clipPath:notch(7),fontFamily:FONT_LABEL}}>{b.label}</span></div>
-    </TPanel>
-    {isHost && <div style={{marginBottom:14}}><button className="ea-btn" onClick={()=>setShowDraft(true)} style={{...notchBtn(true),padding:"12px 20px"}}>⚡ Open Draft</button></div>}
-    {isHost?<HostRoster profile={profile} ev={ev} tick={tick}/>:<PlayerReg profile={profile} ev={ev} phase={phase} onChange={()=>setTick(t=>t+1)}/>}
-  </div></Shell>;
-}
-function PlayerReg({profile,ev,phase,onChange}){
-  const regOpen=phase==="registration_open";
-  const [reg,setReg]=useState(undefined);
-  const [prof,setProf]=useState(undefined);
-  async function load(){setReg(await DB.myReg(ev.id));setProf(await DB.getProfile(profile.id));}
-  useEffect(()=>{load();},[ev.id]);
-  if(reg===undefined)return <TPanel><p style={{margin:0,color:MUTE}}>…</p></TPanel>;
-  const isIn=!!reg;
-  if(!regOpen)return <TPanel><SectionLabel>Registration</SectionLabel><p style={{color:MUTE,fontSize:15,margin:0,fontFamily:FONT_LABEL}}>{isIn?"You're registered for this weekend. Registration is now closed.":"Registration for this weekend is closed."}</p></TPanel>;
-  async function toggle(){if(isIn){await DB.unregister(ev.id);}else{await DB.register(profile.community_id,ev.id);}await load();onChange&&onChange();}
-  async function setCap(v){await DB.setMyWantsCaptain(v);await load();onChange&&onChange();}
-  return <>
-    <TPanel>
-      <SectionLabel>Your registration</SectionLabel>
-      {isIn?<>
-        <div style={okBox}>✓ You're in for this weekend.</div>
-        <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",color:"#cfe0f0",fontSize:15,margin:"6px 0 16px",fontFamily:FONT_LABEL}}>
-          <input type="checkbox" checked={!!reg.wantsCaptain} onChange={e=>setCap(e.target.checked)}/>Raise my hand to be a captain</label>
-        <button className="ea-btn" style={{...notchBtn(false),width:"100%"}} onClick={toggle}>Drop out of this weekend</button>
-      </>:<>
-        <p style={{color:MUTE,fontSize:15,margin:"0 0 16px",fontFamily:FONT_LABEL}}>Available this weekend? Register to be in the draft pool.</p>
-        <button className="ea-btn" style={{...notchBtn(true),width:"100%"}} onClick={toggle}>I'm in for this weekend →</button>
-      </>}
-    </TPanel>
-    {isIn && <div style={{marginTop:14}}><ScoutingProfile profile={profile} prof={prof} onSaved={load}/></div>}
-  </>;
-}
-
-// Player's own scouting profile — built from a Valorant tracker screenshot.
-function ScoutingProfile({profile,prof,onSaved}){
-  const hasProfile = prof && prof.rank;
-  const [editing,setEditing]=useState(false);
-  return <TPanel>
-    <SectionLabel>Your scouting profile</SectionLabel>
-    <p style={{color:MUTE,fontSize:13,margin:"0 0 14px",fontFamily:FONT_LABEL}}>Captains study this before the draft. Enter your Valorant stats from your tracker (tracker.gg, blitz.gg) — rank, KDA, ACS, headshot % and win rate.</p>
-    {hasProfile && !editing && <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
-      {[["RANK",prof.rank],["KDA",prof.kda],["ACS",prof.acs],["HS%",prof.hs+"%"],["WIN%",prof.win+"%"],["AGENT",prof.agent]].map(([k,v])=>(
-        <div key={k} style={{padding:"7px 12px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.22)",clipPath:notch(7)}}>
-          <div style={{fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL}}>{k}</div>
-          <div style={{fontFamily:FONT_MONO,fontSize:15,color:"#ecf3ff",fontWeight:700}}>{v}</div>
-        </div>))}
-    </div>}
-    {editing
-      ? <ProfileForm profile={profile} existing={prof} onSaved={()=>{setEditing(false);onSaved&&onSaved();}} onCancel={()=>setEditing(false)}/>
-      : <button className="ea-btn" onClick={()=>setEditing(true)} style={notchBtn(true)}>{hasProfile?"Edit my stats":"Set up my stats"}</button>}
-  </TPanel>;
-}
-
-// Manual stat entry — reliable, no external AI, works for every player instantly.
-function ProfileForm({profile,existing,onSaved,onCancel}){
-  const [d,setD]=useState({
-    rank: existing?.rank||"", role: existing?.role||"", agent: existing?.agent||"",
-    kda: existing?.kda??"", acs: existing?.acs??"", hs: existing?.hs??"", win: existing?.win??"",
-  });
-  const [saving,setSaving]=useState(false);
-  const set=(k,v)=>setD(s=>({...s,[k]:v}));
-  const ready = d.rank && d.kda!=="" && d.acs!=="";
-  async function save(){
-    if(!ready||saving)return; setSaving(true);
-    await DB.saveProfile(profile.community_id, profile.id, {
-      rank:d.rank, role:d.role||"Flex", agent:d.agent||"—",
-      kda:parseFloat(d.kda)||0, acs:parseInt(d.acs)||0, hs:parseInt(d.hs)||0, win:parseInt(d.win)||0, badges:existing?.badges||[],
+// after a single-elim result, feed winners into the next round's matches
+function propagateElim(t) {
+  if (!t.rounds) return;
+  for (let r = 0; r < t.rounds.length - 1; r++) {
+    const next = t.rounds[r + 1];
+    t.rounds[r].forEach((m, i) => {
+      const slot = Math.floor(i / 2);
+      const isA = i % 2 === 0;
+      const nm = next[slot]; if (!nm) return;
+      const w = m.done ? m.winner : null;
+      if (isA) { if (nm.teamA !== w) { nm.teamA = w; if (!nm.done) { nm.maps = []; nm.winner = null; } } }
+      else { if (nm.teamB !== w) { nm.teamB = w; if (!nm.done) { nm.maps = []; nm.winner = null; } } }
+      resolveMatch(nm);
     });
-    setSaving(false); onSaved&&onSaved();
   }
-  const ROLES=["Duelist","Initiator","Controller","Sentinel","Flex"];
-  return <div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:12,marginBottom:14}}>
-      <label style={{display:"flex",flexDirection:"column",gap:4}}>
-        <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>Rank *</span>
-        <select value={d.rank} onChange={e=>set("rank",e.target.value)} style={{...fieldStyle,padding:"9px 8px"}}>
-          <option value="">— select —</option>{RANK_LIST.map(r=><option key={r} value={r}>{r}</option>)}
-        </select>
-      </label>
-      <label style={{display:"flex",flexDirection:"column",gap:4}}>
-        <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>Role</span>
-        <select value={d.role} onChange={e=>set("role",e.target.value)} style={{...fieldStyle,padding:"9px 8px"}}>
-          <option value="">— select —</option>{ROLES.map(r=><option key={r} value={r}>{r}</option>)}
-        </select>
-      </label>
-      {[["agent","Main agent","text","e.g. Jett"],["kda","KDA *","num","1.850000"],["acs","ACS *","num","240"],["hs","HS %","num","24"],["win","Win %","num","54"]].map(([k,label,type,ph])=>(
-        <label key={k} style={{display:"flex",flexDirection:"column",gap:4}}>
-          <span style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>{label}</span>
-          <input value={d[k]} placeholder={ph} onChange={e=>set(k,type==="num"?e.target.value.replace(/[^0-9.]/g,""):e.target.value)} style={{...fieldStyle,padding:"9px 9px"}}/>
-        </label>))}
-    </div>
-    <p style={{fontSize:11,color:MUTE,fontFamily:FONT_LABEL,margin:"0 0 12px"}}>* Rank, KDA and ACS are required — they drive your draft value.</p>
-    <div style={{display:"flex",gap:10}}>
-      <button className="ea-btn" disabled={!ready||saving} onClick={save} style={{...notchBtn(true),background:ready?"rgba(61,220,132,0.18)":"rgba(255,255,255,0.05)",borderColor:ready?"#3ddc8488":"rgba(120,150,220,0.2)",color:ready?"#9af5c2":"rgba(236,243,255,0.3)",cursor:ready?"pointer":"not-allowed"}}>{saving?"Saving…":"✓ Save my profile"}</button>
-      <button className="ea-btn" onClick={onCancel} style={notchBtn(false)}>Cancel</button>
-    </div>
-  </div>;
-}
-function HostRoster({profile,ev,tick}){
-  const [regs,setRegs]=useState(null);
-  useEffect(()=>{DB.regsForEvent(ev.id).then(setRegs);},[ev.id,tick]);
-  if(!regs)return <TPanel><p style={{margin:0,color:MUTE}}>…</p></TPanel>;
-  const captains=regs.filter(r=>r.wantsCaptain);
-  const stat=(n,label)=>(<div style={{flex:1,minWidth:120,padding:"12px 16px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.2)",clipPath:notch(9)}}>
-    <div style={{fontFamily:FONT_MONO,fontSize:28,fontWeight:700,color:"#aec6ff",lineHeight:1}}>{n}</div>
-    <div style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600,marginTop:5}}>{label}</div></div>);
-  return <TPanel>
-    <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap"}}>{stat(regs.length,"Registered")}{stat(captains.length,"Captain volunteers")}</div>
-    <SectionLabel>Roster</SectionLabel>
-    {regs.length?<div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {regs.map((r,i)=>(<div key={r.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 14px",background:"rgba(255,255,255,0.025)",border:"1px solid rgba(120,150,220,0.16)",clipPath:notch(9)}}>
-        <span style={{fontFamily:FONT_LABEL,fontWeight:600,fontSize:16,color:"#dce6ff",letterSpacing:"0.02em"}}>{r.name}</span>
-        {r.wantsCaptain?<span style={{padding:"5px 13px",fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:"#f5c453",border:"1px solid #f5c45366",background:"#f5c4531a",clipPath:notch(7),fontFamily:FONT_LABEL}}>★ Captain volunteer</span>:<span style={{fontFamily:FONT_MONO,color:"rgba(200,215,255,0.4)",fontSize:12}}>player</span>}
-      </div>))}
-    </div>:<p style={{color:MUTE,fontSize:15,margin:0,fontFamily:FONT_LABEL}}>No one has registered yet.</p>}
-  </TPanel>;
 }
 
-/* ══════════════ LEADERBOARD (season standings + match logging + AI import) ══════════════ */
-function Leaderboard({profile,onBack,onSignOut}){
-  const isHost=profile.role==="host";
-  const [rows,setRows]=useState(null);     // raw match rows for the season
-  const [events,setEvents]=useState([]);
-  const [openName,setOpenName]=useState(null);
-  const [nameMap,setNameMap]=useState({});
+const fmt = (n) => "$" + Number(n || 0).toLocaleString();
 
-  async function load(){
-    const {data:s}=await DB.seasonsActive();
-    if(!s){setRows([]);setEvents([]);return;}
-    const {data:e}=await DB.eventsForSeason(s.id);
-    setEvents(e||[]);
-    setRows(await DB.resultsForSeason(s.id));
-    setNameMap(await DB.getNameMap(profile.community_id));
-  }
-  useEffect(()=>{load();},[]);
+// aggregate a player's per-match tournament stats: K/D/A totaled, ACS averaged
+function aggStats(p) {
+  const m = Array.isArray(p.tourneyStats) ? p.tourneyStats : [];
+  const games = m.length;
+  const k = m.reduce((s, e) => s + (e.k || 0), 0);
+  const d = m.reduce((s, e) => s + (e.d || 0), 0);
+  const a = m.reduce((s, e) => s + (e.a || 0), 0);
+  const acs = games ? Math.round(m.reduce((s, e) => s + (e.acs || 0), 0) / games) : 0;
+  const kd = d > 0 ? k / d : k;
+  return { games, k, d, a, acs, kd };
+}
+const emptySlots = (t) => 4 - t.roster.length;
 
-  if(rows===null)return <Shell><div className="page-wrap" style={{paddingTop:40}}><TPanel><p style={{margin:0,color:MUTE}}>LOADING…</p></TPanel></div></Shell>;
+// Starting-bid value for an available player (rank-priced). Lower = cheaper.
+const playerBidValue = (p) => (RANKS[p.rank]?.bid ?? 0);
 
-  const board=seasonBoardFrom(rows);
-  const unverified=rows.filter(r=>r.unverified).length;
-  const liveId=(()=>{
-    if(!events.length)return null;
-    const byPhase=ph=>events.find(ev=>computeAutoPhase(ev)===ph);
-    const hit=byPhase("matches_live")||byPhase("drafting");
-    if(hit)return hit.id;
-    const open=events.filter(ev=>computeAutoPhase(ev)!=="settled");
-    return open.length?open[0].id:events[0].id;
-  })();
+// The N cheapest available players' starting bids, summed.
+// `availablePlayers` = the live pool (status === "pool"), i.e. NOT the player on the block and NOT sold.
+// N = roster slots this captain must still fill AFTER the current pick succeeds.
+//   Each captain drafts 4 players, so after winning the player on the block they have
+//   (4 - roster.length - 1) slots left. Clamped at 0 (never negative).
+const reserveFor = (t, availablePlayers) => {
+  const slotsAfterThisPick = Math.max(4 - t.roster.length - 1, 0);
+  if (slotsAfterThisPick === 0) return 0;
+  // sort by actual starting-bid value (not rank label) so equal-priced ranks tie correctly
+  const cheapest = availablePlayers
+    .map(playerBidValue)
+    .sort((a, b) => a - b)
+    .slice(0, slotsAfterThisPick);
+  return cheapest.reduce((sum, v) => sum + v, 0);
+};
 
-  const medal=["#ffd75e","#cdd7e6","#e0985a"];
-  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:50}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <Brand/>
-      <button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
+// Live max bid: budget minus the reserve needed to still fill remaining slots
+// from the cheapest players left in the pool. Recomputed against the live pool,
+// so any captain buying a cheap player shifts every captain's ceiling.
+const maxAllowedBid = (t, availablePlayers = []) => t.budget - reserveFor(t, availablePlayers);
+const requiredBid = (b) => (b.leaderId ? b.currentBid + 100 : b.startingBid);
+
+/* ════════════════ atoms ═══════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════
+   TOURNAMENT UI — Commissioner builds & runs brackets; everyone watches.
+   ════════════════════════════════════════════════════════════════════ */
+
+// notched HUD panel wrapper
+function TPanel({ children, hue = "#3d7bff", className = "", style = {} }) {
+  return (
+    <div className={"relative p-5 " + className} style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.05), rgba(10,15,28,0.5))", border: `1px solid ${hue}33`, clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(8px)", ...style }}>
+      <span className="absolute left-0 top-0" style={{ width: 11, height: 11, borderLeft: `2px solid ${hue}`, borderTop: `2px solid ${hue}` }} />
+      {children}
     </div>
-    <button className="ea-btn" onClick={onBack} style={{...notchBtn(false),marginBottom:16}}>‹ Back to schedule</button>
-    <Eyebrow>Season Standings</Eyebrow>
-    <TungstenHead word1="Leader" word2="board"/>
-    <p style={{color:MUTE,fontSize:14,margin:"6px 0 18px",fontFamily:FONT_LABEL}}>Ranked by average points per match. Win = 100 · ACS÷4 · kills + ½ assists.{isHost&&" Tap a player to log a match."}</p>
+  );
+}
 
-    {isHost && <ImportPanel profile={profile} events={events} liveId={liveId} nameMap={nameMap} setNameMap={setNameMap} onDone={load}/>}
+// a small team chip
+function TTeamChip({ team, onClick, active, sub }) {
+  if (!team) return <span className="uppercase tracking-widest" style={{ fontSize: 14, color: "rgba(200,215,255,0.3)", fontFamily: "'Rajdhani',sans-serif" }}>— TBD —</span>;
+  return (
+    <button onClick={onClick} disabled={!onClick} className="flex items-center gap-2 px-3 py-2 transition-all"
+      style={{ cursor: onClick ? "pointer" : "default", background: active ? team.hue + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${active ? team.hue : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
+      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: team.hue }} />
+      <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 16, color: team.hue, letterSpacing: "0.03em" }}>{team.name}</span>
+      {sub && <span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>{sub}</span>}
+    </button>
+  );
+}
 
-    {isHost && unverified>0 && <div style={{marginBottom:14,padding:"9px 13px",background:"rgba(245,196,83,0.08)",border:"1px solid rgba(245,196,83,0.4)",color:"#f5c453",fontFamily:FONT_LABEL,fontSize:13,clipPath:notch(8)}}>⚑ {unverified} AI-read match{unverified===1?"":"es"} awaiting confirmation — tap a player to review.</div>}
-
-    <div style={{display:"grid",gridTemplateColumns:"38px 1fr 56px 56px 64px 70px",gap:10,padding:"6px 16px",fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>
-      <span>#</span><span>Player</span><span style={{textAlign:"center"}}>K</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>ACS</span><span style={{textAlign:"center"}}>AVG</span>
+// editable score row for a single match
+function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
+  const a = teamOf(match.teamA), b = teamOf(match.teamB);
+  const bo = match.bo || 1;
+  const mapsNeeded = bo === 3 ? 3 : 1;
+  const winA = match.done && match.winner === match.teamA;
+  const winB = match.done && match.winner === match.teamB;
+  const bye = match.teamB == null && match.teamA != null;
+  return (
+    <div className="flex flex-col gap-2.5 px-4 py-3.5" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(120,150,220,0.14)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: a ? a.hue : "rgba(120,150,220,0.4)" }} />
+          <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 18, color: a ? a.hue : "rgba(200,215,255,0.35)", opacity: winB ? 0.5 : 1 }}>{a ? a.name : "TBD"}{winA && <span style={{ color: "#3ddc84" }}> ✓</span>}</span>
+        </div>
+        <span className="uppercase tracking-widest px-2 py-0.5 shrink-0" style={{ fontSize: 11, color: "rgba(200,215,255,0.45)", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(120,150,220,0.2)" }}>{bye ? "BYE" : "BO" + bo}</span>
+        <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
+          <span className="font-bold uppercase truncate text-right" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 18, color: b ? b.hue : "rgba(200,215,255,0.35)", opacity: winA ? 0.5 : 1 }}>{winB && <span style={{ color: "#3ddc84" }}>✓ </span>}{b ? b.name : (bye ? "—" : "TBD")}</span>
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: b ? b.hue : "rgba(120,150,220,0.4)" }} />
+        </div>
+      </div>
+      {!bye && (
+        <div className="flex items-center justify-center gap-2.5 flex-wrap">
+          {Array.from({ length: mapsNeeded }).map((_, mi) => {
+            const mp = match.maps?.[mi] || { a: null, b: null };
+            // hide map 3 of a Bo3 if already decided in 2
+            const decidedEarly = bo === 3 && mi === 2 && match.done && (match.maps || []).slice(0, 2).filter((x) => x && x.a != null && x.b != null && x.a !== x.b).length === 2 && ((match.maps[0].a > match.maps[0].b) === (match.maps[1].a > match.maps[1].b));
+            if (decidedEarly && mp.a == null) return null;
+            return (
+              <div key={mi} className="flex items-center gap-1.5">
+                {bo === 3 && <span className="uppercase" style={{ fontSize: 11, color: "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace" }}>M{mi + 1}</span>}
+                <input type="number" inputMode="numeric" min="0" disabled={!isAdmin || !a || !b} value={mp.a == null ? "" : mp.a}
+                  onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–"
+                  className="text-center py-1.5 outline-none" style={{ width: 52, background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 17 }} />
+                <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 16 }}>:</span>
+                <input type="number" inputMode="numeric" min="0" disabled={!isAdmin || !a || !b} value={mp.b == null ? "" : mp.b}
+                  onChange={(e) => onSetMap(locator, mi, mp.a, e.target.value)} placeholder="–"
+                  className="text-center py-1.5 outline-none" style={{ width: 52, background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 17 }} />
+              </div>
+            );
+          })}
+          {isAdmin && onSetBo && (
+            <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} className="uppercase tracking-widest px-2.5 py-1.5 ml-1" style={{ fontSize: 11, color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }} title="Toggle best-of">→ BO{bo === 1 ? 3 : 1}</button>
+          )}
+        </div>
+      )}
     </div>
-    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {board.length===0 && <div style={{padding:"14px 16px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.25)",color:"rgba(200,215,255,0.6)",clipPath:notch(12),fontFamily:FONT_LABEL}}>{isHost?"No match stats yet. Upload a scoreboard above, or tap a player to log one by hand.":"No match stats logged yet. The board fills in as weekends are played."}</div>}
-      {board.map((p,i)=>{
-        const top=i<3;
-        return <React.Fragment key={p.name}>
-          <div onClick={isHost?()=>setOpenName(openName===p.name?null:p.name):undefined}
-            style={{display:"grid",gridTemplateColumns:"38px 1fr 56px 56px 64px 70px",alignItems:"center",gap:10,padding:"13px 16px",cursor:isHost?"pointer":"default",
-              background:top?`linear-gradient(90deg,${medal[i]}14,rgba(10,15,28,0.5))`:"rgba(255,255,255,0.025)",
-              border:`1px solid ${top?medal[i]+"55":"rgba(120,150,220,0.14)"}`,clipPath:notch(12)}}>
-            <span style={{fontFamily:FONT_MONO,fontSize:18,fontWeight:700,color:top?medal[i]:"rgba(200,215,255,0.5)",textShadow:top?`0 0 10px ${medal[i]}88`:"none"}}>{i+1}</span>
-            <span style={{fontFamily:FONT_LABEL,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.02em",color:"#ecf3ff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}{p.unverified>0&&<span style={{marginLeft:8,color:"#f5c453",fontSize:11}} title="has unverified matches">⚑</span>}</span>
-            <span style={{fontFamily:FONT_MONO,textAlign:"center",color:"#9af5c2"}}>{p.k}</span>
-            <span style={{fontFamily:FONT_MONO,textAlign:"center",color:"rgba(200,215,255,0.7)"}}>{p.a}</span>
-            <span style={{fontFamily:FONT_MONO,textAlign:"center",color:"#5b8dff",textShadow:"0 0 12px rgba(61,123,255,0.5)"}}>{p.acs}</span>
-            <span style={{fontFamily:FONT_MONO,textAlign:"center",fontWeight:700,fontSize:17,color:"#fff"}}>{p.avg.toFixed(0)}</span>
+  );
+}
+
+// standings table
+function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#3d7bff" }) {
+  const rows = computeStandings(teamIds, matches, overrides);
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full" style={{ borderCollapse: "collapse", fontFamily: "'Rajdhani',sans-serif" }}>
+        <thead>
+          <tr style={{ color: "rgba(200,215,255,0.5)" }}>
+            {["#", "Team", "P", "W", "L", "RF", "RA", "DIFF", "PTS"].map((h, i) => (
+              <th key={h} className="text-left uppercase tracking-widest py-3 px-2.5" style={{ fontSize: 14, textAlign: i < 2 ? "left" : "center", borderBottom: "1px solid rgba(120,150,220,0.18)" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const tm = teamOf(r.teamId); const adv = i < advance;
+            return (
+              <tr key={r.teamId} style={{ background: adv ? hue + "12" : "transparent" }}>
+                <td className="py-3 px-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: adv ? hue : "rgba(200,215,255,0.5)", fontWeight: 700 }}>{i + 1}{adv && <span style={{ color: hue }}> ▲</span>}</td>
+                <td className="py-3 px-2.5">
+                  <span className="flex items-center gap-2.5">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: tm?.hue }} />
+                    <span className="font-bold uppercase truncate" style={{ color: tm?.hue, fontSize: 18 }}>{tm?.name}{r._ov && <span title="manually adjusted" style={{ color: "#ffb020" }}> *</span>}</span>
+                  </span>
+                </td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(236,243,255,0.7)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.played}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "#3ddc84", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.won}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(255,120,135,0.8)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.lost}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(236,243,255,0.55)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.rf}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(236,243,255,0.55)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.ra}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: r.diff > 0 ? "#3ddc84" : r.diff < 0 ? "rgba(255,120,135,0.8)" : "rgba(236,243,255,0.55)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.diff > 0 ? "+" : ""}{r.diff}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "#5b8dff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 19, fontWeight: 700, textShadow: "0 0 10px rgba(61,123,255,0.5)" }}>{r.pts}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// one bracket match — two stacked team rows + a score box on the right (reference style)
+function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
+  const a = teamOf(match.teamA), b = teamOf(match.teamB);
+  const bo = match.bo || 1;
+  const bye = match.teamB == null && match.teamA != null;
+  const winA = match.done && match.winner === match.teamA;
+  const winB = match.done && match.winner === match.teamB;
+
+  // per-team series score = number of maps won (what shows in the right cell)
+  const mapsWon = (who) => {
+    let n = 0;
+    for (const mp of (match.maps || [])) {
+      if (mp.a == null || mp.b == null) continue;
+      if (who === "a" && mp.a > mp.b) n++;
+      if (who === "b" && mp.b > mp.a) n++;
+    }
+    return n;
+  };
+  // for Bo1 we show the single map's round score; for Bo3 we show maps won
+  const scoreFor = (who) => {
+    if (bo === 1) { const mp = match.maps?.[0]; return mp && mp[who] != null ? mp[who] : null; }
+    return mapsWon(who);
+  };
+
+  const row = (team, win, dim, who) => (
+    <div className="flex items-center gap-2.5 px-3" style={{ height: 38, background: win ? (team ? team.hue + "26" : "transparent") : "transparent", borderLeft: `3px solid ${win && team ? team.hue : "transparent"}`, opacity: dim ? 0.45 : 1, transition: "all .2s" }}>
+      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: team ? team.hue : "rgba(120,150,220,0.35)" }} />
+      <span className="font-bold uppercase truncate flex-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 16, letterSpacing: "0.02em", color: team ? team.hue : "rgba(200,215,255,0.4)" }}>
+        {team ? team.name : (bye && who === "b" ? "—" : "TBD")}{win && <span style={{ color: "#3ddc84", marginLeft: 4 }}>✓</span>}
+      </span>
+      {/* score cell */}
+      <span className="grid place-items-center shrink-0" style={{ width: 34, height: 26, fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 700, color: win ? "#eaf1ff" : "rgba(200,215,255,0.55)", background: win ? "rgba(61,123,255,0.22)" : "rgba(255,255,255,0.04)", border: `1px solid ${win ? "rgba(61,123,255,0.5)" : "rgba(120,150,220,0.18)"}` }}>
+        {scoreFor(who) == null ? "–" : scoreFor(who)}
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="relative" style={{ background: "rgba(10,15,28,0.6)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+      <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+      {row(a, winA, winB, "a")}
+      <div style={{ height: 1, background: "rgba(120,150,220,0.16)" }} />
+      {row(b, winB, winA || bye, "b")}
+
+      {/* score-entry strip (admin only, not for byes) */}
+      {isAdmin && !bye && a && b && (
+        <div className="flex items-center justify-center gap-2 px-2 py-2 flex-wrap" style={{ borderTop: "1px solid rgba(120,150,220,0.16)", background: "rgba(61,123,255,0.04)" }}>
+          {Array.from({ length: bo === 3 ? 3 : 1 }).map((_, mi) => {
+            const mp = match.maps?.[mi] || { a: null, b: null };
+            const decidedEarly = bo === 3 && mi === 2 && match.done && (match.maps || []).slice(0, 2).filter((x) => x && x.a != null && x.b != null && x.a !== x.b).length === 2 && ((match.maps[0].a > match.maps[0].b) === (match.maps[1].a > match.maps[1].b));
+            if (decidedEarly && mp.a == null) return null;
+            return (
+              <span key={mi} className="flex items-center gap-1">
+                {bo === 3 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace" }}>M{mi + 1}</span>}
+                <input type="number" inputMode="numeric" min="0" value={mp.a == null ? "" : mp.a} onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–"
+                  className="text-center outline-none" style={{ width: 40, height: 28, background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 14 }} />
+                <span style={{ color: "rgba(200,215,255,0.3)", fontSize: 13 }}>:</span>
+                <input type="number" inputMode="numeric" min="0" value={mp.b == null ? "" : mp.b} onChange={(e) => onSetMap(locator, mi, mp.a, e.target.value)} placeholder="–"
+                  className="text-center outline-none" style={{ width: 40, height: 28, background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 14 }} />
+              </span>
+            );
+          })}
+          {onSetBo && (
+            <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} className="uppercase tracking-widest px-2 py-1 ml-0.5" style={{ fontSize: 10, color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }} title="Toggle best-of">→ BO{bo === 1 ? 3 : 1}</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// single-elim bracket display — columns of matches joined by elbow connector lines
+function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo }) {
+  const roundName = (ri, total) => {
+    const fromEnd = total - 1 - ri;
+    if (fromEnd === 0) return "Final";
+    if (fromEnd === 1) return "Semifinals";
+    if (fromEnd === 2) return "Quarterfinals";
+    return "Round " + (ri + 1);
+  };
+  const LINE = "rgba(110,150,230,0.4)";
+  return (
+    <div className="flex overflow-x-auto pb-3" style={{ minHeight: 200 }}>
+      {rounds.map((round, ri) => {
+        const isLast = ri === rounds.length - 1;
+        return (
+          <div key={ri} className="flex" style={{ minWidth: 286 }}>
+            {/* match column */}
+            <div className="flex flex-col justify-around flex-1" style={{ gap: 0 }}>
+              <p className="uppercase text-sm font-bold tracking-widest text-center mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>{roundName(ri, rounds.length)}</p>
+              {round.map((m, idx) => (
+                <div key={m.id} className="flex flex-col justify-center flex-1" style={{ position: "relative" }}>
+                  <TBracketMatch match={m} locator={{ kind: "elim", round: ri, idx }} teamOf={teamOf} isAdmin={isAdmin} onSetMap={onSetMap} onSetBo={onSetBo} />
+                </div>
+              ))}
+            </div>
+            {/* connector column (between this round and the next) */}
+            {!isLast && (
+              <div className="flex flex-col" style={{ width: 30 }}>
+                <div style={{ height: 30 }} />{/* offset for the round label */}
+                <div className="flex flex-col flex-1">
+                  {Array.from({ length: Math.ceil(round.length / 2) }).map((_, pi) => (
+                    <div key={pi} className="flex-1 flex items-center" style={{ position: "relative" }}>
+                      {/* top match out-line, elbow down, into next match */}
+                      <div style={{ position: "absolute", left: 0, right: "50%", top: "25%", borderTop: `2px solid ${LINE}` }} />
+                      <div style={{ position: "absolute", left: 0, right: "50%", bottom: "25%", borderTop: `2px solid ${LINE}` }} />
+                      <div style={{ position: "absolute", left: "50%", top: "25%", bottom: "25%", borderLeft: `2px solid ${LINE}` }} />
+                      <div style={{ position: "absolute", left: "50%", right: 0, top: "50%", borderTop: `2px solid ${LINE}` }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-          {isHost&&openName===p.name && <LogPanel profile={profile} name={p.name} events={events} rows={rows.filter(r=>r.name===p.name)} liveId={liveId} onChange={load}/>}
-        </React.Fragment>;
+        );
       })}
     </div>
-  </div></Shell>;
+  );
 }
 
-function LogPanel({profile,name,events,rows,liveId,onChange}){
-  const [k,setK]=useState(""),[a,setA]=useState(""),[acs,setAcs]=useState(""),[won,setWon]=useState(false);
-  const [evId,setEvId]=useState(liveId??(events[0]?.id));
-  const fld=(label,val,set)=>(<div style={{display:"flex",flexDirection:"column",gap:3}}>
-    <span style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>{label}</span>
-    <input value={val} inputMode="numeric" onChange={e=>set(e.target.value.replace(/[^0-9]/g,""))} style={{...fieldStyle,width:60,padding:"7px 8px",textAlign:"center"}} placeholder="0"/>
-  </div>);
-  async function add(){
-    if(k===""&&a===""&&acs==="")return;
-    const uid=await DB.userIdByName(profile.community_id,name);
-    if(!uid)return;
-    await DB.addResult(profile.community_id,evId,uid,{k,a,acs,won,unverified:false});
-    setK("");setA("");setAcs("");setWon(false);onChange&&onChange();
-  }
-  return <div style={{padding:"14px 16px",background:"rgba(7,12,22,0.7)",border:"1px solid rgba(61,123,255,0.25)",clipPath:notch(12)}}>
-    <div style={{display:"flex",alignItems:"flex-end",gap:10,flexWrap:"wrap",marginBottom:12}}>
-      <div style={{display:"flex",flexDirection:"column",gap:3}}>
-        <span style={{fontSize:9,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>Weekend</span>
-        <select value={evId} onChange={e=>setEvId(e.target.value)} style={{...fieldStyle,padding:"7px 8px"}}>{events.map(ev=><option key={ev.id} value={ev.id}>{ev.weekend_label}</option>)}</select>
-      </div>
-      {fld("K",k,setK)}{fld("A",a,setA)}{fld("ACS",acs,setAcs)}
-      <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",color:"#cfe0f0",fontSize:13,fontFamily:FONT_LABEL,paddingBottom:6}}>
-        <input type="checkbox" checked={won} onChange={e=>setWon(e.target.checked)}/>Won</label>
-      <button className="ea-btn" onClick={add} style={{padding:"8px 14px",fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:FONT_LABEL,background:"rgba(61,220,132,0.18)",border:"1px solid #3ddc8488",color:"#9af5c2",cursor:"pointer",clipPath:notch(8)}}>+ Add match</button>
+// champion banner once a bracket / final resolves
+function TChampion({ team }) {
+  if (!team) return null;
+  return (
+    <div className="relative flex flex-col items-center gap-1 py-5 px-8 mx-auto" style={{ maxWidth: 420, background: `linear-gradient(160deg, ${team.hue}22, rgba(10,15,28,0.6))`, border: `1px solid ${team.hue}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", boxShadow: `0 0 50px ${team.hue}33` }}>
+      <p className="uppercase text-xs font-bold tracking-[0.3em]" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Champion ★</p>
+      <p className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.4rem", lineHeight: 1, color: team.hue, letterSpacing: "0.03em" }}>{team.name}</p>
     </div>
-    {rows.length>0 && <div>
-      <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"rgba(200,215,255,0.4)",marginBottom:5,fontFamily:FONT_LABEL}}>Logged matches</div>
-      <div style={{display:"flex",flexDirection:"column",gap:4}}>
-        {rows.map(r=>(<div key={r.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:12,padding:"6px 10px",background:r.unverified?"rgba(245,196,83,0.07)":"rgba(255,255,255,0.03)",fontFamily:FONT_MONO,color:"rgba(220,230,255,0.75)",borderLeft:r.unverified?"2px solid #f5c453":"none"}}>
-          <span style={{color:"rgba(200,215,255,0.4)",minWidth:60}}>{r.weekend}</span>
-          <span style={{color:r.won?"#3ddc84":"rgba(255,138,148,0.8)"}}>{r.won?"WON":"lost"}</span>
-          <span style={{color:"#9af5c2"}}>{r.k}K</span><span>{r.a}A</span><span style={{color:"#5b8dff"}}>{r.acs} ACS</span>
-          <span style={{marginLeft:"auto",color:"#fff",fontWeight:700}}>{Math.round(matchPoints(r))} pts</span>
-          {r.unverified&&<button className="ea-btn" onClick={async()=>{await DB.verifyResult(r.id);onChange&&onChange();}} style={{color:"#f5c453",border:"1px solid rgba(245,196,83,0.5)",padding:"1px 7px",cursor:"pointer",background:"none",fontSize:11}}>⚑ confirm</button>}
-          <button className="ea-btn" onClick={async()=>{await DB.removeResult(r.id);onChange&&onChange();}} style={{color:"#ff8a94",border:"1px solid rgba(255,70,85,0.4)",padding:"1px 7px",cursor:"pointer",background:"none"}}>✕</button>
-        </div>))}
-      </div>
-    </div>}
-  </div>;
+  );
 }
 
-function ImportPanel({profile,events,liveId,nameMap,setNameMap,onDone}){
-  const [stage,setStage]=useState("idle"); // idle | reading | matching | review
-  const [evId,setEvId]=useState(liveId??(events[0]?.id));
-  const [ai,setAi]=useState(null);
-  const [unresolved,setUnresolved]=useState([]);
-  const [queue,setQueue]=useState([]);
-  const [err,setErr]=useState("");
-  const [regsForPick,setRegsForPick]=useState([]);
-  const fileRef=useRef(null);
+// ── main tournament view ──
+function TournamentView({ state, isAdmin, teamOf, actions }) {
+  const t = state.tournament;
+  const [draftFormat, setDraftFormat] = useState("group");
+  const [draftBo, setDraftBo] = useState("bo1");
+  const [draftGroups, setDraftGroups] = useState(2);
+  const [pickGroup, setPickGroup] = useState(null); // active group id for assignment
 
-  async function onFile(e){
-    const f=e.target.files?.[0]; if(!f)return;
-    setErr("");setStage("reading");
-    try{
-      const result=await aiReadScoreboard(f);
-      const regs=await DB.regsForEvent(evId);
-      const un=[];
-      result.rows.forEach(r=>{r.resolved=resolveName(r.scoreName,regs,nameMap);if(!r.resolved)un.push(r);});
-      setAi(result);setUnresolved(un);setRegsForPick(regs);
-      setStage(un.length?"matching":"review");
-    }catch(ex){ setErr((ex&&ex.message)?ex.message:"Couldn't read that screenshot. Try a clearer full-scoreboard image."); setStage("idle"); }
-  }
-
-  async function confirmNames(){
-    const map={...nameMap};
-    unresolved.forEach(u=>{ if(u._pick){map[u.scoreName]=u._pick; u.resolved=u._pick;} });
-    setNameMap(map); await DB.setNameMap(profile.community_id,map);
-    setStage("review");
-  }
-
-  function pushQueue(){
-    const rows=ai.rows.filter(r=>r.resolved).map(r=>({name:r.resolved,k:r.k,a:r.a,acs:r.acs,won:r.team===ai.winningTeam}));
-    setQueue(q=>[...q,{event:evId,map:ai.map,scoreA:ai.scoreA,scoreB:ai.scoreB,rows}]);
-    setAi(null);
-  }
-  async function commitAll(extra){
-    const all=extra?[...queue,extra]:queue;
-    for(const q of all){
-      for(const r of q.rows){
-        const uid=await DB.userIdByName(profile.community_id,r.name);
-        if(uid)await DB.addResult(profile.community_id,q.event,uid,{k:r.k,a:r.a,acs:r.acs,won:r.won,unverified:true});
-      }
-    }
-    setQueue([]);setAi(null);setStage("idle");onDone&&onDone();
-  }
-
-  const wrap=(kids)=>(<TPanel style={{marginBottom:16}}>{kids}</TPanel>);
-
-  if(stage==="reading")return wrap(<div style={{display:"flex",alignItems:"center",gap:12}}>
-    <div style={{fontFamily:FONT_MONO,color:CYAN,fontSize:14}}>◢ Reading scoreboard…</div>
-    <span style={{color:MUTE,fontSize:12,fontFamily:FONT_LABEL}}>map · round score · every player's K / A / ACS</span></div>);
-
-  if(stage==="matching")return wrap(<div>
-    <p style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#f5c453",fontFamily:FONT_LABEL,fontWeight:600,margin:"0 0 10px"}}>Who are these players?</p>
-    <p style={{color:MUTE,fontSize:12,margin:"0 0 12px",fontFamily:FONT_LABEL}}>A few scoreboard names didn't match your roster. Match them once and I'll remember next time.</p>
-    {unresolved.map((u,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-      <span style={{fontFamily:FONT_MONO,minWidth:120,color:"#dce6ff"}}>{u.scoreName}</span><span style={{color:"rgba(200,215,255,0.4)"}}>→</span>
-      <select defaultValue="" onChange={e=>u._pick=e.target.value} style={{...fieldStyle,maxWidth:160}}>
-        <option value="">— skip —</option>
-        {regsForPick.map(p=><option key={p.id||p.name} value={p.name}>{p.name}</option>)}
-      </select>
-    </div>))}
-    <button className="ea-btn" onClick={confirmNames} style={{...notchBtn(true),marginTop:8}}>Continue to review</button>
-  </div>);
-
-  if(stage==="review"&&ai)return wrap(<div>
-    <p style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600,margin:"0 0 10px"}}>Review · {events.find(e=>e.id===evId)?.weekend_label}</p>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
-      <span style={{fontFamily:FONT_MONO,color:"#9fb8e8",fontSize:13}}>MAP</span>
-      <span style={{fontFamily:FONT_LABEL,fontWeight:700,color:"#ecf3ff",textTransform:"uppercase",letterSpacing:"0.04em"}}>{ai.map}</span>
-      <span style={{width:1,height:16,background:"rgba(120,150,220,0.3)"}}/>
-      <span style={{fontFamily:FONT_MONO,color:"#9fb8e8",fontSize:13}}>SCORE</span>
-      <span style={{fontFamily:FONT_MONO,color:"#3ddc84",fontWeight:700,fontSize:16}}>{ai.scoreA}</span>
-      <span style={{color:"rgba(200,215,255,0.4)"}}>–</span>
-      <span style={{fontFamily:FONT_MONO,color:"#ff8a94",fontWeight:700,fontSize:16}}>{ai.scoreB}</span>
-      <span style={{color:MUTE,fontSize:12,marginLeft:6,fontFamily:FONT_LABEL}}>Team {ai.winningTeam} wins</span>
-    </div>
-    {ai.rows.some(r=>lowConf(r.conf?.k)||lowConf(r.conf?.a)||lowConf(r.conf?.acs))
-      ? <div style={{marginBottom:10,padding:"7px 11px",background:"rgba(245,196,83,0.08)",border:"1px solid rgba(245,196,83,0.4)",color:"#f5c453",fontSize:12,fontFamily:FONT_LABEL,clipPath:notch(8)}}>⚑ Amber fields are ones I wasn't fully sure about — give them a glance.</div>
-      : <p style={{margin:"0 0 10px",color:"#86e6b0",fontSize:12,fontFamily:FONT_LABEL}}>✓ Clean read — all fields high-confidence.</p>}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 56px 56px 56px 54px",gap:8,padding:"0 2px 6px",fontSize:10,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL}}>
-      <span>Player</span><span style={{textAlign:"center"}}>K</span><span style={{textAlign:"center"}}>A</span><span style={{textAlign:"center"}}>ACS</span><span style={{textAlign:"center"}}>Won</span></div>
-    {ai.rows.map((r,i)=>{
-      const won=r.team===ai.winningTeam;
-      const box=(val,low,set)=>(<input defaultValue={val} inputMode="numeric" onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,"");e.target.value=v;set(+v||0);}} style={{...fieldStyle,width:56,padding:"6px 7px",textAlign:"center",...(low?{borderColor:"#f5c453",background:"rgba(245,196,83,0.12)",boxShadow:"0 0 0 1px rgba(245,196,83,0.4)"}:{})}}/>);
-      return <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 56px 56px 56px 54px",gap:8,alignItems:"center",padding:"5px 2px"}}>
-        {r.resolved?<span style={{fontFamily:FONT_LABEL,fontWeight:700,color:"#ecf3ff",textTransform:"uppercase",fontSize:13,letterSpacing:"0.02em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.resolved}</span>:<span style={{fontFamily:FONT_MONO,color:"rgba(255,138,148,0.7)",fontSize:12}}>{r.scoreName} · skipped</span>}
-        {box(r.k,lowConf(r.conf?.k),v=>r.k=v)}
-        {box(r.a,lowConf(r.conf?.a),v=>r.a=v)}
-        {box(r.acs,lowConf(r.conf?.acs),v=>r.acs=v)}
-        <span style={{textAlign:"center",color:won?"#3ddc84":"rgba(255,138,148,0.7)",fontFamily:FONT_LABEL,fontWeight:700,fontSize:12}}>{won?"W":"L"}</span>
-      </div>;
-    })}
-    <div style={{display:"flex",gap:10,marginTop:14,flexWrap:"wrap"}}>
-      <button className="ea-btn" onClick={()=>{pushQueue();setStage("idle");}} style={notchBtn(true)}>＋ Add another match</button>
-      <button className="ea-btn" onClick={()=>{const rows=ai.rows.filter(r=>r.resolved).map(r=>({name:r.resolved,k:r.k,a:r.a,acs:r.acs,won:r.team===ai.winningTeam}));commitAll({event:evId,map:ai.map,scoreA:ai.scoreA,scoreB:ai.scoreB,rows});}} style={{...notchBtn(true),background:"rgba(61,220,132,0.18)",borderColor:"#3ddc8488",color:"#9af5c2"}}>✓ Save {queue.length?("all "+(queue.length+1)):"match"}</button>
-    </div>
-  </div>);
-
-  // idle
-  return wrap(<div>
-    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-      <span style={{fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"#7da6ff",fontFamily:FONT_LABEL,fontWeight:600}}>Auto-import results</span>
-      <select value={evId} onChange={e=>setEvId(e.target.value)} style={{...fieldStyle,maxWidth:170}}>{events.map(ev=><option key={ev.id} value={ev.id}>{ev.weekend_label}{ev.id===liveId?" · live":""}</option>)}</select>
-      <button className="ea-btn" onClick={()=>fileRef.current?.click()} style={notchBtn(true)}>⤓ Upload scoreboard</button>
-      <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={onFile}/>
-    </div>
-    <p style={{color:MUTE,fontSize:12,margin:"8px 0 0",fontFamily:FONT_LABEL}}>Defaults to the live weekend. Upload a full scoreboard — I read every player, the map and the round score, then you eyeball anything I'm unsure about before it saves.{queue.length>0&&` ${queue.length} match${queue.length>1?"es":""} queued.`}</p>
-    {err&&<p style={{color:"#ff8a94",fontSize:12,margin:"8px 0 0",fontFamily:FONT_LABEL}}>{err}</p>}
-    {queue.length>0 && <div style={{marginTop:12}}>
-      <p style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.12em",color:"rgba(200,215,255,0.4)",margin:"0 0 7px",fontFamily:FONT_LABEL}}>Queued to save</p>
-      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>{queue.map((q,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 11px",background:"rgba(0,229,255,0.06)",border:"1px solid rgba(0,229,255,0.25)",fontSize:12,fontFamily:FONT_MONO,color:"#bfe9f5",clipPath:notch(8)}}>
-        <span style={{color:"#7fdff0"}}>{events.find(e=>e.id===q.event)?.weekend_label}</span><span>{q.map} {q.scoreA}–{q.scoreB}</span><span style={{color:"rgba(200,215,255,0.5)"}}>{q.rows.length}p</span>
-        <button className="ea-btn" onClick={()=>setQueue(qq=>qq.filter((_,j)=>j!==i))} style={{marginLeft:4,color:"#ff8a94",border:"1px solid rgba(255,70,85,0.4)",padding:"0 6px",cursor:"pointer",background:"none"}}>✕</button>
-      </div>))}</div>
-      <button className="ea-btn" onClick={()=>commitAll()} style={{...notchBtn(true),marginTop:10,background:"rgba(61,220,132,0.18)",borderColor:"#3ddc8488",color:"#9af5c2"}}>✓ Save all {queue.length} queued</button>
-    </div>}
-  </div>);
-}
-
-/* ══════════════ DRAFT (Stage 2 — live realtime auction) ══════════════ */
-const SPIN_MS = 2600, REVEAL_MS = 1100;
-const emptySlots = (t)=> Math.max(DRAFT_SLOTS - t.roster.length, 0);
-
-function Draft({profile,ev,onBack,onSignOut}){
-  const isHost = profile.role==="host";
-  const myId = profile.id;
-  const [players,setPlayers]=useState(null);   // registered pool (with ranks)
-  const [st,setSt]=useState(null);              // live draft_state
-  const [busy,setBusy]=useState(false);
-  const [spinView,setSpinView]=useState(null);  // local spin animation overlay
-  const stRef = useRef(null);
-
-  // load static players once, plus current live state, then subscribe
-  useEffect(()=>{
-    let unsub=()=>{};
-    (async()=>{
-      setPlayers(await DB.draftPlayers(ev.id));
-      const existing = await DB.getDraftState(ev.id);
-      if(existing){ setSt(existing); stRef.current=existing; }
-      unsub = DB.subscribeDraft(ev.id,(state)=>{ setSt(state); stRef.current=state; maybeSpin(state); });
-    })();
-    return ()=>unsub();
-  },[ev.id]);
-
-  // write helper: host (or captain bidding) pushes new state to everyone
-  async function push(next){ stRef.current=next; setSt(next); await DB.setDraftState(profile.community_id, ev.id, next); }
-
-  // trigger local spin overlay when a new spin appears
-  function maybeSpin(state){
-    if(state?.spin && (!spinView || spinView.startTs!==state.spin.startTs)){
-      setSpinView(state.spin);
-      setTimeout(()=>setSpinView(null), SPIN_MS+REVEAL_MS);
-    }
-  }
-
-  if(players===null) return <Shell><div className="page-wrap" style={{paddingTop:40}}><TPanel><p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL}}>LOADING DRAFT…</p></TPanel></div></Shell>;
-
-  const captains = players.filter(p=>p.isCaptain);
-  const started = !!st?.started;
-
-  // ── START DRAFT: create teams from captains, seed live state ──
-  async function startDraft(){
-    if(busy) return; setBusy(true);
-    const teams=[];
-    for(const c of captains){
-      const teamName = c.name ? c.name : `${c.name||c.id}'s Team`;
-      const res = await DB.createTeamForCaptain(profile.community_id, ev.id, c.id, c.name ? c.name+"'s Squad" : (captains.indexOf(c)===0?"CRIMSON PULSE":"NEON SYNDICATE"));
-      const t = res?.data || res; // real returns {data}, mock returns team
-      teams.push({ id:t.id, name:t.name, captainId:c.id, captain:c.name, budget:START_BUDGET, roster:[], prices:{} });
-    }
-    const poolPlayers = players.filter(p=>!p.isCaptain).map(p=>({ id:p.id, name:p.name, rank:p.rank, status:"pool" }));
-    const next = { started:true, teams, players:poolPlayers, block:null, bidHistory:[], spin:null, log:["Draft started — spin to nominate the first player"], recentSales:[] };
-    await push(next); setBusy(false);
-  }
-
-  // ── NOMINATE (fate wheel) ──
-  async function spinNominate(){
-    const s = structuredClone(stRef.current); if(!s||s.block) return;
-    const pool = s.players.filter(p=>p.status==="pool");
-    if(!pool.length) return;
-    const winner = pool[Math.floor(Math.random()*pool.length)];
-    winner.status="block";
-    s.block = { playerId:winner.id, startingBid:RANKS[winner.rank]?.bid||0, currentBid:RANKS[winner.rank]?.bid||0, leaderId:null, ts:Date.now() };
-    s.spin = { playerId:winner.id, pool:pool.map(p=>p.id), startTs:Date.now() };
-    s.bidHistory=[];
-    s.log=[`Fate chose ${winner.name} — opening at ${fmtMoney(s.block.startingBid)}`,...s.log].slice(0,8);
-    await push(s);
-  }
-
-  // ── BID ──
-  async function placeBid(teamId){
-    const s = structuredClone(stRef.current); const b=s.block; if(!b||b.leaderId===teamId) return;
-    const team = s.teams.find(t=>t.id===teamId); if(!team||emptySlots(team)===0) return;
-    const availablePool = s.players.filter(p=>p.status==="pool");
-    const req = requiredBid(b);
-    if(maxAllowedBid(team, availablePool) < req) return;
-    b.currentBid=req; b.leaderId=teamId; b.ts=Date.now();
-    s.bidHistory=[{teamId,amount:req,ts:Date.now()},...s.bidHistory].slice(0,12);
-    const p=s.players.find(x=>x.id===b.playerId);
-    s.log=[`${team.name} bids ${fmtMoney(req)} on ${p?.name}`,...s.log].slice(0,8);
-    await push(s);
-  }
-
-  // ── SELL ──
-  async function sell(){
-    const s = structuredClone(stRef.current); const b=s.block; if(!b||!b.leaderId) return;
-    const team=s.teams.find(t=>t.id===b.leaderId), p=s.players.find(x=>x.id===b.playerId);
-    if(!team||!p) return;
-    team.budget-=b.currentBid; team.roster.push(p.id); team.prices=team.prices||{}; team.prices[p.id]=b.currentBid;
-    p.status="sold"; p.soldTo=team.id; p.soldPrice=b.currentBid;
-    s.recentSales=[{playerId:p.id,name:p.name,teamId:team.id,price:b.currentBid,ts:Date.now()},...(s.recentSales||[])].slice(0,10);
-    s.log=[`SOLD — ${p.name} → ${team.name} for ${fmtMoney(b.currentBid)}`,...s.log].slice(0,8);
-    s.block=null; s.bidHistory=[];
-    await push(s);
-    // persist this team's roster immediately
-    await DB.commitDraftResults(profile.community_id, ev.id, [team]);
-  }
-
-  // ── PASS ──
-  async function passPlayer(){
-    const s = structuredClone(stRef.current); const b=s.block; if(!b) return;
-    const p=s.players.find(x=>x.id===b.playerId); if(p) p.status="pool";
-    s.log=[`${p?.name} passed — back to the pool`,...s.log].slice(0,8);
-    s.block=null; s.bidHistory=[]; await push(s);
-  }
-
-  const myTeam = st?.teams?.find(t=>t.captainId===myId) || null;
-  const block = st?.block || null;
-  const blockPlayer = block ? st.players.find(p=>p.id===block.playerId) : null;
-  const leaderTeam = block?.leaderId ? st.teams.find(t=>t.id===block.leaderId) : null;
-  const poolLeft = st?.players?.filter(p=>p.status==="pool").length || 0;
-  const allDone = started && poolLeft===0 && !block;
-
-  return <Shell><div className="page-wrap" style={{paddingTop:30,paddingBottom:60}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <Brand/><button className="ea-btn" onClick={onSignOut} style={notchBtn(false)}>Sign out</button>
-    </div>
-    <button className="ea-btn" style={{...notchBtn(false),marginBottom:16}} onClick={onBack}>‹ Back to weekend</button>
-    <Eyebrow>Auction Draft</Eyebrow>
-    <TungstenHead word1="Auction" word2="Block"/>
-    <p style={{color:MUTE,fontSize:14,margin:"6px 0 18px",fontFamily:FONT_LABEL}}>{ev.weekend_label} · {captains.length} captains · {fmtMoney(START_BUDGET)} each · {DRAFT_SLOTS} slots.</p>
-
-    {/* START */}
-    {!started && <TPanel style={{marginBottom:16}}>
-      <p style={{margin:"0 0 12px",color:MUTE,fontFamily:FONT_LABEL}}>Ready with {captains.length} captains and {players.filter(p=>!p.isCaptain).length} players in the pool.{captains.length<2?" You need at least 2 captains to draft.":""}</p>
-      {isHost && captains.length>=2 && <button className="ea-btn" disabled={busy} onClick={startDraft} style={{...notchBtn(true),padding:"12px 22px"}}>{busy?"Starting…":"⚡ Start the draft"}</button>}
-      {!isHost && <p style={{margin:0,color:MUTE,fontFamily:FONT_LABEL,fontSize:13}}>Waiting for the host to start the draft…</p>}
-    </TPanel>}
-
-    {/* SPIN OVERLAY */}
-    {spinView && blockPlayer && <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(4,7,15,0.85)",backdropFilter:"blur(6px)"}}>
-      <div style={{textAlign:"center",animation:"voltpop 0.5s ease"}}>
-        <div style={{fontFamily:FONT_LABEL,letterSpacing:"0.3em",textTransform:"uppercase",color:CYAN,fontSize:13,marginBottom:14}}>Fate selects</div>
-        <div style={{fontFamily:FONT_HEAD,fontSize:"clamp(3rem,9vw,6rem)",fontWeight:700,textTransform:"uppercase",color:"#fff",textShadow:"0 0 40px rgba(61,123,255,0.7)"}}>{blockPlayer.name}</div>
-        <div style={{fontFamily:FONT_MONO,fontSize:18,marginTop:10,color:RANKS[blockPlayer.rank]?.c}}>{blockPlayer.rank} · opens {fmtMoney(RANKS[blockPlayer.rank]?.bid)}</div>
+  const header = (eyebrow, word1, word2) => (
+    <div className="flex flex-col items-center text-center mb-7">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>{eyebrow}</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
       </div>
-    </div>}
+      <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>{word1} <span style={{ color: "#3d7bff" }}>{word2}</span></h2>
+    </div>
+  );
 
-    {started && <>
-      {/* LIVE BLOCK */}
-      {block && blockPlayer ? <div style={{marginBottom:18,padding:"22px 20px",background:"rgba(61,123,255,0.06)",border:"1px solid rgba(61,123,255,0.35)",clipPath:notch(14)}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:14}}>
-          <div>
-            <div style={{fontSize:11,letterSpacing:"0.2em",textTransform:"uppercase",color:CYAN,fontFamily:FONT_LABEL}}>On the block</div>
-            <div style={{fontFamily:FONT_HEAD,fontSize:"clamp(2rem,5vw,3rem)",fontWeight:700,textTransform:"uppercase",color:"#fff"}}>{blockPlayer.name}</div>
-            <div style={{fontFamily:FONT_MONO,fontSize:13,color:RANKS[blockPlayer.rank]?.c}}>{blockPlayer.rank}</div>
-          </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontSize:11,letterSpacing:"0.15em",textTransform:"uppercase",color:"rgba(200,215,255,0.5)",fontFamily:FONT_LABEL}}>{block.leaderId?"Top bid":"Opening"}</div>
-            <div style={{fontFamily:FONT_MONO,fontSize:"clamp(2rem,5vw,3rem)",fontWeight:700,color:"#5b8dff",textShadow:"0 0 18px rgba(61,123,255,0.6)"}}>{fmtMoney(block.currentBid)}</div>
-            {leaderTeam && <div style={{fontFamily:FONT_LABEL,fontSize:13,color:"#9af5c2"}}>{leaderTeam.name} leads</div>}
-          </div>
+  // ── EMPTY STATE: no tournament yet ──
+  if (!t) {
+    if (!isAdmin) return (
+      <div className="view-in page-wrap py-12 flex flex-col items-center text-center">
+        {header("Competition", "Tournament", "Brackets")}
+        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>No tournament has been set up yet. The Commissioner will configure the format and brackets — they'll appear here live once it begins.</p>
+      </div>
+    );
+    const maxGroups = Math.max(2, Math.floor(state.teams.length / 2));
+    return (
+      <div className="view-in page-wrap py-10 flex flex-col items-center">
+        {header("Competition", "New", "Tournament")}
+        <div className="w-full max-w-2xl flex flex-col gap-5">
+          <TPanel>
+            <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>1 · Format</p>
+            <div className="grid sm:grid-cols-3 gap-3">
+              {[
+                { id: "group", name: "Group Stage", desc: "Split into groups, round-robin each, top of each advances to a final." },
+                { id: "roundrobin", name: "Round Robin", desc: "One table — every team plays every other team once." },
+                { id: "single", name: "Single Elim", desc: "Seeded knockout bracket. Lose once, you're out." },
+              ].map((f) => (
+                <button key={f.id} onClick={() => setDraftFormat(f.id)} className="text-left p-3 transition-all"
+                  style={{ background: draftFormat === f.id ? "rgba(61,123,255,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${draftFormat === f.id ? "#3d7bff" : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  <p className="font-bold uppercase text-sm mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", color: draftFormat === f.id ? "#aec6ff" : "#dce6ff" }}>{f.name}</p>
+                  <p className="text-xs leading-snug" style={{ color: "rgba(200,215,255,0.45)" }}>{f.desc}</p>
+                </button>
+              ))}
+            </div>
+          </TPanel>
+
+          <TPanel>
+            <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>2 · Default match length</p>
+            <div className="flex gap-3">
+              {[{ id: "bo1", name: "Best of 1", desc: "One map per match" }, { id: "bo3", name: "Best of 3", desc: "First to 2 maps" }].map((b) => (
+                <button key={b.id} onClick={() => setDraftBo(b.id)} className="flex-1 text-left p-3 transition-all"
+                  style={{ background: draftBo === b.id ? "rgba(61,123,255,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${draftBo === b.id ? "#3d7bff" : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  <p className="font-bold uppercase text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: draftBo === b.id ? "#aec6ff" : "#dce6ff" }}>{b.name}</p>
+                  <p className="text-xs" style={{ color: "rgba(200,215,255,0.45)" }}>{b.desc}</p>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>You can switch any single match (e.g. the final) to a different length later.</p>
+          </TPanel>
+
+          {draftFormat === "group" && (
+            <TPanel>
+              <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>3 · Number of groups</p>
+              <div className="flex gap-2 flex-wrap">
+                {Array.from({ length: maxGroups - 1 }).map((_, i) => {
+                  const n = i + 2;
+                  return (
+                    <button key={n} onClick={() => setDraftGroups(n)} className="w-12 h-12 font-bold transition-all"
+                      style={{ fontFamily: "'IBM Plex Mono',monospace", background: draftGroups === n ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.03)", border: `1px solid ${draftGroups === n ? "#3d7bff" : "rgba(120,150,220,0.18)"}`, color: draftGroups === n ? "#aec6ff" : "#dce6ff", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{n}</button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>{state.teams.length} teams available · winner of each group meets in the final.</p>
+            </TPanel>
+          )}
+
+          <button onClick={() => actions.tCreate(draftFormat, draftBo, draftGroups)} className="gate-cta py-3.5 font-bold uppercase tracking-[0.2em]"
+            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(61,123,255,0.18)", border: "1px solid #3d7bff", color: "#eaf1ff" }}>
+            Create Tournament →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── SETUP STATE: tournament exists but not locked ──
+  const unassigned = state.teams.filter((tm) => {
+    if (t.format === "group") return !t.groups.some((g) => g.teamIds.includes(tm.id));
+    if (t.format === "roundrobin") return !t.teamIds.includes(tm.id);
+    if (t.format === "single") return !t.slots.includes(tm.id);
+    return false;
+  });
+
+  const fmtName = t.format === "group" ? "Group Stage" : t.format === "single" ? "Single Elimination" : "Round Robin";
+
+  if (!t.locked) {
+    if (!isAdmin) return (
+      <div className="view-in page-wrap py-12 flex flex-col items-center text-center">
+        {header("Competition", "Tournament", "Setup")}
+        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The Commissioner is setting up a <b style={{ color: "#7da6ff" }}>{fmtName}</b> ({"BO" + t.bo}). Brackets will appear here once it's locked in.</p>
+      </div>
+    );
+
+    const canLock = t.format === "group" ? t.groups.every((g) => g.teamIds.length >= 2)
+      : t.format === "roundrobin" ? t.teamIds.length >= 2
+      : t.slots.filter(Boolean).length >= 2;
+
+    return (
+      <div className="view-in page-wrap py-10">
+        {header("Competition", fmtName.split(" ")[0], fmtName.split(" ").slice(1).join(" ") || "Setup")}
+        <div className="flex items-center justify-center gap-3 mb-6 flex-wrap">
+          <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo}</span>
+          <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "transparent" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>
         </div>
 
-        {/* captain's own bid button */}
-        {myTeam && (()=>{
-          const availablePool = st.players.filter(p=>p.status==="pool");
-          const req = requiredBid(block);
-          const canBid = block.leaderId!==myTeam.id && emptySlots(myTeam)>0 && maxAllowedBid(myTeam,availablePool)>=req;
-          return <button className="ea-btn" disabled={!canBid} onClick={()=>placeBid(myTeam.id)} style={{...notchBtn(true),width:"100%",marginTop:16,padding:"16px",fontSize:18,
-            background:canBid?"linear-gradient(90deg,#2d6bff,#3d7bff)":"rgba(255,255,255,0.05)",color:canBid?"#fff":"rgba(236,243,255,0.3)",cursor:canBid?"pointer":"not-allowed"}}>
-            {block.leaderId===myTeam.id?"You're leading":canBid?`Bid ${fmtMoney(req)}`:"Can't bid"}</button>;
-        })()}
+        {/* unassigned pool (group / round-robin only — single elim uses seed dropdowns) */}
+        {t.format !== "single" && (
+        <TPanel className="mb-5">
+          <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>
+            {t.format === "group" ? (pickGroup ? `Tap a team to add to ${t.groups.find((g) => g.id === pickGroup)?.name}` : "Pick a group below, then tap teams to fill it") : "Tap teams to add them to the bracket"}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {unassigned.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.4)" }}>All teams assigned.</span>
+              : unassigned.map((tm) => (
+                <TTeamChip key={tm.id} team={tm} onClick={() => {
+                  if (t.format === "group") { if (pickGroup) actions.tAssign(pickGroup, tm.id); }
+                  else actions.tAssign(null, tm.id);
+                }} />
+              ))}
+          </div>
+        </TPanel>
+        )}
 
-        {/* host controls */}
-        {isHost && <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap"}}>
-          <button className="ea-btn" disabled={!block.leaderId} onClick={sell} style={{...notchBtn(true),flex:1,padding:"14px",fontSize:16,background:block.leaderId?"linear-gradient(90deg,#1fbf75,#3ddc84)":"rgba(255,255,255,0.05)",color:block.leaderId?"#062b18":"rgba(236,243,255,0.25)",cursor:block.leaderId?"pointer":"not-allowed"}}>SOLD</button>
-          <button className="ea-btn" onClick={passPlayer} style={{...notchBtn(false),padding:"14px 18px"}}>Pass</button>
-        </div>}
+        {/* group format: group columns */}
+        {t.format === "group" && (
+          <div className="grid sm:grid-cols-2 gap-4 mb-6">
+            {t.groups.map((g) => (
+              <TPanel key={g.id} hue={pickGroup === g.id ? "#5b8dff" : "#3d7bff"} style={{ outline: pickGroup === g.id ? "1px solid #5b8dff" : "none" }}>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="uppercase text-base font-bold tracking-widest" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name}</p>
+                  <button onClick={() => setPickGroup(pickGroup === g.id ? null : g.id)} className="text-[11px] uppercase tracking-widest px-2.5 py-1" style={{ color: pickGroup === g.id ? "#06080e" : "#7da6ff", fontFamily: "'Rajdhani',sans-serif", background: pickGroup === g.id ? "#5b8dff" : "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.4)" }}>{pickGroup === g.id ? "Selected" : "Select"}</button>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {g.teamIds.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.35)" }}>Empty — select this group, then tap teams above.</span>
+                    : g.teamIds.map((id) => <div key={id} className="flex items-center justify-between"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} className="text-xs px-2" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
+                </div>
+              </TPanel>
+            ))}
+          </div>
+        )}
 
-        {/* host can also bid on behalf of any team (table) */}
-        {isHost && <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
-          {st.teams.map(t=>{
-            const availablePool = st.players.filter(p=>p.status==="pool");
-            const req=requiredBid(block);
-            const canBid = block.leaderId!==t.id && emptySlots(t)>0 && maxAllowedBid(t,availablePool)>=req;
-            return <button key={t.id} className="ea-btn" disabled={!canBid} onClick={()=>placeBid(t.id)} style={{...notchBtn(false),fontSize:12,opacity:canBid?1:0.4}}>{t.name} +{fmtMoney(req)}</button>;
-          })}
-        </div>}
+        {/* roundrobin: single list */}
+        {t.format === "roundrobin" && (
+          <TPanel className="mb-6">
+            <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Participants ({t.teamIds.length})</p>
+            <div className="flex flex-wrap gap-2">
+              {t.teamIds.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.35)" }}>None yet — tap teams above.</span>
+                : t.teamIds.map((id) => <div key={id} className="flex items-center gap-1"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} className="text-xs px-1" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
+            </div>
+          </TPanel>
+        )}
+
+        {/* single elim: numbered bracket slots */}
+        {t.format === "single" && (
+          <TPanel className="mb-6">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+              <p className="uppercase text-base font-bold tracking-widest" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Bracket Seeding</p>
+              <div className="flex items-center gap-2">
+                <span className="uppercase" style={{ fontSize: 13, color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.1em" }}>Bracket size</span>
+                <select value={t.slots.length} onChange={(e) => actions.tSetSlotCount(Number(e.target.value))}
+                  className="px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 15 }}>
+                  {[2, 4, 8, 16, 32].map((n) => <option key={n} value={n} style={{ background: "#0a0d18" }}>{n} teams</option>)}
+                </select>
+              </div>
+            </div>
+            <p className="mb-4" style={{ fontSize: 13, color: "rgba(200,215,255,0.4)" }}>Pick the team for each seed. Seeds 1 &amp; 2 meet last; adjacent seeds (1–2, 3–4…) play in round one. Empty seeds become byes.</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              {t.slots.map((id, i) => {
+                const taken = new Set(t.slots.filter((x, k) => x && k !== i));
+                return (
+                  <div key={i} className="flex items-center gap-3 px-3 py-2.5" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(120,150,220,0.16)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
+                    <span className="grid place-items-center shrink-0 font-bold" style={{ width: 34, height: 34, fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: "#5b8dff", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.3)" }}>{i + 1}</span>
+                    <select value={id || ""} onChange={(e) => actions.tSetSlot(i, e.target.value || null)}
+                      className="flex-1 min-w-0 px-2.5 py-2 outline-none uppercase" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.22)", color: id ? (teamOf(id)?.hue || "#ecf3ff") : "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: "0.03em" }}>
+                      <option value="" style={{ background: "#0a0d18", color: "#8aa" }}>— Bye / empty —</option>
+                      {state.teams.map((tm) => (
+                        <option key={tm.id} value={tm.id} disabled={taken.has(tm.id)} style={{ background: "#0a0d18", color: "#ecf3ff" }}>{tm.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </TPanel>
+        )}
+
+        <div className="flex justify-center">
+          <button onClick={() => canLock && actions.tLock()} disabled={!canLock} className="gate-cta py-3.5 px-12 font-bold uppercase tracking-[0.2em]"
+            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: canLock ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.04)", border: `1px solid ${canLock ? "#3d7bff" : "rgba(255,255,255,0.1)"}`, color: canLock ? "#eaf1ff" : "rgba(236,243,255,0.3)", cursor: canLock ? "pointer" : "not-allowed" }}>
+            Lock & Generate Matches →
+          </button>
+        </div>
+        {!canLock && <p className="text-center text-xs mt-3" style={{ color: "rgba(255,120,135,0.7)" }}>{t.format === "group" ? "Each group needs at least 2 teams." : "Add at least 2 teams."}</p>}
       </div>
-      : <div style={{marginBottom:18,textAlign:"center"}}>
-          {isHost && poolLeft>0 && <button className="ea-btn" onClick={spinNominate} style={{...notchBtn(true),padding:"16px 30px",fontSize:18}}>🎯 Spin to nominate</button>}
-          {allDone && <TPanel><p style={{margin:0,color:"#9af5c2",fontFamily:FONT_LABEL,fontSize:15}}>✓ Draft complete — every player has been sold. Rosters are saved.</p></TPanel>}
-          {!isHost && poolLeft>0 && <p style={{color:MUTE,fontFamily:FONT_LABEL}}>Waiting for the host to nominate the next player…</p>}
-        </div>}
+    );
+  }
 
-      {/* TEAMS */}
-      <SectionLabel>Teams</SectionLabel>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:10,margin:"8px 0 24px"}}>
-        {st.teams.map(t=>{
-          const mine = t.captainId===myId;
-          return <div key={t.id} style={{padding:"14px 16px",background:mine?"rgba(61,123,255,0.08)":"rgba(255,255,255,0.025)",border:`1px solid ${mine?"rgba(61,123,255,0.5)":"rgba(120,150,220,0.18)"}`,clipPath:notch(10)}}>
-            <div style={{fontFamily:FONT_LABEL,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",color:"#ecf3ff"}}>{t.name}{mine&&<span style={{color:CYAN,fontSize:11,marginLeft:6}}>YOU</span>}</div>
-            <div style={{fontFamily:FONT_MONO,fontSize:12,color:"rgba(200,215,255,0.5)",marginTop:3}}>Capt. {t.captain}</div>
-            <div style={{fontFamily:FONT_MONO,fontSize:20,fontWeight:700,color:"#5b8dff",marginTop:6}}>{fmtMoney(t.budget)}</div>
-            <div style={{fontSize:11,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(200,215,255,0.4)",fontFamily:FONT_LABEL,marginTop:2}}>{t.roster.length}/{DRAFT_SLOTS} slots</div>
-            {t.roster.length>0 && <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:3}}>
-              {t.roster.map(pid=>{const pl=st.players.find(p=>p.id===pid);return <div key={pid} style={{fontFamily:FONT_MONO,fontSize:11,color:"rgba(220,230,255,0.7)",display:"flex",justifyContent:"space-between"}}><span>{pl?.name}</span><span style={{color:RANKS[pl?.rank]?.c}}>{fmtMoney(t.prices?.[pid])}</span></div>;})}
-            </div>}
-          </div>;
+  // ── LIVE STATE: locked, scores being entered ──
+  const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo };
+  let champion = null;
+  if (t.format === "single" && t.rounds?.length) { const fm = t.rounds[t.rounds.length - 1][0]; if (fm?.done) champion = teamOf(fm.winner); }
+  if (t.format === "final" || (t.format === "group" && t.final?.done)) champion = teamOf(t.final.winner);
+
+  return (
+    <div className="view-in page-wrap py-10">
+      {header("Live Competition", fmtName.split(" ")[0], fmtName.split(" ").slice(1).join(" ") || "")}
+      <div className="flex items-center justify-center gap-3 mb-7 flex-wrap">
+        <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo} default</span>
+        {isAdmin && <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "transparent" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>}
+      </div>
+
+      {champion && <div className="mb-8"><TChampion team={champion} /></div>}
+
+      {/* GROUP STAGE */}
+      {t.format === "group" && (
+        <>
+          <div className="grid lg:grid-cols-2 gap-6 mb-8">
+            {t.groups.map((g) => (
+              <div key={g.id} className="flex flex-col gap-4">
+                <TPanel>
+                  <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name} · Standings</p>
+                  <TStandings teamIds={g.teamIds} matches={t.matches[g.id] || []} overrides={t.overrides} teamOf={teamOf} advance={1} />
+                </TPanel>
+                <TPanel>
+                  <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name} · Matches</p>
+                  <div className="flex flex-col gap-2">
+                    {(t.matches[g.id] || []).map((m) => (
+                      <TMatchRow key={m.id} match={m} locator={{ kind: "group", groupId: g.id, matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+                    ))}
+                  </div>
+                </TPanel>
+              </div>
+            ))}
+          </div>
+          {/* the final */}
+          <TPanel hue="#ffd166">
+            <p className="uppercase text-lg font-bold tracking-widest mb-3 text-center" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Grand Final ★</p>
+            {t.final ? (
+              <div className="max-w-md mx-auto">
+                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+              </div>
+            ) : (
+              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>Awaiting both group winners — complete every group match to set the final.</p>
+            )}
+          </TPanel>
+        </>
+      )}
+
+      {/* ROUND ROBIN */}
+      {t.format === "roundrobin" && (
+        <div className="flex flex-col gap-6">
+          <TPanel>
+            <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Standings</p>
+            <TStandings teamIds={t.teamIds} matches={t.matches} overrides={t.overrides} teamOf={teamOf} advance={1} />
+          </TPanel>
+          <TPanel>
+            <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Fixtures</p>
+            <div className="grid sm:grid-cols-2 gap-2">
+              {t.matches.map((m) => (
+                <TMatchRow key={m.id} match={m} locator={{ kind: "rr", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+              ))}
+            </div>
+          </TPanel>
+        </div>
+      )}
+
+      {/* SINGLE ELIM */}
+      {t.format === "single" && (
+        <TPanel>
+          <TBracket rounds={t.rounds} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+        </TPanel>
+      )}
+
+      {/* manual override panel (admin) */}
+      {isAdmin && (t.format === "group" || t.format === "roundrobin") && (
+        <TPanel className="mt-6" hue="#ffb020">
+          <p className="uppercase text-sm font-bold tracking-widest mb-2" style={{ color: "#ffb020", fontFamily: "'Rajdhani',sans-serif" }}>⚙ Manual standings override</p>
+          <p className="text-[11px] mb-3" style={{ color: "rgba(200,215,255,0.45)" }}>Force points / round-diff for a team (forfeits, penalties). Leave blank to clear. Overridden teams show a *.</p>
+          <TOverrideEditor state={state} t={t} teamOf={teamOf} onOverride={actions.tOverride} />
+        </TPanel>
+      )}
+    </div>
+  );
+}
+
+// small override editor
+function TOverrideEditor({ state, t, teamOf, onOverride }) {
+  const ids = t.format === "group" ? t.groups.flatMap((g) => g.teamIds) : t.teamIds;
+  const [sel, setSel] = useState(ids[0] || "");
+  const [pts, setPts] = useState("");
+  const [diff, setDiff] = useState("");
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <select value={sel} onChange={(e) => setSel(e.target.value)} className="px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13 }}>
+        {ids.map((id) => <option key={id} value={id} style={{ background: "#0a0d18" }}>{teamOf(id)?.name}</option>)}
+      </select>
+      <div className="flex flex-col"><span className="text-[10px] uppercase" style={{ color: "rgba(200,215,255,0.4)" }}>pts</span><input type="number" value={pts} onChange={(e) => setPts(e.target.value)} placeholder="—" className="w-16 px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} /></div>
+      <div className="flex flex-col"><span className="text-[10px] uppercase" style={{ color: "rgba(200,215,255,0.4)" }}>diff</span><input type="number" value={diff} onChange={(e) => setDiff(e.target.value)} placeholder="—" className="w-16 px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} /></div>
+      <button onClick={() => { const patch = {}; if (pts !== "") patch.pts = Number(pts); if (diff !== "") patch.diff = Number(diff); onOverride(sel, Object.keys(patch).length ? patch : null); }} className="px-3 py-1.5 text-xs uppercase tracking-widest" style={{ color: "#06080e", background: "#ffb020", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>Apply</button>
+      <button onClick={() => onOverride(sel, null)} className="px-3 py-1.5 text-xs uppercase tracking-widest" style={{ color: "rgba(255,176,32,0.9)", border: "1px solid rgba(255,176,32,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Clear</button>
+    </div>
+  );
+}
+function RankBadge({ rank, size = "md" }) {
+  const r = RANKS[rank] || RANKS.Iron;
+  const dim = size === "xl" ? 80 : size === "lg" ? 64 : size === "md" ? 34 : 24;
+  return (
+    <div className="relative grid place-items-center" style={{ width: dim, height: dim }}>
+      <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
+        <polygon points="50,4 93,27 93,73 50,96 7,73 7,27" fill={r.c + "14"} stroke={r.c} strokeWidth="5"
+          style={{ filter: `drop-shadow(0 0 ${size === "lg" || size === "xl" ? 10 : 5}px ${r.glow})` }} />
+        <polygon points="50,22 76,36 76,64 50,78 24,64 24,36" fill={r.c} opacity="0.9" />
+      </svg>
+      <span className="relative font-bold text-black" style={{ fontSize: dim * 0.34, fontFamily: "'Rajdhani',sans-serif" }}>
+        {rank === "Radiant" ? "R" : rank[0]}
+      </span>
+    </div>
+  );
+}
+
+function AgentCrest({ agent, hue = "#00e5ff", big = false }) {
+  const s = big ? 92 : 30;
+  return (
+    <div className="relative grid place-items-center" style={{ width: s, height: s }}>
+      <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
+        <polygon points="50,2 96,50 50,98 4,50" fill="none" stroke={hue} strokeWidth="3" opacity="0.9"
+          style={{ filter: `drop-shadow(0 0 ${big ? 12 : 4}px ${hue})` }} />
+        <polygon points="50,16 84,50 50,84 16,50" fill={hue} opacity="0.12" />
+      </svg>
+      <span className="relative font-bold uppercase"
+        style={{ color: hue, fontSize: s * (big ? 0.40 : 0.42), fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 12px ${hue}` }}>
+        {agent.replace("/", "").slice(0, big ? 2 : 1)}
+      </span>
+    </div>
+  );
+}
+
+// Big hero crest that foregrounds the player's RANK (the meaningful headline stat)
+function RankCrest({ rank }) {
+  const r = RANKS[rank] || RANKS.Iron;
+  const s = 104;
+  const letter = rank === "Radiant" ? "R" : rank[0];
+  return (
+    <div className="relative grid place-items-center" style={{ width: s, height: s }}>
+      <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
+        <polygon points="50,4 93,27 93,73 50,96 7,73 7,27" fill="none" stroke={r.c} strokeWidth="3.5" opacity="0.95"
+          style={{ filter: `drop-shadow(0 0 14px ${r.glow})` }} />
+        <polygon points="50,16 81,33 81,67 50,84 19,67 19,33" fill={r.c} opacity="0.16" />
+        <polygon points="50,28 70,39 70,61 50,72 30,61 30,39" fill={r.c} opacity="0.22" />
+      </svg>
+      <span className="relative font-bold uppercase leading-none"
+        style={{ color: r.c, fontSize: s * 0.40, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 16px ${r.glow}` }}>
+        {letter}
+      </span>
+    </div>
+  );
+}
+
+function Tag({ children, hue = "#9d6bff" }) {
+  return (
+    <span className="inline-flex items-center px-3.5 py-1.5 text-xs uppercase tracking-widest font-semibold leading-none"
+      style={{ fontFamily: "'Rajdhani',sans-serif", color: hue, border: `1px solid ${hue}55`, background: `${hue}14`,
+        clipPath: "polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)" }}>
+      {children}
+    </span>
+  );
+}
+
+function Stat({ label, value, hue }) {
+  return (
+    <div className="flex flex-col items-center gap-1 px-3 py-2 rounded-md"
+      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <span className="text-2xl font-bold leading-none" style={{ fontFamily: "'Rajdhani',sans-serif", color: hue, textShadow: `0 0 14px ${hue}66` }}>{value}</span>
+      <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.5)" }}>{label}</span>
+    </div>
+  );
+}
+
+/* ── KDA / performance radar ── */
+function StatRadar({ player, size = 200, hue }) {
+  // normalize stats to 0..1 against sensible community ceilings
+  const axes = [
+    { label: "KDA", v: Math.min(player.kda / 1.8, 1) },
+    { label: "ACS", v: Math.min(player.acs / 320, 1) },
+    { label: "HS%", v: Math.min(player.hs / 45, 1) },
+    { label: "WIN%", v: Math.min((player.win || 0) / 100, 1) },
+    { label: "RANK", v: (RANK_LIST.indexOf(player.rank) + 1) / RANK_LIST.length },
+  ];
+  const c = size / 2, R = c - 30, n = axes.length;
+  const pt = (i, rad) => {
+    const a = (Math.PI * 2 * i) / n - Math.PI / 2;
+    return [c + rad * Math.cos(a), c + rad * Math.sin(a)];
+  };
+  const ring = (f) => axes.map((_, i) => pt(i, R * f).join(",")).join(" ");
+  const shape = axes.map((ax, i) => pt(i, R * Math.max(ax.v, 0.05)).join(",")).join(" ");
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+      {[0.25, 0.5, 0.75, 1].map((f) => (
+        <polygon key={f} points={ring(f)} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="1" />
+      ))}
+      {axes.map((_, i) => { const [x, y] = pt(i, R); return <line key={i} x1={c} y1={c} x2={x} y2={y} stroke="rgba(255,255,255,0.10)" />; })}
+      <polygon points={shape} fill={hue + "33"} stroke={hue} strokeWidth="2" style={{ filter: `drop-shadow(0 0 8px ${hue}88)` }} />
+      {axes.map((ax, i) => {
+        const [x, y] = pt(i, R + 18);
+        return <text key={i} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize="11" fontFamily="'Rajdhani',sans-serif"
+          fontWeight="700" letterSpacing="1" fill="rgba(236,243,255,0.7)">{ax.label}</text>;
+      })}
+      {axes.map((ax, i) => { const [x, y] = pt(i, R * Math.max(ax.v, 0.05)); return <circle key={i} cx={x} cy={y} r="3" fill={hue} />; })}
+    </svg>
+  );
+}
+
+/* ════════════════ TRADING CARD ════════════════════════════════════ */
+
+function PlayerCard({ player, lite = false }) {
+  if (!player) return null;
+  const r = RANKS[player.rank] || RANKS.Iron;
+  return (
+    <div className="relative mx-auto w-full" style={{ maxWidth: 420 }}>
+      <div className="absolute -inset-6 pointer-events-none"
+        style={{ background: `radial-gradient(ellipse at 50% 30%, ${r.glow}, transparent 70%)`, filter: "blur(18px)" }} />
+      <div className="relative overflow-hidden"
+        style={{
+          clipPath: "polygon(0 0, calc(100% - 26px) 0, 100% 26px, 100% 100%, 26px 100%, 0 calc(100% - 26px))",
+          background: "linear-gradient(160deg, rgba(20,26,42,0.92), rgba(10,13,22,0.92))",
+          border: `1px solid ${r.c}66`, boxShadow: `0 0 0 1px rgba(255,255,255,0.04) inset, 0 30px 60px rgba(0,0,0,0.6)`,
+          backdropFilter: lite ? undefined : "blur(14px)",
+        }}>
+        {!lite && <div className="absolute inset-0 pointer-events-none holo-sweep" />}
+        <div className="absolute inset-0 pointer-events-none" style={{ background: "repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 4px)" }} />
+        <div className="flex items-center justify-between px-5 pt-5">
+          <span className="text-xs uppercase tracking-widest font-semibold" style={{ color: r.c, fontFamily: "'Rajdhani',sans-serif" }}>// SCOUT FILE</span>
+          <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.4)" }}>{ROLE_GLYPH[player.role]} {player.role}</span>
+        </div>
+        <div className="relative flex flex-col items-center pt-8 pb-5 mt-4 mx-3 rounded-xl overflow-hidden"
+          style={{ background: `linear-gradient(115deg, rgba(255,70,85,0.34), rgba(157,107,255,0.22) 60%, rgba(0,229,255,0.10))`, border: "1px solid rgba(255,255,255,0.08)" }}>
+          <span className="absolute pointer-events-none select-none font-bold leading-none"
+            style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 150, right: -10, top: -18, color: "rgba(255,255,255,0.07)", letterSpacing: "-0.04em" }}>{player.acs}</span>
+          <span className="absolute pointer-events-none select-none uppercase font-bold"
+            style={{ fontFamily: "'Rajdhani',sans-serif", right: 14, top: 112, fontSize: 12, letterSpacing: 3, color: "rgba(255,255,255,0.18)" }}>ACS</span>
+          <div className={lite ? "" : "float-soft"}><RankCrest rank={player.rank} /></div>
+          <h2 className="relative mt-6 text-5xl font-bold uppercase leading-none text-center px-4"
+            style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", letterSpacing: "0.04em", textShadow: `0 0 24px ${r.glow}` }}>{player.name}</h2>
+          <div className="relative mt-4 flex items-center gap-3 pb-2">
+            <span className="uppercase tracking-widest font-semibold" style={{ color: r.c, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 10px ${r.glow}` }}>{player.rank}</span>
+            <span style={{ color: "rgba(236,243,255,0.35)" }}>·</span>
+            <span className="uppercase tracking-widest text-sm" style={{ color: "rgba(236,243,255,0.75)" }}>{player.agent}</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 px-5 pt-5">
+          <Stat label="KDA" value={Number(player.kda).toFixed(2)} hue="#00e5ff" />
+          <Stat label="ACS" value={player.acs} hue="#ff4655" />
+          <Stat label="HS %" value={player.hs + "%"} hue="#9d6bff" />
+        </div>
+        <div className="px-5 pt-5 pb-7">
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "rgba(236,243,255,0.4)" }}>Trophy cabinet</p>
+          <div className="flex flex-wrap items-center gap-2" style={{ minHeight: 40 }}>
+            {player.badges?.length ? player.badges.map((b, i) => <Tag key={i} hue={i % 2 ? "#00e5ff" : "#9d6bff"}>{b}</Tag>)
+              : <span className="text-sm" style={{ color: "rgba(236,243,255,0.3)" }}>No titles yet — write the first chapter.</span>}
+          </div>
+        </div>
+        <div style={{ height: 4, background: `linear-gradient(90deg, transparent, ${r.c}, transparent)` }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── full scouting modal with radar ── */
+function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain }) {
+  const [confirmDel, setConfirmDel] = useState(false);
+  useEffect(() => { setConfirmDel(false); }, [player && player.id]);
+  if (!player) return null;
+  const r = RANKS[player.rank];
+  const drafted = player.status === "sold";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(5,6,12,0.84)", backdropFilter: "blur(8px)" }} onClick={onClose}>
+      <div className="relative w-full grid md:grid-cols-2 gap-6 items-stretch" style={{ maxWidth: 820 }} onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute -top-2 right-0 md:-right-2 z-10 w-9 h-9 grid place-items-center rounded-full"
+          style={{ background: "rgba(61,123,255,0.12)", border: "1px solid rgba(61,123,255,0.4)", color: "#ecf3ff" }}>✕</button>
+        <PlayerCard player={player} />
+        <div className="p-5 flex flex-col" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.55))", border: `1px solid ${r.c}44`, backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
+          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: r.c }}>Performance profile</p>
+          <div className="grid place-items-center flex-1 pt-4"><StatRadar player={player} hue={r.c} size={300} /></div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Role</span><span style={{ color: "#ecf3ff" }}>{player.role}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Agent</span><span style={{ color: "#ecf3ff" }}>{player.agent}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Opens at</span><span style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(r.bid)}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Status</span><span style={{ color: player.status === "sold" ? "#3ddc84" : "#5b8dff" }}>{player.status === "sold" ? "Drafted" : player.status === "block" ? "On block" : "Available"}</span></div>
+          </div>
+          {isAdmin && (
+            <button onClick={() => onEdit(player)} className="mt-4 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+              ✎ Edit player profile
+            </button>
+          )}
+          {isAdmin && (
+            <button onClick={() => onToggleCaptain(player.id)} className="mt-2 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif",
+                background: player.isCaptain ? "rgba(245,196,83,0.18)" : "rgba(255,255,255,0.04)",
+                border: `1px solid ${player.isCaptain ? "#f5c453" : "rgba(120,150,220,0.3)"}`,
+                color: player.isCaptain ? "#f5d58a" : "rgba(200,215,255,0.6)",
+                clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+              {player.isCaptain ? "★ Captain — excluded from draw" : "☆ Tag as captain"}
+            </button>
+          )}
+          {isAdmin && (
+            confirmDel ? (
+              <div className="mt-2 flex gap-2">
+                <button onClick={() => { onDelete(player.id); onClose(); }} className="flex-1 py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,70,85,0.2)", border: "1px solid #ff4655", color: "#ff8a94", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  Confirm delete
+                </button>
+                <button onClick={() => setConfirmDel(false)} className="px-4 py-2.5 text-sm font-bold uppercase tracking-widest"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.16)", color: "rgba(236,243,255,0.6)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmDel(true)} className="mt-2 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+                style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,70,85,0.1)", border: "1px solid rgba(255,70,85,0.45)", color: "#ff8a94", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                {drafted ? "✕ Delete player (drafted)" : "✕ Delete player"}
+              </button>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ FATE WHEEL ══════════════════════════════════════ */
+const WHEEL_HUES = ["#ff4655", "#00e5ff", "#9d6bff", "#f5c453", "#3ddc84", "#e35cff", "#5ad1ff", "#ff8a3d"];
+const REEL_SCALE = 0.66;  // scale applied to the real 420px PlayerCard
+const REEL_CARD_H = 520;  // fixed slot height — fits the taller portrait card
+const REEL_CARD_W = 292;  // full slot width incl. gap (scaled card ≈277 + small gap)
+const REEL_GAP = 14;
+const REEL_INNER = REEL_CARD_W - REEL_GAP;
+function arcPath(cx, cy, r, a0, a1) {
+  const rad = (a) => ((a - 90) * Math.PI) / 180;
+  const x0 = cx + r * Math.cos(rad(a0)), y0 = cy + r * Math.sin(rad(a0));
+  const x1 = cx + r * Math.cos(rad(a1)), y1 = cy + r * Math.sin(rad(a1));
+  return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1} Z`;
+}
+/* mini player card used inside the reel */
+// Two-phase reel easing: constant-speed cruise (first 45% of time → 71% of distance),
+// then a velocity-continuous cubic ease-out that glides to ZERO velocity at the end.
+// This avoids the abrupt stop a single cubic-bezier produces.
+const REEL_T1 = 0.45;                 // cruise portion of the timeline
+const REEL_D1 = (3 * REEL_T1) / (1 + 2 * REEL_T1); // distance covered during cruise (velocity-matched)
+function REEL_EASE(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  if (t <= REEL_T1) return (REEL_D1 / REEL_T1) * t;          // linear cruise
+  const u = (t - REEL_T1) / (1 - REEL_T1);
+  return REEL_D1 + (1 - REEL_D1) * (1 - Math.pow(1 - u, 3)); // soft ease-out tail
+}
+
+function ReelCard({ player, center, dim, idle }) {
+  // render the REAL trading card, scaled to fit the reel slot; center card grows
+  return (
+    <div className="relative shrink-0 overflow-visible" style={{
+      width: REEL_INNER, height: REEL_CARD_H, marginRight: REEL_GAP,
+      opacity: idle ? 0.82 : dim ? 0.4 : 1,
+      transform: center ? "scale(1.1)" : idle ? "scale(0.92)" : "scale(0.9)",
+      transition: idle ? "none" : "opacity 220ms, transform 220ms",
+      zIndex: center ? 3 : 1,
+    }}>
+      <div className="absolute left-1/2 top-1/2" style={{ width: 420, transform: `translate(-50%, -50%) scale(${REEL_SCALE})` }}>
+        <PlayerCard player={player} lite={!center} />
+      </div>
+    </div>
+  );
+}
+
+function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
+  // active draw if a spin exists and hasn't fully revealed yet, OR landed (show winner)
+  const drawing = !!spin;
+  const wheelPool = drawing ? spin.pool.map((id) => players.find((p) => p.id === id)).filter(Boolean) : pool;
+  const n = Math.max(wheelPool.length, 1);
+
+  const [vw, setVw] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
+  useEffect(() => { const f = () => setVw(window.innerWidth); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
+  // inline stage is inside the page shell (max 1760, with padding); approximate usable width
+  const stageW = Math.min(vw - 40, 1720);
+
+  const [x, setX] = useState(0);
+  const [centerIdx, setCenterIdx] = useState(0);
+
+  // ── DRAW animation ──
+  const LOOPS = 6;
+  const winnerPoolIdx = drawing ? Math.max(spin.pool.indexOf(spin.playerId), 0) : 0;
+  const winnerIndex = LOOPS * n + winnerPoolIdx;
+  const drawReel = drawing ? Array.from({ length: winnerIndex + n + 8 }, (_, i) => wheelPool[i % n]) : [];
+  const winner = drawing ? players.find((p) => p.id === spin.playerId) : null;
+  const wr = winner ? RANKS[winner.rank] : RANKS.Iron;
+  const done = drawing && Date.now() >= spin.startTs + spin.duration;
+
+  useEffect(() => {
+    if (!drawing) return;
+    const startX = stageW / 2 - (REEL_CARD_W - REEL_GAP) / 2;
+    const finalX = -(winnerIndex * REEL_CARD_W + (REEL_CARD_W - REEL_GAP) / 2) + stageW / 2;
+    const total = startX - finalX;
+    let lastTickIdx = -1;
+    const apply = (t) => {
+      const curX = startX - total * REEL_EASE(t);
+      setX(curX);
+      const idx = Math.round((stageW / 2 - curX - (REEL_CARD_W - REEL_GAP) / 2) / REEL_CARD_W);
+      const clamped = Math.max(0, Math.min(idx, drawReel.length - 1));
+      setCenterIdx(clamped);
+      // play a mechanical tick on each new card that crosses center (skip the very first frame)
+      if (clamped !== lastTickIdx) {
+        if (lastTickIdx !== -1 && t < 0.999) SndFX.play("tick", t);
+        lastTickIdx = clamped;
+      }
+    };
+    if (Date.now() - spin.startTs >= spin.duration) { apply(1); return; }
+    let frame;
+    const step = () => {
+      const t = Math.min((Date.now() - spin.startTs) / spin.duration, 1);
+      apply(t);
+      if (t < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [spin?.startTs, drawing, stageW]); // eslint-disable-line
+
+  // ── IDLE slow drift (CSS-driven, no per-frame React renders) ──
+  // strip is two identical halves; CSS shifts it -50% then loops seamlessly
+  // idle strip only needs enough cards to fill the visible stage (×2 for seamless loop), not the whole pool
+  const idleCount = Math.min(n, Math.ceil(stageW / REEL_CARD_W) + 2);
+  const idleHalf = Array.from({ length: Math.max(idleCount, 4) }, (_, i) => wheelPool[i % n]);
+  const idleReel = drawing ? [] : [...idleHalf, ...idleHalf];
+
+  const headline = drawing ? (done ? "Target acquired" : "Drawing the next player") : "The draft pool";
+  const glow = drawing ? (done ? wr.glow : "rgba(61,123,255,0.32)") : "rgba(61,123,255,0.22)";
+
+  return (
+    <div className="w-full flex flex-col items-center">
+      {/* heading */}
+      <div className="text-center mb-4">
+        <p className="uppercase tracking-[0.35em] font-bold text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#5b8dff", textShadow: "0 0 14px rgba(61,123,255,0.7)" }}>{drawing ? "// FATE PROTOCOL ENGAGED" : "// AWAITING DRAW"}</p>
+        <h2 className="text-3xl md:text-4xl font-bold uppercase mt-1" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", letterSpacing: "0.06em" }}>{headline}</h2>
+      </div>
+
+      {/* reel */}
+      <div className="relative w-full mt-4" style={{ height: REEL_CARD_H + 50, overflow: "hidden" }}>
+        <div className="absolute pointer-events-none" style={{ left: 0, right: 0, top: -20, bottom: -20, background: `radial-gradient(ellipse 30% 80% at 50% 50%, ${glow}, transparent 70%)`, filter: "blur(20px)", transition: "background 600ms" }} />
+        {/* edge fades */}
+        <div className="absolute inset-y-0 left-0 z-10 pointer-events-none" style={{ width: 80, background: "linear-gradient(90deg, #0a0d18, transparent)" }} />
+        <div className="absolute inset-y-0 right-0 z-10 pointer-events-none" style={{ width: 80, background: "linear-gradient(270deg, #0a0d18, transparent)" }} />
+        {/* center marker */}
+        <div className="absolute left-1/2 top-0 bottom-0 z-20 pointer-events-none" style={{ transform: "translateX(-50%)" }}>
+          <div className="absolute left-1/2" style={{ top: -14, transform: "translateX(-50%)", filter: "drop-shadow(0 0 9px rgba(255,70,85,0.9))" }}>
+            <div style={{ width: 0, height: 0, borderLeft: "11px solid transparent", borderRight: "11px solid transparent", borderTop: "18px solid #ff4655" }} />
+          </div>
+          <div className="absolute left-1/2" style={{ bottom: -14, transform: "translateX(-50%)", filter: "drop-shadow(0 0 9px rgba(255,70,85,0.9))" }}>
+            <div style={{ width: 0, height: 0, borderLeft: "11px solid transparent", borderRight: "11px solid transparent", borderBottom: "18px solid #ff4655" }} />
+          </div>
+          <div className="absolute top-0 bottom-0 left-1/2" style={{ width: 2, transform: "translateX(-50%)", background: "linear-gradient(180deg, transparent, rgba(255,70,85,0.45), transparent)" }} />
+        </div>
+
+        {drawing ? (
+          <div className="absolute top-1/2 flex items-center" style={{ left: 0, transform: `translate(${x}px, -50%)`, willChange: "transform" }}>
+            {drawReel.map((p, i) => {
+              // windowing: only mount real cards near the visible center; far cards are width-preserving spacers
+              const WIN = 7;
+              if (Math.abs(i - centerIdx) > WIN) {
+                return <div key={i} className="shrink-0" style={{ width: REEL_INNER, height: REEL_CARD_H, marginRight: REEL_GAP }} />;
+              }
+              return <ReelCard key={i} player={p} center={i === centerIdx} dim={i !== centerIdx} />;
+            })}
+          </div>
+        ) : (
+          <div className="absolute top-1/2 flex items-center reel-drift" style={{ left: 0, transform: "translateY(-50%)", willChange: "transform" }}>
+            {idleReel.map((p, i) => <ReelCard key={i} player={p} center={false} dim idle />)}
+          </div>
+        )}
+      </div>
+
+      {/* status / controls */}
+      <div className="mt-5 min-h-[88px] flex flex-col items-center justify-center text-center">
+        {drawing && done && winner ? (
+          <div className="bid-pop">
+            <p className="text-5xl font-bold uppercase leading-none" style={{ fontFamily: "'Rajdhani',sans-serif", color: wr.c, textShadow: `0 0 30px ${wr.glow}` }}>{winner.name}</p>
+            <p className="uppercase tracking-widest text-sm mt-2" style={{ color: "rgba(236,243,255,0.6)" }}>{winner.rank} · heads to the block at {fmt(RANKS[winner.rank].bid)}</p>
+          </div>
+        ) : drawing ? (
+          <p className="uppercase tracking-widest text-sm animate-pulse" style={{ color: "rgba(236,243,255,0.45)" }}>{n} candidates in the draw…</p>
+        ) : isAdmin ? (
+          <>
+            <p className="text-sm mb-4" style={{ color: "rgba(236,243,255,0.5)" }}>{canDraw ? `${pool.length} players in the pool. Hit draw and fate decides who's up.` : "Pool is empty — add players in the Scout Hub."}</p>
+            <button onClick={onDraw} disabled={!canDraw} className={"ea-btn relative" + (canDraw ? "" : " ea-disabled")}
+              style={{ display: "inline-block", padding: "2px", clipPath: "polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px))", background: canDraw ? "#3d7bff" : "rgba(120,140,180,0.25)", boxShadow: canDraw ? "0 0 34px rgba(61,123,255,0.45)" : "none", cursor: canDraw ? "pointer" : "not-allowed" }}>
+              <span className="ea-fill flex items-center justify-center gap-3 font-bold uppercase tracking-[0.28em]"
+                style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "clamp(1rem,1.8vw,1.5rem)", lineHeight: 1, padding: "18px 44px", clipPath: "polygon(0 0, calc(100% - 19px) 0, 100% 19px, 100% 100%, 19px 100%, 0 calc(100% - 19px))", background: "linear-gradient(180deg, #0b1426, #070d18)", color: canDraw ? "#cfe0ff" : "rgba(200,215,255,0.3)" }}>
+                <span className="ea-arrow" style={{ fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1, position: "relative", top: "-0.04em" }}>⇆</span>
+                <span style={{ lineHeight: 1 }}>Draw a Player</span>
+              </span>
+            </button>
+          </>
+        ) : (
+          <p className="text-sm uppercase tracking-widest animate-pulse" style={{ color: "rgba(236,243,255,0.45)" }}>Waiting for the Commissioner to draw the next player…</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+/* ════════════════ ADD PLAYER FORM ═════════════════════════════════ */
+const inputCls = "w-full px-3 py-2 rounded-sm text-sm outline-none";
+const inputStyle = { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif" };
+function Field({ label, children }) {
+  return <label className="flex flex-col gap-1"><span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>{label}</span>{children}</label>;
+}
+function AddPlayerForm({ onAdd, editing, onSave, onCancel }) {
+  const init = editing
+    ? { name: editing.name, rank: editing.rank, role: editing.role, agent: editing.agent, kda: String(editing.kda), acs: String(editing.acs), hs: String(editing.hs), win: editing.win != null ? String(editing.win) : "", badgeInput: "", badges: editing.badges || [] }
+    : { name: "", rank: "Gold", role: "Duelist", agent: "Jett", kda: "", acs: "", hs: "", win: "", badgeInput: "", badges: [] };
+  const [f, setF] = useState(init);
+  // re-seed when switching which player is being edited
+  useEffect(() => { setF(init); }, [editing?.id]); // eslint-disable-line
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const addBadge = () => { const b = f.badgeInput.trim(); if (b) setF({ ...f, badges: [...f.badges, b], badgeInput: "" }); };
+  const submit = () => {
+    if (!f.name.trim()) return;
+    const data = { name: f.name.trim(), rank: f.rank, role: f.role, agent: f.agent, kda: parseFloat(f.kda) || 1.0, acs: parseInt(f.acs) || 200, hs: parseInt(f.hs) || 20, win: Math.max(0, Math.min(parseInt(f.win) || 50, 100)), badges: f.badges };
+    if (editing) { onSave({ ...editing, ...data }); }
+    else { onAdd({ id: uid(), ...data, status: "pool", soldTo: null, soldPrice: null }); setF(init); }
+  };
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <Field label="Player name"><input className={inputCls} style={inputStyle} value={f.name} onChange={set("name")} placeholder="e.g. Zephyr" /></Field>
+      <Field label="Rank"><select className={inputCls} style={inputStyle} value={f.rank} onChange={set("rank")}>{RANK_LIST.map((r) => <option key={r}>{r}</option>)}</select></Field>
+      <Field label="Primary role"><select className={inputCls} style={inputStyle} value={f.role} onChange={set("role")}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></Field>
+      <Field label="Main agent"><select className={inputCls} style={inputStyle} value={f.agent} onChange={set("agent")}>{AGENTS.map((a) => <option key={a}>{a}</option>)}</select></Field>
+      <Field label="KDA"><input className={inputCls} style={inputStyle} value={f.kda} onChange={set("kda")} placeholder="1.24" /></Field>
+      <Field label="ACS"><input className={inputCls} style={inputStyle} value={f.acs} onChange={set("acs")} placeholder="245" /></Field>
+      <Field label="Headshot %"><input className={inputCls} style={inputStyle} value={f.hs} onChange={set("hs")} placeholder="28" /></Field>
+      <Field label="Win %"><input className={inputCls} style={inputStyle} value={f.win} onChange={set("win")} placeholder="52" /></Field>
+      <Field label="Add badge / title">
+        <div className="flex gap-2">
+          <input className={inputCls} style={inputStyle} value={f.badgeInput} onChange={set("badgeInput")} onKeyDown={(e) => e.key === "Enter" && addBadge()} placeholder="MVP, IGL…" />
+          <button onClick={addBadge} className="px-3 rounded-sm text-sm font-bold" style={{ background: "#3d7bff22", border: "1px solid #3d7bff66", color: "#aec6ff" }}>+</button>
+        </div>
+      </Field>
+      {f.badges.length > 0 && (
+        <div className="col-span-2 lg:col-span-4 flex flex-wrap gap-2">
+          {f.badges.map((b, i) => <button key={i} onClick={() => setF({ ...f, badges: f.badges.filter((_, j) => j !== i) })}><Tag hue="#3d7bff">{b} ✕</Tag></button>)}
+        </div>
+      )}
+      <div className="col-span-2 lg:col-span-4 flex gap-3">
+        <button onClick={submit} className="flex-1 py-3 font-bold uppercase tracking-widest text-sm transition-transform active:scale-95"
+          style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(14px 0,100% 0,calc(100% - 14px) 100%,0 100%)", background: editing ? "linear-gradient(90deg,#3ddc8422,#3ddc8444)" : "linear-gradient(90deg,#3d7bff22,#3d7bff44)", border: `1px solid ${editing ? "#3ddc8488" : "#3d7bff88"}`, color: editing ? "#9af5c2" : "#aec6ff" }}>
+          {editing ? "Save changes" : "Add to draft pool"}
+        </button>
+        {editing && <button onClick={onCancel} className="px-6 py-3 text-sm font-bold uppercase tracking-widest rounded-sm" style={{ border: "1px solid rgba(120,150,220,0.2)", color: "rgba(200,215,255,0.6)" }}>Cancel</button>}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ TEAM CARD (locker room, editable by admin) ══════ */
+function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, canRemove, onAddToRoster, onRemoveFromRoster, onSetBudget }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(team.name);
+  const [cap, setCap] = useState(team.captain);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addPid, setAddPid] = useState("");
+  const [addPrice, setAddPrice] = useState("");
+  const [budgetEdit, setBudgetEdit] = useState(false);
+  const [budgetVal, setBudgetVal] = useState(String(team.budget));
+  useEffect(() => { if (!budgetEdit) setBudgetVal(String(team.budget)); }, [team.budget, budgetEdit]);
+  useEffect(() => { if (!editing) { setName(team.name); setCap(team.captain); setConfirmDel(false); } }, [team.name, team.captain, editing]);
+  const saveBudget = () => { const v = Math.max(0, parseInt(budgetVal, 10) || 0); onSetBudget(team.id, v); setBudgetEdit(false); };
+
+  const rosterPlayers = team.roster.map((id) => players.find((p) => p.id === id)).filter(Boolean);
+  const rolesHave = new Set(rosterPlayers.map((p) => p.role));
+  const rolesNeed = ROLES.filter((r) => r !== "Flex" && !rolesHave.has(r));
+  const availablePool = players.filter((p) => p.status === "pool");
+  const submitAdd = () => { if (!addPid) return; onAddToRoster(team.id, addPid, addPrice === "" ? 0 : Number(addPrice)); setAddPid(""); setAddPrice(""); setAddOpen(false); };
+  const save = () => { onRename(team.id, name, cap); setEditing(false); };
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl flex flex-col" style={{ background: `linear-gradient(160deg, ${team.hue}16, rgba(255,255,255,0.03) 55%)`, border: `1px solid ${lead ? "#ff4655" : team.hue + "55"}`, boxShadow: lead ? "0 0 24px rgba(255,70,85,0.3)" : "0 14px 30px rgba(0,0,0,0.35)" }}>
+      <div style={{ height: 3, background: `linear-gradient(90deg, ${team.hue}, transparent)` }} />
+      <div className="p-4 flex flex-col gap-3 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          {editing ? (
+            <div className="flex-1 flex flex-col gap-1.5">
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" maxLength={22}
+                className="w-full px-2 py-1.5 rounded text-sm font-bold uppercase outline-none"
+                style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,255,255,0.06)", border: `1px solid ${team.hue}66`, color: team.hue }} />
+              <input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="Captain" maxLength={18}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+                className="w-full px-2 py-1 rounded text-xs outline-none"
+                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }} />
+              <div className="flex gap-2 mt-1">
+                <button onClick={save} className="px-3 py-1 text-xs font-bold uppercase tracking-widest rounded" style={{ background: "rgba(61,220,132,0.18)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>Save</button>
+                <button onClick={() => setEditing(false)} className="px-3 py-1 text-xs uppercase tracking-widest rounded" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>Cancel</button>
+                {canRemove && (
+                  <button onClick={() => { if (confirmDel) { onRemove(team.id); } else { setConfirmDel(true); setTimeout(() => setConfirmDel(false), 4000); } }}
+                    className="ml-auto px-3 py-1 text-xs uppercase tracking-widest rounded"
+                    style={{ background: confirmDel ? "rgba(255,70,85,0.25)" : "transparent", border: "1px solid rgba(255,70,85,0.5)", color: "#ff8a94" }}>
+                    {confirmDel ? "Confirm?" : "Remove"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="min-w-0">
+                <h3 className="font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: team.hue }}>{team.name}</h3>
+                <p className="text-xs" style={{ color: "rgba(236,243,255,0.5)" }}>Capt. {team.captain}</p>
+              </div>
+              {isAdmin && (
+                <button onClick={() => setEditing(true)} title="Rename team" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-xs"
+                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(236,243,255,0.6)" }}>✎</button>
+              )}
+            </>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.04)" }}>
+            <div className="flex items-center gap-1">
+              <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Budget</p>
+              {isAdmin && !budgetEdit && (
+                <button onClick={() => { setBudgetVal(String(team.budget)); setBudgetEdit(true); }} title="Edit budget" className="ml-auto text-[10px] leading-none px-1 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(236,243,255,0.55)" }}>✎</button>
+              )}
+            </div>
+            {isAdmin && budgetEdit ? (
+              <div className="flex items-center gap-1 mt-0.5">
+                <input value={budgetVal} onChange={(e) => setBudgetVal(e.target.value.replace(/[^0-9]/g, ""))}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveBudget(); if (e.key === "Escape") setBudgetEdit(false); }}
+                  inputMode="numeric" autoFocus
+                  className="w-full px-1.5 py-0.5 rounded text-base font-bold outline-none"
+                  style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(10,14,24,0.9)", border: `1px solid ${team.hue}88`, color: "#ecf3ff" }} />
+                <button onClick={saveBudget} className="text-[11px] px-1.5 py-1 rounded shrink-0" style={{ background: "rgba(61,220,132,0.2)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>✓</button>
+                <button onClick={() => setBudgetEdit(false)} className="text-[11px] px-1.5 py-1 rounded shrink-0" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>✕</button>
+              </div>
+            ) : (
+              <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(team.budget)}</p>
+            )}
+          </div>
+          <div className="px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.04)" }}>
+            <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Max bid</p>
+            <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#5b8dff" }}>{fmt(Math.max(maxAllowedBid(team, players.filter((p) => p.status === "pool")), 0))}</p>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded" style={{ background: team.hue + "14" }}>
+            <span style={{ color: team.hue }}>★</span>
+            <span className="text-sm font-semibold truncate" style={{ color: "#ecf3ff" }}>{team.captain}</span>
+            <span className="ml-auto text-xs uppercase shrink-0" style={{ color: "rgba(236,243,255,0.4)" }}>Captain</span>
+          </div>
+          {rosterPlayers.map((p) => { const r = RANKS[p.rank]; return (
+            <div key={p.id} className="flex items-center gap-1.5">
+              <button onClick={() => onScout(p.id)} className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded text-left" style={{ background: "rgba(255,255,255,0.04)" }}>
+                <RankBadge rank={p.rank} size="sm" />
+                <div className="min-w-0">
+                  <p className="text-sm truncate" style={{ color: "#ecf3ff" }}>{p.name}</p>
+                  <p className="text-xs truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role}</p>
+                </div>
+                <span className="ml-auto text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.55)" }}>{fmt(p.soldPrice)}</span>
+              </button>
+              {isAdmin && (
+                <button onClick={() => onRemoveFromRoster(team.id, p.id)} title="Remove from roster (returns to pool)"
+                  className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-xs"
+                  style={{ background: "rgba(255,70,85,0.1)", border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94" }}>✕</button>
+              )}
+            </div>
+          ); })}
+          {Array.from({ length: emptySlots(team) }).map((_, i) => {
+            if (isAdmin && i === 0) {
+              return addOpen ? (
+                <div key={i} className="flex flex-col gap-1.5 p-2 rounded" style={{ border: `1px solid ${team.hue}55`, background: "rgba(255,255,255,0.03)" }}>
+                  <select value={addPid} onChange={(e) => setAddPid(e.target.value)}
+                    className="w-full px-2 py-1.5 rounded text-xs outline-none"
+                    style={{ background: "rgba(10,14,24,0.9)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }}>
+                    <option value="">Select player…</option>
+                    {availablePool.map((p) => <option key={p.id} value={p.id}>{p.name} · {ROLE_GLYPH[p.role]} {p.role} · {p.rank}</option>)}
+                  </select>
+                  <input value={addPrice} onChange={(e) => setAddPrice(e.target.value.replace(/[^0-9]/g, ""))} placeholder="Price label (optional)"
+                    inputMode="numeric"
+                    className="w-full px-2 py-1.5 rounded text-xs outline-none"
+                    style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }} />
+                  <div className="flex gap-2">
+                    <button onClick={submitAdd} disabled={!addPid} className="px-3 py-1 text-xs font-bold uppercase tracking-widest rounded disabled:opacity-40" style={{ background: "rgba(61,220,132,0.18)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>Add</button>
+                    <button onClick={() => { setAddOpen(false); setAddPid(""); setAddPrice(""); }} className="px-3 py-1 text-xs uppercase tracking-widest rounded" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button key={i} onClick={() => setAddOpen(true)} className="px-2 py-1.5 rounded text-xs uppercase tracking-widest text-center"
+                  style={{ border: `1px dashed ${team.hue}66`, color: team.hue + "cc", background: team.hue + "0d" }}>+ Add player</button>
+              );
+            }
+            return <div key={i} className="px-2 py-1.5 rounded text-xs uppercase tracking-widest text-center" style={{ border: "1px dashed rgba(255,255,255,0.12)", color: "rgba(236,243,255,0.25)" }}>open slot</div>;
+          })}
+        </div>
+        <div className="mt-auto pt-2">
+          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "rgba(236,243,255,0.4)" }}>{emptySlots(team) === 0 ? "Squad complete" : "Roles still open"}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {emptySlots(team) === 0 ? <span className="text-xs" style={{ color: "#3ddc84" }}>✓ Full roster locked in</span>
+              : rolesNeed.length ? rolesNeed.map((r) => <span key={r} className="px-2 py-0.5 text-xs uppercase tracking-widest rounded" style={{ background: "rgba(255,70,85,0.12)", color: "#ff8a94" }}>{ROLE_GLYPH[r]} {r}</span>)
+              : <span className="text-xs" style={{ color: "rgba(236,243,255,0.5)" }}>Core roles covered</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ SEAT GATE ═══════════════════════════════════════ */
+function RoleGate({ teams, onPick }) {
+  const [mode, setMode] = useState("seats"); // seats | commish | captain
+  const [seat, setSeat] = useState(null);     // team being unlocked (captain mode)
+  const [seatIdx, setSeatIdx] = useState(0);  // its seat index (for the code)
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    setErr("");
+    if (code.trim() === COMMISH_CODE) { onPick("admin"); }
+    else { setErr("Incorrect passcode."); setCode(""); }
+  };
+
+  const openSeat = (t, i) => { setSeat(t); setSeatIdx(i); setMode("captain"); setCode(""); setErr(""); };
+
+  const submitSeat = () => {
+    setErr("");
+    if (code.trim() === seatCode(seatIdx)) { onPick(seat.id); }
+    else { setErr("Incorrect seat passcode."); setCode(""); }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 py-14 relative overflow-hidden">
+      {/* faint hero art backdrop */}
+      <img src={IMG_HERO} alt="" className="absolute pointer-events-none select-none" style={{ right: "-8%", top: "50%", transform: "translateY(-50%)", height: "112%", width: "auto", opacity: 0.16, objectFit: "cover", maskImage: "linear-gradient(90deg, transparent, #000 55%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 55%)" }} />
+      <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 70% 50% at 50% 38%, rgba(61,123,255,0.10), transparent 70%)" }} />
+
+      <div className="relative w-full max-w-4xl flex flex-col items-center">
+        {/* eyebrow with HUD ticks */}
+        <div className="flex items-center gap-3 mb-4">
+          <span style={{ width: 22, height: 2, background: "#3d7bff" }} />
+          <p className="uppercase text-sm" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 600, letterSpacing: "0.4em" }}>VOLT Protocol — Season 04</p>
+          <span style={{ width: 22, height: 2, background: "#3d7bff" }} />
+        </div>
+
+        {/* Tungsten headline, matching the hero */}
+        <h1 className="font-bold uppercase text-center" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(3.4rem,9vw,7rem)", lineHeight: 0.82, letterSpacing: "0.04em" }}>
+          <span style={{ color: "#f4f8ff" }}>Auction </span><span style={{ color: "#3d7bff" }}>Draft</span>
+        </h1>
+
+        {mode === "seats" ? (
+          <>
+            <p className="mt-4 text-center max-w-md uppercase" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", fontSize: "0.85rem" }}>Claim your seat — everything syncs live to every open session</p>
+            <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+              {teams.map((t, i) => {
+                return (
+                <button key={t.id} onClick={() => openSeat(t, i)} className="seat-card relative p-6 text-left flex items-center gap-4"
+                  style={{ "--hue": t.hue, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", background: "linear-gradient(160deg, rgba(61,123,255,0.05), rgba(10,15,28,0.55))", border: "1px solid rgba(120,150,220,0.18)", backdropFilter: "blur(8px)" }}>
+                  {/* team-color HUD corner bracket */}
+                  <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: `2px solid ${t.hue}`, borderTop: `2px solid ${t.hue}` }} />
+                  {/* seat number tab */}
+                  <span className="shrink-0 flex items-center justify-center font-bold" style={{ width: 52, height: 52, fontFamily: "'IBM Plex Mono',monospace", fontSize: "1.05rem", color: t.hue, background: `${t.hue}1a`, border: `1px solid ${t.hue}66`, clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{String(i + 1).padStart(2, "0")}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "1.35rem", letterSpacing: "0.04em", color: t.hue }}>{t.name}</span>
+                    <span className="block text-sm mt-0.5" style={{ color: "rgba(220,230,255,0.55)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.05em" }}>Captain · {t.captain}</span>
+                  </span>
+                  <span className="seat-go shrink-0 font-bold uppercase text-xs tracking-widest flex items-center gap-1.5" style={{ fontFamily: "'Rajdhani',sans-serif", color: t.hue }}>
+                    Claim <span style={{ fontFamily: "'IBM Plex Mono',monospace" }}>→</span>
+                  </span>
+                </button>
+                );
+              })}
+            </div>
+            <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+              <button onClick={() => onPick("spectator")} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
+                style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(120,160,255,0.08)", border: "1px solid rgba(120,160,255,0.4)", color: "#cfe0ff" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square" style={{ flexShrink: 0 }}>
+                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3" opacity="0.7" />
+                  <circle cx="12" cy="12" r="6.5" />
+                  <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+                </svg>
+                Enter as Player
+              </button>
+              <button onClick={() => { setMode("commish"); setCode(""); setErr(""); }} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
+                style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.55)", color: "#aec6ff" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square" strokeLinejoin="miter" style={{ flexShrink: 0 }}>
+                  <path d="M12 2.5l7 3v5.5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V5.5z" />
+                  <path d="M9.4 11.8l1.9 1.9 3.6-3.9" />
+                </svg>
+                Enter as Commissioner
+              </button>
+            </div>
+            <p className="mt-4 text-xs text-center max-w-md" style={{ color: "rgba(200,215,255,0.4)" }}>Players can watch the auction, rosters and scouting reports live, but can't place bids.</p>
+          </>
+        ) : mode === "captain" ? (
+          <div className="mt-10 w-full max-w-sm flex flex-col gap-3 p-7 relative" style={{ background: `linear-gradient(160deg, ${seat.hue}1c, rgba(10,15,28,0.6))`, border: `1px solid ${seat.hue}66`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", backdropFilter: "blur(10px)", boxShadow: `0 0 50px ${seat.hue}22` }}>
+            <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: `2px solid ${seat.hue}`, borderTop: `2px solid ${seat.hue}` }} />
+            <p className="uppercase tracking-[0.25em] text-sm font-bold text-center" style={{ fontFamily: "'Rajdhani',sans-serif", color: seat.hue }}>{seat.name}</p>
+            <p className="text-xs text-center -mt-1 leading-relaxed" style={{ color: "rgba(220,230,255,0.5)" }}>
+              Enter this seat's captain passcode to take control.
+            </p>
+            <input type="password" autoFocus value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitSeat()}
+              placeholder="Passcode" className="px-3 py-2.5 rounded-lg outline-none text-center tracking-widest"
+              style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }} />
+            {err && <p className="text-xs text-center" style={{ color: "#ff6b7d" }}>{err}</p>}
+            <button onClick={submitSeat} className="gate-cta py-3 font-bold uppercase tracking-[0.2em]"
+              style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", background: `${seat.hue}28`, border: `1px solid ${seat.hue}`, color: "#eaf1ff" }}>
+              Unlock seat
+            </button>
+            <button onClick={() => { setMode("seats"); setSeat(null); setErr(""); }} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>← back to seats</button>
+          </div>
+        ) : (
+          <div className="mt-10 w-full max-w-sm flex flex-col gap-3 p-7 relative" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.08), rgba(10,15,28,0.6))", border: "1px solid rgba(61,123,255,0.4)", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", backdropFilter: "blur(10px)", boxShadow: "0 0 50px rgba(61,123,255,0.18)" }}>
+            <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+            <p className="uppercase tracking-[0.25em] text-sm font-bold text-center" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#7da6ff" }}>Commissioner Access</p>
+            <p className="text-xs text-center -mt-1 leading-relaxed" style={{ color: "rgba(220,230,255,0.5)" }}>
+              Enter the Commissioner passcode.
+            </p>
+            <input type="password" autoFocus value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
+              placeholder="Passcode" className="px-3 py-2.5 rounded-lg outline-none text-center tracking-widest"
+              style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }} />
+            {err && <p className="text-xs text-center" style={{ color: "#ff6b7d" }}>{err}</p>}
+            <button onClick={submit} className="gate-cta py-3 font-bold uppercase tracking-[0.2em]"
+              style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", background: "rgba(61,123,255,0.18)", border: "1px solid #3d7bff", color: "#eaf1ff" }}>
+              Unlock
+            </button>
+            <button onClick={() => { setMode("seats"); setErr(""); }} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>← back to seats</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ COUNTDOWN ═══════════════════════════════════════ */
+function useCountdown(target) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const diff = Math.max(target - now, 0);
+  return { d: Math.floor(diff / 86400000), h: Math.floor(diff / 3600000) % 24, m: Math.floor(diff / 60000) % 60, s: Math.floor(diff / 1000) % 60, live: diff === 0 };
+}
+
+/* ════════════════ WAR ROOM (private captain sandbox) ══════════════ */
+const WR_BUDGET = 10000;
+const WR_SLOTS = 4;  // captain is the 5th player, so they draft 4
+const WR_PLANS = 5;
+const emptyLineup = () => Array.from({ length: WR_SLOTS }, () => ({ playerId: "", target: "" }));
+
+function PlayerPicker({ value, players, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const sel = players.find((p) => p.id === value);
+  const list = players.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()) || p.agent.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="relative flex-1 min-w-0">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left"
+        style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${sel ? RANKS[sel.rank].c + "66" : "rgba(255,255,255,0.12)"}`, color: "#ecf3ff" }}>
+        {sel ? (
+          <>
+            <RankBadge rank={sel.rank} size="sm" />
+            <span className="font-semibold truncate" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{sel.name}</span>
+            <span className="text-xs truncate" style={{ color: RANKS[sel.rank].c }}>{ROLE_GLYPH[sel.role]} {sel.role}</span>
+          </>
+        ) : <span className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>Select a player…</span>}
+        <span className="ml-auto text-xs" style={{ color: "rgba(236,243,255,0.4)" }}>▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-full rounded-lg overflow-hidden" style={{ background: "#0d1120", border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 40px rgba(0,0,0,0.6)" }}>
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="w-full px-3 py-2 text-sm outline-none" style={{ background: "rgba(255,255,255,0.05)", color: "#ecf3ff", borderBottom: "1px solid rgba(255,255,255,0.1)" }} />
+          <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            {value && <button onClick={() => { onChange(""); setOpen(false); setQ(""); }} className="w-full text-left px-3 py-2 text-xs uppercase tracking-widest" style={{ color: "#ff8a94" }}>✕ Clear slot</button>}
+            {list.map((p) => { const r = RANKS[p.rank]; return (
+              <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); setQ(""); }} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80" style={{ background: p.id === value ? r.c + "1f" : "transparent" }}>
+                <RankBadge rank={p.rank} size="sm" />
+                <span className="text-sm truncate" style={{ color: "#ecf3ff" }}>{p.name}</span>
+                <span className="text-xs truncate" style={{ color: r.c }}>{p.rank}</span>
+                <span className="ml-auto text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.5)" }}>{fmt(r.bid)}</span>
+              </button>
+            ); })}
+            {list.length === 0 && <p className="px-3 py-3 text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>No matches.</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WarRoomGate_REMOVED() { return null; }
+
+function WarRoom({ teamId, teamHue, players }) {
+  const [plans, setPlans] = useState(() => Array.from({ length: WR_PLANS }, () => emptyLineup()));
+  const [active, setActive] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [dirty, setDirty] = useState(false);
+
+  // load this captain's private plans on mount / team change
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const data = await readWarRoom(teamId);
+      if (alive) {
+        if (data?.plans?.length) setPlans(data.plans.map((pl) => {
+          const norm = emptyLineup();
+          (pl || []).slice(0, WR_SLOTS).forEach((s, i) => { norm[i] = { playerId: s?.playerId || "", target: s?.target ?? "" }; });
+          return norm;
+        }).concat(Array.from({ length: Math.max(0, WR_PLANS - data.plans.length) }, () => emptyLineup())).slice(0, WR_PLANS));
+        setLoaded(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, [teamId]);
+
+  const lineup = plans[active];
+  const setSlot = (i, patch) => {
+    setPlans((prev) => prev.map((pl, pi) => pi === active ? pl.map((s, si) => si === i ? { ...s, ...patch } : s) : pl));
+    setDirty(true);
+  };
+
+  // browser filters + tap-to-fill
+  const [wrRank, setWrRank] = useState("All");
+  const [wrRole, setWrRole] = useState("All");
+  const [wrQuery, setWrQuery] = useState("");
+  const tapToFill = (p) => {
+    const emptyIdx = lineup.findIndex((s) => !s.playerId);
+    if (emptyIdx === -1) return; // all 4 slots full
+    setSlot(emptyIdx, { playerId: p.id, target: String(RANKS[p.rank].bid) });
+  };
+  const wrChip = (active2, hue = "#3d7bff") => ({
+    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+    background: active2 ? hue + "22" : "rgba(255,255,255,0.04)",
+    border: `1px solid ${active2 ? hue : "rgba(120,150,220,0.18)"}`,
+    color: active2 ? hue : "rgba(200,215,255,0.55)",
+  });
+
+  const projected = lineup.reduce((sum, s) => sum + (s.playerId ? (parseInt(s.target) || 0) : 0), 0);
+  const over = projected > WR_BUDGET;
+  const pct = Math.min((projected / WR_BUDGET) * 100, 100);
+  const filledCount = lineup.filter((s) => s.playerId).length;
+
+  const save = async () => {
+    await writeWarRoom(teamId, { plans, savedAt: Date.now() });
+    setSavedAt(Date.now()); setDirty(false);
+  };
+  const clearPlan = () => { setPlans((prev) => prev.map((pl, pi) => pi === active ? emptyLineup() : pl)); setDirty(true); };
+
+  const chosenIds = new Set(lineup.filter((s) => s.playerId).map((s) => s.playerId));
+
+  return (
+    <div className="view-in page-wrap py-6">
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-1">
+        <h2 className="text-3xl font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}><span style={{ color: teamHue }}>//</span> War Room</h2>
+        <span className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-2" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(236,243,255,0.6)" }}>
+          <span style={{ color: "#3ddc84" }}>●</span> Private to you
+        </span>
+      </div>
+      <p className="text-sm mb-5" style={{ color: "rgba(236,243,255,0.5)" }}>Brainstorm mock lineups and target bids before the auction. Only you can see these — not other captains, not the Commissioner.</p>
+
+      {/* projected spend bar */}
+      <div className="p-4 rounded-2xl mb-5" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${over ? "#ff4655" : "rgba(255,255,255,0.1)"}`, boxShadow: over ? "0 0 24px rgba(255,70,85,0.3)" : "none", transition: "all 250ms" }}>
+        <div className="flex items-end justify-between mb-2 flex-wrap gap-2">
+          <div>
+            <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.5)" }}>Total projected spend</p>
+            <p className="text-4xl font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: over ? "#ff4655" : "#5b8dff", textShadow: over ? "0 0 18px rgba(255,70,85,0.6)" : "0 0 14px rgba(61,123,255,0.45)" }}>{fmt(projected)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.5)" }}>Budget</p>
+            <p className="text-xl font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(WR_BUDGET)}</p>
+          </div>
+        </div>
+        <div className="h-3 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
+          <div style={{ width: pct + "%", height: "100%", borderRadius: 999, background: over ? "linear-gradient(90deg,#ff4655,#ff2d55)" : `linear-gradient(90deg, ${teamHue}, #3d7bff)`, boxShadow: over ? "0 0 12px rgba(255,70,85,0.8)" : `0 0 10px ${teamHue}`, transition: "width 300ms" }} />
+        </div>
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-xs uppercase tracking-widest" style={{ color: over ? "#ff8a94" : "rgba(236,243,255,0.45)" }}>
+            {over ? `⚠ Over budget by ${fmt(projected - WR_BUDGET)}` : `${fmt(WR_BUDGET - projected)} remaining · ${filledCount}/${WR_SLOTS} slots`}
+          </span>
+          {!over && filledCount === WR_SLOTS && <span className="text-xs uppercase tracking-widest" style={{ color: "#3ddc84" }}>✓ Full lineup within budget</span>}
+        </div>
+      </div>
+
+      {/* plan tabs */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        {plans.map((pl, i) => {
+          const used = pl.some((s) => s.playerId);
+          const isActive = i === active;
+          return (
+            <button key={i} onClick={() => setActive(i)} className="px-4 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: isActive ? teamHue + "22" : "rgba(255,255,255,0.04)", border: `1px solid ${isActive ? teamHue : "rgba(255,255,255,0.12)"}`, color: isActive ? teamHue : "rgba(236,243,255,0.55)" }}>
+              Plan {String.fromCharCode(65 + i)}{used && <span className="ml-1.5" style={{ color: "#3ddc84" }}>●</span>}
+            </button>
+          );
         })}
       </div>
 
-      {/* POOL + FEED */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:18}}>
-        <div>
-          <SectionLabel>Player Pool · {poolLeft} left</SectionLabel>
-          <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:8}}>
-            {st.players.filter(p=>p.status==="pool").map(p=>{const r=RANKS[p.rank];return <div key={p.id} style={{padding:"8px 12px",background:"rgba(255,255,255,0.03)",border:`1px solid ${r?r.c+"44":"rgba(120,150,220,0.16)"}`,clipPath:notch(7)}}>
-              <span style={{fontFamily:FONT_LABEL,fontWeight:700,color:"#dce6ff",fontSize:14}}>{p.name}</span>
-              <span style={{fontFamily:FONT_MONO,fontSize:11,color:r?.c,marginLeft:8}}>{p.rank} · {fmtMoney(r?.bid)}</span>
-            </div>;})}
-            {poolLeft===0 && <p style={{color:MUTE,fontFamily:FONT_LABEL,fontSize:13}}>Pool empty — all players drafted.</p>}
-          </div>
+      {/* slots */}
+      <div className="flex flex-col gap-3">
+        {lineup.map((slot, i) => {
+          const avail = players.filter((p) => !chosenIds.has(p.id) || p.id === slot.playerId);
+          const sel = players.find((p) => p.id === slot.playerId);
+          const r = sel ? RANKS[sel.rank] : null;
+          return (
+            <div key={i} className="flex items-center gap-4 p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${r ? r.c + "44" : "rgba(255,255,255,0.08)"}` }}>
+              <span className="w-7 h-7 grid place-items-center rounded-lg text-sm font-bold shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: teamHue, fontFamily: "'Rajdhani',sans-serif" }}>{i + 1}</span>
+              <div className="shrink-0" style={{ width: 300 }}>
+                <PlayerPicker value={slot.playerId} players={avail} onChange={(id) => { const np = players.find((p) => p.id === id); const minBid = np ? RANKS[np.rank].bid : 0; setSlot(i, { playerId: id, target: id ? String(minBid) : "" }); }} />
+              </div>
+              {/* slider target bid */}
+              <div className="flex-1 min-w-0 flex items-center gap-4" style={{ opacity: slot.playerId ? 1 : 0.35, pointerEvents: slot.playerId ? "auto" : "none" }}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Target bid</span>
+                    {sel && <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.35)" }}>opens {fmt(RANKS[sel.rank].bid)}</span>}
+                  </div>
+                  <input type="range" min="0" max={WR_BUDGET} step="100" disabled={!slot.playerId}
+                    value={parseInt(slot.target) || 0} onChange={(e) => { const minBid = sel ? RANKS[sel.rank].bid : 0; setSlot(i, { target: String(Math.max(minBid, parseInt(e.target.value) || 0)) }); }}
+                    className="wr-slider w-full" style={{ "--wr-hue": r ? r.c : teamHue, "--wr-pct": ((parseInt(slot.target) || 0) / WR_BUDGET) * 100 + "%" }} />
+                </div>
+                <div className="shrink-0 flex items-center gap-1 px-3 py-2 rounded-lg" style={{ width: 130, background: "rgba(255,255,255,0.05)", border: `1px solid ${r ? r.c + "55" : "rgba(255,255,255,0.12)"}` }}>
+                  <span style={{ color: "rgba(236,243,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>$</span>
+                  <input type="number" min={sel ? RANKS[sel.rank].bid : 0} max={WR_BUDGET} step="100" disabled={!slot.playerId} value={slot.target}
+                    onChange={(e) => setSlot(i, { target: e.target.value })}
+                    onBlur={(e) => { const minBid = sel ? RANKS[sel.rank].bid : 0; const v = parseInt(e.target.value) || 0; if (slot.playerId && v < minBid) setSlot(i, { target: String(minBid) }); }}
+                    placeholder={sel ? String(RANKS[sel.rank].bid) : "0"}
+                    className="w-full bg-transparent outline-none text-right font-bold" style={{ color: r ? r.c : "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* actions */}
+      <div className="flex items-center gap-3 mt-5 flex-wrap">
+        <button onClick={save} className="px-8 py-3 font-bold uppercase tracking-widest transition-all active:scale-95"
+          style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(16px 0,100% 0,calc(100% - 16px) 100%,0 100%)", background: `linear-gradient(90deg, ${teamHue}, #3d7bff)`, color: "#06080e", boxShadow: `0 0 24px ${teamHue}66` }}>
+          Save Plan {String.fromCharCode(65 + active)}
+        </button>
+        <button onClick={clearPlan} className="px-5 py-3 text-sm font-bold uppercase tracking-widest rounded-lg" style={{ border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94" }}>Clear plan</button>
+        {dirty ? <span className="text-xs uppercase tracking-widest" style={{ color: "#f5c453" }}>Unsaved changes</span>
+          : savedAt ? <span className="text-xs uppercase tracking-widest" style={{ color: "#3ddc84" }}>✓ Saved</span> : null}
+      </div>
+
+      {/* ── player browser (filterable, tap to fill next slot) ── */}
+      <div className="mt-8 pt-6" style={{ borderTop: "1px solid rgba(61,123,255,0.16)" }}>
+        <div className="flex items-center gap-2 mb-3">
+          <span style={{ width: 14, height: 2, background: teamHue }} />
+          <p className="uppercase text-xs font-bold" style={{ color: teamHue, fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.26em" }}>Operator Database</p>
+          <span className="text-xs ml-auto" style={{ color: "rgba(200,215,255,0.4)" }}>Tap a card to fill the next open slot</span>
         </div>
-        <div>
-          <SectionLabel>Auction Feed</SectionLabel>
-          <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
-            {(st.log||[]).map((line,i)=><div key={i} style={{fontFamily:FONT_MONO,fontSize:12,color:i===0?"#dce6ff":"rgba(200,215,255,0.5)",padding:"5px 10px",background:i===0?"rgba(61,123,255,0.06)":"transparent"}}>{line}</div>)}
+
+        <div className="flex items-center gap-2 mb-3 p-2" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+          <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
+          <input value={wrQuery} onChange={(e) => setWrQuery(e.target.value)} placeholder="Search players or agents…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
+        </div>
+        <div className="flex flex-wrap gap-2 mb-2">
+          <button onClick={() => setWrRank("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRank === "All")}>All ranks</button>
+          {RANK_LIST.map((r) => <button key={r} onClick={() => setWrRank(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRank === r, RANKS[r].c)}>{r}</button>)}
+        </div>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button onClick={() => setWrRole("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRole === "All")}>All roles</button>
+          {ROLES.map((r) => <button key={r} onClick={() => setWrRole(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRole === r)}>{ROLE_GLYPH[r]} {r}</button>)}
+        </div>
+
+        <div className="wr-grid">
+          {players
+            .filter((p) => (wrRank === "All" || p.rank === wrRank) && (wrRole === "All" || p.role === wrRole) && (!wrQuery || p.name.toLowerCase().includes(wrQuery.toLowerCase()) || p.agent.toLowerCase().includes(wrQuery.toLowerCase())))
+            .map((p) => {
+              const r = RANKS[p.rank]; const picked = chosenIds.has(p.id); const full = lineup.every((s) => s.playerId);
+              const disabled = picked || full;
+              return (
+                <button key={p.id} onClick={() => tapToFill(p)} disabled={disabled}
+                  className="relative text-left p-3 overflow-hidden transition-transform"
+                  style={{ background: picked ? "rgba(61,220,132,0.08)" : `linear-gradient(150deg, ${r.c}18, rgba(10,15,28,0.5) 60%)`,
+                    border: `1px solid ${picked ? "rgba(61,220,132,0.5)" : r.c + "44"}`,
+                    clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))",
+                    opacity: disabled && !picked ? 0.4 : 1, cursor: disabled ? "default" : "pointer",
+                    transform: disabled ? "none" : undefined }}>
+                  <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-base font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
+                      <p className="text-[11px] uppercase tracking-widest mt-1" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role}</p>
+                    </div>
+                    <RankBadge rank={p.rank} size="sm" />
+                  </div>
+                  <div className="flex items-center gap-3 mt-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                    <span className="text-xs"><span style={{ color: "#5b8dff" }}>{p.acs}</span><span className="text-[9px] ml-0.5" style={{ color: "rgba(200,215,255,0.4)" }}>ACS</span></span>
+                    <span className="text-xs"><span style={{ color: "#3be8d8" }}>{p.kda}</span><span className="text-[9px] ml-0.5" style={{ color: "rgba(200,215,255,0.4)" }}>KDA</span></span>
+                    <span className="text-xs"><span style={{ color: "#c08bff" }}>{p.hs}%</span><span className="text-[9px] ml-0.5" style={{ color: "rgba(200,215,255,0.4)" }}>HS</span></span>
+                    {!picked && <span className="ml-auto text-xs" style={{ color: "rgba(236,243,255,0.55)" }}>{fmt(r.bid)}</span>}
+                  </div>
+                  {picked && <span className="absolute bottom-2 right-2.5 text-[10px] uppercase tracking-widest font-bold" style={{ color: "#3ddc84" }}>✓ In plan</span>}
+                </button>
+              );
+            })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* agent artwork flanking the hero */
+function AgentArt({ side, src, hue, width = 520, top = -40, imgScale = 1, edgeOffset = -70, mask }) {
+  const isLeft = side === "left";
+  const maskImg = mask || `linear-gradient(${isLeft ? "90deg" : "270deg"}, #000 45%, transparent 95%)`;
+  return (
+    <div className="absolute bottom-0 pointer-events-none hidden md:block"
+      style={{ [isLeft ? "left" : "right"]: edgeOffset, top, width,
+        maskImage: maskImg, WebkitMaskImage: maskImg }}>
+      <div className="absolute" style={{ inset: 0, background: `radial-gradient(ellipse 55% 60% at ${isLeft ? "40%" : "60%"} 58%, ${hue}3a, transparent 70%)`, filter: "blur(12px)" }} />
+      <img src={src} alt="" className="absolute bottom-0 w-auto object-contain object-bottom"
+        style={{ [isLeft ? "left" : "right"]: 0, height: `${imgScale * 100}%`, opacity: 0.95, filter: `drop-shadow(0 0 26px ${hue}77)` }} />
+    </div>
+  );
+}
+
+/* ════════════════ MAP VETO (Commissioner pick/ban tool — local, not synced) ══════ */
+const ALL_MAPS = ["Ascent", "Bind", "Breeze", "Corrode", "Fracture", "Haven", "Icebox", "Lotus", "Pearl", "Split", "Sunset", "Abyss"];
+// Map splash thumbnails. Paste a URL or base64 data URI per map; blanks render a styled placeholder.
+const MAP_IMG = {
+  Ascent: "data:image/jpeg;base64,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",
+  Bind: "data:image/jpeg;base64,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",
+  Breeze: "data:image/jpeg;base64,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",
+  Corrode: "data:image/jpeg;base64,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",
+  Fracture: "data:image/jpeg;base64,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",
+  Haven: "data:image/jpeg;base64,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",
+  Icebox: "data:image/jpeg;base64,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",
+  Lotus: "data:image/jpeg;base64,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",
+  Pearl: "data:image/jpeg;base64,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",
+  Split: "data:image/jpeg;base64,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",
+  Sunset: "data:image/jpeg;base64,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",
+  Abyss: "data:image/jpeg;base64,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",
+};
+// Distinct placeholder tint per map so the grid reads as cards before real art is supplied.
+const MAP_TINT = {
+  Ascent: "#6b8cff", Bind: "#d9a441", Breeze: "#4fc4d6", Corrode: "#b56ad9",
+  Fracture: "#7a8a55", Haven: "#c4773f", Icebox: "#73b4e6", Lotus: "#5fae7a",
+  Pearl: "#4f8fd9", Split: "#8a93a8", Sunset: "#e08a5a", Abyss: "#5566aa",
+};
+
+// One card. `state` = "active" | "off" (setup, toggled out) | "banned" | "decider" | "live".
+// `stamp` is the small label shown at the bottom (e.g. "BANNED · TEAM" or "★ DECIDER").
+/* shared HUD panel — notched clip + corner brackets, matching the Lobby command-center style */
+function HudPanel({ children, className = "", accent = "#3d7bff", pad = "px-4 py-3.5", style = {} }) {
+  return (
+    <div className={`relative ${pad} ${className}`} style={{
+      background: "linear-gradient(180deg, rgba(11,16,28,0.82), rgba(8,11,20,0.6))",
+      border: `1px solid ${accent}44`,
+      clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))",
+      backdropFilter: "blur(4px)",
+      boxShadow: "0 8px 34px rgba(0,0,0,0.4)",
+      ...style,
+    }}>
+      <span className="absolute left-0 top-0" style={{ width: 14, height: 14, borderLeft: `2px solid ${accent}`, borderTop: `2px solid ${accent}` }} />
+      <span className="absolute right-0 bottom-0" style={{ width: 14, height: 14, borderRight: `2px solid ${accent}`, borderBottom: `2px solid ${accent}` }} />
+      {children}
+    </div>
+  );
+}
+
+/* small section eyebrow — dot + label + gradient rule, like System Status */
+function HudLabel({ children, dot = "#3d7bff" }) {
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 6, height: 6, background: dot, boxShadow: `0 0 8px ${dot}`, borderRadius: 1 }} />
+        <p className="uppercase text-xs" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.28em" }}>{children}</p>
+      </div>
+      <div className="mb-3" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
+    </>
+  );
+}
+
+/* HUD coin — octagonal clip, blue HUD frame, monospace face */
+function HudCoin({ coin, flipping }) {
+  const lit = !!coin;
+  const oct = "polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%)";
+  return (
+    <div className="relative" style={{ width: 108, height: 108 }}>
+      <div className="absolute inset-0" style={{
+        clipPath: oct,
+        background: lit ? "linear-gradient(150deg, rgba(61,123,255,0.35), rgba(8,12,24,0.9))" : "rgba(255,255,255,0.04)",
+        border: `1px solid ${lit ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.25)"}`,
+        boxShadow: lit ? "0 0 30px rgba(61,123,255,0.4), inset 0 0 22px rgba(61,123,255,0.12)" : "none",
+        transform: flipping ? "rotateX(180deg)" : "none",
+        transition: "transform .09s linear, box-shadow .3s ease",
+      }} />
+      <div className="absolute inset-0 grid place-items-center">
+        <div className="grid place-items-center" style={{
+          width: 64, height: 64, clipPath: oct,
+          background: lit ? "rgba(61,123,255,0.12)" : "transparent",
+          border: `1px solid ${lit ? "rgba(120,160,255,0.4)" : "rgba(120,150,220,0.18)"}`,
+        }}>
+          <span className="font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: coin ? 13 : 22, letterSpacing: "0.08em", color: lit ? "#cfe0ff" : "rgba(236,243,255,0.3)", textShadow: lit ? "0 0 12px rgba(61,123,255,0.7)" : "none" }}>{coin ? coin : "?"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
+  const img = MAP_IMG[m];
+  const tint = MAP_TINT[m] || "#5b8dff";
+  const dimmed = state === "off" || state === "banned";
+  const isDecider = state === "decider";
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className="relative rounded-lg overflow-hidden group text-left"
+      style={{
+        aspectRatio: "16 / 10",
+        border: `1px solid ${isDecider ? "#3ddc84" : state === "banned" ? "rgba(255,70,85,0.4)" : state === "off" ? "rgba(120,150,220,0.15)" : tint + "99"}`,
+        boxShadow: isDecider ? "0 0 26px rgba(61,220,132,0.45)" : "none",
+        cursor: disabled ? "default" : "pointer",
+        transition: "all .18s ease",
+      }}>
+      {/* art layer (image if supplied, otherwise tinted gradient placeholder).
+          Images get a slight scale-up so the source art's soft/blurred baked-in
+          edges crop out beyond the card frame. */}
+      <div className="absolute inset-0" style={{
+        background: img ? `url("${img}") center/cover no-repeat` : `linear-gradient(150deg, ${tint}55, #0a0f1c 75%)`,
+        transform: img ? "scale(1.08)" : "none",
+        filter: dimmed ? "grayscale(1) brightness(0.4)" : "none",
+        transition: "filter .18s ease",
+      }} />
+      {/* hover accent for clickable cards */}
+      {!disabled && <div className="absolute inset-0 opacity-0 group-hover:opacity-100" style={{ background: `linear-gradient(to top, ${tint}22, transparent 60%)`, transition: "opacity .15s" }} />}
+      {/* name — centered & enlarged */}
+      <span className="absolute inset-0 grid place-items-center text-center px-2 font-bold uppercase pointer-events-none" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(1.5rem,3.2vw,2.4rem)", lineHeight: 1, letterSpacing: "0.06em", color: dimmed ? "rgba(236,243,255,0.5)" : "#f4f8ff", textShadow: "0 2px 14px rgba(0,0,0,0.75)" }}>{m}</span>
+      {/* decider checkmark, corner-style like the in-game select */}
+      {isDecider && (
+        <>
+          <span className="absolute top-0 left-0" style={{ width: 0, height: 0, borderTop: "26px solid #3ddc84", borderRight: "26px solid transparent" }} />
+          <span className="absolute top-1.5 left-1/2 -translate-x-1/2" style={{ fontSize: 30, color: "#3ddc84", textShadow: "0 0 14px rgba(61,220,132,0.7)" }}>✓</span>
+        </>
+      )}
+      {/* off (toggled out in setup) marker */}
+      {state === "off" && <span className="absolute top-1.5 right-2 text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(255,138,148,0.7)" }}>OUT</span>}
+      {/* bottom stamp */}
+      {stamp && <span className="absolute left-1/2 -translate-x-1/2 bottom-2 text-[10px] font-semibold tracking-widest whitespace-nowrap" style={{ color: stampColor || "rgba(236,243,255,0.6)" }}>{stamp}</span>}
+    </button>
+  );
+}
+
+/* ════════════════ LEADERBOARD (tournament stats, sorted by avg ACS) ══════════ */
+function MatchAddRow({ pid, hue, onAdd }) {
+  const [k, setK] = useState(""); const [d, setD] = useState(""); const [a, setA] = useState(""); const [acs, setAcs] = useState("");
+  const num = (v, set) => (e) => set(e.target.value.replace(/[^0-9]/g, ""));
+  const submit = () => { if (k === "" && d === "" && a === "" && acs === "") return; onAdd(pid, { k, d, a, acs }); setK(""); setD(""); setA(""); setAcs(""); };
+  const field = (label, val, set, ph) => (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[9px] uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)" }}>{label}</span>
+      <input value={val} onChange={num(val, set)} onKeyDown={(e) => e.key === "Enter" && submit()} placeholder={ph} inputMode="numeric"
+        className="w-14 px-2 py-1 text-sm outline-none text-center" style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(7,12,22,0.9)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff" }} />
+    </div>
+  );
+  return (
+    <div className="flex items-end gap-2 flex-wrap">
+      {field("K", k, setK, "0")}{field("D", d, setD, "0")}{field("A", a, setA, "0")}{field("ACS", acs, setAcs, "0")}
+      <button onClick={submit} className="px-3 py-1.5 text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,220,132,0.18)", border: "1px solid #3ddc8488", color: "#9af5c2", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>+ Add match</button>
+    </div>
+  );
+}
+
+function Leaderboard({ players, isAdmin, onAddMatch, onRemoveMatch }) {
+  const [expanded, setExpanded] = useState(null); // pid whose match panel is open (admin)
+  const ranked = [...players]
+    .map((p) => ({ p, s: aggStats(p) }))
+    .sort((A, B) => B.s.acs - A.s.acs || B.s.kd - A.s.kd || B.s.k - A.s.k);
+  const anyStats = ranked.some((r) => r.s.games > 0);
+
+  return (
+    <div className="view-in page-wrap py-8">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Performance Rankings</p>
+      </div>
+      <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h2>
+      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>Ranked by average ACS across matches. {isAdmin ? "Tap a player to log match stats." : "Updated live by the Commissioner."}</p>
+
+      {!anyStats && (
+        <div className="mb-5 px-4 py-3 text-sm" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "rgba(200,215,255,0.6)", clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+          No match stats logged yet. {isAdmin ? "Tap any player below and add a match to start the board." : "The board fills in as matches are played."}
+        </div>
+      )}
+
+      {/* header row */}
+      <div className="hidden md:grid items-center gap-3 px-4 py-2 text-[10px] uppercase tracking-widest" style={{ gridTemplateColumns: "40px 1fr 60px 60px 60px 70px 70px 60px", color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>
+        <span>#</span><span>Player</span><span className="text-center">K</span><span className="text-center">D</span><span className="text-center">A</span><span className="text-center">K/D</span><span className="text-center">ACS</span><span className="text-center">GP</span>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {ranked.map(({ p, s }, i) => {
+          const r = RANKS[p.rank] || RANKS.Iron;
+          const top = i < 3 && s.games > 0;
+          const medal = ["#ffd75e", "#cdd7e6", "#e0985a"][i];
+          const isOpen = expanded === p.id;
+          return (
+            <div key={p.id}>
+              <button onClick={() => isAdmin && setExpanded(isOpen ? null : p.id)} disabled={!isAdmin}
+                className="w-full grid items-center gap-3 px-4 py-3 text-left transition-transform"
+                style={{ gridTemplateColumns: "40px 1fr 60px 60px 60px 70px 70px 60px",
+                  background: top ? `linear-gradient(90deg, ${r.c}14, rgba(10,15,28,0.5))` : "rgba(255,255,255,0.025)",
+                  border: `1px solid ${top ? r.c + "55" : "rgba(120,150,220,0.14)"}`,
+                  clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))",
+                  cursor: isAdmin ? "pointer" : "default" }}>
+                <span className="font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, color: top ? medal : "rgba(200,215,255,0.5)", textShadow: top ? `0 0 10px ${medal}88` : "none" }}>{i + 1}</span>
+                <span className="flex items-center gap-2 min-w-0">
+                  <RankBadge rank={p.rank} size="sm" />
+                  <span className="min-w-0">
+                    <span className="block font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", letterSpacing: "0.02em" }}>{p.name}</span>
+                    <span className="block text-[11px] truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.rank}</span>
+                  </span>
+                </span>
+                <span className="text-center font-bold hidden md:block" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#9af5c2" }}>{s.k}</span>
+                <span className="text-center hidden md:block" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(255,138,148,0.85)" }}>{s.d}</span>
+                <span className="text-center hidden md:block" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.7)" }}>{s.a}</span>
+                <span className="text-center hidden md:block font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: s.kd >= 1 ? "#3ddc84" : "#ff8a94" }}>{s.kd.toFixed(2)}</span>
+                <span className="text-center font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, color: "#5b8dff", textShadow: "0 0 12px rgba(61,123,255,0.5)" }}>{s.acs}</span>
+                <span className="text-center hidden md:block text-sm" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>{s.games}</span>
+              </button>
+
+              {/* mobile stat strip */}
+              <div className="md:hidden flex items-center gap-3 px-4 py-1.5 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.6)" }}>
+                <span style={{ color: "#9af5c2" }}>{s.k}K</span><span style={{ color: "#ff8a94" }}>{s.d}D</span><span>{s.a}A</span>
+                <span style={{ color: s.kd >= 1 ? "#3ddc84" : "#ff8a94" }}>{s.kd.toFixed(2)} K/D</span>
+                <span className="ml-auto" style={{ color: "rgba(200,215,255,0.4)" }}>{s.games} GP</span>
+              </div>
+
+              {isAdmin && isOpen && (
+                <div className="mt-1 mb-1 px-4 py-3 flex flex-col gap-3" style={{ background: "rgba(7,12,22,0.7)", border: `1px solid ${r.c}33`, clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+                  <MatchAddRow pid={p.id} hue={r.c} onAdd={onAddMatch} />
+                  {Array.isArray(p.tourneyStats) && p.tourneyStats.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)" }}>Logged matches</span>
+                      {p.tourneyStats.map((e, idx) => (
+                        <div key={idx} className="flex items-center gap-3 text-xs px-2 py-1" style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(255,255,255,0.03)", color: "rgba(220,230,255,0.7)" }}>
+                          <span style={{ color: "rgba(200,215,255,0.4)" }}>M{idx + 1}</span>
+                          <span style={{ color: "#9af5c2" }}>{e.k}</span>/<span style={{ color: "#ff8a94" }}>{e.d}</span>/<span>{e.a}</span>
+                          <span className="ml-2" style={{ color: "#5b8dff" }}>{e.acs} ACS</span>
+                          <button onClick={() => onRemoveMatch(p.id, idx)} className="ml-auto text-xs px-1.5 py-0.5" style={{ color: "#ff8a94", border: "1px solid rgba(255,70,85,0.4)" }}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MapVeto({ teams }) {
+  // Two sides for this veto. Default to the first two seeded teams if present.
+  const seedA = teams[0] || null, seedB = teams[1] || null;
+  const [teamA, setTeamA] = useState(seedA ? seedA.id : "");
+  const [teamB, setTeamB] = useState(seedB ? seedB.id : "");
+  const [active, setActive] = useState(new Set(ALL_MAPS));    // maps eligible this veto
+  const [banned, setBanned] = useState({});                    // mapName -> teamId who banned it
+  const [decider, setDecider] = useState(null);                // final map name
+  const [sidePick, setSidePick] = useState(null);              // { teamId, side }
+  const [coin, setCoin] = useState(null);                      // "HEADS" | "TAILS"
+  const [flipping, setFlipping] = useState(false);
+  const [coinTeam, setCoinTeam] = useState(null);              // teamId assigned the coin result
+  const [turn, setTurn] = useState(null);                      // teamId whose ban turn it is
+  const [setup, setSetup] = useState(true);                    // setup vs running
+
+  const resolve = (id) => teams.find((t) => t.id === id) || null;
+  const A = resolve(teamA), B = resolve(teamB);
+  const nameOf = (id) => { const t = resolve(id); return t ? t.name : "—"; };
+  const hueOf = (id) => { const t = resolve(id); return t ? t.hue : "#5b8dff"; };
+  const other = (id) => (id === teamA ? teamB : teamA);
+
+  const pool = ALL_MAPS.filter((m) => active.has(m));
+  const remaining = pool.filter((m) => !banned[m]);
+
+  const toggleActive = (m) => {
+    if (!setup) return;
+    setActive((prev) => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n; });
+  };
+
+
+  const flip = () => {
+    if (flipping) return;
+    setFlipping(true); setCoin(null); setCoinTeam(null);
+    let n = 0;
+    const iv = setInterval(() => {
+      setCoin(Math.random() < 0.5 ? "HEADS" : "TAILS"); n++;
+      if (n > 12) { clearInterval(iv); setFlipping(false); }
+    }, 90);
+  };
+
+  const banMap = (m) => {
+    if (setup || decider || banned[m] || !turn) return;
+    const nextBanned = { ...banned, [m]: turn };
+    const left = pool.filter((x) => !nextBanned[x]);
+    setBanned(nextBanned);
+    if (left.length === 1) {
+      // last map standing becomes the decider; the OTHER team (not whoever just banned) picks side
+      setDecider(left[0]);
+      setSidePick({ teamId: other(turn), side: null });
+      setTurn(null);
+    } else {
+      setTurn(other(turn)); // alternate
+    }
+  };
+
+  const startVeto = () => {
+    if (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn) return;
+    setSetup(false);
+  };
+
+  const resetAll = () => {
+    setActive(new Set(ALL_MAPS)); setBanned({}); setDecider(null); setSidePick(null);
+    setCoin(null); setCoinTeam(null); setFlipping(false); setTurn(null); setSetup(true);
+  };
+
+  const teamPill = (id, label) => {
+    const sel = coinTeam === id;
+    return (
+      <button onClick={() => { if (setup && coin) setCoinTeam(id); }} disabled={!coin || !setup}
+        className="relative flex-1 px-3 py-2.5 text-left disabled:cursor-default"
+        style={{ background: sel ? hueOf(id) + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${sel ? hueOf(id) : "rgba(120,150,220,0.2)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", boxShadow: sel ? `0 0 18px ${hueOf(id)}33` : "none" }}>
+        <p className="text-[10px] uppercase tracking-[0.2em]" style={{ color: "rgba(236,243,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>{label}{sel ? " · WON" : ""}</p>
+        <p className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: hueOf(id) }}>{nameOf(id) || "—"}</p>
+      </button>
+    );
+  };
+
+  return (
+    <div className="view-in page-wrap py-8">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Commissioner Tool</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+      </div>
+      <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
+      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>Flip the coin, assign who bans first, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
+
+      {/* ─── SETUP ─── */}
+      {setup && (
+        <div className="flex flex-col gap-4">
+          {/* team selectors */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[["Combatant A", teamA, setTeamA, teamB], ["Combatant B", teamB, setTeamB, teamA]].map(([label, val, setVal, exclude]) => (
+              <HudPanel key={label} accent={val ? hueOf(val) : "#3d7bff"}>
+                <HudLabel dot={val ? hueOf(val) : "#3d7bff"}>{label}</HudLabel>
+                <select value={val} onChange={(e) => setVal(e.target.value)}
+                  className="w-full px-3 py-2 text-sm outline-none uppercase font-semibold"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.06em", background: "rgba(7,12,22,0.9)", border: "1px solid rgba(61,123,255,0.3)", color: val ? hueOf(val) : "#ecf3ff", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
+                  <option value="">Select team…</option>
+                  {teams.filter((t) => t.id !== exclude).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </HudPanel>
+            ))}
+          </div>
+
+          {/* coin flip */}
+          <HudPanel pad="px-5 py-5">
+            <HudLabel dot="#3ddc84">Coin Toss</HudLabel>
+            <div className="flex flex-col items-center gap-3">
+              <HudCoin coin={coin} flipping={flipping} />
+              <button onClick={flip} disabled={flipping} className="ea-btn relative" style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "11px 30px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.85rem", letterSpacing: "0.28em", textTransform: "uppercase", color: "#cfe0ff", background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))", border: "1px solid rgba(61,123,255,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)", opacity: flipping ? 0.5 : 1 }}>
+                <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                <span className="absolute right-0 top-0" style={{ width: 10, height: 10, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                {flipping ? "Flipping…" : coin ? "Flip again" : "Flip coin"}
+              </button>
+              {coin && !flipping && <p className="text-xs text-center" style={{ color: "rgba(200,215,255,0.5)" }}>Tap the team that won the flip, then choose who bans first.</p>}
+              {coin && !flipping && (
+                <div className="w-full flex gap-3 mt-1">{teamPill(teamA, "Side A")}{teamPill(teamB, "Side B")}</div>
+              )}
+            </div>
+          </HudPanel>
+
+          {/* who bans first */}
+          {teamA && teamB && teamA !== teamB && (
+            <HudPanel>
+              <HudLabel>First Ban</HudLabel>
+              <div className="flex gap-3">
+                {[teamA, teamB].map((id) => (
+                  <button key={id} onClick={() => setTurn(id)} className="relative flex-1 px-3 py-2.5 font-bold uppercase text-sm"
+                    style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.04em", background: turn === id ? hueOf(id) + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${turn === id ? hueOf(id) : "rgba(120,150,220,0.2)"}`, color: hueOf(id), clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", boxShadow: turn === id ? `0 0 18px ${hueOf(id)}33` : "none" }}>
+                    {nameOf(id)} bans 1st
+                  </button>
+                ))}
+              </div>
+            </HudPanel>
+          )}
+
+          {/* map pool toggles */}
+          <div>
+            <HudLabel>Map Pool · {remaining.length} active — tap to toggle out</HudLabel>
+            <div className="grid grid-cols-4 gap-3">
+              {ALL_MAPS.map((m) => (
+                <MapTile key={m} m={m} onClick={() => toggleActive(m)} state={active.has(m) ? "active" : "off"} />
+              ))}
+            </div>
+          </div>
+
+          <button onClick={startVeto} disabled={!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn}
+            className="ea-btn relative self-start" style={{ display: "inline-flex", alignItems: "center", gap: 14, padding: "15px 38px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.9rem", letterSpacing: "0.3em", textTransform: "uppercase", color: "#9af5c2", background: "linear-gradient(180deg, rgba(13,32,24,0.55), rgba(7,18,14,0.45))", border: "1px solid rgba(61,220,132,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)", opacity: (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn) ? 0.4 : 1 }}>
+            <span className="absolute left-0 top-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderTop: "2px solid #3ddc84" }} />
+            <span className="absolute left-0 bottom-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderBottom: "2px solid #3ddc84" }} />
+            Start veto <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400 }}>→</span>
+          </button>
+        </div>
+      )}
+
+      {/* ─── RUNNING ─── */}
+      {!setup && (
+        <div className="flex flex-col gap-4">
+          {/* status banner */}
+          <HudPanel className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5" style={{ background: hueOf(teamA), boxShadow: `0 0 8px ${hueOf(teamA)}`, borderRadius: 1 }} />
+              <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", color: hueOf(teamA) }}>{nameOf(teamA)}</span>
+              <span className="text-xs mx-1" style={{ color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>VS</span>
+              <span className="w-2.5 h-2.5" style={{ background: hueOf(teamB), boxShadow: `0 0 8px ${hueOf(teamB)}`, borderRadius: 1 }} />
+              <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", color: hueOf(teamB) }}>{nameOf(teamB)}</span>
+            </div>
+            {decider ? (
+              <span className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-widest" style={{ color: "#3ddc84" }}><span className="cd-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#3ddc84", color: "#3ddc84" }} />Decider locked</span>
+            ) : turn ? (
+              <span className="relative text-sm font-bold uppercase tracking-widest px-3 py-1" style={{ background: hueOf(turn) + "22", color: hueOf(turn), clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{nameOf(turn)} bans next</span>
+            ) : null}
+          </HudPanel>
+
+          {/* maps grid */}
+          <div className="grid grid-cols-4 gap-3">
+            {pool.map((m) => {
+              const by = banned[m];
+              const isDecider = decider === m;
+              const state = isDecider ? "decider" : by ? "banned" : "live";
+              return (
+                <MapTile key={m} m={m} onClick={() => banMap(m)} disabled={!!by || !!decider || !turn} state={state}
+                  stamp={by ? `BANNED · ${nameOf(by)}` : isDecider ? "★ DECIDER" : null}
+                  stampColor={by ? hueOf(by) : "#3ddc84"} />
+              );
+            })}
+          </div>
+
+          {/* side pick */}
+          {decider && sidePick && (
+            <HudPanel pad="px-5 py-5" accent="#3ddc84">
+              <HudLabel dot="#3ddc84">Side Selection</HudLabel>
+              <p className="text-sm mb-3" style={{ color: "rgba(200,215,255,0.6)" }}>
+                Decider is <span className="font-bold" style={{ color: "#9af5c2" }}>{decider}</span>. <span className="font-bold uppercase" style={{ color: hueOf(sidePick.teamId), fontFamily: "'Rajdhani',sans-serif" }}>{nameOf(sidePick.teamId)}</span> picks side:
+              </p>
+              <div className="flex gap-3">
+                {["ATTACK", "DEFENSE"].map((s) => {
+                  const on = sidePick.side === s;
+                  const c = s === "ATTACK" ? "#ff4655" : "#3d7bff";
+                  return (
+                    <button key={s} onClick={() => setSidePick((p) => ({ ...p, side: s }))} className="relative flex-1 px-4 py-3 font-bold uppercase tracking-widest text-sm"
+                      style={{ fontFamily: "'Rajdhani',sans-serif", background: on ? c + "26" : "rgba(255,255,255,0.03)", border: `1px solid ${on ? c : "rgba(120,150,220,0.2)"}`, color: on ? (s === "ATTACK" ? "#ff8a94" : "#aec6ff") : "rgba(200,215,255,0.55)", clipPath: "polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 11px 100%, 0 calc(100% - 11px))", boxShadow: on ? `0 0 20px ${c}33` : "none" }}>{s}</button>
+                  );
+                })}
+              </div>
+              {sidePick.side && (
+                <div className="relative mt-4 text-center px-4 py-5" style={{ background: "linear-gradient(180deg, rgba(13,32,24,0.6), rgba(7,18,14,0.4))", border: "1px solid rgba(61,220,132,0.4)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
+                  <span className="absolute left-0 top-0" style={{ width: 14, height: 14, borderLeft: "2px solid #3ddc84", borderTop: "2px solid #3ddc84" }} />
+                  <span className="absolute right-0 bottom-0" style={{ width: 14, height: 14, borderRight: "2px solid #3ddc84", borderBottom: "2px solid #3ddc84" }} />
+                  <p className="text-xs uppercase tracking-[0.3em] mb-1" style={{ color: "rgba(154,245,194,0.7)", fontFamily: "'Rajdhani',sans-serif" }}>Locked In</p>
+                  <p className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.1rem", lineHeight: 1, letterSpacing: "0.03em", color: "#f4f8ff", textShadow: "0 0 24px rgba(61,220,132,0.4)" }}>{decider}</p>
+                  <p className="text-sm mt-2" style={{ color: "rgba(200,215,255,0.65)" }}><span style={{ color: hueOf(sidePick.teamId), fontWeight: 700 }}>{nameOf(sidePick.teamId)}</span> starts <span style={{ color: sidePick.side === "ATTACK" ? "#ff8a94" : "#aec6ff", fontWeight: 700 }}>{sidePick.side}</span> · <span style={{ color: hueOf(other(sidePick.teamId)), fontWeight: 700 }}>{nameOf(other(sidePick.teamId))}</span> takes the other side</p>
+                </div>
+              )}
+            </HudPanel>
+          )}
+
+          <button onClick={resetAll} className="relative self-start px-7 py-3 text-sm font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ff8a94", background: "linear-gradient(180deg, rgba(32,13,16,0.55), rgba(18,7,9,0.45))", border: "1px solid rgba(255,70,85,0.45)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)" }}>
+            <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #ff4655", borderTop: "2px solid #ff4655" }} />
+            <span className="absolute left-0 bottom-0" style={{ width: 10, height: 10, borderLeft: "2px solid #ff4655", borderBottom: "2px solid #ff4655" }} />
+            ↺ Reset veto
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════ NAV ═════════════════════════════════════════════ */
+const NAV = [
+  { id: "lobby", label: "Lobby", glyph: "⌂" },
+  { id: "scout", label: "Scout Hub", glyph: "⊞" },
+  { id: "block", label: "Auction Block", glyph: "⟁" },
+  { id: "locker", label: "Locker Room", glyph: "▦" },
+  { id: "warroom", label: "War Room", glyph: "✦" },
+];
+// grouped under the "Tournament" dropdown to keep the nav from overflowing
+const TOURNEY_NAV = [
+  { id: "bracket", label: "Brackets", glyph: "◈" },
+  { id: "leaderboard", label: "Leaderboard", glyph: "≣" },
+  { id: "veto", label: "Map Veto", glyph: "⊘", adminOnly: true },
+];
+
+/* ════════════════════════════════════════════════════════════════════
+   AUDIO ENGINE — synthesized cyberpunk SFX + musical ambient bed
+   Self-contained Web Audio. No files. Lazily inits on first user gesture.
+   ════════════════════════════════════════════════════════════════════ */
+const SndFX = (() => {
+  let ctx = null, master = null, ambGain = null, ambNodes = [], started = false, enabled = true;
+  const now = () => ctx.currentTime;
+
+  function ensure() {
+    if (ctx) return ctx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = 0.0;
+    master.connect(ctx.destination);
+    master.gain.setValueAtTime(0.0001, now());
+    master.gain.exponentialRampToValueAtTime(0.9, now() + 0.6);
+    return ctx;
+  }
+
+  // a short tone with an envelope
+  function blip({ type = "square", f0 = 440, f1 = null, dur = 0.08, vol = 0.18, attack = 0.004, dest = null, detune = 0 } = {}) {
+    if (!ctx || !enabled) return;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.detune.value = detune;
+    o.frequency.setValueAtTime(f0, now());
+    if (f1) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), now() + dur);
+    g.gain.setValueAtTime(0.0001, now());
+    g.gain.exponentialRampToValueAtTime(vol, now() + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, now() + dur);
+    o.connect(g); g.connect(dest || master);
+    o.start(); o.stop(now() + dur + 0.02);
+  }
+
+  // filtered noise burst — for electricity zaps / hammer crack
+  function noise({ dur = 0.12, vol = 0.2, type = "highpass", freq = 1800, q = 0.7, sweepTo = null, dest = null } = {}) {
+    if (!ctx || !enabled) return;
+    const n = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const filt = ctx.createBiquadFilter(); filt.type = type; filt.frequency.value = freq; filt.Q.value = q;
+    if (sweepTo) filt.frequency.exponentialRampToValueAtTime(Math.max(40, sweepTo), now() + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, now());
+    g.gain.exponentialRampToValueAtTime(0.0001, now() + dur);
+    src.connect(filt); filt.connect(g); g.connect(dest || master);
+    src.start(); src.stop(now() + dur + 0.02);
+  }
+
+  // ── musical cyberpunk ambient: warm minor pad + pulsing sub-bass + sparse pentatonic arp ──
+  function startAmbient() {
+    if (!ctx || ambNodes.length) return;
+    ambGain = ctx.createGain(); ambGain.gain.value = 0.0001;
+    ambGain.connect(master);
+
+    // lush space: feedback delay (cinematic tail) — kept modest so it doesn't build into a wash
+    const delay = ctx.createDelay(); delay.delayTime.value = 0.5;
+    const fb = ctx.createGain(); fb.gain.value = 0.25;
+    const wet = ctx.createGain(); wet.gain.value = 0.32;
+    delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(ambGain);
+
+    // master tone filter the whole bed runs through (warm, rounded)
+    const toneFilt = ctx.createBiquadFilter(); toneFilt.type = "lowpass"; toneFilt.frequency.value = 1400; toneFilt.Q.value = 0.5;
+    toneFilt.connect(ambGain); toneFilt.connect(delay);
+
+    ambGain.gain.exponentialRampToValueAtTime(0.04, now() + 4);
+    ambNodes = [delay, fb, wet, toneFilt, ambGain];
+
+    // ── cinematic chord progression (emotional minor-key loop): Am · F · C · G ──
+    // each entry: root sub freq + a warm triad of frequencies (close voicing)
+    const PROG = [
+      { sub: 55.00, notes: [220.00, 261.63, 329.63] }, // Am  (A C E)
+      { sub: 43.65, notes: [174.61, 220.00, 261.63] }, // F   (F A C)
+      { sub: 65.41, notes: [196.00, 261.63, 329.63] }, // C   (G C E) — C add over G-ish
+      { sub: 49.00, notes: [196.00, 246.94, 293.66] }, // G   (G B D)
+    ];
+    // a gentle melody that sits over each chord (one sustained note per chord, top-voice)
+    const MELODY = [659.25, 523.25, 587.33, 493.88]; // E5 C5 D5 B4
+
+    // play ONE chord: a slow swell in, hold, swell out — the Zimmer "breath"
+    function playChord(idx, dur) {
+      if (!ctx || !enabled || !ambNodes.length) return;
+      const c = PROG[idx % PROG.length];
+      const t0 = now();
+      const swellIn = dur * 0.4, swellOut = dur * 0.45;
+
+      // bass — soft sine, gentle (raised so it's a warm note, not a sub-rumble)
+      const subO = ctx.createOscillator(); subO.type = "sine"; subO.frequency.value = c.sub * 2;
+      const subG = ctx.createGain(); subG.gain.setValueAtTime(0.0001, t0);
+      subG.gain.exponentialRampToValueAtTime(0.05, t0 + swellIn);
+      subG.gain.setValueAtTime(0.05, t0 + dur - swellOut);
+      subG.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      subO.connect(subG); subG.connect(ambGain); subO.start(t0); subO.stop(t0 + dur + 0.1);
+
+      // triad pad — detuned triangle pairs per note, swelling
+      const oscs = [];
+      c.notes.forEach((f, i) => {
+        const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0);
+        const peak = 0.028 - i * 0.004; // top notes slightly softer
+        g.gain.exponentialRampToValueAtTime(peak, t0 + swellIn);
+        g.gain.setValueAtTime(peak, t0 + dur - swellOut);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        g.connect(toneFilt);
+        [-5, 6].forEach((det) => {
+          const o = ctx.createOscillator(); o.type = "triangle"; o.frequency.value = f; o.detune.value = det;
+          o.connect(g); o.start(t0); o.stop(t0 + dur + 0.1); oscs.push(o);
+        });
+      });
+
+      // melody note — a soft sine bell that fades in late and rings, through the delay for echoes
+      const mF = MELODY[idx % MELODY.length];
+      const mDelay = dur * 0.25;
+      const mo = ctx.createOscillator(); mo.type = "sine"; mo.frequency.value = mF;
+      const mg = ctx.createGain(); mg.gain.setValueAtTime(0.0001, t0 + mDelay);
+      mg.gain.exponentialRampToValueAtTime(0.05, t0 + mDelay + 0.5);
+      mg.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      mo.connect(mg); mg.connect(toneFilt); mg.connect(delay);
+      mo.start(t0 + mDelay); mo.stop(t0 + dur + 0.1);
+    }
+
+    // ── phrase: play the 4-chord progression, then PAUSE in silence, then return ──
+    let chordIdx = 0;
+    const CHORD_DUR = 7.5;   // seconds per chord (slow, cinematic)
+    const PHRASE_LEN = 4;    // chords per phrase (one full progression)
+    const PAUSE_MS = 22000;  // ~22s of clear silence between phrases
+
+    function runPhrase() {
+      if (!ctx || !enabled || !ambNodes.length) return;
+      for (let i = 0; i < PHRASE_LEN; i++) {
+        ambTimer = setTimeout(() => playChord(chordIdx + i, CHORD_DUR), i * CHORD_DUR * 1000);
+      }
+      chordIdx += PHRASE_LEN;
+      // schedule next phrase after this one finishes + a silent pause
+      const total = PHRASE_LEN * CHORD_DUR * 1000 + PAUSE_MS;
+      ambTimer = setTimeout(runPhrase, total);
+    }
+    // first phrase starts shortly after boot
+    ambTimer = setTimeout(runPhrase, 1200);
+  }
+  let ambTimer = null;
+
+  // ── named SFX
+  const sfx = {
+    hover() { blip({ type: "sine", f0: 880, f1: 1320, dur: 0.05, vol: 0.05 }); },
+    click() { blip({ type: "sine", f0: 520, f1: 660, dur: 0.085, vol: 0.07, attack: 0.012 }); blip({ type: "sine", f0: 1040, dur: 0.05, vol: 0.018, attack: 0.012 }); },
+    nav() { blip({ type: "triangle", f0: 480, f1: 760, dur: 0.1, vol: 0.085, attack: 0.01 }); blip({ type: "sine", f0: 960, dur: 0.06, vol: 0.025, attack: 0.01 }); },
+    enter() {
+      blip({ type: "sawtooth", f0: 180, f1: 720, dur: 0.32, vol: 0.16 });
+      blip({ type: "square", f0: 360, f1: 1440, dur: 0.34, vol: 0.08 });
+      noise({ dur: 0.4, vol: 0.12, type: "bandpass", freq: 600, q: 1.2, sweepTo: 5000 });
+    },
+    transition() { blip({ type: "sine", f0: 380, f1: 620, dur: 0.16, vol: 0.045, attack: 0.02 }); },
+    spin() { // subtle rising underlay — the per-card ticks carry the motion
+      if (!ctx || !enabled) return;
+      const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+      o.type = "sawtooth"; f.type = "bandpass"; f.Q.value = 7;
+      o.frequency.setValueAtTime(90, now()); o.frequency.exponentialRampToValueAtTime(560, now() + 2.4);
+      f.frequency.setValueAtTime(300, now()); f.frequency.exponentialRampToValueAtTime(2200, now() + 2.4);
+      g.gain.setValueAtTime(0.0001, now()); g.gain.exponentialRampToValueAtTime(0.05, now() + 0.3);
+      g.gain.exponentialRampToValueAtTime(0.0001, now() + 2.6);
+      o.connect(f); f.connect(g); g.connect(master); o.start(); o.stop(now() + 2.7);
+    },
+    tick(p = 0) { // each card pass — soft rounded tick that rises & warms as it slows (kept exciting, easy on ears)
+      const f = 600 + p * 1300;
+      blip({ type: "triangle", f0: f, f1: f * 0.78, dur: 0.03 + p * 0.035, vol: 0.045 + p * 0.06, attack: 0.006 });
+      // gentle low body so it feels tactile without the sharp noise crack
+      blip({ type: "sine", f0: f * 0.5, dur: 0.04 + p * 0.02, vol: 0.025 + p * 0.03, attack: 0.005 });
+      // soft shimmer on the final slow ticks for the climactic feel
+      if (p > 0.8) blip({ type: "sine", f0: f * 2, dur: 0.05, vol: 0.035, attack: 0.008 });
+    },
+    reveal() { // soft celebratory "confetti" — warm rising chime + scattered gentle twinkles
+      if (!ctx || !enabled) return;
+      // a warm major chord bloom underneath (C major: C E G C) — soft sines, gentle swell
+      [261.63, 329.63, 392.0, 523.25].forEach((f, i) =>
+        setTimeout(() => blip({ type: "sine", f0: f, dur: 0.7, vol: 0.07, attack: 0.04 }), i * 70)
+      );
+      // rising sparkle run up a pleasant pentatonic — soft triangles, rounded
+      const upRun = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
+      upRun.forEach((f, i) =>
+        setTimeout(() => blip({ type: "triangle", f0: f, dur: 0.28, vol: 0.06, attack: 0.015 }), 120 + i * 60)
+      );
+      // scattered confetti twinkles — many tiny soft bells at random times/pitches, fading out
+      const twinkle = [659.25, 783.99, 880.0, 987.77, 1046.5, 1318.5, 1567.98];
+      for (let i = 0; i < 14; i++) {
+        const f = twinkle[Math.floor(Math.random() * twinkle.length)];
+        const t = 150 + Math.random() * 1100;
+        const v = 0.018 + Math.random() * 0.022;
+        setTimeout(() => blip({ type: "sine", f0: f, dur: 0.2 + Math.random() * 0.2, vol: v, attack: 0.012 }), t);
+      }
+      // very soft airy shimmer (gentle, no sharp sweep)
+      noise({ dur: 0.7, vol: 0.025, type: "bandpass", freq: 6000, q: 1.2 });
+    },
+    bid() { blip({ type: "square", f0: 740, f1: 1180, dur: 0.07, vol: 0.14 }); blip({ type: "sine", f0: 1480, dur: 0.05, vol: 0.05 }); },
+    sold() { // hammer crack + triumphant chord
+      noise({ dur: 0.16, vol: 0.3, type: "lowpass", freq: 2200, sweepTo: 400 });
+      blip({ type: "sawtooth", f0: 90, f1: 60, dur: 0.3, vol: 0.2 });
+      [392, 494, 587, 784].forEach((f) => blip({ type: "triangle", f0: f, dur: 0.5, vol: 0.09 }));
+    },
+    error() { blip({ type: "sawtooth", f0: 200, f1: 120, dur: 0.2, vol: 0.16 }); },
+  };
+
+  return {
+    boot() {
+      if (started) return;
+      const c = ensure(); if (!c) return;
+      if (c.state === "suspended") c.resume();
+      started = true;
+      startAmbient();
+    },
+    play(name, ...args) {
+      if (!started || !enabled) return;
+      const fn = sfx[name] || (() => {});
+      if (ctx && ctx.state === "suspended") {
+        // context not running yet (first gesture) — wait for resume, then play so the sound isn't lost
+        const p = ctx.resume();
+        if (p && p.then) p.then(() => { if (enabled) fn(...args); }).catch(() => {});
+        else fn(...args);
+        return;
+      }
+      fn(...args);
+    },
+    setEnabled(on) {
+      enabled = on;
+      if (!ctx) return;
+      master.gain.cancelScheduledValues(now());
+      master.gain.setTargetAtTime(on ? 0.9 : 0.0001, now(), 0.2);
+    },
+    isEnabled() { return enabled; },
+    isStarted() { return started; },
+  };
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   MAIN
+   ════════════════════════════════════════════════════════════════════ */
+function DraftApp() {
+  const [state, setState] = useState(null);
+  const [identity, setIdentity] = useState(null);
+  const [view, setView] = useState("lobby");
+  const [tourneyOpen, setTourneyOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => { if (!tourneyOpen) return; const close = () => setTourneyOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [tourneyOpen]);
+  useEffect(() => { if (!mobileNavOpen) return; const close = () => setMobileNavOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [mobileNavOpen]);
+  const [liveCount, setLiveCount] = useState(1);
+  const sessionIdRef = useRef(null);
+  if (!sessionIdRef.current) sessionIdRef.current = Math.random().toString(36).slice(2, 12);
+  useEffect(() => {
+    const sid = sessionIdRef.current;
+    const KEY = "volt-presence";   // single shared row: { sessionId: lastSeenTs, ... }
+    const FRESH_MS = 14000;        // a session is "live" if seen within 14s
+    const BEAT_MS = 5000;          // heartbeat + recount every 5s
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const r = await window.storage.get(KEY, true);
+        let map = {};
+        if (r) { try { map = JSON.parse(r.value) || {}; } catch {} }
+        const now = Date.now();
+        map[sid] = now;                                   // stamp myself
+        for (const k of Object.keys(map)) if (now - map[k] >= FRESH_MS) delete map[k]; // prune stale
+        await window.storage.set(KEY, JSON.stringify(map), true);
+        if (!cancelled) setLiveCount(Math.max(1, Object.keys(map).length));
+      } catch {}
+    };
+
+    tick();
+    const iv = setInterval(tick, BEAT_MS);
+    const onLeave = async () => {
+      try {
+        const r = await window.storage.get(KEY, true);
+        if (r) { const map = JSON.parse(r.value) || {}; delete map[sid]; await window.storage.set(KEY, JSON.stringify(map), true); }
+      } catch {}
+    };
+    window.addEventListener("beforeunload", onLeave);
+    return () => { cancelled = true; clearInterval(iv); onLeave(); window.removeEventListener("beforeunload", onLeave); };
+  }, []);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const [scouted, setScouted] = useState(null); // player id for modal
+  const [editingPlayer, setEditingPlayer] = useState(null); // player object being edited by admin
+  useEffect(() => { if (editingPlayer) { const t = setTimeout(() => document.getElementById("wr-admin-form")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); return () => clearTimeout(t); } }, [editingPlayer]);
+  const [filterRank, setFilterRank] = useState("All");
+  const [filterRole, setFilterRole] = useState("All");
+  const [query, setQuery] = useState("");
+  const [resetArmed, setResetArmed] = useState(false);
+  const [tClearArmed, setTClearArmed] = useState(false);
+  const prevBid = useRef(null);
+  const stateRef = useRef(null);
+  const localStampRef = useRef(0);
+  const writeTimerRef = useRef(null);
+  stateRef.current = state;
+
+  // ── AUDIO: boot on first user gesture, then delegate UI click/hover sounds globally
+  const [soundOn, setSoundOn] = useState(true);
+  const soundOnRef = useRef(true);
+  soundOnRef.current = soundOn;
+  useEffect(() => {
+    const boot = () => { SndFX.boot(); };
+    const onClick = (e) => {
+      SndFX.boot();
+      if (!soundOnRef.current) return;
+      const el = e.target.closest("button, a, [role=button], input, select");
+      if (!el) return;
+      if (el.dataset.snd === "off") return;
+      SndFX.play(el.dataset.snd || "click");
+    };
+    const onOver = (e) => {
+      if (!soundOnRef.current || !SndFX.isStarted()) return;
+      const el = e.target.closest("button, a, [role=button]");
+      if (!el || el.dataset.nohover === "1") return;
+      SndFX.play("hover");
+    };
+    window.addEventListener("pointerdown", boot, { once: false });
+    window.addEventListener("click", onClick, true);
+    window.addEventListener("pointerover", onOver, true);
+    return () => {
+      window.removeEventListener("pointerdown", boot);
+      window.removeEventListener("click", onClick, true);
+      window.removeEventListener("pointerover", onOver, true);
+    };
+  }, []);
+  useEffect(() => { SndFX.setEnabled(soundOn); }, [soundOn]);
+
+  // whoosh on page/view change
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) { firstView.current = false; return; }
+    if (soundOnRef.current) SndFX.play("transition");
+  }, [view]);
+
+  // draft time lives in shared state so the countdown matches for everyone
+  const cd = useCountdown(state?.draftAt ?? Date.now() + 7200000);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => { let s = await readState(); if (!s) s = await writeState(freshState()); if (alive) setState(s); };
+    load();
+    const t = setInterval(async () => {
+      const s = await readState();
+      if (!alive || !s) return;
+      // ignore remote state that isn't newer than what we have locally (prevents clobbering optimistic writes)
+      if (s.stamp <= localStampRef.current) return;
+      if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
+    }, POLL_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  useEffect(() => {
+    const bid = state?.block?.currentBid ?? null;
+    if (prevBid.current !== null && bid !== null && bid !== prevBid.current) { setFlash(true); if (soundOnRef.current) SndFX.play("bid"); const t = setTimeout(() => setFlash(false), 600); return () => clearTimeout(t); }
+    prevBid.current = bid;
+  }, [state?.block?.currentBid]);
+
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!state?.spin) return;
+    if (soundOnRef.current && Date.now() - state.spin.startTs < 600) SndFX.play("spin");
+    const end = state.spin.startTs + state.spin.duration + 2000;
+    if (Date.now() > end) return;
+    const t = setInterval(() => { setTick((x) => x + 1); if (Date.now() > end + 300) clearInterval(t); }, 150);
+    return () => clearInterval(t);
+  }, [state?.spin?.startTs]);
+
+  // red sale flash + sale sound
+  const [saleFlash, setSaleFlash] = useState(false);
+  useEffect(() => {
+    if (!state?.soldFlash) return;
+    if (Date.now() - state.soldFlash < 1600) { setSaleFlash(true); if (soundOnRef.current) SndFX.play("sold"); const t = setTimeout(() => setSaleFlash(false), 1300); return () => clearTimeout(t); }
+  }, [state?.soldFlash]);
+
+  // play a sparkle when the spin lands on its winner
+  const revealedRef = useRef(null);
+  useEffect(() => {
+    const sp = state?.spin;
+    if (!sp) { return; }
+    if (revealedRef.current === sp.startTs) return;
+    const landAt = sp.startTs + sp.duration;
+    const delay = landAt - Date.now();
+    if (delay < -1500) return; // already long past
+    const fire = () => { revealedRef.current = sp.startTs; if (soundOnRef.current) SndFX.play("reveal"); };
+    if (delay <= 0) fire();
+    else { const t = setTimeout(fire, delay); return () => clearTimeout(t); }
+  }, [state?.spin?.startTs]);
+
+  // if a captain's seat is removed by the commissioner, send them back to the gate
+  useEffect(() => {
+    if (identity && identity !== "admin" && identity !== "spectator" && state && !state.teams.some((t) => t.id === identity)) setIdentity(null);
+  }, [identity, state?.teams?.length]);
+
+  const mutate = useCallback(async (fn, optimistic = false, debounce = false) => {
+    if (busy) return;
+    if (optimistic) {
+      // apply instantly against current in-memory state (no read round-trip), then persist
+      const base = stateRef.current || freshState();
+      const next = fn(structuredClone(base));
+      if (!next) return;
+      next.stamp = Date.now();                // stamp now so the poll guard is exact
+      localStampRef.current = next.stamp;
+      setState(next);
+      if (debounce) {
+        // coalesce bursts of rapid edits into one network write shortly after the last one
+        if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
+        writeTimerRef.current = setTimeout(() => {
+          writeTimerRef.current = null;
+          const latest = stateRef.current;
+          if (latest) writeState(latest).then((w) => { if (w) localStampRef.current = Math.max(localStampRef.current, w.stamp); });
+        }, 280);
+      } else {
+        writeState(next).then((w) => { if (w) localStampRef.current = Math.max(localStampRef.current, w.stamp); });
+      }
+      return;
+    }
+    setBusy(true);
+    try {
+      const latest = (await readState()) || freshState();
+      const next = fn(structuredClone(latest));
+      if (next) { next.stamp = Date.now(); localStampRef.current = next.stamp; await writeState(next); setState(next); }
+    }
+    finally { setBusy(false); }
+  }, [busy]);
+
+  const SPIN_MS = 7200, REVEAL_MS = 2000;
+  const addPlayer = (p) => mutate((s) => { s.players.push(p); return s; });
+  const editPlayer = (p) => mutate((s) => { const i = s.players.findIndex((x) => x.id === p.id); if (i < 0) return null; s.players[i] = { ...s.players[i], ...p }; return s; });
+  const removePlayer = (pid) => mutate((s) => {
+    if (s.block?.playerId === pid) return null; // not while on the block
+    const p = s.players.find((x) => x.id === pid);
+    if (p && p.status === "sold" && p.soldTo) {
+      const t = s.teams.find((x) => x.id === p.soldTo);
+      if (t) { t.roster = t.roster.filter((id) => id !== pid); t.budget += Math.max(0, Number(p.soldPrice) || 0); }
+    }
+    s.players = s.players.filter((x) => x.id !== pid);
+    return s;
+  });
+  const spinNominate = () => mutate((s) => {
+    if (s.block || (s.spin && Date.now() < s.spin.startTs + SPIN_MS + REVEAL_MS)) return null;
+    const poolIds = s.players.filter((p) => p.status === "pool" && !p.isCaptain).map((p) => p.id);
+    if (!poolIds.length) return null;
+    for (let i = poolIds.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [poolIds[i], poolIds[j]] = [poolIds[j], poolIds[i]]; }
+    const winnerId = poolIds[Math.floor(Math.random() * poolIds.length)];
+    const p = s.players.find((x) => x.id === winnerId);
+    p.status = "block";
+    s.block = { playerId: winnerId, startingBid: RANKS[p.rank].bid, currentBid: RANKS[p.rank].bid, leaderId: null, ts: Date.now() };
+    s.spin = { playerId: winnerId, pool: poolIds, startTs: Date.now(), duration: SPIN_MS };
+    s.bidHistory = [];
+    s.log.unshift(`Fate chose ${p.name} — opening at ${fmt(s.block.startingBid)}`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true);  // optimistic — overlay appears instantly
+  const placeBid = (teamId) => mutate((s) => {
+    const b = s.block; if (!b || b.leaderId === teamId) return null;
+    const team = s.teams.find((t) => t.id === teamId); if (!team || emptySlots(team) === 0) return null;
+    const availablePool = s.players.filter((p) => p.status === "pool");
+    const req = requiredBid(b); if (maxAllowedBid(team, availablePool) < req) return null;
+    b.currentBid = req; b.leaderId = teamId; b.ts = Date.now();
+    s.bidHistory.unshift({ teamId, amount: req, ts: Date.now() }); s.bidHistory = s.bidHistory.slice(0, 12);
+    const p = s.players.find((x) => x.id === b.playerId);
+    s.log.unshift(`${team.name} bids ${fmt(req)} on ${p?.name}`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+  const sell = () => mutate((s) => {
+    const b = s.block; if (!b || !b.leaderId) return null;
+    const team = s.teams.find((t) => t.id === b.leaderId), p = s.players.find((x) => x.id === b.playerId);
+    if (!team || !p) return null;
+    team.budget -= b.currentBid; team.roster.push(p.id);
+    p.status = "sold"; p.soldTo = team.id; p.soldPrice = b.currentBid;
+    p.bidCount = s.bidHistory.length; // how many bids this player drew, for the "most contested" storyline
+    s.log.unshift(`SOLD — ${p.name} → ${team.name} for ${fmt(b.currentBid)}`); s.log = s.log.slice(0, 8);
+    s.block = null; s.bidHistory = []; s.soldFlash = Date.now(); s.lastSoldTo = team.id;
+    if (!Array.isArray(s.recentSales)) s.recentSales = [];
+    s.recentSales.unshift({ playerId: p.id, name: p.name, teamId: team.id, price: b.currentBid, bidCount: p.bidCount || 0, ts: Date.now() });
+    s.recentSales = s.recentSales.slice(0, 10);
+    return s;
+  }, true);
+  const passPlayer = () => mutate((s) => {
+    const b = s.block; if (!b) return null;
+    const p = s.players.find((x) => x.id === b.playerId);
+    if (p) { p.status = "pool"; s.log.unshift(`${p.name} passed — back to the pool`); s.log = s.log.slice(0, 8); }
+    s.block = null; s.bidHistory = []; return s;
+  }, true);
+  const resetAll = () => { if (!resetArmed) { setResetArmed(true); setTimeout(() => setResetArmed(false), 4000); return; } setResetArmed(false); mutate(() => freshState()); };
+  const renameTeam = (teamId, name, captain) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+    const nm = (name ?? "").trim(), cap = (captain ?? "").trim();
+    if (nm) t.name = nm.toUpperCase();
+    if (cap) t.captain = cap;
+    return s;
+  });
+  const addTeam = () => mutate((s) => {
+    if (s.teams.length >= MAX_TEAMS) return null;
+    const used = new Set(s.teams.map((t) => t.hue));
+    const hue = TEAM_HUES.find((h) => !used.has(h)) || TEAM_HUES[s.teams.length % TEAM_HUES.length];
+    const n = s.teams.length + 1;
+    s.teams.push({ id: "t" + uid(), name: "TEAM " + n, captain: "Captain " + n, hue, budget: 10000, roster: [] });
+    s.log.unshift(`New team added — ${s.teams.length} teams in the draft`); s.log = s.log.slice(0, 8);
+    return s;
+  });
+  const removeTeam = (teamId) => mutate((s) => {
+    if (s.teams.length <= MIN_TEAMS) return null;
+    if (s.block?.leaderId === teamId) return null; // can't remove the team holding the live bid
+    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+    // return any drafted players to the pool
+    t.roster.forEach((pid) => { const p = s.players.find((x) => x.id === pid); if (p) { p.status = "pool"; p.soldTo = null; p.soldPrice = null; } });
+    s.teams = s.teams.filter((x) => x.id !== teamId);
+    if (s.teamCodes) delete s.teamCodes[teamId];
+    s.log.unshift(`${t.name} removed — ${t.roster.length ? "drafted players returned to pool" : "had no draftees"}`); s.log = s.log.slice(0, 8);
+    return s;
+  });
+
+  /* ── manual roster edits (Commissioner only) — add deducts the price, remove refunds it, so budget stays correct ── */
+  const adminAddToRoster = (teamId, playerId, price) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t || emptySlots(t) === 0) return null;
+    const p = s.players.find((x) => x.id === playerId); if (!p || p.status === "sold") return null;
+    if (s.block?.playerId === playerId) return null; // not while on the block
+    const cost = Math.max(0, Number(price) || 0);
+    p.status = "sold"; p.soldTo = t.id; p.soldPrice = cost;
+    t.budget -= cost;            // deduct so add/remove stay symmetric with budget
+    t.roster.push(p.id);
+    s.log.unshift(`Commish added ${p.name} → ${t.name} (${fmt(cost)})`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+  const adminRemoveFromRoster = (teamId, playerId) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+    const p = s.players.find((x) => x.id === playerId); if (!p) return null;
+    const refund = Math.max(0, Number(p.soldPrice) || 0); // refund what was actually paid (auction sales carry a price)
+    t.roster = t.roster.filter((id) => id !== playerId);
+    if (refund > 0) t.budget += refund;
+    p.status = "pool"; p.soldTo = null; p.soldPrice = null;
+    s.log.unshift(`Commish removed ${p.name} from ${t.name}${refund > 0 ? ` — ${fmt(refund)} refunded` : ""}`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+
+  const setTeamBudget = (teamId, value) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+    const v = Math.max(0, Number(value) || 0);
+    s.log.unshift(`Commish set ${t.name} budget → ${fmt(v)} (was ${fmt(t.budget)})`); s.log = s.log.slice(0, 8);
+    t.budget = v;
+    return s;
+  }, true, true);
+
+  const setDraftTime = (ms) => mutate((s) => {
+    const v = Number(ms);
+    if (!Number.isFinite(v)) return null;
+    s.draftAt = v;
+    s.log.unshift(`Commish set auction start → ${new Date(v).toLocaleString()}`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+
+  // tournament stats — per-match entries that aggregate on the leaderboard (separate from scouting stats)
+  const addMatchStat = (pid, entry) => mutate((s) => {
+    const p = s.players.find((x) => x.id === pid); if (!p) return null;
+    if (!Array.isArray(p.tourneyStats)) p.tourneyStats = [];
+    p.tourneyStats.push({
+      k: Math.max(0, parseInt(entry.k) || 0),
+      d: Math.max(0, parseInt(entry.d) || 0),
+      a: Math.max(0, parseInt(entry.a) || 0),
+      acs: Math.max(0, parseInt(entry.acs) || 0),
+      ts: Date.now(),
+    });
+    return s;
+  }, true, true);
+  const removeMatchStat = (pid, idx) => mutate((s) => {
+    const p = s.players.find((x) => x.id === pid); if (!p || !Array.isArray(p.tourneyStats)) return null;
+    p.tourneyStats.splice(idx, 1);
+    return s;
+  }, true, true);
+
+  // tag a player as a captain → excluded from the auction draw (stays visible/scoutable)
+  const toggleCaptain = (pid) => mutate((s) => {
+    const p = s.players.find((x) => x.id === pid); if (!p) return null;
+    p.isCaptain = !p.isCaptain;
+    s.log.unshift(`${p.name} ${p.isCaptain ? "tagged as captain — excluded from draw" : "untagged as captain"}`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+
+  /* ── tournament mutators (Commissioner only) ── */
+  const tCreate = (format, matchType, numGroups) => mutate((s) => {
+    const ids = s.teams.map((t) => t.id);
+    const boNum = matchType === "bo3" ? 3 : 1;       // numeric best-of for match logic
+    const t = { format, bo: boNum, overrides: {}, createdAt: Date.now() };
+    if (format === "group") {
+      const g = Math.max(2, Math.min(numGroups || 2, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
+      t.matches = {}; // per-group matches generated when groups are locked
+      t.locked = false;
+      t.final = null; // { teamA, teamB, bo, maps, done, winner } once groups complete
+    } else if (format === "roundrobin") {
+      t.teamIds = []; // commissioner adds all participating teams
+      t.matches = [];
+      t.locked = false;
+    } else if (format === "single") {
+      // fixed-length bracket positions (power of 2 >= team count, min 2), filled by the host
+      const size = Math.max(nextPow2(ids.length || 2), 2);
+      t.slots = Array.from({ length: size }, () => null);
+      t.rounds = []; // built on lock
+      t.locked = false;
+    }
+    s.tournament = t;
+    s.log.unshift(`Tournament created — ${format === "group" ? "Group Stage" : format === "single" ? "Single Elimination" : "Round Robin"} (${matchType.toUpperCase()})`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
+  const tClear = () => mutate((s) => { s.tournament = null; if (!Array.isArray(s.log)) s.log = []; s.log.unshift("Tournament cleared"); s.log = s.log.slice(0, 8); return s; }, true);
+  const armTClear = () => { if (!tClearArmed) { setTClearArmed(true); setTimeout(() => setTClearArmed(false), 4000); return; } setTClearArmed(false); tClear(); };
+
+  // assign / remove a team to a group (group format) or the pool list (roundrobin) or a slot (single)
+  const tAssign = (target, teamId) => mutate((s) => {
+    const t = s.tournament; if (!t || t.locked) return null;
+    if (t.format === "group") {
+      // remove from all groups first, then add to target group
+      t.groups.forEach((g) => { g.teamIds = g.teamIds.filter((x) => x !== teamId); });
+      if (target) { const g = t.groups.find((x) => x.id === target); if (g && !g.teamIds.includes(teamId)) g.teamIds.push(teamId); }
+    } else if (t.format === "roundrobin") {
+      if (t.teamIds.includes(teamId)) t.teamIds = t.teamIds.filter((x) => x !== teamId);
+      else t.teamIds.push(teamId);
+    }
+    return s;
+  }, true, true);
+
+  // place a team into a specific bracket position (or clear it with teamId=null).
+  // a team can only occupy one slot, so remove it from any other slot first.
+  const tSetSlot = (index, teamId) => mutate((s) => {
+    const t = s.tournament; if (!t || t.locked || t.format !== "single") return null;
+    if (index < 0 || index >= t.slots.length) return null;
+    if (teamId) { for (let k = 0; k < t.slots.length; k++) if (t.slots[k] === teamId) t.slots[k] = null; }
+    t.slots[index] = teamId || null;
+    return s;
+  }, true, true);
+
+  // resize the bracket (number of positions). keeps existing picks that still fit.
+  const tSetSlotCount = (size) => mutate((s) => {
+    const t = s.tournament; if (!t || t.locked || t.format !== "single") return null;
+    size = Math.max(2, size);
+    const cur = t.slots.slice(0, size);
+    while (cur.length < size) cur.push(null);
+    t.slots = cur;
+    return s;
+  }, true);
+
+  const tLock = () => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (t.format === "group") {
+      t.matches = {};
+      t.groups.forEach((g) => { t.matches[g.id] = roundRobinMatches(g.teamIds, t.bo); });
+    } else if (t.format === "roundrobin") {
+      t.matches = roundRobinMatches(t.teamIds, t.bo);
+    } else if (t.format === "single") {
+      t.rounds = buildSingleElim(t.slots, t.bo);
+    }
+    t.locked = true;
+    s.log.unshift("Tournament bracket locked — matches generated"); s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
+  // set a single map score within a match, then re-resolve the match + propagate bracket winners
+  const tSetMap = (locator, mapIdx, aScore, bScore) => mutate((s) => {
+    const t = s.tournament; if (!t || !t.locked) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    if (!m.maps) m.maps = [];
+    while (m.maps.length <= mapIdx) m.maps.push({ a: null, b: null });
+    m.maps[mapIdx] = { a: aScore == null || aScore === "" ? null : Number(aScore), b: bScore == null || bScore === "" ? null : Number(bScore) };
+    resolveMatch(m);
+    if (t.format === "single") propagateElim(t);
+    if (t.format === "group") syncFinal(s, t);
+    return s;
+  }, true, true);
+
+  // set best-of for a specific match (e.g. finals to Bo3)
+  const tSetBo = (locator, bo) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    m.bo = bo; resolveMatch(m);
+    if (t.format === "single") propagateElim(t);
+    return s;
+  }, true, true);
+
+  const tOverride = (teamId, patch) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (!t.overrides) t.overrides = {};
+    if (patch == null) delete t.overrides[teamId];
+    else t.overrides[teamId] = { ...(t.overrides[teamId] || {}), ...patch };
+    return s;
+  }, true, true);
+
+  // build the group-stage final from current group winners (top of each group)
+  function syncFinal(s, t) {
+    const winners = t.groups.map((g) => {
+      const rows = computeStandings(g.teamIds, t.matches[g.id] || [], t.overrides);
+      const allDone = (t.matches[g.id] || []).every((m) => m.done);
+      return allDone && rows.length ? rows[0].teamId : null;
+    });
+    if (winners.length >= 2 && winners[0] && winners[1]) {
+      if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: t.bo, maps: [], done: false, winner: null };
+      else if (!t.final.done) { t.final.teamA = winners[0]; t.final.teamB = winners[1]; }
+    } else if (t.final && !t.final.done) {
+      t.final = null;
+    }
+  }
+
+  /* ── loading ── */
+  if (!state) return (
+    <div className="min-h-screen grid place-items-center" style={{ background: "#0a0d18", color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif" }}>
+      <span className="uppercase tracking-widest animate-pulse">Initializing auction grid…</span>
+    </div>
+  );
+
+  const fonts = (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
+      /* Tungsten webfont stripped for artifact rendering; falls back to condensed system fonts via the font stacks below */
+      .holo-sweep { background: linear-gradient(115deg, transparent 30%, rgba(0,229,255,0.10) 45%, rgba(255,255,255,0.16) 50%, rgba(157,107,255,0.10) 55%, transparent 70%); background-size: 250% 250%; animation: sweep 4.5s ease-in-out infinite; }
+      @keyframes sweep { 0% { background-position: 120% 0; } 60%,100% { background-position: -120% 0; } }
+      /* diagonal shine flowing through the hero headline letters */
+      @keyframes textshine { 0% { background-position: 220% 0; } 100% { background-position: -120% 0; } }
+      .shine-text { background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; animation: textshine 4s linear infinite; }
+      .shine-white { background-image: linear-gradient(100deg, #ffffff 0%, #ffffff 44%, #ffffff 48%, #ffffff 50%, #ffffff 52%, #f2f6ff 58%, #ffffff 100%); }
+      .shine-blue { background-image: linear-gradient(100deg, #2f6dff 0%, #2f6dff 42%, #bcd6ff 48%, #ffffff 50%, #bcd6ff 52%, #2f6dff 58%, #2f6dff 100%); }
+      @media (prefers-reduced-motion: reduce) { .shine-text { animation: none; } }
+      @keyframes bidpop { 0% { transform: scale(1); } 35% { transform: scale(1.12); } 100% { transform: scale(1); } }
+      .bid-pop { animation: bidpop 0.55s cubic-bezier(.2,.9,.3,1.4); }
+      /* hide native number-input spinner arrows */
+      input[type=number]::-webkit-outer-spin-button,
+      input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+      .idle-rotor { animation: rotor 14s linear infinite; }
+      .ea-btn { transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease; }
+      .ea-btn .ea-arrow { transition: transform .18s ease; display: inline-block; }
+      .ea-btn:hover { transform: translateY(-2px); border-color: rgba(111,160,255,0.95); background: linear-gradient(180deg, rgba(22,41,77,0.7), rgba(12,23,48,0.55)); color: #ffffff; box-shadow: 0 0 38px rgba(61,123,255,0.45), inset 0 0 22px rgba(61,123,255,0.12); }
+      .ea-btn:hover .ea-arrow { transform: translateX(6px); }
+      .ea-btn:active { transform: translateY(0) scale(0.98); }
+      .ea-btn.ea-disabled { pointer-events: none; }
+      .ea-btn.ea-disabled:hover { transform: none; box-shadow: none; }
+      .seat-card { transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background .16s ease; }
+      .seat-card:hover { transform: translateY(-4px); border-color: var(--hue) !important; box-shadow: 0 0 0 1px var(--hue), 0 0 32px -4px var(--hue), 0 18px 40px rgba(0,0,0,0.5); background: linear-gradient(160deg, color-mix(in srgb, var(--hue) 14%, transparent), rgba(8,12,24,0.6)) !important; }
+      .seat-card:active { transform: translateY(-1px); }
+      .seat-card .seat-go { opacity: 0; transform: translateX(-4px); transition: opacity .16s ease, transform .16s ease; }
+      .seat-card:hover .seat-go { opacity: 1; transform: translateX(0); }
+      .gate-cta { transition: transform .18s ease, box-shadow .18s ease, background .18s ease; }
+      .gate-cta:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 0 40px rgba(61,123,255,0.5); background: rgba(61,123,255,0.16) !important; }
+      @keyframes rotor { to { transform: rotate(360deg); } }
+      .reel-drift { animation: reeldrift 60s linear infinite; }
+      @keyframes reeldrift { from { transform: translate(0, -50%); } to { transform: translate(-50%, -50%); } }
+      .burst { animation: burst 1.1s ease-out infinite; }
+      @keyframes burst { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(1.18); opacity: 0; } }
+      .float-soft { animation: floaty 7s ease-in-out infinite; }
+      @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+      .marquee { display: inline-flex; white-space: nowrap; animation: marq 28s linear infinite; }
+      @keyframes marq { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+      .cd-pulse { animation: cdpulse 1.6s ease-in-out infinite; }
+      @keyframes cdpulse { 0%,100% { opacity: 1; box-shadow: 0 0 6px currentColor; } 50% { opacity: 0.35; box-shadow: 0 0 2px currentColor; } }
+      /* one shared horizontal inset for all aligned sections (nav, hero text, cards, ticker) */
+      .page-wrap { max-width: 1760px; margin-left: auto; margin-right: auto; padding-left: 5vw; padding-right: 5vw; }
+      @media (min-width: 1400px) { .page-wrap { padding-left: 88px; padding-right: 88px; } }
+      .grid-bg { background-image: linear-gradient(rgba(157,107,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(157,107,255,0.06) 1px, transparent 1px); background-size: 44px 44px; }
+      .sale-flash { animation: saleflash 1.3s ease-out; }
+      @keyframes saleflash { 0% { background: rgba(255,70,85,0.55); } 100% { background: rgba(255,70,85,0); } }
+      .view-in { animation: viewin 0.4s ease; }
+      @keyframes viewin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+      @media (prefers-reduced-motion: reduce) { .holo-sweep,.bid-pop,.animate-pulse,.idle-rotor,.reel-drift,.burst,.float-soft,.marquee,.sale-flash,.view-in { animation: none !important; } }
+      select option { background: #0b0f1a; }
+      .nav-desktop { display: flex; }
+      .nav-mobile-btn { display: none; }
+      @media (max-width: 860px) {
+        .nav-desktop { display: none !important; }
+        .nav-mobile-btn { display: flex !important; }
+      }
+      @media (max-width: 640px) {
+        .hero-cta { padding: 13px 26px !important; gap: 12px !important; letter-spacing: 0.22em !important; font-size: 0.82rem !important; }
+      }
+      .wr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      @media (min-width: 680px) { .wr-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+      .wr-slider { -webkit-appearance: none; appearance: none; height: 8px; border-radius: 999px; outline: none; cursor: pointer;
+        background: linear-gradient(90deg, var(--wr-hue) 0%, var(--wr-hue) var(--wr-pct), rgba(255,255,255,0.10) var(--wr-pct), rgba(255,255,255,0.10) 100%); }
+      .wr-slider:disabled { cursor: default; }
+      .wr-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%;
+        background: #ecf3ff; border: 3px solid var(--wr-hue); box-shadow: 0 0 10px var(--wr-hue), 0 2px 6px rgba(0,0,0,0.5); transition: transform 120ms; }
+      .wr-slider::-webkit-slider-thumb:hover { transform: scale(1.18); }
+      .wr-slider::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: #ecf3ff; border: 3px solid var(--wr-hue); box-shadow: 0 0 10px var(--wr-hue); }
+      .wr-slider::-moz-range-track { height: 8px; border-radius: 999px; background: transparent; }
+      ::-webkit-scrollbar { width: 8px; height: 8px; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+    `}</style>
+  );
+
+  const shell = (children) => (
+    <div className="min-h-screen" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden" }}>
+      {fonts}
+      <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
+      <div className="relative min-h-screen">
+        {children}
+      </div>
+    </div>
+  );
+
+  if (!identity) return shell(<RoleGate teams={state.teams} onPick={setIdentity} />);
+
+  const isAdmin = identity === "admin";
+  const isSpectator = identity === "spectator";
+  const myTeam = (isAdmin || isSpectator) ? null : state.teams.find((t) => t.id === identity);
+  const block = state.block;
+  const blockPlayer = block ? state.players.find((p) => p.id === block.playerId) : null;
+  const leaderTeam = block?.leaderId ? state.teams.find((t) => t.id === block.leaderId) : null;
+  const pool = state.players.filter((p) => p.status === "pool");
+  const sold = state.players.filter((p) => p.status === "sold").sort((a, b) => b.soldPrice - a.soldPrice);
+  const spinLive = state.spin && Date.now() < state.spin.startTs + state.spin.duration + REVEAL_MS;
+  const teamOf = (id) => state.teams.find((t) => t.id === id);
+
+  /* ── top nav (transparent, hero-themed) ── */
+  const TopNav = (
+    <header className="sticky top-0 z-30" style={{ background: "rgba(6,9,16,0.94)", borderBottom: "1px solid rgba(61,123,255,0.14)", backdropFilter: "blur(12px)" }}>
+      <div className="page-wrap flex items-center gap-3 py-4 flex-wrap">
+        {/* brand with HUD corner bracket */}
+        <div className="relative flex items-center gap-2 mr-2 shrink-0 pl-3 pr-4 py-1.5">
+          <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+          <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>VOLT</span>
+          <span className="text-xl font-bold" style={{ color: "rgba(180,200,255,0.3)" }}>//</span>
+          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#eaf1ff" }}>DRAFT</span>
+        </div>
+
+        {/* nav tabs — centered between brand and right controls (desktop) */}
+        <div className="nav-desktop items-center justify-center flex-1 min-w-0 gap-1">
+        <nav className="flex items-center gap-1 min-w-0 overflow-x-auto">
+          {NAV.filter((nav) => !nav.adminOnly || isAdmin).map((nav) => {
+            const active = view === nav.id;
+            const live = nav.id === "block" && (block || spinLive);
+            return (
+              <button key={nav.id} onClick={() => setView(nav.id)} className="relative flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 group"
+                style={{ color: active ? "#eaf1ff" : "rgba(200,215,255,0.55)" }}>
+                <span className="text-base transition-colors" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
+                <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{nav.label}</span>
+                {live && <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#3d7bff", boxShadow: "0 0 8px #3d7bff" }} />}
+                {/* active underline — short centered tick (reference style) */}
+                <span className="absolute left-1/2" style={{ bottom: 2, height: 2, width: active ? 22 : 0, transform: "translateX(-50%)", background: "#3d7bff", boxShadow: active ? "0 0 10px rgba(61,123,255,0.9)" : "none", transition: "width .2s ease" }} />
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Tournament group dropdown — sits outside the scrollable nav so its menu can overlay the page */}
+        {(() => {
+          const items = TOURNEY_NAV.filter((nav) => !nav.adminOnly || isAdmin);
+          if (!items.length) return null;
+          const groupActive = items.some((nav) => nav.id === view);
+          return (
+            <div className="relative shrink-0 flex items-center">
+              <span className="mr-2 shrink-0" style={{ width: 1, height: 18, background: "rgba(120,150,220,0.25)" }} />
+              <button onClick={(e) => { e.stopPropagation(); setTourneyOpen((o) => !o); }}
+                className="relative flex items-center gap-2 px-3.5 py-2 transition-all group"
+                style={{ color: groupActive ? "#eaf1ff" : "rgba(200,215,255,0.7)",
+                  background: tourneyOpen || groupActive ? "rgba(61,123,255,0.1)" : "rgba(255,255,255,0.025)",
+                  border: `1px solid ${tourneyOpen || groupActive ? "rgba(61,123,255,0.45)" : "rgba(120,150,220,0.2)"}`,
+                  clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
+                <span className="text-base" style={{ color: groupActive ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>◇</span>
+                <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>Tournament</span>
+                <span className="text-[9px] transition-transform" style={{ color: "rgba(200,215,255,0.5)", transform: tourneyOpen ? "rotate(180deg)" : "none" }}>▼</span>
+              </button>
+              {tourneyOpen && (
+                <div className="absolute right-0 z-50 py-1.5" style={{ top: "calc(100% + 8px)", minWidth: 190, background: "rgba(9,13,22,0.98)", border: "1px solid rgba(61,123,255,0.3)", backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))", boxShadow: "0 18px 40px rgba(0,0,0,0.5)" }}>
+                  {items.map((nav) => {
+                    const active = view === nav.id;
+                    return (
+                      <button key={nav.id} onClick={(e) => { e.stopPropagation(); setView(nav.id); setTourneyOpen(false); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors"
+                        style={{ background: active ? "rgba(61,123,255,0.14)" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.7)" }}>
+                        <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
+                        <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{nav.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        </div>
+
+        {/* mobile hamburger — shows full nav as a dropdown */}
+        <div className="nav-mobile-btn relative items-center ml-auto">
+          <button onClick={(e) => { e.stopPropagation(); setMobileNavOpen((o) => !o); }}
+            className="relative flex items-center gap-2 px-3 py-2"
+            style={{ background: mobileNavOpen ? "rgba(61,123,255,0.12)" : "rgba(255,255,255,0.03)", border: "1px solid rgba(61,123,255,0.35)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
+            <span className="flex flex-col gap-1">
+              <span style={{ width: 18, height: 2, background: "#7da6ff" }} />
+              <span style={{ width: 18, height: 2, background: "#7da6ff" }} />
+              <span style={{ width: 18, height: 2, background: "#7da6ff" }} />
+            </span>
+            <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#cfe0ff" }}>Menu</span>
+          </button>
+          {mobileNavOpen && (
+            <div className="absolute right-0 z-50 py-1.5" style={{ top: "calc(100% + 10px)", minWidth: 220, background: "rgba(9,13,22,0.99)", border: "1px solid rgba(61,123,255,0.3)", backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", boxShadow: "0 18px 44px rgba(0,0,0,0.6)" }}>
+              {[...NAV, ...TOURNEY_NAV].filter((nav) => !nav.adminOnly || isAdmin).map((nav) => {
+                const active = view === nav.id;
+                const live = nav.id === "block" && (block || spinLive);
+                return (
+                  <button key={nav.id} onClick={(e) => { e.stopPropagation(); setView(nav.id); setMobileNavOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors"
+                    style={{ background: active ? "rgba(61,123,255,0.16)" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.75)" }}>
+                    <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
+                    <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{nav.label}</span>
+                    {live && <span className="cd-pulse ml-auto" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", color: "#ff4655" }} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* seat status + switch, framed with HUD brackets */}
+        <div className="relative flex items-center gap-3 shrink-0 pl-4 pr-3 py-1.5">
+          <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid rgba(61,123,255,0.6)", borderTop: "2px solid rgba(61,123,255,0.6)" }} />
+          <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid rgba(61,123,255,0.6)", borderBottom: "2px solid rgba(61,123,255,0.6)" }} />
+          <div className="hidden sm:flex flex-col items-end leading-tight">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full" style={{ background: isAdmin ? "#3d7bff" : isSpectator ? "#7da6ff" : myTeam.hue, boxShadow: (isAdmin || isSpectator) ? "0 0 8px #3d7bff" : "none" }} />
+              <span className="text-sm font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: isAdmin ? "#7da6ff" : isSpectator ? "#aec6ff" : myTeam.hue }}>{isAdmin ? "Commissioner" : isSpectator ? "Player · Spectator" : myTeam.name}</span>
+            </div>
+            {myTeam && <span className="text-xs" style={{ color: "rgba(200,215,255,0.45)" }}>{fmt(myTeam.budget)} · {emptySlots(myTeam)} slots open</span>}
+            {isSpectator && <span className="text-xs" style={{ color: "rgba(200,215,255,0.45)" }}>View only · bidding disabled</span>}
+          </div>
+          <button data-snd="off" data-nohover="1" onClick={() => setSoundOn((v) => !v)} aria-label={soundOn ? "Mute sound" : "Unmute sound"} title={soundOn ? "Mute" : "Unmute"}
+            className="grid place-items-center transition-all hover:scale-110" style={{ width: 38, height: 38, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
+            {soundOn ? "🔊" : "🔇"}
+          </button>
+          <button onClick={() => setIdentity(null)} className="px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition-all hover:scale-[1.03]"
+            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff" }}>Switch Seat</button>
+        </div>
+      </div>
+    </header>
+  );
+
+  /* global ticker tape (lobby + reused) */
+  const tickerItems = sold.length
+    ? sold.map((p) => `${teamOf(p.soldTo)?.name ?? "?"} secured ${p.name} (${p.rank}) for ${fmt(p.soldPrice)}`)
+    : ["No players sold yet — the board is wide open", "Spin the wheel to nominate the first name", `${state.teams.length} captains · $10,000 each · 4 slots to fill`];
+  const TickerTape = (
+    <div className="overflow-hidden py-2" style={{ borderTop: "1px solid rgba(61,123,255,0.18)", borderBottom: "1px solid rgba(61,123,255,0.18)", background: "linear-gradient(180deg, rgba(8,14,28,0.6), rgba(5,9,18,0.6))" }}>
+      <div className="marquee">
+        {[...tickerItems, ...tickerItems].map((t, i) => (
+          <span key={i} className="mx-6 text-sm uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: "rgba(200,215,255,0.6)" }}>
+            <span style={{ color: "#3d7bff" }}>◆</span> {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* ════════ VIEW: LOBBY ════════ */
+  const LobbyView = (
+    <div className="view-in">
+      <div className="relative overflow-hidden" style={{ width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)", aspectRatio: "1920 / 1086", maxHeight: "84vh", minHeight: 520, background: "#05070e" }}>
+        {/* Figma hero art (Neon + watermark baked in) */}
+        <img src={IMG_HERO} alt="" className="absolute inset-0 w-full h-full" style={{ objectFit: "cover", objectPosition: "right 30%" }} />
+        {/* left-side legibility scrim so live text stays crisp over the art */}
+        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, rgba(5,7,14,0.92) 0%, rgba(5,7,14,0.78) 30%, rgba(5,7,14,0.28) 50%, transparent 66%)" }} />
+
+        {/* vertical YR // 0 marker on the far right */}
+        <div className="hidden md:block absolute" style={{ right: "2.2%", top: "50%", transform: "translateY(-50%) rotate(180deg)", writingMode: "vertical-rl", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, letterSpacing: "0.35em", color: "rgba(120,160,255,0.55)" }}>YR // 0</div>
+
+        {/* HUD rails + live text, all anchored inside the shared page-wrap inset so they align with the nav and cards */}
+        <div className="page-wrap absolute inset-0">
+          <div className="relative h-full">
+
+            {/* HUD bracket rails (uploaded overlays) — frame the left column tightly:
+                top rail just above the headline, bottom rail just below the CTA. */}
+            <img src={HUD_BOT} alt="" className="hidden sm:block absolute pointer-events-none select-none" style={{ left: 0, top: "20%", width: "min(470px, 38%)", height: "auto", opacity: 0.9 }} />
+            <img src={HUD_TOP} alt="" className="hidden sm:block absolute pointer-events-none select-none" style={{ left: 0, top: "84%", width: "min(470px, 38%)", height: "auto", opacity: 0.9 }} />
+
+            {/* live text + buttons — centered in the upper band, clear of the baked-in
+                top rail (~12%) above and the status panel / bottom rail below */}
+            <div className="absolute flex flex-col justify-center items-start text-left"
+              style={{ left: 0, right: "auto", top: "17%", bottom: "16%", width: "min(820px, 64%)" }}>
+              <h1 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(3.5rem,10.5vw,9.4rem)", lineHeight: 0.8, letterSpacing: "0.04em", textShadow: "0 0 50px rgba(61,123,255,0.25)" }}>
+                <span className="shine-text shine-white" style={{ animationDelay: "0s" }}>Initiation</span><br />
+                <span className="shine-text shine-blue" style={{ animationDelay: "0s" }}>Protocol</span><br />
+                <span className="shine-text shine-white" style={{ animationDelay: "0s" }}>// Draft</span>
+              </h1>
+
+              {/* DEFY THE LIMITS tagline */}
+              <p className="uppercase mt-4" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 600, fontSize: "clamp(0.85rem,1.5vw,1.15rem)", letterSpacing: "0.5em", color: "#5b8dff", textShadow: "0 0 18px rgba(61,123,255,0.5)" }}>Defy the Limits</p>
+
+              {/* ENTER AUCTION button — outlined HUD frame, only bottom-right notched,
+                  with card-style corner brackets on the three square corners */}
+              <div className="mt-7">
+                <button onClick={() => setView("block")} className="ea-btn hero-cta relative group"
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 18,
+                    padding: "18px 44px",
+                    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+                    fontSize: "clamp(0.85rem,1.3vw,1.05rem)", letterSpacing: "0.34em",
+                    textTransform: "uppercase", color: "#cfe0ff",
+                    background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))",
+                    border: "1px solid rgba(61,123,255,0.5)",
+                    clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%)",
+                    backdropFilter: "blur(2px)",
+                    boxShadow: "0 0 24px rgba(61,123,255,0.18), inset 0 0 18px rgba(61,123,255,0.06)",
+                  }}>
+                  {/* card-style corner brackets — top-left, top-right, bottom-left (bottom-right is the notch) */}
+                  <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                  <span className="absolute right-0 top-0" style={{ width: 12, height: 12, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                  <span className="absolute left-0 bottom-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+                  <span>Enter Auction</span>
+                  <span className="ea-arrow" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400, fontSize: "1.15em" }}>→</span>
+                </button>
+              </div>
+            </div>
+
+            {/* command-center system status — bottom-RIGHT corner, framed with its own
+                HUD brackets; keeps the left column (headline + CTA) completely clear */}
+            <div className="hidden md:block absolute select-none" style={{ right: 0, bottom: "12%", width: 272, zIndex: 5 }}>
+              <div
+                className="relative px-5 py-4"
+                style={{
+                  background: "linear-gradient(180deg, rgba(11,16,28,0.82), rgba(8,11,20,0.62))",
+                  border: "1px solid rgba(61,123,255,0.28)",
+                  clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))",
+                  backdropFilter: "blur(4px)",
+                  boxShadow: "0 8px 40px rgba(0,0,0,0.45)",
+                }}
+              >
+                {/* full corner bracket frame */}
+                <span className="absolute left-0 top-0" style={{ width: 16, height: 16, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                <span className="absolute right-0 top-0" style={{ width: 16, height: 16, borderRight: "2px solid rgba(61,123,255,0.55)", borderTop: "2px solid rgba(61,123,255,0.55)" }} />
+                <span className="absolute left-0 bottom-0" style={{ width: 16, height: 16, borderLeft: "2px solid rgba(61,123,255,0.55)", borderBottom: "2px solid rgba(61,123,255,0.55)" }} />
+                <span className="absolute right-0 bottom-0" style={{ width: 16, height: 16, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+
+                <div className="flex items-center gap-2 mb-1">
+                  <span style={{ width: 6, height: 6, background: "#3ddc84", boxShadow: "0 0 8px #3ddc84", borderRadius: 1 }} />
+                  <p className="uppercase text-xs" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.34em" }}>System Status</p>
+                </div>
+                <div className="mb-3" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
+
+                {/* captains online */}
+                <div className="flex items-baseline justify-between gap-3 py-1">
+                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Captains Online</span>
+                  <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", letterSpacing: "0.04em" }}>{state.teams.length}/{state.teams.length}</span>
+                </div>
+
+                {/* devices live — real-time presence */}
+                <div className="flex items-baseline justify-between gap-3 py-1">
+                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Devices Live</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="cd-pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: "#3ddc84", color: "#3ddc84" }} />
+                    <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", letterSpacing: "0.04em" }}>{liveCount}</span>
+                  </span>
+                </div>
+
+                {/* auction phase — live countdown */}
+                <div className="mt-2 pt-3" style={{ borderTop: "1px solid rgba(61,123,255,0.16)" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em" }}>Auction Phase</span>
+                    <span className="flex items-center gap-1 ml-auto">
+                      <span className="cd-pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: cd.live ? "#3ddc84" : "#3d7bff", color: cd.live ? "#3ddc84" : "#3d7bff" }} />
+                      <span className="uppercase" style={{ fontSize: 9, letterSpacing: "0.18em", color: cd.live ? "#3ddc84" : "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{cd.live ? "Live" : "Starts in"}</span>
+                    </span>
+                  </div>
+
+                  {cd.live ? (
+                    <div className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "1.9rem", lineHeight: 1, letterSpacing: "0.04em", color: "#3ddc84", textShadow: "0 0 18px rgba(61,220,132,0.45)" }}>
+                      Underway
+                    </div>
+                  ) : (
+                    <div className="flex items-end gap-1" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                      {(cd.d > 0
+                        ? [["D", cd.d], ["H", cd.h], ["M", cd.m]]
+                        : [["H", cd.h], ["M", cd.m], ["S", cd.s]]
+                      ).map(([unit, val], i, arr) => (
+                        <span key={unit} className="flex items-end">
+                          <span className="flex flex-col items-center">
+                            <span style={{ fontSize: "2rem", lineHeight: 0.95, fontWeight: 700, color: "#eaf2ff", textShadow: "0 0 16px rgba(61,123,255,0.55)", letterSpacing: "0.01em" }}>
+                              {String(val).padStart(2, "0")}
+                            </span>
+                            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.22em", color: "rgba(170,198,255,0.92)", marginTop: 4, fontFamily: "'Rajdhani',sans-serif" }}>{unit}</span>
+                          </span>
+                          {i < arr.length - 1 && (
+                            <span style={{ fontSize: "1.7rem", lineHeight: 0.95, color: "rgba(61,123,255,0.55)", margin: "0 3px", alignSelf: "flex-start" }}>:</span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {isAdmin && (
+                    <div className="mt-3 pt-3" style={{ borderTop: "1px solid rgba(61,123,255,0.16)" }}>
+                      <p className="uppercase text-[10px] mb-1.5" style={{ color: "rgba(220,230,255,0.45)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.14em" }}>Set auction start (Commissioner)</p>
+                      <input type="datetime-local"
+                        value={(() => { const d = new Date(state?.draftAt ?? Date.now()); const p = (x) => String(x).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; })()}
+                        onChange={(e) => { const ms = new Date(e.target.value).getTime(); if (Number.isFinite(ms)) setDraftTime(ms); }}
+                        className="w-full px-2 py-1.5 text-sm outline-none"
+                        style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(7,12,22,0.9)", border: "1px solid rgba(61,123,255,0.4)", color: "#cfe0ff", colorScheme: "dark", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </>}
-  </div></Shell>;
+
+      {TickerTape}
+
+      {/* rule summary */}
+      <div className="page-wrap py-8">
+        <div className="grid md:grid-cols-3 gap-4">
+        {[
+          { t: "The Budget", b: "Every team starts with $10,000 and exactly 4 open slots. Captains are pre-seated — you're filling the squad around them." },
+          { t: "The Wheel", b: "Players aren't hand-picked. The Commissioner spins the fate wheel and a random name from the pool hits the block." },
+          { t: "The Bidding", b: "Bids rise in $100 steps. Your max is capped so you always keep enough to buy the cheapest players left for your open slots — the ceiling shifts live as the pool changes, and the button locks if a bid would break it." },
+        ].map((r, i) => (
+          <div key={i} className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
+            <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: "rgba(61,123,255,0.16)", color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace" }}>{String(i + 1).padStart(2, "0")}</span>
+              <h3 className="font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{r.t}</h3>
+            </div>
+            <p className="text-sm leading-relaxed" style={{ color: "rgba(220,230,255,0.62)" }}>{r.b}</p>
+          </div>
+        ))}
+        </div>
+      </div>
+
+      {/* top sales strip */}
+      {sold.length > 0 && (
+        <div className="page-wrap pb-10">
+          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: "#7da6ff" }}>Biggest signings so far</p>
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {sold.slice(0, 6).map((p) => { const r = RANKS[p.rank], tm = teamOf(p.soldTo); return (
+              <div key={p.id} className="shrink-0 flex items-center gap-3 p-3 rounded-xl" style={{ minWidth: 230, background: `linear-gradient(135deg, ${r.c}1f, rgba(255,255,255,0.03))`, border: `1px solid ${r.c}44` }}>
+                <RankBadge rank={p.rank} />
+                <div className="min-w-0">
+                  <p className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
+                  <p className="text-xs truncate" style={{ color: tm?.hue }}>{tm?.name}</p>
+                  <p className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(p.soldPrice)}</p>
+                </div>
+              </div>
+            ); })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  /* ════════ VIEW: SCOUT HUB ════════ */
+  const filtered = state.players.filter((p) =>
+    (filterRank === "All" || p.rank === filterRank) &&
+    (filterRole === "All" || p.role === filterRole) &&
+    (!query || p.name.toLowerCase().includes(query.toLowerCase()) || p.agent.toLowerCase().includes(query.toLowerCase()))
+  );
+  const chip = (active, hue = "#3d7bff") => ({
+    background: active ? hue + "22" : "rgba(61,123,255,0.05)", border: `1px solid ${active ? hue : "rgba(120,150,220,0.18)"}`,
+    color: active ? hue : "rgba(200,215,255,0.6)",
+  });
+  const ScoutView = (
+    <div className="view-in page-wrap py-6">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Operator Database</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Scout <span style={{ color: "#3d7bff" }}>Hub</span></h2>
+        </div>
+        <span className="text-sm" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{filtered.length} / {state.players.length} players</span>
+      </div>
+      <p className="text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>Tap any operator to open their full scouting file with a performance radar.</p>
+
+      <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+        <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search players or agents…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
+      </div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        <button onClick={() => setFilterRank("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === "All")}>All ranks</button>
+        {RANK_LIST.map((r) => <button key={r} onClick={() => setFilterRank(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === r, RANKS[r].c)}>{r}</button>)}
+      </div>
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button onClick={() => setFilterRole("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === "All")}>All roles</button>
+        {ROLES.map((r) => <button key={r} onClick={() => setFilterRole(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === r)}>{ROLE_GLYPH[r]} {r}</button>)}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+        {filtered.map((p) => { const r = RANKS[p.rank]; const tm = p.soldTo ? teamOf(p.soldTo) : null; return (
+          <button key={p.id} onClick={() => setScouted(p.id)} className="relative text-left p-4 transition-all hover:scale-[1.03] overflow-hidden"
+            style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${r.c}44`, boxShadow: "0 12px 28px rgba(0,0,0,0.35)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
+            <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xl font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
+                <p className="text-xs uppercase tracking-widest mt-1.5" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <RankBadge rank={p.rank} size="sm" />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{p.rank}</span>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+              <span style={{ color: "#00e5ff" }}>KDA {p.kda.toFixed(2)}</span>
+              <span style={{ color: "#ff4655" }}>ACS {p.acs}</span>
+              <span style={{ color: "#9d6bff" }}>HS {p.hs}%</span>
+            </div>
+            {p.isCaptain ? <p className="mt-2 text-xs uppercase tracking-widest font-bold" style={{ color: "#f5c453" }}>★ Captain · not in draw</p>
+              : tm ? <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: tm.hue }}>◆ {tm.name} · {fmt(p.soldPrice)}</p>
+              : <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.4)" }}>Available · opens {fmt(r.bid)}</p>}
+          </button>
+        ); })}
+        {filtered.length === 0 && <p className="col-span-full text-sm py-10 text-center" style={{ color: "rgba(236,243,255,0.4)" }}>No players match those filters.</p>}
+      </div>
+
+      {isAdmin && (
+        <div id="wr-admin-form" className="mt-8 p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.5))", border: `1px solid ${editingPlayer ? "#3ddc8455" : "rgba(61,123,255,0.22)"}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs uppercase tracking-widest" style={{ color: editingPlayer ? "#3ddc84" : "#7da6ff" }}>
+              {editingPlayer ? `Commissioner · editing ${editingPlayer.name}` : "Commissioner · add player"}
+            </p>
+            <button onClick={resetAll} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ border: `1px solid ${resetArmed ? "#ff4655" : "rgba(255,70,85,0.5)"}`, background: resetArmed ? "rgba(255,70,85,0.2)" : "transparent", color: resetArmed ? "#ffd2d7" : "#ff8a94" }}>{resetArmed ? "Click again to confirm" : "Reset auction"}</button>
+          </div>
+          <AddPlayerForm onAdd={addPlayer} editing={editingPlayer} onSave={(p) => { editPlayer(p); setEditingPlayer(null); }} onCancel={() => setEditingPlayer(null)} />
+        </div>
+      )}
+    </div>
+  );
+
+  /* ════════ VIEW: AUCTION BLOCK ════════ */
+  const myReq = block ? requiredBid(block) : 0;
+  const myMax = myTeam ? maxAllowedBid(myTeam, pool) : 0;
+  const iLead = block && myTeam && block.leaderId === myTeam.id;
+  const myFull = myTeam && emptySlots(myTeam) === 0;
+  const canBid = block && myTeam && !iLead && !myFull && myMax >= myReq;
+
+  // auction storylines — derived from sold players (spectator feed)
+  const soldPlayers = state.players.filter((p) => p.status === "sold");
+  const recordSale = soldPlayers.reduce((best, p) => (!best || (p.soldPrice || 0) > (best.soldPrice || 0) ? p : best), null);
+  const mostContested = soldPlayers.reduce((best, p) => (!best || (p.bidCount || 0) > (best.bidCount || 0) ? p : best), null);
+  const totalSpent = soldPlayers.reduce((s, p) => s + (p.soldPrice || 0), 0);
+  const spendByTeam = {};
+  soldPlayers.forEach((p) => { if (p.soldTo) spendByTeam[p.soldTo] = (spendByTeam[p.soldTo] || 0) + (p.soldPrice || 0); });
+  const biggestSpenderId = Object.keys(spendByTeam).reduce((best, id) => (!best || spendByTeam[id] > spendByTeam[best] ? id : best), null);
+  const completedTeams = state.teams.filter((t) => t.roster.length >= 4);
+
+  const BlockView = (
+    <div className={"view-in relative mx-auto " + (saleFlash ? "sale-flash" : "")} style={{ minHeight: 560, maxWidth: 1760 }}>
+      {/* slim budget bar */}
+      <div className="flex flex-wrap justify-center gap-2 px-5 md:px-8 pt-5 pb-3">
+        {state.teams.map((t) => { const lead = block?.leaderId === t.id; return (
+          <div key={t.id} className="shrink-0 flex items-center gap-2.5 px-3.5 py-2 rounded-lg" style={{ background: lead ? "rgba(255,70,85,0.16)" : "rgba(255,255,255,0.04)", border: `1px solid ${lead ? "#ff4655" : t.hue + "44"}` }}>
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.hue, boxShadow: `0 0 8px ${t.hue}` }} />
+            <span className="text-sm font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: t.hue }}>{t.name.split(" ")[0]}</span>
+            <span className="text-base" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(t.budget)}</span>
+          </div>
+        ); })}
+      </div>
+
+      <div className="px-5 md:px-8 py-4 flex flex-col items-center gap-6">
+        {/* center stage */}
+        <div className="flex flex-col items-center gap-5 w-full">
+          {blockPlayer && !spinLive ? (
+            <>
+              <button onClick={() => setScouted(blockPlayer.id)} className="group relative w-full max-w-[420px] transition-transform hover:scale-[1.015] active:scale-[0.99]" style={{ cursor: "pointer" }} title="View full scouting file">
+                <PlayerCard player={blockPlayer} />
+                <span className="absolute left-1/2 -translate-x-1/2 -bottom-3 px-3 py-1 text-[10px] uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(7,12,22,0.9)", border: "1px solid rgba(61,123,255,0.4)", color: "#7da6ff", clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>Tap for performance radar</span>
+              </button>
+              <div className={"flex items-center gap-6 px-8 py-3 " + (flash ? "bid-pop" : "")} style={{ clipPath: "polygon(18px 0,100% 0,calc(100% - 18px) 100%,0 100%)", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.45)", backdropFilter: "blur(10px)", boxShadow: "0 0 26px rgba(61,123,255,0.2)" }}>
+                <div className="text-center">
+                  <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>Current bid</p>
+                  <p className="text-4xl font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#5b8dff", textShadow: "0 0 18px rgba(61,123,255,0.6)" }}>{fmt(block.currentBid)}</p>
+                </div>
+                <div className="w-px self-stretch" style={{ background: "rgba(120,150,220,0.18)" }} />
+                <div className="text-center">
+                  <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>Held by</p>
+                  <p className="text-xl font-bold uppercase leading-tight" style={{ fontFamily: "'Rajdhani',sans-serif", color: leaderTeam ? leaderTeam.hue : "rgba(200,215,255,0.4)" }}>{leaderTeam ? leaderTeam.name : "No bids yet"}</p>
+                </div>
+                {myTeam && (
+                  <>
+                    <div className="w-px self-stretch" style={{ background: "rgba(120,150,220,0.18)" }} />
+                    <div className="text-center">
+                      <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>Your budget</p>
+                      <p className="text-2xl font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: myTeam.hue, textShadow: `0 0 14px ${myTeam.hue}66` }}>{fmt(myTeam.budget)}</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {myTeam && (
+                <div className="w-full max-w-md flex flex-col items-center gap-2">
+                  {/* live max-bid ceiling + the reserve note that explains it — kept together
+                      so the shifting number reads as intentional, not random */}
+                  {!myFull && (() => { const slotsLeft = Math.max(4 - myTeam.roster.length - 1, 0); const lowFunds = myMax < myReq; return (
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="flex items-center gap-2 px-4 py-1.5" style={{ background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.35)", clipPath: "polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%)" }}>
+                        <span className="uppercase text-xs tracking-widest" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>Max Bid</span>
+                        <span className="text-lg font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: lowFunds ? "#ff6b7d" : "#5b8dff", textShadow: lowFunds ? "none" : "0 0 14px rgba(61,123,255,0.5)" }}>{fmt(Math.max(myMax, 0))}</span>
+                      </div>
+                      {slotsLeft > 0 && (
+                        <span className="text-[10px] uppercase tracking-widest" style={{ color: lowFunds ? "#ff8a94" : "rgba(200,215,255,0.4)" }}>
+                          {lowFunds ? "Insufficient — " : ""}reserve held for your {slotsLeft} remaining slot{slotsLeft === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </div>
+                  ); })()}
+                  <button onClick={() => placeBid(myTeam.id)} disabled={!canBid} className="w-full py-6 text-3xl font-bold uppercase tracking-widest transition-all active:scale-95"
+                    style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(24px 0,100% 0,calc(100% - 24px) 100%,0 100%)", background: canBid ? "linear-gradient(90deg,#ff4655,#ff2d55)" : "rgba(255,255,255,0.05)", color: canBid ? "#fff" : "rgba(236,243,255,0.25)", border: canBid ? "1px solid #ff8a94" : "1px solid rgba(255,255,255,0.1)", boxShadow: canBid ? "0 0 36px rgba(255,70,85,0.5), 0 0 80px rgba(255,70,85,0.2)" : "none", cursor: canBid ? "pointer" : "not-allowed" }}>
+                    {iLead ? "You hold the bid" : `BID ${fmt(myReq)}`}
+                  </button>
+                  {myFull ? (
+                    <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(236,243,255,0.4)" }}>Roster full — spectating</p>
+                  ) : iLead ? (
+                    <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(236,243,255,0.4)" }}>Waiting on challengers…</p>
+                  ) : (
+                    <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ color: "rgba(200,215,255,0.7)", background: "rgba(120,150,220,0.12)", border: "1px solid rgba(120,150,220,0.25)" }}>
+                      +$100 min. raise
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {isSpectator && (
+                <div className="w-full max-w-md flex flex-col items-center gap-1 py-4 px-6" style={{ background: "rgba(120,160,255,0.06)", border: "1px solid rgba(120,160,255,0.25)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
+                  <p className="text-sm font-bold uppercase tracking-widest flex items-center gap-2" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#aec6ff" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square"><path d="M12 3v3M12 18v3M3 12h3M18 12h3" opacity="0.7" /><circle cx="12" cy="12" r="6.5" /><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /></svg>
+                    Spectating
+                  </p>
+                  <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(200,215,255,0.4)" }}>You're watching live · only captains can place bids</p>
+                </div>
+              )}
+
+              {isAdmin && (
+                <div className="flex gap-3 w-full max-w-md">
+                  <button onClick={sell} disabled={!block.leaderId} className="flex-1 py-4 text-2xl font-bold uppercase tracking-widest active:scale-95 transition-all"
+                    style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(20px 0,100% 0,calc(100% - 20px) 100%,0 100%)", background: block.leaderId ? "linear-gradient(90deg,#1fbf75,#3ddc84)" : "rgba(255,255,255,0.05)", color: block.leaderId ? "#062b18" : "rgba(236,243,255,0.25)", boxShadow: block.leaderId ? "0 0 30px rgba(61,220,132,0.4)" : "none", cursor: block.leaderId ? "pointer" : "not-allowed" }}>SOLD</button>
+                  <button onClick={passPlayer} className="px-6 py-4 font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(14px 0,100% 0,calc(100% - 14px) 100%,0 100%)", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(236,243,255,0.6)" }}>Pass</button>
+                </div>
+              )}
+            </>
+          ) : (
+            <ReelStage spin={spinLive ? state.spin : null} players={state.players} pool={pool} isAdmin={isAdmin} onDraw={spinNominate} canDraw={!!pool.length} />
+          )}
+        </div>
+
+        {/* bidding war + auction feed, side by side */}
+        <div className="w-full flex flex-col md:flex-row gap-4 justify-center items-stretch">
+        {/* bidding war tracker */}
+        <div className="w-full max-w-md p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(10px)" }}>
+          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: "#ff4655" }}>Bidding war</p>
+          {state.bidHistory.length === 0 ? (
+            <p className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>{block ? "No bids yet. First captain to act sets the pace." : "Tracker activates when a player hits the block."}</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {state.bidHistory.map((h, i) => { const tm = teamOf(h.teamId); return (
+                <div key={h.ts} className="flex items-center gap-2.5 px-3 py-2 rounded-lg" style={{ background: i === 0 ? tm.hue + "1f" : "rgba(255,255,255,0.03)", border: `1px solid ${i === 0 ? tm.hue + "66" : "transparent"}` }}>
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: tm.hue, boxShadow: i === 0 ? `0 0 8px ${tm.hue}` : "none" }} />
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm.hue }}>{tm.captain || tm.name.split(" ")[0]}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "rgba(236,243,255,0.45)" }}>{tm.name}</span>
+                  </span>
+                  <span className="ml-auto text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: i === 0 ? "#ecf3ff" : "rgba(236,243,255,0.6)" }}>{fmt(h.amount)}</span>
+                </div>
+              ); })}
+            </div>
+          )}
+        </div>
+
+        {/* auction feed — running storylines */}
+        <div className="w-full max-w-md p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(10px)" }}>
+          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: "#3d7bff" }}>Auction feed</p>
+          {soldPlayers.length === 0 ? (
+            <p className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>Storylines appear as players get sold.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {recordSale && (() => { const tm = teamOf(recordSale.soldTo); return (
+                <div className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.3)" }}>
+                  <span className="text-lg shrink-0">🔨</span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "#f5c453", fontFamily: "'Rajdhani',sans-serif" }}>Record sale</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{recordSale.name}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ color: tm ? tm.hue : "rgba(236,243,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{tm ? (tm.captain || tm.name) : "—"}</span>
+                  </span>
+                  <span className="ml-auto text-base font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#f5c453" }}>{fmt(recordSale.soldPrice)}</span>
+                </div>
+              ); })()}
+
+              {mostContested && (mostContested.bidCount || 0) > 1 && (() => { const tm = teamOf(mostContested.soldTo); return (
+                <div className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: "rgba(255,70,85,0.08)", border: "1px solid rgba(255,70,85,0.3)" }}>
+                  <span className="text-lg shrink-0">🔥</span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "#ff8a94", fontFamily: "'Rajdhani',sans-serif" }}>Most contested</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{mostContested.name}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ color: tm ? tm.hue : "rgba(236,243,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{tm ? (tm.captain || tm.name) : "—"}</span>
+                  </span>
+                  <span className="ml-auto text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ff8a94" }}>{mostContested.bidCount} bids</span>
+                </div>
+              ); })()}
+
+              {biggestSpenderId && (() => { const tm = teamOf(biggestSpenderId); return (
+                <div className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)" }}>
+                  <span className="text-lg shrink-0">💰</span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Biggest spender</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm ? tm.hue : "#ecf3ff" }}>{tm ? (tm.captain || tm.name) : "—"}</span>
+                  </span>
+                  <span className="ml-auto text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#7da6ff" }}>{fmt(spendByTeam[biggestSpenderId])}</span>
+                </div>
+              ); })()}
+
+              {/* roster complete — milestone callout for any team that's drafted all 4 */}
+              {completedTeams.map((t) => (
+                <div key={t.id} className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: `${t.hue}14`, border: `1px solid ${t.hue}55` }}>
+                  <span className="text-lg shrink-0">✅</span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: t.hue, fontFamily: "'Rajdhani',sans-serif" }}>Draft complete</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{t.captain || t.name}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ color: t.hue, fontFamily: "'Rajdhani',sans-serif" }}>{t.name} · roster locked</span>
+                  </span>
+                  <span className="ml-auto text-xs font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: t.hue }}>4/4</span>
+                </div>
+              ))}
+
+              <div className="flex gap-2 mt-1">
+                <div className="flex-1 px-3 py-2 rounded-lg text-center" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>Players sold</p>
+                  <p className="text-base font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{soldPlayers.length}</p>
+                </div>
+                <div className="flex-1 px-3 py-2 rounded-lg text-center" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>Total spent</p>
+                  <p className="text-base font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(totalSpent)}</p>
+                </div>
+              </div>
+
+              {/* recent sales ticker — last few hammers, newest first */}
+              {Array.isArray(state.recentSales) && state.recentSales.length > 0 && (
+                <div className="mt-1 pt-2" style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                  <p className="text-[10px] uppercase tracking-widest mb-1.5" style={{ color: "rgba(236,243,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Recent sales</p>
+                  <div className="flex flex-col gap-1">
+                    {state.recentSales.slice(0, 5).map((sale) => { const tm = teamOf(sale.teamId); return (
+                      <div key={sale.ts} className="flex items-center gap-2 px-2.5 py-1.5 rounded" style={{ background: "rgba(255,255,255,0.025)" }}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: tm ? tm.hue : "#888" }} />
+                        <span className="text-xs font-semibold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{sale.name}</span>
+                        <span className="text-[10px] uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm ? tm.hue : "rgba(236,243,255,0.5)" }}>→ {tm ? (tm.captain || tm.name.split(" ")[0]) : "—"}</span>
+                        <span className="ml-auto text-xs font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.85)" }}>{fmt(sale.price)}</span>
+                      </div>
+                    ); })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ════════ VIEW: LOCKER ROOM ════════ */
+  const canRemoveTeam = state.teams.length > MIN_TEAMS;
+  const LockerView = (
+    <div className="view-in page-wrap py-6">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Rosters & Budgets</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Locker <span style={{ color: "#3d7bff" }}>Room</span></h2>
+        </div>
+        <span className="text-sm px-3 py-1" style={{ background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.3)", color: "#7da6ff", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", fontFamily: "'IBM Plex Mono',monospace" }}>{state.teams.length} teams</span>
+      </div>
+      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>
+        Every roster, budget and the roles still missing — scout your rivals.{isAdmin && " Tap ✎ on a card to rename or remove a team."}
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {state.teams.map((t) => (
+          <TeamCard key={t.id} team={t} players={state.players} lead={block?.leaderId === t.id} isAdmin={isAdmin} onRename={renameTeam} onScout={setScouted} onRemove={removeTeam} canRemove={canRemoveTeam} onAddToRoster={adminAddToRoster} onRemoveFromRoster={adminRemoveFromRoster} onSetBudget={setTeamBudget} />
+        ))}
+        {isAdmin && state.teams.length < MAX_TEAMS && (
+          <button onClick={addTeam} className="flex flex-col items-center justify-center gap-2 py-10 transition-all hover:scale-[1.02] min-h-[220px]"
+            style={{ border: "2px dashed rgba(61,123,255,0.4)", background: "rgba(61,123,255,0.05)", color: "#aec6ff", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))" }}>
+            <span className="text-4xl leading-none">＋</span>
+            <span className="font-bold uppercase tracking-widest text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>Add team</span>
+            <span className="text-xs" style={{ color: "rgba(200,215,255,0.4)" }}>$10,000 budget · 4 slots</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const WarRoomView = isAdmin ? (
+    <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Captain Sandbox</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+      </div>
+      <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: "#3d7bff" }}>Room</span></h2>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As Commissioner you can't view captains' saved lineups — they're visible only to the captain who made them.</p>
+    </div>
+  ) : isSpectator ? (
+    <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Captain Sandbox</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+      </div>
+      <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: "#3d7bff" }}>Room</span></h2>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As a spectating Player you don't have a roster to plan — take a captain's seat to use it.</p>
+    </div>
+  ) : (
+    <WarRoom teamId={myTeam.id} teamHue={myTeam.hue} players={state.players} />
+  );
+
+  const BracketView = (
+    <TournamentView
+      state={state}
+      isAdmin={isAdmin}
+      teamOf={teamOf}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tOverride }}
+    />
+  );
+
+  const VetoView = isAdmin ? (
+    <MapVeto teams={state.teams} />
+  ) : (
+    <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
+      <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The map veto is run by the Commissioner.</p>
+    </div>
+  );
+
+  const LeaderboardView = (
+    <Leaderboard players={state.players} isAdmin={isAdmin} onAddMatch={addMatchStat} onRemoveMatch={removeMatchStat} />
+  );
+
+  const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView };
+  const scoutedPlayer = scouted ? state.players.find((p) => p.id === scouted) : null;
+
+  return shell(
+    <>
+      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} />}
+      {TopNav}
+      {views[view]}
+    </>
+  );
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   MULTI-TENANT SHELL — login + community select, then the draft app.
+   Sets window.__VOLT.{communityId,userId} so the storage layer is scoped.
+   ════════════════════════════════════════════════════════════════════ */
+function VoltGate() {
+  const [phase, setPhase] = useState("loading"); // loading | auth | community | ready
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [community, setCommunity] = useState(null);
+  const [err, setErr] = useState("");
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [displayName, setDisplayName] = useState("");
+  const [ccode, setCcode] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // In preview (no Supabase), skip straight into the app with a memory community.
+  useEffect(() => {
+    if (!HAS_SUPABASE) {
+      window.__VOLT.communityId = "preview";
+      window.__VOLT.userId = "preview-user";
+      setPhase("ready");
+      return;
+    }
+    (async () => {
+      const { data } = await __sb.auth.getSession();
+      if (data?.session) { setSession(data.session); await loadProfile(data.session.user.id); }
+      else setPhase("auth");
+    })();
+    const { data: sub } = __sb.auth.onAuthStateChange((_e, s) => {
+      if (s) { setSession(s); loadProfile(s.user.id); } else { setSession(null); setPhase("auth"); }
+    });
+    return () => sub?.subscription?.unsubscribe?.();
+  }, []);
+
+  async function loadProfile(uid) {
+    window.__VOLT.userId = uid;
+    const { data: u } = await __sb.from("users").select("*, communities(*)").eq("id", uid).maybeSingle();
+    if (u && u.community_id) {
+      setProfile(u); setCommunity(u.communities);
+      window.__VOLT.communityId = u.community_id;
+      setPhase("ready");
+    } else {
+      setProfile(u || null);
+      setPhase("community");
+    }
+  }
+
+  async function doAuth() {
+    setErr(""); setBusy(true);
+    try {
+      if (mode === "signup") {
+        const { data, error } = await __sb.auth.signUp({ email, password: pw });
+        if (error) throw error;
+        // profile row is created at community-join time
+      } else {
+        const { error } = await __sb.auth.signInWithPassword({ email, password: pw });
+        if (error) throw error;
+      }
+    } catch (e) { setErr(e.message || "Auth failed"); }
+    setBusy(false);
+  }
+
+  async function joinOrCreate(kind) {
+    setErr(""); setBusy(true);
+    try {
+      const uid = session.user.id;
+      if (kind === "join") {
+        const { data: c } = await __sb.from("communities").select("*").eq("slug", ccode.trim().toLowerCase()).maybeSingle();
+        if (!c) throw new Error("No community with that code.");
+        await __sb.from("users").upsert({ id: uid, community_id: c.id, role: "player", display_name: displayName || email.split("@")[0] });
+        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("ready");
+      } else {
+        const code = (displayName || "community").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24) + "-" + Math.random().toString(36).slice(2, 5);
+        const { data: c, error } = await __sb.from("communities").insert({ name: displayName || "My Community", slug: code }).select().single();
+        if (error) throw error;
+        await __sb.from("users").upsert({ id: uid, community_id: c.id, role: "host", display_name: displayName || email.split("@")[0] });
+        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("ready");
+      }
+    } catch (e) { setErr(e.message || "Could not set community."); }
+    setBusy(false);
+  }
+
+  const wrap = (inner) => (
+    <div style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 420 }}>
+        <div style={{ textAlign: "center", marginBottom: 26 }}>
+          <div style={{ fontSize: 13, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// VOLT PROTOCOL</div>
+          <div style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>VOLT <span style={{ color: "#3d7bff" }}>LEAGUE</span></div>
+        </div>
+        <div style={{ background: "linear-gradient(160deg,rgba(20,26,42,0.9),rgba(10,13,22,0.9))", border: "1px solid rgba(61,123,255,0.3)", clipPath: "polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px))", padding: 26 }}>
+          {inner}
+          {err && <p style={{ color: "#ff8a94", fontSize: 13, marginTop: 12 }}>{err}</p>}
+        </div>
+      </div>
+    </div>
+  );
+  const field = { width: "100%", padding: "11px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(120,150,220,0.25)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, marginBottom: 10, boxSizing: "border-box" };
+  const btn = (primary) => ({ width: "100%", padding: "12px", background: primary ? "#3d7bff" : "rgba(255,255,255,0.05)", border: primary ? "none" : "1px solid rgba(120,150,220,0.3)", color: primary ? "#fff" : "#cfe0ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 14, cursor: "pointer", marginTop: 4 });
+
+  if (phase === "loading") return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
+  if (phase === "ready") return <DraftApp />;
+
+  if (phase === "auth") return wrap(<>
+    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <button onClick={() => setMode("signin")} style={{ ...btn(mode === "signin"), marginTop: 0 }}>Sign in</button>
+      <button onClick={() => setMode("signup")} style={{ ...btn(mode === "signup"), marginTop: 0 }}>Sign up</button>
+    </div>
+    <input style={field} type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+    <input style={field} type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} />
+    <button disabled={busy} onClick={doAuth} style={btn(true)}>{busy ? "…" : mode === "signup" ? "Create account" : "Enter"}</button>
+  </>);
+
+  // community select
+  return wrap(<>
+    <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Join your community with a code, or start a new one as host.</p>
+    <input style={field} placeholder="Your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+    <input style={field} placeholder="Community code (to join)" value={ccode} onChange={e => setCcode(e.target.value)} />
+    <button disabled={busy} onClick={() => joinOrCreate("join")} style={btn(true)}>{busy ? "…" : "Join community"}</button>
+    <button disabled={busy} onClick={() => joinOrCreate("create")} style={btn(false)}>Create a new community</button>
+  </>);
+}
+
+export default function App() { return <VoltGate />; }
