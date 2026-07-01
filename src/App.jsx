@@ -85,7 +85,15 @@ const IMG_KILLJOY = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg
    Lobby · Scout Hub · Auction Block · Locker Room
    ════════════════════════════════════════════════════════════════════ */
 
-const STORE_KEY = "volt-auction-v2";
+// The board key is scoped per weekend so each weekend runs its own isolated
+// draft (within its community, which the storage layer already scopes).
+// window.__VOLT.weekendId is set by the season shell; null → the community's
+// standing/default board (back-compatible with the old single-board behavior).
+const STORE_KEY_BASE = "volt-auction-v2";
+function boardKey() {
+  const w = (typeof window !== "undefined" && window.__VOLT && window.__VOLT.weekendId) || null;
+  return w ? `${STORE_KEY_BASE}::${w}` : STORE_KEY_BASE;
+}
 const POLL_MS = 1500;
 
 // Hardcoded access codes (baked into the build — nobody sets these in-app).
@@ -140,10 +148,22 @@ const SAMPLE_PLAYERS = [
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
-function freshState() {
+function freshState(captains) {
+  // captains: optional [{ userId, name, teamName? }] from the real community.
+  // When present, teams are built from real registered captains (each tied to a
+  // userId so login-based seat claiming maps to the right seat). Otherwise the
+  // old demo seeds are used (preview / first-run before captains exist).
+  const teamDefs = (captains && captains.length)
+    ? captains.map((c, i) => ({
+        name: c.teamName || (TEAM_SEEDS[i]?.name) || `TEAM ${String(i + 1).padStart(2, "0")}`,
+        captain: c.name,
+        captainUserId: c.userId,
+        hue: TEAM_HUES[i % TEAM_HUES.length],
+      }))
+    : TEAM_SEEDS;
   return {
     v: 2,
-    teams: TEAM_SEEDS.map((t, i) => ({ id: "t" + (i + 1), ...t, budget: 10000, roster: [] })),
+    teams: teamDefs.map((t, i) => ({ id: "t" + (i + 1), ...t, budget: 10000, roster: [] })),
     players: SAMPLE_PLAYERS.map((p) => ({ id: uid(), status: "pool", soldTo: null, soldPrice: null, ...p })),
     block: null,
     spin: null,
@@ -161,12 +181,12 @@ function freshState() {
 }
 
 async function readState() {
-  try { const r = await window.storage.get(STORE_KEY, true); return r ? JSON.parse(r.value) : null; }
+  try { const r = await window.storage.get(boardKey(), true); return r ? JSON.parse(r.value) : null; }
   catch { return null; }
 }
 async function writeState(s) {
   if (!s.stamp) s.stamp = Date.now();
-  try { await window.storage.set(STORE_KEY, JSON.stringify(s), true); } catch (e) { console.error(e); }
+  try { await window.storage.set(boardKey(), JSON.stringify(s), true); } catch (e) { console.error(e); }
   return s;
 }
 
@@ -1538,12 +1558,14 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
 }
 
 /* ════════════════ SEAT GATE ═══════════════════════════════════════ */
-function RoleGate({ teams, onPick }) {
+function RoleGate({ teams, onPick, auth }) {
   const [mode, setMode] = useState("seats"); // seats | commish | captain
   const [seat, setSeat] = useState(null);     // team being unlocked (captain mode)
   const [seatIdx, setSeatIdx] = useState(0);  // its seat index (for the code)
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
+  const loggedIn = !!auth;           // authenticated via Supabase → no passcodes
+  const isHost = auth?.role === "host";
 
   const submit = () => {
     setErr("");
@@ -1551,7 +1573,18 @@ function RoleGate({ teams, onPick }) {
     else { setErr("Incorrect passcode."); setCode(""); }
   };
 
-  const openSeat = (t, i) => { setSeat(t); setSeatIdx(i); setMode("captain"); setCode(""); setErr(""); };
+  // Logged in → claim seat directly. Legacy → open passcode step.
+  const openSeat = (t, i) => {
+    if (loggedIn) { onPick(t.id); return; }
+    setSeat(t); setSeatIdx(i); setMode("captain"); setCode(""); setErr("");
+  };
+
+  // Commissioner: hosts enter directly; legacy asks for passcode.
+  const enterCommish = () => {
+    if (isHost) { onPick("admin"); return; }
+    if (loggedIn) { setErr("Only the community host can enter as Commissioner."); return; }
+    setMode("commish"); setCode(""); setErr("");
+  };
 
   const submitSeat = () => {
     setErr("");
@@ -1611,7 +1644,7 @@ function RoleGate({ teams, onPick }) {
                 </svg>
                 Enter as Player
               </button>
-              <button onClick={() => { setMode("commish"); setCode(""); setErr(""); }} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
+              <button onClick={enterCommish} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
                 style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.55)", color: "#aec6ff" }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square" strokeLinejoin="miter" style={{ flexShrink: 0 }}>
                   <path d="M12 2.5l7 3v5.5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V5.5z" />
@@ -2666,9 +2699,11 @@ const SndFX = (() => {
 /* ════════════════════════════════════════════════════════════════════
    MAIN
    ════════════════════════════════════════════════════════════════════ */
-function DraftApp() {
+function DraftApp({ auth }) {
   const [state, setState] = useState(null);
-  const [identity, setIdentity] = useState(null);
+  // Auto-resolve in-app identity from the logged-in role:
+  //  host  → "admin" (Commissioner)   ·   others start unpicked (choose seat/spectator)
+  const [identity, setIdentity] = useState(auth?.role === "host" ? "admin" : null);
   const [view, setView] = useState("lobby");
   const [tourneyOpen, setTourneyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -2762,12 +2797,39 @@ function DraftApp() {
     if (soundOnRef.current) SndFX.play("transition");
   }, [view]);
 
+  // Once the board loads, map a logged-in captain to their own seat automatically
+  // (matched by captainUserId). Host stays "admin"; others can still pick/spectate.
+  useEffect(() => {
+    if (identity || !state || !auth) return;
+    if (auth.role === "host") { setIdentity("admin"); return; }
+    const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
+    if (mine) setIdentity(mine.id);
+  }, [state, auth, identity]);
+
   // draft time lives in shared state so the countdown matches for everyone
   const cd = useCountdown(state?.draftAt ?? Date.now() + 7200000);
 
   useEffect(() => {
     let alive = true;
-    const load = async () => { let s = await readState(); if (!s) s = await writeState(freshState()); if (alive) setState(s); };
+    const load = async () => {
+      let s = await readState();
+      if (!s) {
+        // First boot for this community: build teams from real registered captains.
+        let captains = null;
+        if (HAS_SUPABASE && window.__VOLT.communityId) {
+          try {
+            const { data } = await __sb
+              .from("users")
+              .select("id, display_name, wants_captain, role")
+              .eq("community_id", window.__VOLT.communityId);
+            const caps = (data || []).filter(u => u.wants_captain || u.role === "captain");
+            if (caps.length >= 2) captains = caps.map(u => ({ userId: u.id, name: u.display_name }));
+          } catch (e) { console.error("load captains", e); }
+        }
+        s = await writeState(freshState(captains));
+      }
+      if (alive) setState(s);
+    };
     load();
     const t = setInterval(async () => {
       const s = await readState();
@@ -3224,7 +3286,7 @@ function DraftApp() {
     </div>
   );
 
-  if (!identity) return shell(<RoleGate teams={state.teams} onPick={setIdentity} />);
+  if (!identity) return shell(<RoleGate teams={state.teams} onPick={setIdentity} auth={auth} />);
 
   const isAdmin = identity === "admin";
   const isSpectator = identity === "spectator";
@@ -3992,6 +4054,7 @@ function VoltGate() {
     if (!HAS_SUPABASE) {
       window.__VOLT.communityId = "preview";
       window.__VOLT.userId = "preview-user";
+      window.__VOLT.weekendId = "preview-weekend";
       setPhase("ready");
       return;
     }
@@ -4012,7 +4075,7 @@ function VoltGate() {
     if (u && u.community_id) {
       setProfile(u); setCommunity(u.communities);
       window.__VOLT.communityId = u.community_id;
-      setPhase("ready");
+      setPhase("schedule");
     } else {
       setProfile(u || null);
       setPhase("community");
@@ -4042,13 +4105,13 @@ function VoltGate() {
         const { data: c } = await __sb.from("communities").select("*").eq("slug", ccode.trim().toLowerCase()).maybeSingle();
         if (!c) throw new Error("No community with that code.");
         await __sb.from("users").upsert({ id: uid, community_id: c.id, role: "player", display_name: displayName || email.split("@")[0] });
-        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("ready");
+        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("schedule");
       } else {
         const code = (displayName || "community").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24) + "-" + Math.random().toString(36).slice(2, 5);
         const { data: c, error } = await __sb.from("communities").insert({ name: displayName || "My Community", slug: code }).select().single();
         if (error) throw error;
         await __sb.from("users").upsert({ id: uid, community_id: c.id, role: "host", display_name: displayName || email.split("@")[0] });
-        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("ready");
+        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("schedule");
       }
     } catch (e) { setErr(e.message || "Could not set community."); }
     setBusy(false);
@@ -4072,7 +4135,10 @@ function VoltGate() {
   const btn = (primary) => ({ width: "100%", padding: "12px", background: primary ? "#3d7bff" : "rgba(255,255,255,0.05)", border: primary ? "none" : "1px solid rgba(120,150,220,0.3)", color: primary ? "#fff" : "#cfe0ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 14, cursor: "pointer", marginTop: 4 });
 
   if (phase === "loading") return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
-  if (phase === "ready") return <DraftApp />;
+  if (phase === "schedule") return <WeekendSchedule community={community} isHost={profile?.role === "host"}
+    onEnter={(ev) => { window.__VOLT.weekendId = ev.id; setPhase("ready"); }} />;
+
+  if (phase === "ready") return <DraftApp auth={HAS_SUPABASE ? { role: profile?.role || "player", name: profile?.display_name, userId: window.__VOLT.userId } : { role: "host", name: "Preview" }} />;
 
   if (phase === "auth") return wrap(<>
     <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -4091,6 +4157,76 @@ function VoltGate() {
     <input style={field} placeholder="Community code (to join)" value={ccode} onChange={e => setCcode(e.target.value)} />
     <button disabled={busy} onClick={() => joinOrCreate("join")} style={btn(true)}>{busy ? "…" : "Join community"}</button>
     <button disabled={busy} onClick={() => joinOrCreate("create")} style={btn(false)}>Create a new community</button>
+  </>);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SEASON SHELL — weekend schedule. Each weekend is its own scoped draft.
+   ════════════════════════════════════════════════════════════════════ */
+function WeekendSchedule({ community, isHost, onEnter }) {
+  const [events, setEvents] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function load() {
+    if (!HAS_SUPABASE) { setEvents([]); return; }
+    const { data } = await __sb.from("events").select("*").eq("community_id", window.__VOLT.communityId).order("created_at", { ascending: false });
+    setEvents(data || []);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function createWeekend() {
+    setErr(""); setBusy(true);
+    try {
+      const n = (events?.length || 0) + 1;
+      const { error } = await __sb.from("events").insert({
+        community_id: window.__VOLT.communityId,
+        weekend_label: `Weekend ${n}`,
+        phase: "registration",
+      });
+      if (error) throw error;
+      await load();
+    } catch (e) { setErr(e.message || "Could not create weekend."); }
+    setBusy(false);
+  }
+
+  const wrap = (inner) => (
+    <div style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "40px 20px" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// {community?.name || "Community"}</div>
+          <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>Weekend <span style={{ color: "#3d7bff" }}>Schedule</span></div>
+        </div>
+        {inner}
+        {err && <p style={{ color: "#ff8a94", fontSize: 13, marginTop: 12, textAlign: "center" }}>{err}</p>}
+      </div>
+    </div>
+  );
+
+  if (events === null) return wrap(<p style={{ textAlign: "center", color: "rgba(200,215,255,0.6)" }}>Loading…</p>);
+
+  const btn = (primary) => ({ padding: "12px 22px", background: primary ? "#3d7bff" : "rgba(255,255,255,0.05)", border: primary ? "none" : "1px solid rgba(120,150,220,0.3)", color: primary ? "#fff" : "#cfe0ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 13, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" });
+  const PHASE_LABEL = { registration: "Registration open", draft: "Draft live", matches: "Matches", complete: "Complete" };
+
+  return wrap(<>
+    {events.length === 0
+      ? <div style={{ textAlign: "center", padding: "30px 0", color: "rgba(200,215,255,0.6)" }}>
+          <p>No weekends yet.{isHost ? " Create the first one to start." : " Check back when your host opens a weekend."}</p>
+        </div>
+      : <div style={{ display: "grid", gap: 12, marginBottom: 22 }}>
+          {events.map(ev => (
+            <div key={ev.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: "linear-gradient(160deg,rgba(20,26,42,0.9),rgba(10,13,22,0.9))", border: "1px solid rgba(61,123,255,0.25)", clipPath: "polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))" }}>
+              <div>
+                <div style={{ fontSize: 19, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{ev.weekend_label}</div>
+                <div style={{ fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#5b8dff", marginTop: 3, fontWeight: 600 }}>{PHASE_LABEL[ev.phase] || ev.phase}</div>
+              </div>
+              <button onClick={() => onEnter(ev)} style={btn(true)}>Enter →</button>
+            </div>
+          ))}
+        </div>}
+    {isHost && <div style={{ textAlign: "center" }}>
+      <button disabled={busy} onClick={createWeekend} style={btn(events.length === 0)}>{busy ? "…" : "+ Create weekend"}</button>
+    </div>}
   </>);
 }
 
