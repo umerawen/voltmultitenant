@@ -191,12 +191,13 @@ rank must be one of: Iron,Bronze,Silver,Gold,Platinum,Diamond,Ascendant,Immortal
 // from a user gesture (the upload click) so the sign-in popup is allowed.
 async function ensurePuterAuth(){
   if(!window.puter || !window.puter.auth) throw new Error("Puter not loaded.");
+  // NOTE: puter.auth.isSignedIn() returns a SYNCHRONOUS boolean (not a promise).
   let signedIn=false;
-  try{ signedIn = await window.puter.auth.isSignedIn(); }catch(e){}
+  try{ signedIn = !!window.puter.auth.isSignedIn(); }catch(e){}
   if(signedIn) return true;
   // Opens Puter's sign-in popup; resolves once the user completes it.
   await window.puter.auth.signIn();
-  try{ signedIn = await window.puter.auth.isSignedIn(); }catch(e){}
+  try{ signedIn = !!window.puter.auth.isSignedIn(); }catch(e){}
   if(!signedIn) throw new Error("Puter sign-in was not completed. The screenshot reader needs a (free) Puter account to run the AI.");
   return true;
 }
