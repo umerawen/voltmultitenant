@@ -4163,7 +4163,8 @@ function VoltGate() {
     setErr(""); setBusy(true);
     try {
       if (!ccode.trim()) throw new Error("Enter your league's join code.");
-      const { data: c } = await __sb.from("communities").select("*").eq("slug", ccode.trim().toLowerCase()).maybeSingle();
+      const { data: rows } = await __sb.rpc("join_lookup", { p_slug: ccode.trim() });
+      const c = Array.isArray(rows) ? rows[0] : rows;
       if (!c) throw new Error("No league found with that code. Check with your host.");
       const user = await ensureAuthedUser();
       window.__VOLT.userId = user.id;
@@ -4193,7 +4194,23 @@ function VoltGate() {
   const btn = (primary) => ({ width: "100%", padding: "12px", background: primary ? "#3d7bff" : "rgba(255,255,255,0.05)", border: primary ? "none" : "1px solid rgba(120,150,220,0.3)", color: primary ? "#fff" : "#cfe0ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 14, cursor: "pointer", marginTop: 4 });
 
   if (phase === "loading") return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
+
+  const account = {
+    name: profile?.display_name || (HAS_SUPABASE ? (session?.user?.email || "You") : "Preview"),
+    role: profile?.role || "player",
+    community: community?.name,
+    code: community?.slug,
+  };
+  const signOut = async () => {
+    try { if (HAS_SUPABASE) await __sb.auth.signOut(); } catch (e) { console.error(e); }
+    window.__VOLT.communityId = null; window.__VOLT.userId = null; window.__VOLT.weekendId = null;
+    setProfile(null); setCommunity(null); setActiveEvent(null); setSession(null);
+    setEmail(""); setPw(""); setDisplayName(""); setLeagueName(""); setCcode(""); setPendingIntent(null);
+    setPhase("welcome");
+  };
+
   if (phase === "schedule") return <WeekendSchedule community={community} isHost={profile?.role === "host"}
+    account={account} onSignOut={signOut}
     onEnter={(ev) => { window.__VOLT.weekendId = ev.id; setActiveEvent(ev); setPhase("ready"); }} />;
 
   if (phase === "ready") {
@@ -4204,6 +4221,7 @@ function VoltGate() {
       auth={auth}
       event={activeEvent}
       isHost={profile?.role === "host"}
+      account={account} onSignOut={signOut}
       onBack={() => { window.__VOLT.weekendId = null; setActiveEvent(null); setPhase("schedule"); }} />;
   }
 
@@ -4259,10 +4277,33 @@ function VoltGate() {
   return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
 }
 
+// Persistent account control — shows who you are + sign out. Used on every shell screen.
+function AccountChip({ account, onSignOut, dark }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
+      <button onClick={() => setOpen(o => !o)} aria-label="Account menu" style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.3)", color: "#cfe0ff", padding: "7px 12px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em" }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3ddc84" }} />
+        <span style={{ textTransform: "uppercase" }}>{account.name}</span>
+        <span style={{ color: "rgba(200,215,255,0.5)", fontSize: 11 }}>▾</span>
+      </button>
+      {open && <>
+        <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
+        <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 210, background: "#0d1220", border: "1px solid rgba(61,123,255,0.35)", clipPath: "polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)", padding: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", color: "#ecf3ff" }}>{account.name}</div>
+          <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: account.role === "host" ? "#f5c453" : "#5b8dff", marginTop: 2, fontWeight: 600 }}>{account.role === "host" ? "Host" : "Player"}</div>
+          {account.community && <div style={{ fontSize: 12, color: "rgba(200,215,255,0.55)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(120,150,220,0.15)" }}>{account.community}{account.code && <span style={{ display: "block", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#7da6ff", marginTop: 2 }}>code: {account.code}</span>}</div>}
+          <button onClick={onSignOut} style={{ width: "100%", marginTop: 12, padding: "9px", background: "rgba(255,70,85,0.1)", border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>Sign out</button>
+        </div>
+      </>}
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════════
    SEASON SHELL — weekend schedule. Each weekend is its own scoped draft.
    ════════════════════════════════════════════════════════════════════ */
-function WeekendSchedule({ community, isHost, onEnter }) {
+function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [events, setEvents] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -4316,8 +4357,11 @@ function WeekendSchedule({ community, isHost, onEnter }) {
   }
 
   const wrap = (inner) => (
-    <div style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "40px 20px" }}>
-      <div style={{ maxWidth: 720, margin: "0 auto" }}>
+    <div style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.15)" }}>
+        {account && <AccountChip account={account} onSignOut={onSignOut} />}
+      </div>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "34px 20px 0" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// {community?.name || "Community"}</div>
           <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>Weekend <span style={{ color: "#3d7bff" }}>Schedule</span></div>
@@ -4374,7 +4418,7 @@ function WeekendSchedule({ community, isHost, onEnter }) {
 /* ════════════════════════════════════════════════════════════════════
    WEEKEND APP — phase router. Registration → Draft → Matches, per weekend.
    ════════════════════════════════════════════════════════════════════ */
-function WeekendApp({ auth, event, isHost, onBack }) {
+function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   const [ev, setEv] = useState(event);
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
@@ -4481,12 +4525,12 @@ function WeekendApp({ auth, event, isHost, onBack }) {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "rgba(10,13,22,0.9)", borderBottom: "1px solid rgba(61,123,255,0.2)", fontFamily: "'Rajdhani',sans-serif", position: "sticky", top: 0, zIndex: 60 }}>
       <button onClick={onBack} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "#cfe0ff", padding: "7px 14px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>‹ Schedule</button>
       <div style={{ fontSize: 13, letterSpacing: "0.14em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{ev?.weekend_label} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {isHost && phase === "drafting" &&
           <button disabled={busy} onClick={rebuildNow} title="Rebuild teams from registered captains" style={{ background: "none", border: "1px solid rgba(245,196,83,0.4)", color: "#f5c453", padding: "7px 12px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>⟳ Rebuild teams</button>}
-        {isHost && phase !== "settled"
-          ? <button disabled={busy} onClick={advance} style={{ background: "#3d7bff", border: "none", color: "#fff", padding: "7px 16px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>{busy ? "…" : NEXT_LABEL[phase] + " →"}</button>
-          : <span style={{ width: 90 }} />}
+        {isHost && phase !== "settled" &&
+          <button disabled={busy} onClick={advance} style={{ background: "#3d7bff", border: "none", color: "#fff", padding: "7px 16px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>{busy ? "…" : NEXT_LABEL[phase] + " →"}</button>}
+        {account && <AccountChip account={account} onSignOut={onSignOut} />}
       </div>
     </div>
   );
