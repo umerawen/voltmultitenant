@@ -796,7 +796,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                 </div>
                 <div className="flex flex-col gap-2">
                   {g.teamIds.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.35)" }}>Empty — select this group, then tap teams above.</span>
-                    : g.teamIds.map((id) => <div key={id} className="flex items-center justify-between"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} className="text-xs px-2" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
+                    : g.teamIds.map((id) => <div key={id} className="flex items-center justify-between"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} aria-label="Remove team from group" className="text-xs px-2" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
                 </div>
               </TPanel>
             ))}
@@ -809,7 +809,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Participants ({t.teamIds.length})</p>
             <div className="flex flex-wrap gap-2">
               {t.teamIds.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.35)" }}>None yet — tap teams above.</span>
-                : t.teamIds.map((id) => <div key={id} className="flex items-center gap-1"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} className="text-xs px-1" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
+                : t.teamIds.map((id) => <div key={id} className="flex items-center gap-1"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} aria-label="Remove team from group" className="text-xs px-1" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
             </div>
           </TPanel>
         )}
@@ -1133,13 +1133,20 @@ function PlayerCard({ player, lite = false }) {
 function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain }) {
   const [confirmDel, setConfirmDel] = useState(false);
   useEffect(() => { setConfirmDel(false); }, [player && player.id]);
+  // Close on Escape for keyboard users.
+  useEffect(() => {
+    if (!player) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [player, onClose]);
   if (!player) return null;
   const r = RANKS[player.rank];
   const drafted = player.status === "sold";
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(5,6,12,0.84)", backdropFilter: "blur(8px)" }} onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={`Scouting report for ${player.name}`} className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(5,6,12,0.84)", backdropFilter: "blur(8px)" }} onClick={onClose}>
       <div className="relative w-full grid md:grid-cols-2 gap-6 items-stretch" style={{ maxWidth: 820 }} onClick={(e) => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute -top-2 right-0 md:-right-2 z-10 w-9 h-9 grid place-items-center rounded-full"
+        <button onClick={onClose} aria-label="Close" className="absolute -top-2 right-0 md:-right-2 z-10 w-9 h-9 grid place-items-center rounded-full"
           style={{ background: "rgba(61,123,255,0.12)", border: "1px solid rgba(61,123,255,0.4)", color: "#ecf3ff" }}>✕</button>
         <PlayerCard player={player} />
         <div className="p-5 flex flex-col" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.55))", border: `1px solid ${r.c}44`, backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
@@ -1501,7 +1508,7 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
                   className="w-full px-1.5 py-0.5 rounded text-base font-bold outline-none"
                   style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(10,14,24,0.9)", border: `1px solid ${team.hue}88`, color: "#ecf3ff" }} />
                 <button onClick={saveBudget} className="text-[11px] px-1.5 py-1 rounded shrink-0" style={{ background: "rgba(61,220,132,0.2)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>✓</button>
-                <button onClick={() => setBudgetEdit(false)} className="text-[11px] px-1.5 py-1 rounded shrink-0" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>✕</button>
+                <button onClick={() => setBudgetEdit(false)} aria-label="Cancel budget edit" className="text-[11px] px-1.5 py-1 rounded shrink-0" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>✕</button>
               </div>
             ) : (
               <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(team.budget)}</p>
@@ -2220,7 +2227,7 @@ function Leaderboard({ players, isAdmin, onAddMatch, onRemoveMatch }) {
                           <span style={{ color: "rgba(200,215,255,0.4)" }}>M{idx + 1}</span>
                           <span style={{ color: "#9af5c2" }}>{e.k}</span>/<span style={{ color: "#ff8a94" }}>{e.d}</span>/<span>{e.a}</span>
                           <span className="ml-2" style={{ color: "#5b8dff" }}>{e.acs} ACS</span>
-                          <button onClick={() => onRemoveMatch(p.id, idx)} className="ml-auto text-xs px-1.5 py-0.5" style={{ color: "#ff8a94", border: "1px solid rgba(255,70,85,0.4)" }}>✕</button>
+                          <button onClick={() => onRemoveMatch(p.id, idx)} aria-label="Remove match" className="ml-auto text-xs px-1.5 py-0.5" style={{ color: "#ff8a94", border: "1px solid rgba(255,70,85,0.4)" }}>✕</button>
                         </div>
                       ))}
                     </div>
@@ -3220,6 +3227,13 @@ function DraftApp({ auth }) {
   const fonts = (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
+      /* Keyboard focus — visible ring for keyboard users only (not mouse clicks). */
+      *:focus { outline: none; }
+      *:focus-visible { outline: 2px solid #6fa0ff; outline-offset: 2px; border-radius: 2px; }
+      button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+        outline: 2px solid #6fa0ff; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(61,123,255,0.25);
+      }
+      .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
       /* Tungsten webfont stripped for artifact rendering; falls back to condensed system fonts via the font stacks below */
       .holo-sweep { background: linear-gradient(115deg, transparent 30%, rgba(0,229,255,0.10) 45%, rgba(255,255,255,0.16) 50%, rgba(157,107,255,0.10) 55%, transparent 70%); background-size: 250% 250%; animation: sweep 4.5s ease-in-out infinite; }
       @keyframes sweep { 0% { background-position: 120% 0; } 60%,100% { background-position: -120% 0; } }
