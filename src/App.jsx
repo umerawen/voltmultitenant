@@ -4129,18 +4129,27 @@ function VoltGate() {
     setBusy(false);
   }
 
-  // Ensure we have an authenticated user for the given email/pw (sign up or in).
+  // Ensure we have an authenticated user WITH AN ACTIVE SESSION for the given
+  // email/pw. Without a session, later inserts run as the anon role and RLS
+  // denies them — so we require session, not just a user object.
   async function ensureAuthedUser() {
-    let { data: si, error: siErr } = await __sb.auth.signInWithPassword({ email, password: pw });
-    if (si?.user) return si.user;
-    // Not an existing account (or wrong pw) → try to create one.
+    let { data: si } = await __sb.auth.signInWithPassword({ email, password: pw });
+    if (si?.session && si?.user) return si.user;
+    // No existing account (or wrong pw) → create one.
     const { data: su, error: suErr } = await __sb.auth.signUp({ email, password: pw });
-    if (suErr) throw (siErr && /Invalid/.test(siErr.message) ? new Error("That email exists — check your password.") : suErr);
-    if (!su?.user) throw new Error("Could not create the account.");
+    if (suErr) {
+      if (/registered|already/i.test(suErr.message)) throw new Error("That email already has an account — wrong password. Try Sign in instead.");
+      throw suErr;
+    }
+    // signUp returns session:null when email confirmation is required.
+    if (!su?.session) {
+      if (su?.user && !su?.session) throw new Error("That email already exists — use Sign in with your existing password.");
+      throw new Error("Check your email to confirm your account, then Sign in. (Or ask us to disable email confirmation.)");
+    }
     return su.user;
   }
 
-  // Host path: create the league, become host.
+  // Host path: create the league, become host (atomic RPC — avoids RLS ordering).
   async function doHost() {
     setErr(""); setBusy(true);
     try {
@@ -4148,11 +4157,13 @@ function VoltGate() {
       const user = await ensureAuthedUser();
       window.__VOLT.userId = user.id;
       const slug = leagueName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 20) + "-" + Math.random().toString(36).slice(2, 5);
-      const { data: c, error } = await __sb.from("communities").insert({ name: leagueName.trim(), slug }).select().single();
+      const dn = displayName || email.split("@")[0];
+      const { data: rows, error } = await __sb.rpc("create_league", { p_name: leagueName.trim(), p_slug: slug, p_display: dn });
       if (error) throw error;
-      await __sb.from("users").upsert({ id: user.id, community_id: c.id, role: "host", display_name: displayName || email.split("@")[0] });
+      const c = Array.isArray(rows) ? rows[0] : rows;
+      if (!c) throw new Error("League was not created — try again.");
       window.__VOLT.communityId = c.id; setCommunity(c);
-      setProfile({ id: user.id, role: "host", display_name: displayName || email.split("@")[0], community_id: c.id });
+      setProfile({ id: user.id, role: "host", display_name: dn, community_id: c.id });
       setPhase("schedule");
     } catch (e) { setErr(e.message || "Could not create the league."); }
     setBusy(false);
