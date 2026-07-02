@@ -40,7 +40,8 @@ if (typeof window !== "undefined") {
       if (!HAS_SUPABASE || !cid) return memSet(key, value, shared);
       try {
         const row = { community_id: cid, k: key, val: value, shared: !!shared, user_id: shared ? null : window.__VOLT.userId, updated_at: new Date().toISOString() };
-        await __sb.from("community_kv").upsert(row, { onConflict: shared ? "community_id,k,shared" : "community_id,k,shared,user_id" });
+        const { error } = await __sb.from("community_kv").upsert(row, { onConflict: "community_id,k,shared,user_id" });
+        if (error) { console.error("storage.set failed:", error.message); return memSet(key, value, shared); }
         return { key, value, shared: !!shared };
       } catch (e) { console.error("storage.set", e); return memSet(key, value, shared); }
     },
@@ -4133,6 +4134,9 @@ function VoltGate() {
   // email/pw. Without a session, later inserts run as the anon role and RLS
   // denies them — so we require session, not just a user object.
   async function ensureAuthedUser() {
+    // Already signed in? Reuse that session — don't re-auth or switch accounts.
+    const { data: cur } = await __sb.auth.getSession();
+    if (cur?.session?.user) return cur.session.user;
     let { data: si } = await __sb.auth.signInWithPassword({ email, password: pw });
     if (si?.session && si?.user) return si.user;
     // No existing account (or wrong pw) → create one.
@@ -4270,7 +4274,7 @@ function VoltGate() {
     <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Name your league and create your host account. You'll get a join code to share with players.</p>
     <input style={field} placeholder="League name (e.g. Minaal.GG)" value={leagueName} onChange={e => setLeagueName(e.target.value)} />
     <input style={field} placeholder="Your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
-    {emailPw}
+    {!session && emailPw}
     <button disabled={busy} onClick={doHost} style={btn(true)}>{busy ? "…" : "Create my league →"}</button>
   </>);
 
@@ -4281,7 +4285,7 @@ function VoltGate() {
     <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Enter the join code your host gave you, then set up your account.</p>
     <input style={{ ...field, textTransform: "lowercase" }} placeholder="Join code" value={ccode} onChange={e => setCcode(e.target.value)} />
     <input style={field} placeholder="Your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
-    {emailPw}
+    {!session && emailPw}
     <button disabled={busy} onClick={doJoin} style={btn(true)}>{busy ? "…" : "Join league →"}</button>
   </>);
 
@@ -4581,9 +4585,7 @@ function WeekendRegistration({ ev, auth, phase }) {
     setBusy(true);
     try {
       await __sb.from("users").update({ wants_captain: v }).eq("id", window.__VOLT.userId);
-      // registrations has no self-update policy; re-create the row with the flag.
-      await __sb.from("registrations").delete().eq("id", reg.id);
-      await __sb.from("registrations").insert({ event_id: ev.id, community_id: window.__VOLT.communityId, user_id: window.__VOLT.userId, is_captain: v });
+      await __sb.from("registrations").update({ is_captain: v }).eq("id", reg.id);
       await load();
     }
     catch (e) { console.error(e); }
