@@ -4055,18 +4055,19 @@ function DraftApp({ auth }) {
    Sets window.__VOLT.{communityId,userId} so the storage layer is scoped.
    ════════════════════════════════════════════════════════════════════ */
 function VoltGate() {
-  const [phase, setPhase] = useState("loading"); // loading | auth | community | ready
+  const [phase, setPhase] = useState("loading"); // loading | welcome | signin | host | join | schedule | ready
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [community, setCommunity] = useState(null);
   const [err, setErr] = useState("");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
-  const [mode, setMode] = useState("signin"); // signin | signup
   const [displayName, setDisplayName] = useState("");
+  const [leagueName, setLeagueName] = useState("");
   const [ccode, setCcode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [activeEvent, setActiveEvent] = useState(null); // the weekend the user entered
+  const [pendingIntent, setPendingIntent] = useState(null); // host | join — what to do after auth
+  const [activeEvent, setActiveEvent] = useState(null);
 
   // In preview (no Supabase), skip straight into the app with a memory community.
   useEffect(() => {
@@ -4080,10 +4081,11 @@ function VoltGate() {
     (async () => {
       const { data } = await __sb.auth.getSession();
       if (data?.session) { setSession(data.session); await loadProfile(data.session.user.id); }
-      else setPhase("auth");
+      else setPhase("welcome");
     })();
     const { data: sub } = __sb.auth.onAuthStateChange((_e, s) => {
-      if (s) { setSession(s); loadProfile(s.user.id); } else { setSession(null); setPhase("auth"); }
+      setSession(s || null);
+      if (!s) setPhase("welcome");
     });
     return () => sub?.subscription?.unsubscribe?.();
   }, []);
@@ -4096,43 +4098,66 @@ function VoltGate() {
       window.__VOLT.communityId = u.community_id;
       setPhase("schedule");
     } else {
+      // Authenticated but not yet in a community — route by the intent they picked.
       setProfile(u || null);
-      setPhase("community");
+      setPhase(pendingIntent === "join" ? "join" : pendingIntent === "host" ? "host" : "welcome");
     }
   }
 
-  async function doAuth() {
+  // Returning user: plain sign in, then land wherever they belong.
+  async function doSignIn() {
     setErr(""); setBusy(true);
     try {
-      if (mode === "signup") {
-        const { data, error } = await __sb.auth.signUp({ email, password: pw });
-        if (error) throw error;
-        // profile row is created at community-join time
-      } else {
-        const { error } = await __sb.auth.signInWithPassword({ email, password: pw });
-        if (error) throw error;
-      }
-    } catch (e) { setErr(e.message || "Auth failed"); }
+      const { data, error } = await __sb.auth.signInWithPassword({ email, password: pw });
+      if (error) throw error;
+      if (data?.user) await loadProfile(data.user.id);
+    } catch (e) { setErr(e.message || "Sign in failed"); }
     setBusy(false);
   }
 
-  async function joinOrCreate(kind) {
+  // Ensure we have an authenticated user for the given email/pw (sign up or in).
+  async function ensureAuthedUser() {
+    let { data: si, error: siErr } = await __sb.auth.signInWithPassword({ email, password: pw });
+    if (si?.user) return si.user;
+    // Not an existing account (or wrong pw) → try to create one.
+    const { data: su, error: suErr } = await __sb.auth.signUp({ email, password: pw });
+    if (suErr) throw (siErr && /Invalid/.test(siErr.message) ? new Error("That email exists — check your password.") : suErr);
+    if (!su?.user) throw new Error("Could not create the account.");
+    return su.user;
+  }
+
+  // Host path: create the league, become host.
+  async function doHost() {
     setErr(""); setBusy(true);
     try {
-      const uid = session.user.id;
-      if (kind === "join") {
-        const { data: c } = await __sb.from("communities").select("*").eq("slug", ccode.trim().toLowerCase()).maybeSingle();
-        if (!c) throw new Error("No community with that code.");
-        await __sb.from("users").upsert({ id: uid, community_id: c.id, role: "player", display_name: displayName || email.split("@")[0] });
-        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("schedule");
-      } else {
-        const code = (displayName || "community").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24) + "-" + Math.random().toString(36).slice(2, 5);
-        const { data: c, error } = await __sb.from("communities").insert({ name: displayName || "My Community", slug: code }).select().single();
-        if (error) throw error;
-        await __sb.from("users").upsert({ id: uid, community_id: c.id, role: "host", display_name: displayName || email.split("@")[0] });
-        window.__VOLT.communityId = c.id; setCommunity(c); setPhase("schedule");
-      }
-    } catch (e) { setErr(e.message || "Could not set community."); }
+      if (!leagueName.trim()) throw new Error("Give your league a name.");
+      const user = await ensureAuthedUser();
+      window.__VOLT.userId = user.id;
+      const slug = leagueName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 20) + "-" + Math.random().toString(36).slice(2, 5);
+      const { data: c, error } = await __sb.from("communities").insert({ name: leagueName.trim(), slug }).select().single();
+      if (error) throw error;
+      await __sb.from("users").upsert({ id: user.id, community_id: c.id, role: "host", display_name: displayName || email.split("@")[0] });
+      window.__VOLT.communityId = c.id; setCommunity(c);
+      setProfile({ id: user.id, role: "host", display_name: displayName || email.split("@")[0], community_id: c.id });
+      setPhase("schedule");
+    } catch (e) { setErr(e.message || "Could not create the league."); }
+    setBusy(false);
+  }
+
+  // Join path: code first, then account, placed as player.
+  async function doJoin() {
+    setErr(""); setBusy(true);
+    try {
+      if (!ccode.trim()) throw new Error("Enter your league's join code.");
+      const { data: c } = await __sb.from("communities").select("*").eq("slug", ccode.trim().toLowerCase()).maybeSingle();
+      if (!c) throw new Error("No league found with that code. Check with your host.");
+      const user = await ensureAuthedUser();
+      window.__VOLT.userId = user.id;
+      await __sb.from("users").upsert({ id: user.id, community_id: c.id, role: "player", display_name: displayName || email.split("@")[0] });
+      window.__VOLT.communityId = c.id; setCommunity(c);
+      setProfile({ id: user.id, role: "player", display_name: displayName || email.split("@")[0], community_id: c.id });
+      setPhase("schedule");
+    } catch (e) { setErr(e.message || "Could not join the league."); }
     setBusy(false);
   }
 
@@ -4168,24 +4193,56 @@ function VoltGate() {
       onBack={() => { window.__VOLT.weekendId = null; setActiveEvent(null); setPhase("schedule"); }} />;
   }
 
-  if (phase === "auth") return wrap(<>
-    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-      <button onClick={() => setMode("signin")} style={{ ...btn(mode === "signin"), marginTop: 0 }}>Sign in</button>
-      <button onClick={() => setMode("signup")} style={{ ...btn(mode === "signup"), marginTop: 0 }}>Sign up</button>
-    </div>
+  const backLink = (
+    <button onClick={() => { setErr(""); setPhase("welcome"); }} style={{ background: "none", border: "none", color: "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontSize: 13, letterSpacing: "0.06em", cursor: "pointer", marginBottom: 14, padding: 0 }}>‹ Back</button>
+  );
+  const emailPw = (<>
     <input style={field} type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
     <input style={field} type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} />
-    <button disabled={busy} onClick={doAuth} style={btn(true)}>{busy ? "…" : mode === "signup" ? "Create account" : "Enter"}</button>
   </>);
 
-  // community select
-  return wrap(<>
-    <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Join your community with a code, or start a new one as host.</p>
-    <input style={field} placeholder="Your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
-    <input style={field} placeholder="Community code (to join)" value={ccode} onChange={e => setCcode(e.target.value)} />
-    <button disabled={busy} onClick={() => joinOrCreate("join")} style={btn(true)}>{busy ? "…" : "Join community"}</button>
-    <button disabled={busy} onClick={() => joinOrCreate("create")} style={btn(false)}>Create a new community</button>
+  // Intent picker — the three front doors.
+  if (phase === "welcome") return wrap(<>
+    <p style={{ margin: "0 0 20px", color: "rgba(200,215,255,0.7)", fontSize: 14, textAlign: "center" }}>Run a Valorant auction league, or join one you were invited to.</p>
+    <button onClick={() => { setErr(""); setPendingIntent("host"); setPhase("host"); }} style={{ ...btn(true), marginTop: 0, marginBottom: 10 }}>◆ Host a league</button>
+    <button onClick={() => { setErr(""); setPendingIntent("join"); setPhase("join"); }} style={{ ...btn(false), marginBottom: 18 }}>Join a league</button>
+    <div style={{ textAlign: "center", borderTop: "1px solid rgba(120,150,220,0.15)", paddingTop: 14 }}>
+      <span style={{ color: "rgba(200,215,255,0.5)", fontSize: 13 }}>Already have an account? </span>
+      <button onClick={() => { setErr(""); setPhase("signin"); }} style={{ background: "none", border: "none", color: "#5b8dff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", textTransform: "uppercase", letterSpacing: "0.06em" }}>Sign in</button>
+    </div>
   </>);
+
+  // Returning user.
+  if (phase === "signin") return wrap(<>
+    {backLink}
+    <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Welcome back. Sign in to your league.</p>
+    {emailPw}
+    <button disabled={busy} onClick={doSignIn} style={btn(true)}>{busy ? "…" : "Sign in →"}</button>
+  </>);
+
+  // Host a league.
+  if (phase === "host") return wrap(<>
+    {backLink}
+    <p style={{ margin: "0 0 6px", color: "#5dcaa5", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Host setup</p>
+    <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Name your league and create your host account. You'll get a join code to share with players.</p>
+    <input style={field} placeholder="League name (e.g. Minaal.GG)" value={leagueName} onChange={e => setLeagueName(e.target.value)} />
+    <input style={field} placeholder="Your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+    {emailPw}
+    <button disabled={busy} onClick={doHost} style={btn(true)}>{busy ? "…" : "Create my league →"}</button>
+  </>);
+
+  // Join a league.
+  if (phase === "join") return wrap(<>
+    {backLink}
+    <p style={{ margin: "0 0 6px", color: "#af9aec", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Join a league</p>
+    <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Enter the join code your host gave you, then set up your account.</p>
+    <input style={{ ...field, textTransform: "lowercase" }} placeholder="Join code" value={ccode} onChange={e => setCcode(e.target.value)} />
+    <input style={field} placeholder="Your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+    {emailPw}
+    <button disabled={busy} onClick={doJoin} style={btn(true)}>{busy ? "…" : "Join league →"}</button>
+  </>);
+
+  return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
 }
 
 /* ════════════════════════════════════════════════════════════════════
