@@ -4192,21 +4192,24 @@ function VoltGate() {
   }
 
   const wrap = (inner) => (
-    <div style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif", padding: 20 }}>
+    <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif", padding: 20 }}>
+      <ShellStyles />
       <div style={{ width: "100%", maxWidth: 420 }}>
         <div style={{ textAlign: "center", marginBottom: 26 }}>
-          <div style={{ fontSize: 13, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// VOLT PROTOCOL</div>
+          <div style={{ fontSize: 13, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT PROTOCOL</div>
           <div style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>VOLT <span style={{ color: "#3d7bff" }}>LEAGUE</span></div>
         </div>
-        <div style={{ background: "linear-gradient(160deg,rgba(20,26,42,0.9),rgba(10,13,22,0.9))", border: "1px solid rgba(61,123,255,0.3)", clipPath: "polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px))", padding: 26 }}>
+        <div style={{ position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.9),rgba(10,13,22,0.9))", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(18), padding: 26 }}>
+          <span style={{ position: "absolute", left: 0, top: 0, width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+          <span style={{ position: "absolute", right: 0, bottom: 0, width: 10, height: 10, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
           {inner}
           {err && <p style={{ color: "#ff8a94", fontSize: 13, marginTop: 12 }}>{err}</p>}
         </div>
       </div>
     </div>
   );
-  const field = { width: "100%", padding: "11px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(120,150,220,0.25)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, marginBottom: 10, boxSizing: "border-box" };
-  const btn = (primary) => ({ width: "100%", padding: "12px", background: primary ? "#3d7bff" : "rgba(255,255,255,0.05)", border: primary ? "none" : "1px solid rgba(120,150,220,0.3)", color: primary ? "#fff" : "#cfe0ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 14, cursor: "pointer", marginTop: 4 });
+  const field = { width: "100%", padding: "11px 12px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, marginBottom: 10, boxSizing: "border-box" };
+  const btn = (primary) => shellBtn(primary ? "primary" : "ghost", { width: "100%", padding: "13px", fontSize: 13.5, letterSpacing: "0.18em", marginTop: 4, clipPath: SHELL_NOTCH(12) });
 
   if (phase === "loading") return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
 
@@ -4292,23 +4295,52 @@ function VoltGate() {
   return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
 }
 
+// ── Shell design language — mirrors the old app's HUD aesthetic ─────────
+// Notched clip-path corners, Rajdhani uppercase tracking, blue glow accents.
+const SHELL_NOTCH = (n = 9) => `polygon(0 0, calc(100% - ${n}px) 0, 100% ${n}px, 100% 100%, ${n}px 100%, 0 calc(100% - ${n}px))`;
+function shellBtn(kind, extra) {
+  const kinds = {
+    primary: { background: "linear-gradient(180deg,#4a86ff,#2f66e0)", borderColor: "rgba(140,180,255,0.55)", color: "#fff", boxShadow: "0 0 18px rgba(61,123,255,0.35)" },
+    ghost:   { background: "linear-gradient(180deg, rgba(20,30,52,0.8), rgba(10,16,30,0.8))", borderColor: "rgba(90,130,210,0.4)", color: "#cfe0ff" },
+    accent:  { background: "rgba(61,220,132,0.08)", borderColor: "rgba(61,220,132,0.45)", color: "#9af5c2" },
+    warn:    { background: "rgba(245,196,83,0.07)", borderColor: "rgba(245,196,83,0.45)", color: "#f5c453" },
+    danger:  { background: "rgba(255,70,85,0.08)", borderColor: "rgba(255,70,85,0.45)", color: "#ff8a94" },
+  };
+  return {
+    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
+    letterSpacing: "0.14em", fontSize: 12.5, cursor: "pointer", padding: "9px 16px",
+    border: "1px solid", clipPath: SHELL_NOTCH(9),
+    ...kinds[kind], ...(extra || {}),
+  };
+}
+function ShellStyles() {
+  return <style>{`
+    .vg-shell button { transition: transform .16s ease, box-shadow .16s ease, filter .16s ease; }
+    .vg-shell button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.15); box-shadow: 0 0 20px rgba(61,123,255,0.3); }
+    .vg-shell button:active:not(:disabled) { transform: translateY(0) scale(.98); }
+    .vg-shell button:disabled { opacity: .45; cursor: not-allowed; }
+    .vg-shell input:focus { border-color: rgba(111,160,255,0.8) !important; box-shadow: 0 0 0 3px rgba(61,123,255,0.18); outline: none; }
+    .vg-shell *:focus-visible { outline: 2px solid #6fa0ff; outline-offset: 2px; }
+  `}</style>;
+}
+
 // Persistent account control — shows who you are + sign out. Used on every shell screen.
 function AccountChip({ account, onSignOut, dark }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
-      <button onClick={() => setOpen(o => !o)} aria-label="Account menu" style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.3)", color: "#cfe0ff", padding: "7px 12px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em" }}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3ddc84" }} />
+      <button onClick={() => setOpen(o => !o)} aria-label="Account menu" style={shellBtn("ghost", { display: "flex", alignItems: "center", gap: 8, letterSpacing: "0.1em", fontSize: 13 })}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3ddc84", boxShadow: "0 0 8px rgba(61,220,132,0.8)" }} />
         <span style={{ textTransform: "uppercase" }}>{account.name}</span>
         <span style={{ color: "rgba(200,215,255,0.5)", fontSize: 11 }}>▾</span>
       </button>
       {open && <>
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
-        <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 210, background: "#0d1220", border: "1px solid rgba(61,123,255,0.35)", clipPath: "polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)", padding: 14 }}>
+        <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 210, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
           <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", color: "#ecf3ff" }}>{account.name}</div>
           <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: account.role === "host" ? "#f5c453" : "#5b8dff", marginTop: 2, fontWeight: 600 }}>{account.role === "host" ? "Host" : "Player"}</div>
           {account.community && <div style={{ fontSize: 12, color: "rgba(200,215,255,0.55)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(120,150,220,0.15)" }}>{account.community}{account.code && <span style={{ display: "block", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#7da6ff", marginTop: 2 }}>code: {account.code}</span>}</div>}
-          <button onClick={onSignOut} style={{ width: "100%", marginTop: 12, padding: "9px", background: "rgba(255,70,85,0.1)", border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>Sign out</button>
+          <button onClick={onSignOut} style={shellBtn("danger", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>Sign out</button>
         </div>
       </>}
     </div>
@@ -4372,13 +4404,14 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   }
 
   const wrap = (inner) => (
-    <div style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px" }}>
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.15)" }}>
+    <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px" }}>
+      <ShellStyles />
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
         {account && <AccountChip account={account} onSignOut={onSignOut} />}
       </div>
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "34px 20px 0" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// {community?.name || "Community"}</div>
+          <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {community?.name || "Community"}</div>
           <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>Weekend <span style={{ color: "#3d7bff" }}>Schedule</span></div>
         </div>
         {inner}
@@ -4389,7 +4422,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
 
   if (events === null) return wrap(<p style={{ textAlign: "center", color: "rgba(200,215,255,0.6)" }}>Loading…</p>);
 
-  const btn = (primary) => ({ padding: "12px 22px", background: primary ? "#3d7bff" : "rgba(255,255,255,0.05)", border: primary ? "none" : "1px solid rgba(120,150,220,0.3)", color: primary ? "#fff" : "#cfe0ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 13, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" });
+  const btn = (primary) => shellBtn(primary ? "primary" : "ghost", { padding: "11px 22px", fontSize: 13 });
   const PHASE_LABEL = { registration_open: "Registration open", registration_closed: "Registration closed", drafting: "Draft live", matches_live: "Matches live", settled: "Settled" };
 
   return wrap(<>
@@ -4437,6 +4470,8 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   const [ev, setEv] = useState(event);
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
+  const [regView, setRegView] = useState("gate"); // gate | app — browsing during registration
+  useEffect(() => { setRegView("gate"); }, [phase]);
 
   // Poll the weekend's phase so players follow the host's transitions live.
   useEffect(() => {
@@ -4537,30 +4572,35 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   }
 
   const bar = (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "rgba(10,13,22,0.9)", borderBottom: "1px solid rgba(61,123,255,0.2)", fontFamily: "'Rajdhani',sans-serif", position: "sticky", top: 0, zIndex: 60 }}>
-      <button onClick={onBack} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "#cfe0ff", padding: "7px 14px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>‹ Schedule</button>
-      <div style={{ fontSize: 13, letterSpacing: "0.14em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{ev?.weekend_label} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
+    <div className="vg-shell" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(8,11,19,0.96))", borderBottom: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 10px 30px rgba(0,0,0,0.35)", fontFamily: "'Rajdhani',sans-serif", position: "sticky", top: 0, zIndex: 60 }}>
+      <ShellStyles />
+      <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 14px" })}>‹ Schedule</button>
+      <div style={{ fontSize: 13, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, textShadow: "0 0 14px rgba(61,123,255,0.65)" }}>// {ev?.weekend_label} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {(phase === "registration_open" || phase === "registration_closed") && regView === "app" &&
+          <button onClick={() => setRegView("gate")} style={shellBtn("accent", { padding: "8px 12px" })}>‹ Registration</button>}
         {isHost && phase === "drafting" &&
-          <button disabled={busy} onClick={rebuildNow} title="Rebuild teams from registered captains" style={{ background: "none", border: "1px solid rgba(245,196,83,0.4)", color: "#f5c453", padding: "7px 12px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>⟳ Rebuild teams</button>}
+          <button disabled={busy} onClick={rebuildNow} title="Rebuild teams from registered captains" style={shellBtn("warn", { padding: "8px 12px" })}>⟳ Rebuild teams</button>}
         {isHost && phase !== "settled" &&
-          <button disabled={busy} onClick={advance} style={{ background: "#3d7bff", border: "none", color: "#fff", padding: "7px 16px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>{busy ? "…" : NEXT_LABEL[phase] + " →"}</button>}
+          <button disabled={busy} onClick={advance} style={shellBtn("primary", { padding: "8px 16px" })}>{busy ? "…" : NEXT_LABEL[phase] + " →"}</button>}
         {account && <AccountChip account={account} onSignOut={onSignOut} />}
       </div>
     </div>
   );
 
-  // Registration phases → sign-up view. Draft/matches/settled → the full draft app
-  // (which itself carries the auction, tournament and results views).
-  const inner = (phase === "registration_open" || phase === "registration_closed")
-    ? <WeekendRegistration ev={ev} auth={auth} phase={phase} />
+  // Registration phases land on the sign-up card, but the league stays
+  // browsable — "Explore the league" opens the full app (Scout Hub, rosters)
+  // while registration is still open. Draft/matches/settled → full app.
+  const inReg = (phase === "registration_open" || phase === "registration_closed");
+  const inner = (inReg && regView === "gate")
+    ? <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />
     : <DraftApp auth={auth} />;
 
   return <div>{bar}{inner}</div>;
 }
 
 // Registration view — sign up for the weekend, raise hand for captain.
-function WeekendRegistration({ ev, auth, phase }) {
+function WeekendRegistration({ ev, auth, phase, onExplore }) {
   const regOpen = phase === "registration_open";
   const [reg, setReg] = useState(undefined);
   const [busy, setBusy] = useState(false);
@@ -4593,7 +4633,7 @@ function WeekendRegistration({ ev, auth, phase }) {
   }
 
   const isIn = !!reg;
-  return <div style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "50px 20px" }}>
+  return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "50px 20px" }}>
     <div style={{ maxWidth: 560, margin: "0 auto", textAlign: "center" }}>
       <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// {ev?.weekend_label}</div>
       <h1 style={{ fontSize: 40, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "8px 0 6px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
@@ -4606,7 +4646,11 @@ function WeekendRegistration({ ev, auth, phase }) {
                 <input type="checkbox" checked={!!reg.is_captain} disabled={busy} onChange={e => toggleCaptain(e.target.checked)} /> Raise my hand to be a captain</label>}
             </div>
           : <p style={{ color: "rgba(200,215,255,0.6)", marginBottom: 18 }}>{regOpen ? "You haven't registered yet." : "You didn't register for this weekend."}</p>}
-        {regOpen && <button disabled={busy} onClick={toggleReg} style={{ padding: "13px 30px", background: isIn ? "rgba(255,255,255,0.05)" : "#3d7bff", border: isIn ? "1px solid rgba(120,150,220,0.3)" : "none", color: isIn ? "#cfe0ff" : "#fff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 14, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>{busy ? "…" : isIn ? "Drop out" : "Register for this weekend →"}</button>}
+        {regOpen && <button disabled={busy} onClick={toggleReg} style={shellBtn(isIn ? "ghost" : "primary", { padding: "13px 30px", fontSize: 14, letterSpacing: "0.18em", clipPath: SHELL_NOTCH(12) })}>{busy ? "…" : isIn ? "Drop out" : "Register for this weekend →"}</button>}
+        <div style={{ marginTop: 26 }}>
+          <button onClick={onExplore} style={shellBtn("ghost", { padding: "12px 26px", fontSize: 13, color: "#7da6ff", borderColor: "rgba(61,123,255,0.4)" })}>⊞ Explore the league →</button>
+          <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 12, marginTop: 8, fontFamily: "'Rajdhani',sans-serif" }}>Browse the Scout Hub, players and rosters while registration runs.</p>
+        </div>
       </>}
     </div>
   </div>;
