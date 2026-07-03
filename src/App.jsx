@@ -168,10 +168,12 @@ function computeSeasonPoints(s) {
   return Object.values(acc);
 }
 
-function freshState(captains) {  // captains: optional [{ userId, name, teamName? }] from the real community.
+function freshState(captains, poolPlayers) {  // captains: optional [{ userId, name, teamName? }] from the real community.
   // When present, teams are built from real registered captains (each tied to a
   // userId so login-based seat claiming maps to the right seat). Otherwise the
   // old demo seeds are used (preview / first-run before captains exist).
+  // poolPlayers: optional [{ userId, name, rank, role, agent, kda, acs, hs, win, badges }]
+  // — the weekend's registered (non-captain) players with their scouting stats.
   const teamDefs = (captains && captains.length)
     ? captains.map((c, i) => ({
         name: c.teamName || (TEAM_SEEDS[i]?.name) || `TEAM ${String(i + 1).padStart(2, "0")}`,
@@ -180,10 +182,18 @@ function freshState(captains) {  // captains: optional [{ userId, name, teamName
         hue: TEAM_HUES[i % TEAM_HUES.length],
       }))
     : TEAM_SEEDS;
+  const poolDefs = (poolPlayers && poolPlayers.length >= 2)
+    ? poolPlayers.map((p) => ({
+        id: p.userId, status: "pool", soldTo: null, soldPrice: null,
+        name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
+        kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
+        badges: p.badges || [],
+      }))
+    : SAMPLE_PLAYERS.map((p) => ({ id: uid(), status: "pool", soldTo: null, soldPrice: null, ...p }));
   return {
     v: 2,
     teams: teamDefs.map((t, i) => ({ id: "t" + (i + 1), ...t, budget: 10000, roster: [] })),
-    players: SAMPLE_PLAYERS.map((p) => ({ id: uid(), status: "pool", soldTo: null, soldPrice: null, ...p })),
+    players: poolDefs,
     block: null,
     spin: null,
     draftAt: Date.now() + 1000 * 60 * 60 * 2, // draft opens 2h after first boot
@@ -4486,6 +4496,30 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   const NEXT = { registration_open: "registration_closed", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
   const NEXT_LABEL = { registration_open: "Close registration", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
 
+  // Fetch this weekend's full roster: registered captains, the non-captain
+  // player pool, and everyone's scouting profiles (rank/KDA/ACS/HS/win).
+  async function fetchWeekendRoster() {
+    const { data: regs } = await __sb.from("registrations")
+      .select("user_id, is_captain, users(display_name)")
+      .eq("event_id", ev.id);
+    const all = regs || [];
+    const ids = all.map(r => r.user_id);
+    let profs = {};
+    if (ids.length) {
+      const { data: pp } = await __sb.from("player_profiles").select("*").in("user_id", ids);
+      (pp || []).forEach(p => { profs[p.user_id] = p; });
+    }
+    const withProfile = (r) => {
+      const p = profs[r.user_id] || {};
+      return { userId: r.user_id, name: r.users?.display_name || "Player",
+        rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges };
+    };
+    return {
+      captains: all.filter(r => r.is_captain).map(withProfile),
+      pool: all.filter(r => !r.is_captain).map(withProfile),
+    };
+  }
+
   // Build this weekend's draft board from its registered captains.
   // Called when the host opens the draft. Won't clobber an existing board
   // that already has picks (roster/sales) — safe to re-run.
@@ -4499,13 +4533,9 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       );
       if (hasProgress) return; // a real draft is underway — leave it alone
 
-      // Registered captains for THIS weekend, with their display names.
-      const { data: regs } = await __sb.from("registrations")
-        .select("user_id, is_captain, users(display_name)")
-        .eq("event_id", ev.id).eq("is_captain", true);
-      const captains = (regs || []).map(r => ({ userId: r.user_id, name: r.users?.display_name || "Captain" }));
+      const { captains, pool } = await fetchWeekendRoster();
       if (captains.length >= 2) {
-        await writeState(freshState(captains));
+        await writeState(freshState(captains, pool));
       } else if (!existing) {
         // No captains registered and no board yet → seed so the app still renders.
         await writeState(freshState(null));
@@ -4562,11 +4592,8 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
     if (!window.confirm("Rebuild the teams from the currently registered captains? This clears the current draft board for this weekend.")) return;
     setBusy(true);
     try {
-      const { data: regs } = await __sb.from("registrations")
-        .select("user_id, is_captain, users(display_name)")
-        .eq("event_id", ev.id).eq("is_captain", true);
-      const captains = (regs || []).map(r => ({ userId: r.user_id, name: r.users?.display_name || "Captain" }));
-      await writeState(freshState(captains.length >= 2 ? captains : null));
+      const { captains, pool } = await fetchWeekendRoster();
+      await writeState(freshState(captains.length >= 2 ? captains : null, pool));
       window.location.reload();
     } catch (e) { console.error(e); setBusy(false); }
   }
@@ -4597,6 +4624,78 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
     : <DraftApp auth={auth} />;
 
   return <div>{bar}{inner}</div>;
+}
+
+// Scouting profile — the stats captains study before bidding. Saved once per
+// player (player_profiles), reused across weekends, feeds the draft-pool cards.
+function ScoutProfileCard({ userId }) {
+  const [prof, setProf] = useState(undefined);
+  const [editing, setEditing] = useState(false);
+  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "" });
+  const [busy, setBusy] = useState(false);
+  const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
+  const fieldS = { width: "100%", padding: "9px 10px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box" };
+  const labS = { fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif", display: "block", marginBottom: 4, textAlign: "left" };
+
+  async function load() {
+    const { data } = await __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle();
+    setProf(data || null);
+    if (data) setD({ rank: data.rank || "", role: data.role || "", agent: data.agent || "", kda: data.kda ?? "", acs: data.acs ?? "", hs: data.hs ?? "", win: data.win ?? "" });
+  }
+  useEffect(() => { load(); }, [userId]);
+
+  async function save() {
+    setBusy(true);
+    const { error } = await __sb.from("player_profiles").upsert({
+      user_id: userId, community_id: window.__VOLT.communityId,
+      rank: d.rank || null, role: d.role || null, agent: d.agent || null,
+      kda: d.kda === "" ? null : parseFloat(d.kda), acs: d.acs === "" ? null : parseInt(d.acs),
+      hs: d.hs === "" ? null : parseInt(d.hs), win: d.win === "" ? null : parseInt(d.win),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+    if (error) console.error("saveProfile:", error.message);
+    setBusy(false); setEditing(false); load();
+  }
+
+  if (prof === undefined) return null;
+  const has = prof && prof.rank;
+  return (
+    <div style={{ marginTop: 24, padding: "18px 20px", position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(14), textAlign: "left" }}>
+      <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Your scouting profile</div>
+      {!editing && <>
+        {has
+          ? <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              {[["RANK", prof.rank], ["ROLE", prof.role || "—"], ["AGENT", prof.agent || "—"], ["KDA", prof.kda ?? "—"], ["ACS", prof.acs ?? "—"], ["HS%", prof.hs != null ? prof.hs + "%" : "—"], ["WIN%", prof.win != null ? prof.win + "%" : "—"]].map(([k, v]) => (
+                <div key={k} style={{ padding: "6px 11px", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(6) }}>
+                  <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7da6ff" }}>{k}</div>
+                  <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, color: "#ecf3ff", fontWeight: 700 }}>{v}</div>
+                </div>))}
+            </div>
+          : <p style={{ color: "rgba(200,215,255,0.55)", fontSize: 13, margin: "0 0 12px" }}>Captains study this before bidding on you. Add your rank and tracker stats — it takes 30 seconds.</p>}
+        <button onClick={() => setEditing(true)} style={shellBtn(has ? "ghost" : "primary", { padding: "9px 18px", fontSize: 12 })}>{has ? "Edit my stats" : "Set up my stats →"}</button>
+      </>}
+      {editing && <>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(110px,1fr))", gap: 10, marginBottom: 14 }}>
+          <label><span style={labS}>Rank *</span>
+            <select value={d.rank} onChange={e => setD({ ...d, rank: e.target.value })} style={fieldS}>
+              <option value="">— select —</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
+            </select></label>
+          <label><span style={labS}>Role</span>
+            <select value={d.role} onChange={e => setD({ ...d, role: e.target.value })} style={fieldS}>
+              <option value="">— select —</option>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select></label>
+          {[["agent", "Main agent", "text"], ["kda", "KDA", "num"], ["acs", "ACS", "num"], ["hs", "HS %", "num"], ["win", "Win %", "num"]].map(([k, label, type]) => (
+            <label key={k}><span style={labS}>{label}</span>
+              <input value={d[k]} onChange={e => setD({ ...d, [k]: type === "num" ? e.target.value.replace(/[^0-9.]/g, "") : e.target.value })} style={fieldS} /></label>))}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button disabled={busy || !d.rank} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
+          <button onClick={() => setEditing(false)} style={shellBtn("ghost", { padding: "9px 18px", fontSize: 12 })}>Cancel</button>
+        </div>
+      </>}
+    </div>
+  );
 }
 
 // Registration view — sign up for the weekend, raise hand for captain.
@@ -4647,6 +4746,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
             </div>
           : <p style={{ color: "rgba(200,215,255,0.6)", marginBottom: 18 }}>{regOpen ? "You haven't registered yet." : "You didn't register for this weekend."}</p>}
         {regOpen && <button disabled={busy} onClick={toggleReg} style={shellBtn(isIn ? "ghost" : "primary", { padding: "13px 30px", fontSize: 14, letterSpacing: "0.18em", clipPath: SHELL_NOTCH(12) })}>{busy ? "…" : isIn ? "Drop out" : "Register for this weekend →"}</button>}
+        {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
         <div style={{ marginTop: 26 }}>
           <button onClick={onExplore} style={shellBtn("ghost", { padding: "12px 26px", fontSize: 13, color: "#7da6ff", borderColor: "rgba(61,123,255,0.4)" })}>⊞ Explore the league →</button>
           <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 12, marginTop: 8, fontFamily: "'Rajdhani',sans-serif" }}>Browse the Scout Hub, players and rosters while registration runs.</p>
