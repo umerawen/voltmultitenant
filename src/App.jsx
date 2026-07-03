@@ -1616,9 +1616,15 @@ function RoleGate({ teams, onPick, auth }) {
     else { setErr("Incorrect passcode."); setCode(""); }
   };
 
-  // Logged in → claim seat directly. Legacy → open passcode step.
+  // Logged in → seats are LOCKED to their assigned captain (captainUserId).
+  // Unowned seats (legacy/guest boards) stay claimable. Legacy → passcode step.
   const openSeat = (t, i) => {
-    if (loggedIn) { onPick(t.id); return; }
+    if (loggedIn) {
+      if (t.captainUserId && t.captainUserId !== auth.userId) {
+        setErr(`${t.name} is locked to its captain. Enter as a spectator to watch.`); return;
+      }
+      onPick(t.id); return;
+    }
     setSeat(t); setSeatIdx(i); setMode("captain"); setCode(""); setErr("");
   };
 
@@ -1645,7 +1651,7 @@ function RoleGate({ teams, onPick, auth }) {
         {/* eyebrow with HUD ticks */}
         <div className="flex items-center gap-3 mb-4">
           <span style={{ width: 22, height: 2, background: "#3d7bff" }} />
-          <p className="uppercase text-sm" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 600, letterSpacing: "0.4em" }}>VOLT Protocol — Season 04</p>
+          <p className="uppercase text-sm" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 600, letterSpacing: "0.4em" }}>{(window.__VOLT.communityName || "VOLT Protocol")} — {(window.__VOLT.weekendLabel || "Auction Draft")}</p>
           <span style={{ width: 22, height: 2, background: "#3d7bff" }} />
         </div>
 
@@ -1687,14 +1693,14 @@ function RoleGate({ teams, onPick, auth }) {
                 </svg>
                 Enter as Player
               </button>
-              <button onClick={enterCommish} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
+              {(!loggedIn || isHost) && <button onClick={enterCommish} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
                 style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.55)", color: "#aec6ff" }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square" strokeLinejoin="miter" style={{ flexShrink: 0 }}>
                   <path d="M12 2.5l7 3v5.5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V5.5z" />
                   <path d="M9.4 11.8l1.9 1.9 3.6-3.9" />
                 </svg>
                 Enter as Commissioner
-              </button>
+              </button>}
             </div>
             <p className="mt-4 text-xs text-center max-w-md" style={{ color: "rgba(200,215,255,0.4)" }}>Players can watch the auction, rosters and scouting reports live, but can't place bids.</p>
           </>
@@ -2980,7 +2986,19 @@ function DraftApp({ auth, browse }) {
 
   const SPIN_MS = 7200, REVEAL_MS = 2000;
   const addPlayer = (p) => mutate((s) => { s.players.push(p); return s; });
-  const editPlayer = (p) => mutate((s) => { const i = s.players.findIndex((x) => x.id === p.id); if (i < 0) return null; s.players[i] = { ...s.players[i], ...p }; return s; });
+  const editPlayer = (p) => {
+    mutate((s) => { const i = s.players.findIndex((x) => x.id === p.id); if (i < 0) return null; s.players[i] = { ...s.players[i], ...p }; return s; });
+    // Real players (id = auth uuid) → persist to their profile so edits survive
+    // board rebuilds and follow the player across weekends.
+    if (HAS_SUPABASE && typeof p.id === "string" && p.id.length > 30 && window.__VOLT.communityId) {
+      __sb.from("player_profiles").upsert({
+        user_id: p.id, community_id: window.__VOLT.communityId,
+        rank: p.rank ?? null, role: p.role ?? null, agent: p.agent ?? null,
+        kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" }).then(({ error }) => { if (error) console.error("profile write-through:", error.message); });
+    }
+  };
   const removePlayer = (pid) => mutate((s) => {
     if (s.block?.playerId === pid) return null; // not while on the block
     const p = s.players.find((x) => x.id === pid);
@@ -3377,9 +3395,9 @@ function DraftApp({ auth, browse }) {
         <div className="relative flex items-center gap-2 mr-2 shrink-0 pl-3 pr-4 py-1.5">
           <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
           <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>VOLT</span>
+          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>{window.__VOLT.communityName || "VOLT"}</span>
           <span className="text-xl font-bold" style={{ color: "rgba(180,200,255,0.3)" }}>//</span>
-          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#eaf1ff" }}>DRAFT</span>
+          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#eaf1ff" }}>{window.__VOLT.weekendLabel || "DRAFT"}</span>
         </div>
 
         {/* nav tabs — centered between brand and right controls (desktop) */}
@@ -4148,6 +4166,7 @@ function VoltGate() {
     if (u && u.community_id) {
       setProfile(u); setCommunity(u.communities);
       window.__VOLT.communityId = u.community_id;
+      window.__VOLT.communityName = u.communities?.name || null;
       setPhase("schedule");
     } else {
       // Authenticated but not yet in a community — route by the intent they picked.
@@ -4203,7 +4222,7 @@ function VoltGate() {
       if (error) throw error;
       const c = Array.isArray(rows) ? rows[0] : rows;
       if (!c) throw new Error("League was not created — try again.");
-      window.__VOLT.communityId = c.id; setCommunity(c);
+      window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
       setProfile({ id: user.id, role: "host", display_name: dn, community_id: c.id });
       setPhase("schedule");
     } catch (e) { setErr(e.message || "Could not create the league."); }
@@ -4221,7 +4240,7 @@ function VoltGate() {
       const user = await ensureAuthedUser();
       window.__VOLT.userId = user.id;
       await __sb.from("users").upsert({ id: user.id, community_id: c.id, role: "player", display_name: displayName || email.split("@")[0] });
-      window.__VOLT.communityId = c.id; setCommunity(c);
+      window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
       setProfile({ id: user.id, role: "player", display_name: displayName || email.split("@")[0], community_id: c.id });
       setPhase("schedule");
     } catch (e) { setErr(e.message || "Could not join the league."); }
@@ -4266,7 +4285,7 @@ function VoltGate() {
 
   if (phase === "schedule") return <WeekendSchedule community={community} isHost={profile?.role === "host"}
     account={account} onSignOut={signOut}
-    onEnter={(ev) => { window.__VOLT.weekendId = ev.id; setActiveEvent(ev); setPhase("ready"); }} />;
+    onEnter={(ev) => { window.__VOLT.weekendId = ev.id; window.__VOLT.weekendLabel = ev.weekend_label; setActiveEvent(ev); setPhase("ready"); }} />;
 
   if (phase === "ready") {
     const auth = HAS_SUPABASE
@@ -4624,11 +4643,12 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       if (hasProgress) return; // a real draft is underway — leave it alone
 
       const { captains, pool } = await fetchWeekendRoster();
+      const stamp = (st) => { if (ev?.draft_at) st.draftAt = new Date(ev.draft_at).getTime(); return st; };
       if (captains.length >= 2) {
-        await writeState(freshState(captains, pool));
+        await writeState(stamp(freshState(captains, pool)));
       } else if (!existing) {
         // No captains registered and no board yet → seed so the app still renders.
-        await writeState(freshState(null));
+        await writeState(stamp(freshState(null)));
       }
     } catch (e) { console.error("buildBoard", e); }
   }
