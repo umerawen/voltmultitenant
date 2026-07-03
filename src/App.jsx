@@ -2735,7 +2735,7 @@ const SndFX = (() => {
 /* ════════════════════════════════════════════════════════════════════
    MAIN
    ════════════════════════════════════════════════════════════════════ */
-function DraftApp({ auth }) {
+function DraftApp({ auth, browse }) {
   const [state, setState] = useState(null);
   // Auto-resolve in-app identity from the logged-in role:
   //  host  → "admin" (Commissioner)   ·   others start unpicked (choose seat/spectator)
@@ -2838,15 +2838,32 @@ function DraftApp({ auth }) {
   useEffect(() => {
     if (identity || !state || !auth) return;
     if (auth.role === "host") { setIdentity("admin"); return; }
+    // Browsing during registration: no seats exist to claim yet — go straight
+    // in as spectator (skips the seat-claim gate entirely).
+    if (browse) { setIdentity("spectator"); return; }
     const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
     if (mine) setIdentity(mine.id);
-  }, [state, auth, identity]);
+  }, [state, auth, identity, browse]);
 
   // draft time lives in shared state so the countdown matches for everyone
   const cd = useCountdown(state?.draftAt ?? Date.now() + 7200000);
 
   useEffect(() => {
     let alive = true;
+    // Browse mode (registration phase): show a LIVE view of who's registered,
+    // with their scouting stats — built in memory, never written to the board,
+    // so the real draft board stays untouched until the host opens the draft.
+    if (browse && HAS_SUPABASE && window.__VOLT.weekendId) {
+      const loadLive = async () => {
+        try {
+          const { captains, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
+          if (alive) setState(freshState(captains.length >= 2 ? captains : null, pool));
+        } catch (e) { console.error("browse roster", e); if (alive) setState(freshState(null)); }
+      };
+      loadLive();
+      const t = setInterval(loadLive, 8000); // pick up new registrations live
+      return () => { alive = false; clearInterval(t); };
+    }
     const load = async () => {
       let s = await readState();
       if (!s) {
@@ -4423,6 +4440,13 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {community?.name || "Community"}</div>
           <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>Weekend <span style={{ color: "#3d7bff" }}>Schedule</span></div>
+          {isHost && community?.slug && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginTop: 14, padding: "8px 14px", background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(8) }}>
+              <span style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>Join code</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff" }}>{community.slug}</span>
+              <button onClick={() => { navigator.clipboard?.writeText(community.slug); }} style={shellBtn("ghost", { padding: "5px 10px", fontSize: 10 })}>Copy</button>
+            </div>
+          )}
         </div>
         {inner}
         {err && <p style={{ color: "#ff8a94", fontSize: 13, marginTop: 12, textAlign: "center" }}>{err}</p>}
@@ -4473,6 +4497,30 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   </>);
 }
 
+// ── Weekend roster fetch (module-level: used by the phase shell AND the
+// draft app's live browse mode) ──────────────────────────────────────────
+async function fetchRosterForEvent(eventId) {
+  const { data: regs } = await __sb.from("registrations")
+    .select("user_id, is_captain, users(display_name)")
+    .eq("event_id", eventId);
+  const all = regs || [];
+  const ids = all.map(r => r.user_id);
+  let profs = {};
+  if (ids.length) {
+    const { data: pp } = await __sb.from("player_profiles").select("*").in("user_id", ids);
+    (pp || []).forEach(p => { profs[p.user_id] = p; });
+  }
+  const withProfile = (r) => {
+    const p = profs[r.user_id] || {};
+    return { userId: r.user_id, name: r.users?.display_name || "Player",
+      rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges };
+  };
+  return {
+    captains: all.filter(r => r.is_captain).map(withProfile),
+    pool: all.filter(r => !r.is_captain).map(withProfile),
+  };
+}
+
 /* ════════════════════════════════════════════════════════════════════
    WEEKEND APP — phase router. Registration → Draft → Matches, per weekend.
    ════════════════════════════════════════════════════════════════════ */
@@ -4498,27 +4546,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
 
   // Fetch this weekend's full roster: registered captains, the non-captain
   // player pool, and everyone's scouting profiles (rank/KDA/ACS/HS/win).
-  async function fetchWeekendRoster() {
-    const { data: regs } = await __sb.from("registrations")
-      .select("user_id, is_captain, users(display_name)")
-      .eq("event_id", ev.id);
-    const all = regs || [];
-    const ids = all.map(r => r.user_id);
-    let profs = {};
-    if (ids.length) {
-      const { data: pp } = await __sb.from("player_profiles").select("*").in("user_id", ids);
-      (pp || []).forEach(p => { profs[p.user_id] = p; });
-    }
-    const withProfile = (r) => {
-      const p = profs[r.user_id] || {};
-      return { userId: r.user_id, name: r.users?.display_name || "Player",
-        rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges };
-    };
-    return {
-      captains: all.filter(r => r.is_captain).map(withProfile),
-      pool: all.filter(r => !r.is_captain).map(withProfile),
-    };
-  }
+  async function fetchWeekendRoster() { return fetchRosterForEvent(ev.id); }
 
   // Build this weekend's draft board from its registered captains.
   // Called when the host opens the draft. Won't clobber an existing board
@@ -4621,7 +4649,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   const inReg = (phase === "registration_open" || phase === "registration_closed");
   const inner = (inReg && regView === "gate")
     ? <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />
-    : <DraftApp auth={auth} />;
+    : <DraftApp auth={auth} browse={inReg} />;
 
   return <div>{bar}{inner}</div>;
 }
