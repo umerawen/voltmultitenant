@@ -182,7 +182,7 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
         hue: TEAM_HUES[i % TEAM_HUES.length],
       }))
     : TEAM_SEEDS;
-  const poolDefs = (poolPlayers && poolPlayers.length >= 2)
+  const poolDefs = (poolPlayers && poolPlayers.length >= 1)
     ? poolPlayers.map((p) => ({
         id: p.userId, status: "pool", soldTo: null, soldPrice: null,
         name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
@@ -2857,7 +2857,10 @@ function DraftApp({ auth, browse }) {
       const loadLive = async () => {
         try {
           const { captains, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
-          if (alive) setState(freshState(captains.length >= 2 ? captains : null, pool));
+          if (!alive) return;
+          const s = freshState(captains.length >= 2 ? captains : null, pool);
+          if (pool.length === 0) s.players = []; // truthful: nobody registered yet
+          setState(s);
         } catch (e) { console.error("browse roster", e); if (alive) setState(freshState(null)); }
       };
       loadLive();
@@ -4501,7 +4504,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
 // draft app's live browse mode) ──────────────────────────────────────────
 async function fetchRosterForEvent(eventId) {
   const { data: regs } = await __sb.from("registrations")
-    .select("user_id, is_captain, users(display_name)")
+    .select("id, user_id, is_captain, users(display_name, wants_captain)")
     .eq("event_id", eventId);
   const all = regs || [];
   const ids = all.map(r => r.user_id);
@@ -4512,12 +4515,15 @@ async function fetchRosterForEvent(eventId) {
   }
   const withProfile = (r) => {
     const p = profs[r.user_id] || {};
-    return { userId: r.user_id, name: r.users?.display_name || "Player",
+    return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain, volunteered: !!r.users?.wants_captain,
+      name: r.users?.display_name || "Player",
       rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges };
   };
+  const mapped = all.map(withProfile);
   return {
-    captains: all.filter(r => r.is_captain).map(withProfile),
-    pool: all.filter(r => !r.is_captain).map(withProfile),
+    captains: mapped.filter(r => r.isCaptain),
+    pool: mapped.filter(r => !r.isCaptain),
+    all: mapped,
   };
 }
 
@@ -4726,18 +4732,23 @@ function ScoutProfileCard({ userId }) {
   );
 }
 
-// Registration view — sign up for the weekend, raise hand for captain.
+// Registration — professional single-flow: status, profile, live registrant
+// roster. Captaincy is the Commissioner's call; players can only quietly
+// signal availability. The host assigns captains from the roster below.
 function WeekendRegistration({ ev, auth, phase, onExplore }) {
   const regOpen = phase === "registration_open";
+  const isHost = auth?.role === "host";
   const [reg, setReg] = useState(undefined);
+  const [roster, setRoster] = useState([]);
   const [busy, setBusy] = useState(false);
 
   async function load() {
-    if (!HAS_SUPABASE) { setReg(null); return; }
+    if (!HAS_SUPABASE) { setReg(null); setRoster([]); return; }
     const { data } = await __sb.from("registrations").select("*").eq("event_id", ev.id).eq("user_id", window.__VOLT.userId).maybeSingle();
     setReg(data || null);
+    try { const r = await fetchRosterForEvent(ev.id); setRoster(r.all); } catch (e) { console.error(e); }
   }
-  useEffect(() => { load(); }, [ev?.id]);
+  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [ev?.id]);
 
   async function toggleReg() {
     setBusy(true);
@@ -4748,36 +4759,83 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     } catch (e) { console.error(e); }
     setBusy(false);
   }
-  async function toggleCaptain(v) {
+  // Player side: a quiet availability signal only — not a captain claim.
+  async function volunteer(v) {
     setBusy(true);
-    try {
-      await __sb.from("users").update({ wants_captain: v }).eq("id", window.__VOLT.userId);
-      await __sb.from("registrations").update({ is_captain: v }).eq("id", reg.id);
-      await load();
-    }
+    try { await __sb.from("users").update({ wants_captain: v }).eq("id", window.__VOLT.userId); await load(); }
+    catch (e) { console.error(e); }
+    setBusy(false);
+  }
+  // Host side: the actual captain decision.
+  async function hostSetCaptain(entry, v) {
+    setBusy(true);
+    try { await __sb.from("registrations").update({ is_captain: v }).eq("id", entry.regId); await load(); }
     catch (e) { console.error(e); }
     setBusy(false);
   }
 
   const isIn = !!reg;
-  return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "50px 20px" }}>
-    <div style={{ maxWidth: 560, margin: "0 auto", textAlign: "center" }}>
-      <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// {ev?.weekend_label}</div>
-      <h1 style={{ fontSize: 40, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "8px 0 6px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
-      <p style={{ color: "rgba(200,215,255,0.6)", marginBottom: 30 }}>{regOpen ? "Claim your spot in this weekend's draft pool." : "Registration for this weekend is closed. The draft opens soon."}</p>
-      {reg === undefined ? <p style={{ color: "rgba(200,215,255,0.5)" }}>…</p> : <>
-        {isIn
-          ? <div style={{ padding: "18px 22px", background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.4)", clipPath: "polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))", marginBottom: 18 }}>
-              <div style={{ color: "#9af5c2", fontWeight: 700, fontSize: 18, textTransform: "uppercase", letterSpacing: "0.06em" }}>✓ You're in for this weekend</div>
-              {regOpen && <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 14, cursor: "pointer", color: "#cfe0f0" }}>
-                <input type="checkbox" checked={!!reg.is_captain} disabled={busy} onChange={e => toggleCaptain(e.target.checked)} /> Raise my hand to be a captain</label>}
+  const me = roster.find(r => r.userId === window.__VOLT.userId);
+  const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
+  const corner = <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />;
+  const secLabel = (t) => <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 12 }}>// {t}</div>;
+
+  return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "44px 20px 60px" }}>
+    <div style={{ maxWidth: 680, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 26 }}>
+        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {ev?.weekend_label}</div>
+        <h1 style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 14 }}>{regOpen ? "Claim your spot in this weekend's draft pool." : "Registration is closed — the draft opens soon."}</p>
+      </div>
+
+      {reg === undefined ? <p style={{ color: "rgba(200,215,255,0.5)", textAlign: "center" }}>…</p> : <>
+        <div style={panel}>
+          {corner}
+          {secLabel("Your registration")}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: isIn ? "#3ddc84" : "rgba(200,215,255,0.25)", boxShadow: isIn ? "0 0 10px rgba(61,220,132,0.8)" : "none" }} />
+              <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 15, color: isIn ? "#9af5c2" : "rgba(200,215,255,0.7)" }}>
+                {isIn ? "Registered for this weekend" : regOpen ? "Not registered" : "You didn't register this weekend"}</span>
             </div>
-          : <p style={{ color: "rgba(200,215,255,0.6)", marginBottom: 18 }}>{regOpen ? "You haven't registered yet." : "You didn't register for this weekend."}</p>}
-        {regOpen && <button disabled={busy} onClick={toggleReg} style={shellBtn(isIn ? "ghost" : "primary", { padding: "13px 30px", fontSize: 14, letterSpacing: "0.18em", clipPath: SHELL_NOTCH(12) })}>{busy ? "…" : isIn ? "Drop out" : "Register for this weekend →"}</button>}
-        {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
-        <div style={{ marginTop: 26 }}>
+            {regOpen && <button disabled={busy} onClick={toggleReg} style={shellBtn(isIn ? "ghost" : "primary", { padding: "10px 22px", fontSize: 13 })}>{busy ? "…" : isIn ? "Drop out" : "Register →"}</button>}
+          </div>
+          {isIn && regOpen && (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", color: "rgba(200,215,255,0.5)", fontSize: 12.5 }}>
+              <input type="checkbox" checked={!!me?.volunteered} disabled={busy} onChange={e => volunteer(e.target.checked)} style={{ accentColor: "#3d7bff" }} />
+              Available to captain if needed — the Commissioner makes the final call.
+            </label>
+          )}
+          {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
+        </div>
+
+        <div style={{ ...panel, marginTop: 16 }}>
+          {corner}
+          {secLabel(`Registered · ${roster.length}`)}
+          {roster.length === 0
+            ? <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>No one has registered yet.</p>
+            : <div style={{ display: "grid", gap: 6 }}>
+                {roster.map(r => (
+                  <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
+                    <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1 }}>{r.name}
+                      {r.userId === window.__VOLT.userId && <span style={{ color: "rgba(200,215,255,0.4)", fontWeight: 500, marginLeft: 6, fontSize: 11 }}>(you)</span>}
+                    </span>
+                    {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
+                    {r.isCaptain && <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Captain</span>}
+                    {!r.isCaptain && r.volunteered && <span title="Available to captain" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>available</span>}
+                    {isHost && (
+                      <button disabled={busy} onClick={() => hostSetCaptain(r, !r.isCaptain)} style={shellBtn(r.isCaptain ? "ghost" : "warn", { padding: "5px 10px", fontSize: 10 })}>
+                        {r.isCaptain ? "Remove" : "Make captain"}</button>
+                    )}
+                  </div>
+                ))}
+              </div>}
+          {isHost && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "12px 0 0" }}>Captains you assign here become the teams when you open the draft. "Available" marks players who volunteered.</p>}
+        </div>
+
+        <div style={{ textAlign: "center", marginTop: 24 }}>
           <button onClick={onExplore} style={shellBtn("ghost", { padding: "12px 26px", fontSize: 13, color: "#7da6ff", borderColor: "rgba(61,123,255,0.4)" })}>⊞ Explore the league →</button>
-          <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 12, marginTop: 8, fontFamily: "'Rajdhani',sans-serif" }}>Browse the Scout Hub, players and rosters while registration runs.</p>
+          <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 12, marginTop: 8 }}>Browse the Scout Hub, players and rosters while registration runs.</p>
         </div>
       </>}
     </div>
