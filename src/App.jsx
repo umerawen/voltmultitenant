@@ -1192,7 +1192,10 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
               {player.isCaptain ? "★ Captain — excluded from draw" : "☆ Tag as captain"}
             </button>
           )}
-          {isAdmin && (
+          {isAdmin && typeof player.id === "string" && player.id.length > 30 && (
+            <p className="mt-2 text-center" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, color: "rgba(200,215,255,0.4)", letterSpacing: "0.06em" }}>Registered player — leaves the pool by dropping their weekend registration.</p>
+          )}
+          {isAdmin && !(typeof player.id === "string" && player.id.length > 30) && (
             confirmDel ? (
               <div className="mt-2 flex gap-2">
                 <button onClick={() => { onDelete(player.id); onClose(); }} className="flex-1 py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
@@ -2175,93 +2178,80 @@ function MatchAddRow({ pid, hue, onAdd }) {
   );
 }
 
-function Leaderboard({ players, isAdmin, onAddMatch, onRemoveMatch }) {
-  const [expanded, setExpanded] = useState(null); // pid whose match panel is open (admin)
-  const ranked = [...players]
-    .map((p) => ({ p, s: aggStats(p) }))
-    .sort((A, B) => B.s.acs - A.s.acs || B.s.kd - A.s.kd || B.s.k - A.s.k);
-  const anyStats = ranked.some((r) => r.s.games > 0);
+// SEASON LEADERBOARD — the league's single source of truth for player points.
+// Reads match_results (host's Report Match): +100 win · ACS÷4 · K+⅓A, summed
+// across every match of every weekend in the community.
+function Leaderboard({ isAdmin }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      if (!HAS_SUPABASE || !window.__VOLT.communityId) { if (alive) setRows([]); return; }
+      try {
+        const { data: mrs } = await __sb.from("match_results")
+          .select("user_id, points_computed, team_won, stat_payload")
+          .eq("community_id", window.__VOLT.communityId);
+        const { data: us } = await __sb.from("users").select("id, display_name").eq("community_id", window.__VOLT.communityId);
+        const { data: pp } = await __sb.from("player_profiles").select("user_id, rank, role").eq("community_id", window.__VOLT.communityId);
+        if (!alive) return;
+        const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
+        const profs = {}; (pp || []).forEach(p => { profs[p.user_id] = p; });
+        const agg = {};
+        (mrs || []).forEach(r => {
+          const a = (agg[r.user_id] = agg[r.user_id] || { name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, acsSum: 0 });
+          a.pts += Number(r.points_computed || 0); a.m++; if (r.team_won) a.w++;
+          const sp = r.stat_payload || {}; a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
+        });
+        setRows(Object.values(agg).map(a => ({ ...a, avgAcs: a.m ? Math.round(a.acsSum / a.m) : 0 })).sort((x, y) => y.pts - x.pts || y.avgAcs - x.avgAcs));
+      } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
+    }
+    load();
+    const t = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
   return (
     <div className="view-in page-wrap py-8">
-      <div className="flex items-center gap-2 mb-2">
-        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
-        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Performance Rankings</p>
+      <div className="flex items-center gap-3 mb-1">
+        <span style={{ width: 26, height: 3, background: "#3d7bff" }} />
+        <span className="uppercase text-xs tracking-[0.3em]" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>Season standings · every match counts</span>
       </div>
-      <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h2>
-      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>Ranked by average ACS across matches. {isAdmin ? "Tap a player to log match stats." : "Updated live by the Commissioner."}</p>
+      <h1 className="text-5xl font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.02em" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
+      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>+100 win · ACS÷4 · K+⅓A — summed across all weekends.{isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}</p>
 
-      {!anyStats && (
-        <div className="mb-5 px-4 py-3 text-sm" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "rgba(200,215,255,0.6)", clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
-          No match stats logged yet. {isAdmin ? "Tap any player below and add a match to start the board." : "The board fills in as matches are played."}
+      {rows === null && <p style={{ color: "rgba(200,215,255,0.5)" }}>Loading…</p>}
+      {rows && rows.length === 0 && (
+        <div className="px-5 py-4" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.2)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif" }}>
+          No matches recorded this season yet. Points appear the moment the Commissioner reports the first match.
         </div>
       )}
-
-      {/* header row */}
-      <div className="hidden md:grid items-center gap-3 px-4 py-2 text-[10px] uppercase tracking-widest" style={{ gridTemplateColumns: "40px 1fr 60px 60px 60px 70px 70px 60px", color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>
-        <span>#</span><span>Player</span><span className="text-center">K</span><span className="text-center">D</span><span className="text-center">A</span><span className="text-center">K/D</span><span className="text-center">ACS</span><span className="text-center">GP</span>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        {ranked.map(({ p, s }, i) => {
-          const r = RANKS[p.rank] || RANKS.Iron;
-          const top = i < 3 && s.games > 0;
-          const medal = ["#ffd75e", "#cdd7e6", "#e0985a"][i];
-          const isOpen = expanded === p.id;
-          return (
-            <div key={p.id}>
-              <button onClick={() => isAdmin && setExpanded(isOpen ? null : p.id)} disabled={!isAdmin}
-                className="w-full grid items-center gap-3 px-4 py-3 text-left transition-transform"
-                style={{ gridTemplateColumns: "40px 1fr 60px 60px 60px 70px 70px 60px",
-                  background: top ? `linear-gradient(90deg, ${r.c}14, rgba(10,15,28,0.5))` : "rgba(255,255,255,0.025)",
-                  border: `1px solid ${top ? r.c + "55" : "rgba(120,150,220,0.14)"}`,
-                  clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))",
-                  cursor: isAdmin ? "pointer" : "default" }}>
-                <span className="font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, color: top ? medal : "rgba(200,215,255,0.5)", textShadow: top ? `0 0 10px ${medal}88` : "none" }}>{i + 1}</span>
-                <span className="flex items-center gap-2 min-w-0">
-                  <RankBadge rank={p.rank} size="sm" />
-                  <span className="min-w-0">
-                    <span className="block font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", letterSpacing: "0.02em" }}>{p.name}</span>
-                    <span className="block text-[11px] truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.rank}</span>
+      {rows && rows.length > 0 && (
+        <div>
+          <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em]" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Avg ACS</span><span className="text-right">Points</span>
+          </div>
+          <div className="grid gap-1.5">
+            {rows.map((r, i) => {
+              const rc = (RANKS[r.rank] || {}).c || "#8d97a8";
+              return (
+                <div key={i} className="grid items-center px-4 py-3" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+                  <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff" }}>{String(i + 1).padStart(2, "0")}</span>
+                  <span>
+                    <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.03em", fontSize: 15 }}>{r.name}</span>
+                    {(r.rank || r.role) && <span className="ml-2 text-[11px] uppercase tracking-[0.1em]" style={{ color: rc, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ")}</span>}
                   </span>
-                </span>
-                <span className="text-center font-bold hidden md:block" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#9af5c2" }}>{s.k}</span>
-                <span className="text-center hidden md:block" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(255,138,148,0.85)" }}>{s.d}</span>
-                <span className="text-center hidden md:block" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.7)" }}>{s.a}</span>
-                <span className="text-center hidden md:block font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: s.kd >= 1 ? "#3ddc84" : "#ff8a94" }}>{s.kd.toFixed(2)}</span>
-                <span className="text-center font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, color: "#5b8dff", textShadow: "0 0 12px rgba(61,123,255,0.5)" }}>{s.acs}</span>
-                <span className="text-center hidden md:block text-sm" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>{s.games}</span>
-              </button>
-
-              {/* mobile stat strip */}
-              <div className="md:hidden flex items-center gap-3 px-4 py-1.5 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.6)" }}>
-                <span style={{ color: "#9af5c2" }}>{s.k}K</span><span style={{ color: "#ff8a94" }}>{s.d}D</span><span>{s.a}A</span>
-                <span style={{ color: s.kd >= 1 ? "#3ddc84" : "#ff8a94" }}>{s.kd.toFixed(2)} K/D</span>
-                <span className="ml-auto" style={{ color: "rgba(200,215,255,0.4)" }}>{s.games} GP</span>
-              </div>
-
-              {isAdmin && isOpen && (
-                <div className="mt-1 mb-1 px-4 py-3 flex flex-col gap-3" style={{ background: "rgba(7,12,22,0.7)", border: `1px solid ${r.c}33`, clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
-                  <MatchAddRow pid={p.id} hue={r.c} onAdd={onAddMatch} />
-                  {Array.isArray(p.tourneyStats) && p.tourneyStats.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)" }}>Logged matches</span>
-                      {p.tourneyStats.map((e, idx) => (
-                        <div key={idx} className="flex items-center gap-3 text-xs px-2 py-1" style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(255,255,255,0.03)", color: "rgba(220,230,255,0.7)" }}>
-                          <span style={{ color: "rgba(200,215,255,0.4)" }}>M{idx + 1}</span>
-                          <span style={{ color: "#9af5c2" }}>{e.k}</span>/<span style={{ color: "#ff8a94" }}>{e.d}</span>/<span>{e.a}</span>
-                          <span className="ml-2" style={{ color: "#5b8dff" }}>{e.acs} ACS</span>
-                          <button onClick={() => onRemoveMatch(p.id, idx)} aria-label="Remove match" className="ml-auto text-xs px-1.5 py-0.5" style={{ color: "#ff8a94", border: "1px solid rgba(255,70,85,0.4)" }}>✕</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.m}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84" }}>{r.w}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.k}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.as}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#00e5ff" }}>{r.avgAcs}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#ecf3ff", fontSize: 15 }}>{r.pts}</span>
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3142,12 +3132,44 @@ function DraftApp({ auth, browse }) {
   }, true, true);
 
   // tag a player as a captain → excluded from the auction draw (stays visible/scoutable)
-  const toggleCaptain = (pid) => mutate((s) => {
-    const p = s.players.find((x) => x.id === pid); if (!p) return null;
-    p.isCaptain = !p.isCaptain;
-    s.log.unshift(`${p.name} ${p.isCaptain ? "tagged as captain — excluded from draw" : "untagged as captain"}`); s.log = s.log.slice(0, 8);
-    return s;
-  }, true, true);
+  const toggleCaptain = (pid) => {
+    const p0 = stateRef.current?.players?.find((x) => x.id === pid);
+    const promoting = p0 ? !p0.isCaptain : true;
+    mutate((s) => {
+      const p = s.players.find((x) => x.id === pid); if (!p) return null;
+      if (!p.isCaptain) {
+        // Promote: exclude from the draw AND spin up their roster in the Locker Room.
+        p.isCaptain = true;
+        const nid = "t" + (Math.max(0, ...s.teams.map((t) => parseInt(String(t.id).slice(1)) || 0)) + 1);
+        s.teams.push({
+          id: nid, name: p.name.toUpperCase().slice(0, 22),
+          captain: p.name,
+          captainUserId: (typeof p.id === "string" && p.id.length > 30) ? p.id : null,
+          hue: TEAM_HUES[s.teams.length % TEAM_HUES.length],
+          budget: 10000, roster: [],
+        });
+        s.log.unshift(`${p.name} tagged as captain — roster created in the Locker Room`);
+      } else {
+        // Demote: remove their (empty) roster and return them to the draw.
+        const t = s.teams.find((x) => (x.captainUserId && x.captainUserId === p.id) || x.captain === p.name);
+        if (t && t.roster && t.roster.length) {
+          s.log.unshift(`Can't untag ${p.name} — their roster already has players`);
+          s.log = s.log.slice(0, 8); return s;
+        }
+        if (t) s.teams = s.teams.filter((x) => x !== t);
+        p.isCaptain = false;
+        s.log.unshift(`${p.name} untagged — roster removed`);
+      }
+      s.log = s.log.slice(0, 8);
+      return s;
+    }, true, true);
+    // Keep the registration panel + future board rebuilds in agreement.
+    if (HAS_SUPABASE && typeof pid === "string" && pid.length > 30 && window.__VOLT.weekendId) {
+      __sb.from("registrations").update({ is_captain: promoting })
+        .eq("event_id", window.__VOLT.weekendId).eq("user_id", pid)
+        .then(({ error }) => { if (error) console.error("captain sync:", error.message); });
+    }
+  };
 
   /* ── tournament mutators (Commissioner only) ── */
   const tCreate = (format, matchType, numGroups) => mutate((s) => {
@@ -4105,7 +4127,7 @@ function DraftApp({ auth, browse }) {
   );
 
   const LeaderboardView = (
-    <Leaderboard players={state.players} isAdmin={isAdmin} onAddMatch={addMatchStat} onRemoveMatch={removeMatchStat} />
+    <Leaderboard isAdmin={isAdmin} />
   );
 
   const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView };
