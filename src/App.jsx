@@ -187,7 +187,7 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
         id: p.userId, status: "pool", soldTo: null, soldPrice: null,
         name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
         kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
-        badges: p.badges || [],
+        badges: p.badges || [], tracker: p.tracker || null,
       }))
     : SAMPLE_PLAYERS.map((p) => ({ id: uid(), status: "pool", soldTo: null, soldPrice: null, ...p }));
   return {
@@ -1169,6 +1169,13 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Opens at</span><span style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(r.bid)}</span></div>
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Status</span><span style={{ color: player.status === "sold" ? "#3ddc84" : "#5b8dff" }}>{player.status === "sold" ? "Drafted" : player.status === "block" ? "On block" : "Available"}</span></div>
           </div>
+          {player.tracker && (
+            <a href={player.tracker} target="_blank" rel="noopener noreferrer"
+              className="mt-3 block w-full py-2.5 text-center text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.45)", color: "#7deaff", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", textDecoration: "none" }}>
+              ⌖ View tracker profile ↗
+            </a>
+          )}
           {isAdmin && (
             <button onClick={() => onEdit(player)} className="mt-4 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
               style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
@@ -4384,13 +4391,33 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [events, setEvents] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [season, setSeason] = useState(null); // aggregated standings across weekends
+  const [season, setSeason] = useState(null); // aggregated captain standings across weekends
+  const [board, setBoard] = useState(null);   // player points leaderboard (match_results)
 
   async function load() {
     if (!HAS_SUPABASE) { setEvents([]); return; }
     const { data } = await __sb.from("events").select("*").eq("community_id", window.__VOLT.communityId).order("created_at", { ascending: false });
     setEvents(data || []);
     loadSeason();
+    loadPlayerBoard();
+  }
+
+  // Player season leaderboard: sum of every match's points (+100 win · ACS÷4 · K+⅓A).
+  async function loadPlayerBoard() {
+    try {
+      const { data: mrs } = await __sb.from("match_results")
+        .select("user_id, points_computed, team_won")
+        .eq("community_id", window.__VOLT.communityId);
+      if (!mrs || !mrs.length) { setBoard(null); return; }
+      const { data: us } = await __sb.from("users").select("id, display_name").eq("community_id", window.__VOLT.communityId);
+      const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
+      const agg = {};
+      mrs.forEach(r => {
+        const a = (agg[r.user_id] = agg[r.user_id] || { name: names[r.user_id] || "Player", pts: 0, matches: 0, wins: 0 });
+        a.pts += Number(r.points_computed || 0); a.matches++; if (r.team_won) a.wins++;
+      });
+      setBoard(Object.values(agg).sort((x, y) => y.pts - x.pts));
+    } catch (e) { console.error("playerBoard", e); }
   }
 
   // Aggregate settled weekends' standings into a season leaderboard.
@@ -4481,10 +4508,27 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     {isHost && <div style={{ textAlign: "center" }}>
       <button disabled={busy} onClick={createWeekend} style={btn(events.length === 0)}>{busy ? "…" : "+ Create weekend"}</button>
     </div>}
+    {board && <div style={{ marginTop: 34 }}>
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
+        <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Player <span style={{ color: "#3d7bff" }}>Leaderboard</span></div>
+        <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>+100 win · ACS÷4 · K+⅓A — every match counts</div>
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {board.map((r, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
+            <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}</span>
+            <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>{r.matches}m · {r.wins}w</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 66, textAlign: "right" }}>{r.pts} pts</span>
+          </div>
+        ))}
+      </div>
+    </div>}
     {season && <div style={{ marginTop: 34 }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
-        <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Standings</div>
+        <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Captain <span style={{ color: "#3d7bff" }}>Standings</span></div>
       </div>
       <div style={{ display: "grid", gap: 6 }}>
         {season.map((r, i) => (
@@ -4517,7 +4561,8 @@ async function fetchRosterForEvent(eventId) {
     const p = profs[r.user_id] || {};
     return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain, volunteered: !!r.users?.wants_captain,
       name: r.users?.display_name || "Player",
-      rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges };
+      rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges,
+      tracker: p.tracker_url || null };
   };
   const mapped = all.map(withProfile);
   return {
@@ -4525,6 +4570,16 @@ async function fetchRosterForEvent(eventId) {
     pool: mapped.filter(r => !r.isCaptain),
     all: mapped,
   };
+}
+
+// ── SEASON SCORING — per-match player points ────────────────────────────
+//   +100 win bonus (heaviest) · ACS÷4 (middle) · K + ⅓A (lightest)
+//   Season total = sum of every match's points across all weekends.
+function matchPoints({ won, acs, kills, assists }) {
+  const win = won ? 100 : 0;
+  const perf = Math.round((Number(acs) || 0) / 4);
+  const frags = Math.round((Number(kills) || 0) + (Number(assists) || 0) / 3);
+  return win + perf + frags;
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -4535,7 +4590,8 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
   const [regView, setRegView] = useState("gate"); // gate | app — browsing during registration
-  useEffect(() => { setRegView("gate"); }, [phase]);
+  const [matchView, setMatchView] = useState(false); // host match-report form
+  useEffect(() => { setRegView("gate"); setMatchView(false); }, [phase]);
 
   // Poll the weekend's phase so players follow the host's transitions live.
   useEffect(() => {
@@ -4642,6 +4698,8 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
           <button onClick={() => setRegView("gate")} style={shellBtn("accent", { padding: "8px 12px" })}>‹ Registration</button>}
         {isHost && phase === "drafting" &&
           <button disabled={busy} onClick={rebuildNow} title="Rebuild teams from registered captains" style={shellBtn("warn", { padding: "8px 12px" })}>⟳ Rebuild teams</button>}
+        {isHost && phase === "matches_live" &&
+          <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { padding: "8px 12px" })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
         {isHost && phase !== "settled" &&
           <button disabled={busy} onClick={advance} style={shellBtn("primary", { padding: "8px 16px" })}>{busy ? "…" : NEXT_LABEL[phase] + " →"}</button>}
         {account && <AccountChip account={account} onSignOut={onSignOut} />}
@@ -4653,9 +4711,11 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   // browsable — "Explore the league" opens the full app (Scout Hub, rosters)
   // while registration is still open. Draft/matches/settled → full app.
   const inReg = (phase === "registration_open" || phase === "registration_closed");
-  const inner = (inReg && regView === "gate")
-    ? <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />
-    : <DraftApp auth={auth} browse={inReg} />;
+  const inner = (matchView && isHost)
+    ? <MatchReport ev={ev} onDone={() => setMatchView(false)} />
+    : (inReg && regView === "gate")
+      ? <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />
+      : <DraftApp auth={auth} browse={inReg} />;
 
   return <div>{bar}{inner}</div>;
 }
@@ -4665,7 +4725,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
 function ScoutProfileCard({ userId }) {
   const [prof, setProf] = useState(undefined);
   const [editing, setEditing] = useState(false);
-  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "" });
+  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "" });
   const [busy, setBusy] = useState(false);
   const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
   const fieldS = { width: "100%", padding: "9px 10px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box" };
@@ -4674,7 +4734,7 @@ function ScoutProfileCard({ userId }) {
   async function load() {
     const { data } = await __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle();
     setProf(data || null);
-    if (data) setD({ rank: data.rank || "", role: data.role || "", agent: data.agent || "", kda: data.kda ?? "", acs: data.acs ?? "", hs: data.hs ?? "", win: data.win ?? "" });
+    if (data) setD({ rank: data.rank || "", role: data.role || "", agent: data.agent || "", kda: data.kda ?? "", acs: data.acs ?? "", hs: data.hs ?? "", win: data.win ?? "", tracker: data.tracker_url || "" });
   }
   useEffect(() => { load(); }, [userId]);
 
@@ -4685,6 +4745,7 @@ function ScoutProfileCard({ userId }) {
       rank: d.rank || null, role: d.role || null, agent: d.agent || null,
       kda: d.kda === "" ? null : parseFloat(d.kda), acs: d.acs === "" ? null : parseInt(d.acs),
       hs: d.hs === "" ? null : parseInt(d.hs), win: d.win === "" ? null : parseInt(d.win),
+      tracker_url: d.tracker ? (/^https?:\/\//i.test(d.tracker) ? d.tracker.trim() : "https://" + d.tracker.trim()) : null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
     if (error) console.error("saveProfile:", error.message);
@@ -4722,6 +4783,8 @@ function ScoutProfileCard({ userId }) {
           {[["agent", "Main agent", "text"], ["kda", "KDA", "num"], ["acs", "ACS", "num"], ["hs", "HS %", "num"], ["win", "Win %", "num"]].map(([k, label, type]) => (
             <label key={k}><span style={labS}>{label}</span>
               <input value={d[k]} onChange={e => setD({ ...d, [k]: type === "num" ? e.target.value.replace(/[^0-9.]/g, "") : e.target.value })} style={fieldS} /></label>))}
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Tracker link (tracker.gg, blitz.gg…)</span>
+            <input value={d.tracker} placeholder="tracker.gg/valorant/profile/riot/yourname" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button disabled={busy || !d.rank} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
@@ -4730,6 +4793,149 @@ function ScoutProfileCard({ userId }) {
       </>}
     </div>
   );
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   MATCH REPORT — host records a match; every player earns season points.
+   +100 win · ACS÷4 · K+⅓A  → one match_results row per player.
+   ════════════════════════════════════════════════════════════════════ */
+function MatchReport({ ev, onDone }) {
+  const [teams, setTeams] = useState(null);   // [{id,name,captain,captainUserId,roster:[{id,name}]}]
+  const [tA, setTA] = useState(""); const [tB, setTB] = useState("");
+  const [winner, setWinner] = useState("A");
+  const [label, setLabel] = useState("");
+  const [lines, setLines] = useState({});     // userId → {k,a,acs}
+  const [saved, setSaved] = useState([]);     // reported matches for this weekend
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
+  const fieldS = { padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, boxSizing: "border-box", width: 64 };
+  const secLabel = (t) => <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 12 }}>// {t}</div>;
+
+  async function load() {
+    const s = await readState();
+    const board = (s?.teams || []).map(t => ({
+      id: t.id, name: t.name, captainUserId: t.captainUserId || null, captain: t.captain,
+      players: [
+        ...(t.captainUserId ? [{ id: t.captainUserId, name: t.captain }] : []),
+        ...(t.roster || []).map(pid => { const p = (s.players || []).find(x => x.id === pid); return p ? { id: p.id, name: p.name } : null; }).filter(Boolean),
+      ],
+    }));
+    setTeams(board);
+    if (board[0]) setTA(board[0].id);
+    if (board[1]) setTB(board[1].id);
+    const { data } = await __sb.from("match_results").select("match_label, team_won, points_computed, user_id, stat_payload").eq("event_id", ev.id).order("created_at", { ascending: false });
+    const byLabel = {};
+    (data || []).forEach(r => { const k = r.match_label || "match"; (byLabel[k] = byLabel[k] || []).push(r); });
+    setSaved(Object.entries(byLabel));
+  }
+  useEffect(() => { load(); }, [ev?.id]);
+
+  const teamOf = (id) => (teams || []).find(t => t.id === id);
+  const line = (uid) => lines[uid] || { k: "", a: "", acs: "" };
+  const setLine = (uid, k, v) => setLines(ls => ({ ...ls, [uid]: { ...line(uid), [k]: v.replace(/[^0-9]/g, "") } }));
+  const ptsFor = (uid, won) => matchPoints({ won, acs: line(uid).acs, kills: line(uid).k, assists: line(uid).a });
+
+  async function save() {
+    setErr(""); setBusy(true);
+    try {
+      const A = teamOf(tA), B = teamOf(tB);
+      if (!A || !B || A.id === B.id) throw new Error("Pick two different teams.");
+      const ml = label.trim() || `${A.name} vs ${B.name}`;
+      const rows = [];
+      [[A, winner === "A"], [B, winner === "B"]].forEach(([team, won]) => {
+        team.players.forEach(p => {
+          if (typeof p.id !== "string" || p.id.length < 30) return; // skip guest/sample players (no account)
+          const l = line(p.id);
+          rows.push({
+            event_id: ev.id, community_id: window.__VOLT.communityId, user_id: p.id,
+            match_label: ml, team_won: won,
+            stat_payload: { name: p.name, team: team.name, k: +l.k || 0, a: +l.a || 0, acs: +l.acs || 0 },
+            points_computed: ptsFor(p.id, won),
+          });
+        });
+      });
+      if (!rows.length) throw new Error("No registered players on these rosters.");
+      const { error } = await __sb.from("match_results").insert(rows);
+      if (error) throw error;
+      setLines({}); setLabel(""); await load();
+    } catch (e) { setErr(e.message || "Could not save the match."); }
+    setBusy(false);
+  }
+
+  async function removeMatch(labelKey) {
+    if (!window.confirm(`Delete "${labelKey}" and its points?`)) return;
+    await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", labelKey);
+    await load();
+  }
+
+  if (teams === null) return <div className="vg-shell" style={{ minHeight: "60vh", background: "#0a0d18", color: "rgba(200,215,255,0.6)", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif" }}>Loading rosters…</div>;
+
+  const rosterBlock = (teamId, side) => {
+    const t = teamOf(teamId); if (!t) return null;
+    const won = winner === side;
+    return (
+      <div style={{ flex: 1, minWidth: 280 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <select value={teamId} onChange={e => (side === "A" ? setTA : setTB)(e.target.value)} style={{ ...fieldS, width: "auto", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+            {teams.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <button onClick={() => setWinner(side)} style={shellBtn(won ? "accent" : "ghost", { padding: "7px 12px", fontSize: 11 })}>{won ? "✓ Won" : "Mark won"}</button>
+        </div>
+        {t.players.length === 0 && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 12 }}>No players on this roster yet.</p>}
+        <div style={{ display: "grid", gap: 6 }}>
+          {t.players.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
+              <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{p.name}</span>
+              <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
+              <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} style={fieldS} aria-label={`${p.name} assists`} />
+              <input placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} style={fieldS} aria-label={`${p.name} ACS`} />
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: won ? "#3ddc84" : "#7da6ff", width: 58, textAlign: "right" }}>{ptsFor(p.id, won)} pts</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "40px 20px 60px" }}>
+    <div style={{ maxWidth: 980, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {ev?.weekend_label} · Match report</div>
+        <h1 style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Record a <span style={{ color: "#3d7bff" }}>Match</span></h1>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+100 win · ACS÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
+      </div>
+      <div style={panel}>
+        <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        {secLabel("Match")}
+        <input placeholder="Match label (optional — e.g. Grand Final · Map 2)" value={label} onChange={e => setLabel(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box", marginBottom: 16 }} />
+        <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+          {rosterBlock(tA, "A")}
+          {rosterBlock(tB, "B")}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 18, alignItems: "center" }}>
+          <button disabled={busy} onClick={save} style={shellBtn("primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : "Save match →"}</button>
+          <button onClick={onDone} style={shellBtn("ghost", { padding: "11px 18px", fontSize: 13 })}>Done</button>
+          {err && <span style={{ color: "#ff8a94", fontSize: 13 }}>{err}</span>}
+        </div>
+      </div>
+
+      {saved.length > 0 && <div style={{ ...panel, marginTop: 16 }}>
+        {secLabel(`Reported this weekend · ${saved.length}`)}
+        <div style={{ display: "grid", gap: 6 }}>
+          {saved.map(([ml, rows]) => (
+            <div key={ml} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
+              <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{ml}</span>
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>{rows.length} players · {rows.reduce((s, r) => s + Number(r.points_computed || 0), 0)} pts</span>
+              <button onClick={() => removeMatch(ml)} style={shellBtn("danger", { padding: "5px 10px", fontSize: 10 })}>Delete</button>
+            </div>
+          ))}
+        </div>
+      </div>}
+    </div>
+  </div>;
 }
 
 // Registration — professional single-flow: status, profile, live registrant
