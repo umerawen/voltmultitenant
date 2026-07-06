@@ -2757,7 +2757,7 @@ const SndFX = (() => {
 /* ════════════════════════════════════════════════════════════════════
    MAIN
    ════════════════════════════════════════════════════════════════════ */
-function DraftApp({ auth, browse }) {
+function DraftApp({ auth, browse, chrome }) {
   const [state, setState] = useState(null);
   // Auto-resolve in-app identity from the logged-in role:
   //  host  → "admin" (Commissioner)   ·   others start unpicked (choose seat/spectator)
@@ -3418,7 +3418,15 @@ function DraftApp({ auth, browse }) {
     </div>
   );
 
-  if (!identity) return shell(<RoleGate teams={state.teams} onPick={setIdentity} auth={auth} />);
+  if (!identity) return shell(<>
+    {chrome && (
+      <div className="vg-shell flex items-center justify-between px-5 py-3" style={{ borderBottom: "1px solid rgba(61,123,255,0.18)", fontFamily: "'Rajdhani',sans-serif" }}>
+        <button onClick={chrome.onBack} style={shellBtn("ghost", { padding: "8px 14px" })}>‹ {chrome.backLabel}</button>
+        {chrome.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} />}
+      </div>
+    )}
+    <RoleGate teams={state.teams} onPick={setIdentity} auth={auth} />
+  </>);
 
   const isAdmin = identity === "admin";
   const isSpectator = identity === "spectator";
@@ -3435,6 +3443,12 @@ function DraftApp({ auth, browse }) {
   const TopNav = (
     <header className="sticky top-0 z-30" style={{ background: "rgba(6,9,16,0.94)", borderBottom: "1px solid rgba(61,123,255,0.14)", backdropFilter: "blur(12px)" }}>
       <div className="page-wrap flex items-center gap-3 py-4 flex-wrap">
+        {/* league chrome: back to schedule/registration */}
+        {chrome && (
+          <button onClick={chrome.onBack} title={"Back to " + chrome.backLabel}
+            className="shrink-0 px-2.5 py-2 text-sm font-semibold uppercase tracking-[0.14em] transition-all hover:scale-[1.04]"
+            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.4)", color: "#aec6ff" }}>‹ {chrome.backLabel}</button>
+        )}
         {/* brand with HUD corner bracket */}
         <div className="relative flex items-center gap-2 mr-2 shrink-0 pl-3 pr-4 py-1.5">
           <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
@@ -3442,6 +3456,7 @@ function DraftApp({ auth, browse }) {
           <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>{window.__VOLT.communityName || "VOLT"}</span>
           <span className="text-xl font-bold" style={{ color: "rgba(180,200,255,0.3)" }}>//</span>
           <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#eaf1ff" }}>{window.__VOLT.weekendLabel || "DRAFT"}</span>
+          {chrome?.phaseTag && <span className="hidden md:inline text-[11px] font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", color: chrome.phaseColor || "#5b8dff", marginLeft: 4 }}>· {chrome.phaseTag}</span>}
         </div>
 
         {/* nav tabs — centered between brand and right controls (desktop) */}
@@ -3550,6 +3565,8 @@ function DraftApp({ auth, browse }) {
           </button>
           <button onClick={() => setIdentity(null)} className="px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition-all hover:scale-[1.03]"
             style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff" }}>Switch Seat</button>
+          {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
+          {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} />}
         </div>
       </div>
     </header>
@@ -4625,15 +4642,23 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
           </div>
         </div>
       )}
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "34px 20px 0" }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {community?.name || "Community"}</div>
-          <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>Weekend <span style={{ color: "#3d7bff" }}>Schedule</span></div>
+      <div style={{ maxWidth: 840, margin: "0 auto", padding: "34px 20px 0" }}>
+        <div style={{ textAlign: "center", marginBottom: 26 }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.4em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT LEAGUE</div>
+          <div style={{ fontSize: "clamp(34px, 6vw, 52px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.05, marginTop: 6, textShadow: "0 0 40px rgba(61,123,255,0.35)" }}>
+            {community?.name || "Community"}</div>
           {community?.slug && (
             <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginTop: 14, padding: "8px 14px", background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(8) }}>
               <span style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>Join code</span>
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff" }}>{community.slug}</span>
               <button onClick={() => { navigator.clipboard?.writeText(community.slug); }} style={shellBtn("ghost", { padding: "5px 10px", fontSize: 10 })}>Copy</button>
+            </div>
+          )}
+          {events && events.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 16, flexWrap: "wrap", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.55)" }}>
+              <span><span style={{ color: "#7da6ff", fontWeight: 700 }}>{events.filter(e => e.phase === "settled").length}</span> weekends settled</span>
+              {board && <span><span style={{ color: "#7da6ff", fontWeight: 700 }}>{board.length}</span> players on the board</span>}
+              {board && board[0] && <span>race leader <span style={{ color: "#f5c453", fontWeight: 700, textTransform: "uppercase" }}>{board[0].name}</span> · {board[0].pts} pts</span>}
             </div>
           )}
         </div>
@@ -4968,11 +4993,31 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   // browsable — "Explore the league" opens the full app (Scout Hub, rosters)
   // while registration is still open. Draft/matches/settled → full app.
   const inReg = (phase === "registration_open" || phase === "registration_closed");
-  const inner = (matchView && isHost)
+  const showGate = inReg && regView === "gate";
+  const showReport = matchView && isHost;
+
+  // Merged mode: DraftApp owns the one nav bar; league chrome rides inside it.
+  if (!showGate && !showReport) {
+    const PHASE_TAG = { registration_open: "Registration", registration_closed: "Reg closed", drafting: "Draft", matches_live: "Matches", settled: "Settled" };
+    const PHASE_TAG_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#5b8dff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.5)" };
+    const hostControls = isHost ? <>
+      {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
+      {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: PREV[phase] ? 8 : 0 })}>⟳ Rebuild teams</button>}
+      {phase === "matches_live" && <button onClick={() => setMatchView(true)} style={shellBtn("accent", { width: "100%", padding: "9px", marginTop: 8 })}>▦ Report match</button>}
+      {phase !== "settled" && <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+    </> : null;
+    const chrome = {
+      backLabel: inReg ? "Registration" : "Schedule",
+      onBack: inReg ? () => setRegView("gate") : onBack,
+      phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
+      account, onSignOut, hostControls,
+    };
+    return <DraftApp auth={auth} browse={inReg} chrome={chrome} />;
+  }
+
+  const inner = showReport
     ? <MatchReport ev={ev} onDone={() => setMatchView(false)} />
-    : (inReg && regView === "gate")
-      ? <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />
-      : <DraftApp auth={auth} browse={inReg} />;
+    : <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />;
 
   return <div>{bar}{inner}</div>;
 }
