@@ -249,6 +249,24 @@ function roundRobinMatches(teamIds, bo) {
   return ms;
 }
 
+// League Play fixtures — no bracket. Circle-method rotation for 4 rounds so
+// every team plays 4 matches per weekend (vs 4 different opponents when the
+// team count allows; small leagues see a rematch, odd counts a bye per round).
+function leagueMatches(teamIds, bo) {
+  const arr = [...teamIds];
+  if (arr.length % 2) arr.push(null); // bye slot
+  const n = arr.length, ms = [];
+  const rounds = Math.min(4, Math.max(1, 4)); // 4 matches per team per weekend
+  for (let r = 0; r < rounds; r++) {
+    for (let i = 0; i < n / 2; i++) {
+      const a = arr[i], b = arr[n - 1 - i];
+      if (a != null && b != null) ms.push({ id: tuid(), round: r + 1, teamA: a, teamB: b, bo, maps: [], done: false, winner: null });
+    }
+    arr.splice(1, 0, arr.pop()); // rotate, first seat fixed
+  }
+  return ms;
+}
+
 // next power of two >= n
 const nextPow2 = (n) => { let p = 1; while (p < n) p *= 2; return p; };
 
@@ -698,6 +716,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
               {[
                 { id: "group", name: "Group Stage", desc: "Split into groups, round-robin each, top of each advances to a final." },
                 { id: "roundrobin", name: "Round Robin", desc: "One table — every team plays every other team once." },
+                { id: "league", name: "League Play", desc: "No bracket — 4 matches per team, every match banks points." },
                 { id: "single", name: "Single Elim", desc: "Seeded knockout bracket. Lose once, you're out." },
               ].map((f) => (
                 <button key={f.id} onClick={() => setDraftFormat(f.id)} className="text-left p-3 transition-all"
@@ -751,7 +770,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
   // ── SETUP STATE: tournament exists but not locked ──
   const unassigned = state.teams.filter((tm) => {
     if (t.format === "group") return !t.groups.some((g) => g.teamIds.includes(tm.id));
-    if (t.format === "roundrobin") return !t.teamIds.includes(tm.id);
+    if ((t.format === "roundrobin" || t.format === "league")) return !t.teamIds.includes(tm.id);
     if (t.format === "single") return !t.slots.includes(tm.id);
     return false;
   });
@@ -767,7 +786,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
     );
 
     const canLock = t.format === "group" ? t.groups.every((g) => g.teamIds.length >= 2)
-      : t.format === "roundrobin" ? t.teamIds.length >= 2
+      : (t.format === "roundrobin" || t.format === "league") ? t.teamIds.length >= 2
       : t.slots.filter(Boolean).length >= 2;
 
     return (
@@ -815,7 +834,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
         )}
 
         {/* roundrobin: single list */}
-        {t.format === "roundrobin" && (
+        {(t.format === "roundrobin" || t.format === "league") && (
           <TPanel className="mb-6">
             <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Participants ({t.teamIds.length})</p>
             <div className="flex flex-wrap gap-2">
@@ -922,7 +941,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
       )}
 
       {/* ROUND ROBIN */}
-      {t.format === "roundrobin" && (
+      {(t.format === "roundrobin" || t.format === "league") && (
         <div className="flex flex-col gap-6">
           <TPanel>
             <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Standings</p>
@@ -947,7 +966,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
       )}
 
       {/* manual override panel (admin) */}
-      {isAdmin && (t.format === "group" || t.format === "roundrobin") && (
+      {isAdmin && (t.format === "group" || (t.format === "roundrobin" || t.format === "league")) && (
         <TPanel className="mt-6" hue="#ffb020">
           <p className="uppercase text-sm font-bold tracking-widest mb-2" style={{ color: "#ffb020", fontFamily: "'Rajdhani',sans-serif" }}>⚙ Manual standings override</p>
           <p className="text-[11px] mb-3" style={{ color: "rgba(200,215,255,0.45)" }}>Force points / round-diff for a team (forfeits, penalties). Leave blank to clear. Overridden teams show a *.</p>
@@ -2845,7 +2864,10 @@ function DraftApp({ auth, browse }) {
     // in as spectator (skips the seat-claim gate entirely).
     if (browse) { setIdentity("spectator"); return; }
     const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
-    if (mine) setIdentity(mine.id);
+    if (mine) { setIdentity(mine.id); return; }
+    // Logged-in non-captain on a real board (every seat owned by someone else):
+    // there is nothing to claim — skip the seat gate, go straight to spectator.
+    if (auth.userId && state.teams.length && state.teams.every(t => t.captainUserId)) setIdentity("spectator");
   }, [state, auth, identity, browse]);
 
   // draft time lives in shared state so the countdown matches for everyone
@@ -3182,7 +3204,7 @@ function DraftApp({ auth, browse }) {
       t.matches = {}; // per-group matches generated when groups are locked
       t.locked = false;
       t.final = null; // { teamA, teamB, bo, maps, done, winner } once groups complete
-    } else if (format === "roundrobin") {
+    } else if (format === "roundrobin" || format === "league") {
       t.teamIds = []; // commissioner adds all participating teams
       t.matches = [];
       t.locked = false;
@@ -3208,7 +3230,7 @@ function DraftApp({ auth, browse }) {
       // remove from all groups first, then add to target group
       t.groups.forEach((g) => { g.teamIds = g.teamIds.filter((x) => x !== teamId); });
       if (target) { const g = t.groups.find((x) => x.id === target); if (g && !g.teamIds.includes(teamId)) g.teamIds.push(teamId); }
-    } else if (t.format === "roundrobin") {
+    } else if ((t.format === "roundrobin" || t.format === "league")) {
       if (t.teamIds.includes(teamId)) t.teamIds = t.teamIds.filter((x) => x !== teamId);
       else t.teamIds.push(teamId);
     }
@@ -3240,8 +3262,8 @@ function DraftApp({ auth, browse }) {
     if (t.format === "group") {
       t.matches = {};
       t.groups.forEach((g) => { t.matches[g.id] = roundRobinMatches(g.teamIds, t.bo); });
-    } else if (t.format === "roundrobin") {
-      t.matches = roundRobinMatches(t.teamIds, t.bo);
+    } else if ((t.format === "roundrobin" || t.format === "league")) {
+      t.matches = t.format === "league" ? leagueMatches(t.teamIds, t.bo) : roundRobinMatches(t.teamIds, t.bo);
     } else if (t.format === "single") {
       t.rounds = buildSingleElim(t.slots, t.bo);
     }
@@ -4289,7 +4311,7 @@ function VoltGate() {
   const field = { width: "100%", padding: "11px 12px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, marginBottom: 10, boxSizing: "border-box" };
   const btn = (primary) => shellBtn(primary ? "primary" : "ghost", { width: "100%", padding: "13px", fontSize: 13.5, letterSpacing: "0.18em", marginTop: 4, clipPath: SHELL_NOTCH(12) });
 
-  if (phase === "loading") return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
+  if (phase === "loading") return wrap(<p className="vg-loading" style={{ margin: 0 }}>// Syncing…</p>);
 
   const account = {
     name: profile?.display_name || (HAS_SUPABASE ? (session?.user?.email || "You") : "Preview"),
@@ -4370,7 +4392,7 @@ function VoltGate() {
     <button disabled={busy} onClick={doJoin} style={btn(true)}>{busy ? "…" : "Join league →"}</button>
   </>);
 
-  return wrap(<p style={{ margin: 0, color: "rgba(200,215,255,0.6)", textAlign: "center" }}>Loading…</p>);
+  return wrap(<p className="vg-loading" style={{ margin: 0 }}>// Syncing…</p>);
 }
 
 // ── Shell design language — mirrors the old app's HUD aesthetic ─────────
@@ -4399,11 +4421,29 @@ function ShellStyles() {
     .vg-shell button:disabled { opacity: .45; cursor: not-allowed; }
     .vg-shell input:focus { border-color: rgba(111,160,255,0.8) !important; box-shadow: 0 0 0 3px rgba(61,123,255,0.18); outline: none; }
     .vg-shell *:focus-visible { outline: 2px solid #6fa0ff; outline-offset: 2px; }
+    @keyframes vgPulse { 0%,100% { opacity: .35; } 50% { opacity: .9; } }
+    .vg-loading { animation: vgPulse 1.4s ease-in-out infinite; letter-spacing: .28em; text-transform: uppercase; font-size: 12px; font-weight: 700; color: #5b8dff !important; text-align: center; }
   `}</style>;
 }
 
+// Collapsed host controls for narrow screens — same overlay pattern as the chip.
+function HostMenu({ children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
+      <button onClick={() => setOpen(o => !o)} aria-label="Host controls" style={shellBtn("primary", { padding: "8px 12px", fontSize: 13 })}>⚙ Manage</button>
+      {open && <>
+        <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
+        <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 230, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
+          {children}
+        </div>
+      </>}
+    </div>
+  );
+}
+
 // Persistent account control — shows who you are + sign out. Used on every shell screen.
-function AccountChip({ account, onSignOut, dark }) {
+function AccountChip({ account, onSignOut, onProfile }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
@@ -4418,7 +4458,8 @@ function AccountChip({ account, onSignOut, dark }) {
           <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", color: "#ecf3ff" }}>{account.name}</div>
           <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: account.role === "host" ? "#f5c453" : "#5b8dff", marginTop: 2, fontWeight: 600 }}>{account.role === "host" ? "Host" : "Player"}</div>
           {account.community && <div style={{ fontSize: 12, color: "rgba(200,215,255,0.55)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(120,150,220,0.15)" }}>{account.community}{account.code && <span style={{ display: "block", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#7da6ff", marginTop: 2 }}>code: {account.code}</span>}</div>}
-          <button onClick={onSignOut} style={shellBtn("danger", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>Sign out</button>
+          {onProfile && <button onClick={() => { setOpen(false); onProfile(); }} style={shellBtn("ghost", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>⊞ My profile</button>}
+          <button onClick={onSignOut} style={shellBtn("danger", { width: "100%", marginTop: onProfile ? 8 : 12, padding: "9px", letterSpacing: "0.1em" })}>Sign out</button>
         </div>
       </>}
     </div>
@@ -4434,11 +4475,30 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [err, setErr] = useState("");
   const [season, setSeason] = useState(null); // aggregated captain standings across weekends
   const [board, setBoard] = useState(null);   // player points leaderboard (match_results)
+  const [live, setLive] = useState(null);     // { count, mine } — registrations for the current weekend
+  const [showProfile, setShowProfile] = useState(false);
+  const [editTime, setEditTime] = useState(false);
+
+  // The weekend that IS the league right now: the non-settled one that's
+  // furthest along (matches > draft > reg closed > reg open); ties → oldest.
+  const PHASE_RANK = { matches_live: 4, drafting: 3, registration_closed: 2, registration_open: 1, settled: 0 };
+  function pickCurrent(evs) {
+    const open = (evs || []).filter(e => e.phase !== "settled");
+    if (!open.length) return null;
+    return open.sort((a, b) => (PHASE_RANK[b.phase] - PHASE_RANK[a.phase]) || (new Date(a.created_at) - new Date(b.created_at)))[0];
+  }
 
   async function load() {
     if (!HAS_SUPABASE) { setEvents([]); return; }
     const { data } = await __sb.from("events").select("*").eq("community_id", window.__VOLT.communityId).order("created_at", { ascending: false });
     setEvents(data || []);
+    const cur = pickCurrent(data);
+    if (cur) {
+      try {
+        const { data: regs } = await __sb.from("registrations").select("user_id").eq("event_id", cur.id);
+        setLive({ count: (regs || []).length, mine: (regs || []).some(r => r.user_id === window.__VOLT.userId) });
+      } catch (e) { console.error(e); setLive(null); }
+    } else setLive(null);
     loadSeason();
     loadPlayerBoard();
   }
@@ -4486,6 +4546,52 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   }
   useEffect(() => { load(); }, []);
 
+  // Light poll (#events + current-weekend regs only) so phases/counters go
+  // live without re-running the heavy season aggregation every tick.
+  async function refreshEvents() {
+    if (!HAS_SUPABASE) return;
+    const { data } = await __sb.from("events").select("*").eq("community_id", window.__VOLT.communityId).order("created_at", { ascending: false });
+    setEvents(data || []);
+    const cur = pickCurrent(data);
+    if (cur) {
+      try {
+        const { data: regs } = await __sb.from("registrations").select("user_id").eq("event_id", cur.id);
+        setLive({ count: (regs || []).length, mine: (regs || []).some(r => r.user_id === window.__VOLT.userId) });
+      } catch (e) { console.error(e); }
+    } else setLive(null);
+  }
+  useEffect(() => { const t = setInterval(refreshEvents, 8000); return () => clearInterval(t); }, []);
+
+  // ── Host weekend management ──
+  async function renameWeekend(ev) {
+    const v = window.prompt("Rename weekend:", ev.weekend_label);
+    if (!v || !v.trim() || v.trim() === ev.weekend_label) return;
+    try { const { error } = await __sb.from("events").update({ weekend_label: v.trim() }).eq("id", ev.id); if (error) throw error; await refreshEvents(); }
+    catch (e) { setErr(e.message || "Rename failed."); }
+  }
+  async function deleteWeekend(ev) {
+    if (!window.confirm(`Delete ${ev.weekend_label}? This removes the weekend and its registrations. Reported match points are kept.`)) return;
+    try {
+      await __sb.from("registrations").delete().eq("event_id", ev.id);
+      const { error } = await __sb.from("events").delete().eq("id", ev.id);
+      if (error) throw error;
+      await refreshEvents();
+    } catch (e) { setErr(e.message || "Could not delete — the weekend may have linked data."); }
+  }
+  async function saveDraftTime(ev, localValue) {
+    try {
+      const iso = localValue ? new Date(localValue).toISOString() : null;
+      const { error } = await __sb.from("events").update({ draft_at: iso }).eq("id", ev.id);
+      if (error) throw error;
+      await refreshEvents();
+    } catch (e) { setErr(e.message || "Could not save draft time."); }
+  }
+  const fmtDraftAt = (d) => {
+    if (!d) return null;
+    const dt = new Date(d);
+    return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " · " + dt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  };
+
   async function createWeekend() {
     setErr(""); setBusy(true);
     try {
@@ -4505,13 +4611,25 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px" }}>
       <ShellStyles />
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
-        {account && <AccountChip account={account} onSignOut={onSignOut} />}
+        {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? () => setShowProfile(true) : null} />}
       </div>
+      {showProfile && (
+        <div onClick={() => setShowProfile(false)} style={{ position: "fixed", inset: 0, zIndex: 120, background: "rgba(4,6,12,0.8)", display: "grid", placeItems: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(16), padding: "22px 24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <span style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// My scouting profile</span>
+              <button onClick={() => setShowProfile(false)} style={shellBtn("ghost", { padding: "5px 10px", fontSize: 11 })}>✕</button>
+            </div>
+            <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "0 0 6px" }}>Captains study this before bidding — keep it current between weekends.</p>
+            <ScoutProfileCard userId={window.__VOLT.userId} />
+          </div>
+        </div>
+      )}
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "34px 20px 0" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {community?.name || "Community"}</div>
           <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>Weekend <span style={{ color: "#3d7bff" }}>Schedule</span></div>
-          {isHost && community?.slug && (
+          {community?.slug && (
             <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginTop: 14, padding: "8px 14px", background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(8) }}>
               <span style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>Join code</span>
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff" }}>{community.slug}</span>
@@ -4525,10 +4643,35 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     </div>
   );
 
-  if (events === null) return wrap(<p style={{ textAlign: "center", color: "rgba(200,215,255,0.6)" }}>Loading…</p>);
+  if (events === null) return wrap(<p className="vg-loading">// Loading league…</p>);
 
   const btn = (primary) => shellBtn(primary ? "primary" : "ghost", { padding: "11px 22px", fontSize: 13 });
   const PHASE_LABEL = { registration_open: "Registration open", registration_closed: "Registration closed", drafting: "Draft live", matches_live: "Matches live", settled: "Settled" };
+
+  // ── Current weekend hero + the rest as quiet strips ──
+  const current = pickCurrent(events);
+  const upcoming = events.filter(e => e.phase !== "settled" && e.id !== current?.id);
+  const past = events.filter(e => e.phase === "settled");
+
+  const PHASE_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#3d7bff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.4)" };
+  const heroCTA = !current ? "" :
+    current.phase === "registration_open" ? (live?.mine ? "Enter weekend →" : "Register now →") :
+    current.phase === "registration_closed" ? "Enter weekend →" :
+    current.phase === "drafting" ? "Enter the draft →" : "Watch matches →";
+
+  const strip = (ev, dim) => (
+    <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220," + (dim ? "0.1" : "0.18") + ")", clipPath: SHELL_NOTCH(8), opacity: dim ? 0.6 : 1 }}>
+      <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14 }}>{ev.weekend_label}
+        {ev.draft_at && <span style={{ fontWeight: 500, textTransform: "none", color: "rgba(200,215,255,0.4)", fontSize: 11.5, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>{fmtDraftAt(ev.draft_at)}</span>}
+      </span>
+      <span style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: PHASE_COLOR[ev.phase] || "#5b8dff", fontWeight: 600 }}>{PHASE_LABEL[ev.phase] || ev.phase}</span>
+      {isHost && <>
+        <button onClick={() => renameWeekend(ev)} title="Rename" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
+        <button onClick={() => deleteWeekend(ev)} title="Delete weekend" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
+      </>}
+      <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>{dim ? "View" : "Enter"} →</button>
+    </div>
+  );
 
   return wrap(<>
     {events.length === 0
@@ -4536,15 +4679,52 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
           <p>No weekends yet.{isHost ? " Create the first one to start." : " Check back when your host opens a weekend."}</p>
         </div>
       : <div style={{ display: "grid", gap: 12, marginBottom: 22 }}>
-          {events.map(ev => (
-            <div key={ev.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: "linear-gradient(160deg,rgba(20,26,42,0.9),rgba(10,13,22,0.9))", border: "1px solid rgba(61,123,255,0.25)", clipPath: "polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))" }}>
-              <div>
-                <div style={{ fontSize: 19, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{ev.weekend_label}</div>
-                <div style={{ fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "#5b8dff", marginTop: 3, fontWeight: 600 }}>{PHASE_LABEL[ev.phase] || ev.phase}</div>
+          {current && (
+            <div style={{ position: "relative", padding: "24px 24px 22px", background: "linear-gradient(160deg,rgba(24,32,54,0.95),rgba(10,13,22,0.95))", border: "1px solid rgba(61,123,255,0.45)", clipPath: SHELL_NOTCH(16), boxShadow: "0 0 40px rgba(61,123,255,0.12)" }}>
+              <span style={{ position: "absolute", left: 0, top: 0, width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+              <span style={{ position: "absolute", right: 0, bottom: 0, width: 10, height: 10, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+              <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 6 }}>// This weekend</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{current.weekend_label}
+                    {isHost && <>
+                      <button onClick={() => renameWeekend(current)} title="Rename" style={shellBtn("ghost", { padding: "3px 8px", fontSize: 10, marginLeft: 10, verticalAlign: "middle" })}>✎</button>
+                      <button onClick={() => deleteWeekend(current)} title="Delete weekend" style={shellBtn("danger", { padding: "3px 8px", fontSize: 10, marginLeft: 6, verticalAlign: "middle" })}>✕</button>
+                    </>}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: PHASE_COLOR[current.phase], fontWeight: 700 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: PHASE_COLOR[current.phase], boxShadow: `0 0 8px ${PHASE_COLOR[current.phase]}` }} />
+                      {PHASE_LABEL[current.phase]}
+                    </span>
+                    {live && <span style={{ fontSize: 12, color: "rgba(200,215,255,0.55)" }}>{live.count} registered</span>}
+                    {live?.mine && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9af5c2", border: "1px solid rgba(61,220,132,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>You're in ✓</span>}
+                    {current.phase === "registration_open" && live && !live.mine && <span style={{ fontSize: 12, color: "#f5c453" }}>You haven't registered yet</span>}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    {editTime && isHost
+                      ? <>
+                          <input type="datetime-local" defaultValue={current.draft_at ? (() => { const d = new Date(current.draft_at); const p = x => String(x).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; })() : ""} id="volt-draft-at"
+                            style={{ padding: "6px 8px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13, colorScheme: "dark" }} />
+                          <button onClick={() => { saveDraftTime(current, document.getElementById("volt-draft-at")?.value); setEditTime(false); }} style={shellBtn("accent", { padding: "6px 12px", fontSize: 11 })}>Save</button>
+                          <button onClick={() => setEditTime(false)} style={shellBtn("ghost", { padding: "6px 10px", fontSize: 11 })}>Cancel</button>
+                        </>
+                      : <>
+                          <span style={{ fontSize: 12.5, color: current.draft_at ? "#7da6ff" : "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>
+                            {current.draft_at ? "Draft: " + fmtDraftAt(current.draft_at) : "Draft time not set"}</span>
+                          {isHost && <button onClick={() => setEditTime(true)} style={shellBtn("ghost", { padding: "4px 10px", fontSize: 10 })}>{current.draft_at ? "Change" : "Set time"}</button>}
+                        </>}
+                  </div>
+                </div>
+                <button onClick={() => onEnter(current)} style={shellBtn("primary", { padding: "13px 26px", fontSize: 13.5 })}>{heroCTA}</button>
               </div>
-              <button onClick={() => onEnter(ev)} style={btn(true)}>Enter →</button>
             </div>
-          ))}
+          )}
+          {upcoming.length > 0 && upcoming.map(ev => strip(ev, false))}
+          {past.length > 0 && <>
+            <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginTop: 6 }}>// Past weekends</div>
+            {past.map(ev => strip(ev, true))}
+          </>}
         </div>}
     {isHost && <div style={{ textAlign: "center" }}>
       <button disabled={busy} onClick={createWeekend} style={btn(events.length === 0)}>{busy ? "…" : "+ Create weekend"}</button>
@@ -4552,8 +4732,8 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     {board && <div style={{ marginTop: 34 }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
-        <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Player <span style={{ color: "#3d7bff" }}>Leaderboard</span></div>
-        <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>+100 win · ACS÷4 · K+⅓A — every match counts</div>
+        <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Season <span style={{ color: "#3d7bff" }}>Race</span></div>
+        <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>+100 win · ACS÷4 · K+⅓A — every match counts, subs included</div>
       </div>
       <div style={{ display: "grid", gap: 6 }}>
         {board.map((r, i) => (
@@ -4632,6 +4812,14 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   const phase = ev?.phase || "drafting";
   const [regView, setRegView] = useState("gate"); // gate | app — browsing during registration
   const [matchView, setMatchView] = useState(false); // host match-report form
+  const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 640px)").matches : false);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const on = (e) => setNarrow(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
   useEffect(() => { setRegView("gate"); setMatchView(false); }, [phase]);
 
   // Poll the weekend's phase so players follow the host's transitions live.
@@ -4646,6 +4834,23 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
 
   const NEXT = { registration_open: "registration_closed", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
   const NEXT_LABEL = { registration_open: "Close registration", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
+  const PREV = { registration_closed: "registration_open", drafting: "registration_closed", matches_live: "drafting" };
+  const [arm, setArm] = useState(false); // two-tap confirm on phase advance
+  useEffect(() => { if (!arm) return; const t = setTimeout(() => setArm(false), 4000); return () => clearTimeout(t); }, [arm]);
+  useEffect(() => { setArm(false); }, [phase]);
+
+  // Step the weekend one phase backward (settled stays terminal — season
+  // snapshots are written at settle and must not be re-rolled casually).
+  async function stepBack() {
+    if (!isHost || !HAS_SUPABASE || !PREV[phase]) return;
+    if (!window.confirm(`Move ${ev.weekend_label} back to "${PREV[phase].replace(/_/g, " ")}"? The draft board is kept.`)) return;
+    setBusy(true);
+    try {
+      const { data } = await __sb.from("events").update({ phase: PREV[phase] }).eq("id", ev.id).select().maybeSingle();
+      if (data) setEv(data);
+    } catch (e) { console.error(e); }
+    setBusy(false);
+  }
 
   // Fetch this weekend's full roster: registered captains, the non-captain
   // player pool, and everyone's scouting profiles (rank/KDA/ACS/HS/win).
@@ -4738,12 +4943,22 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {(phase === "registration_open" || phase === "registration_closed") && regView === "app" &&
           <button onClick={() => setRegView("gate")} style={shellBtn("accent", { padding: "8px 12px" })}>‹ Registration</button>}
-        {isHost && phase === "drafting" &&
-          <button disabled={busy} onClick={rebuildNow} title="Rebuild teams from registered captains" style={shellBtn("warn", { padding: "8px 12px" })}>⟳ Rebuild teams</button>}
-        {isHost && phase === "matches_live" &&
-          <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { padding: "8px 12px" })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
-        {isHost && phase !== "settled" &&
-          <button disabled={busy} onClick={advance} style={shellBtn("primary", { padding: "8px 16px" })}>{busy ? "…" : NEXT_LABEL[phase] + " →"}</button>}
+        {isHost && (narrow
+          ? <HostMenu>
+              {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
+              {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: 8 })}>⟳ Rebuild teams</button>}
+              {phase === "matches_live" && <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { width: "100%", padding: "9px", marginTop: 8 })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
+              {phase !== "settled" && <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+            </HostMenu>
+          : <>
+              {PREV[phase] && <button disabled={busy} onClick={stepBack} title="Move this weekend back one phase" style={shellBtn("ghost", { padding: "8px 11px" })}>↶</button>}
+              {phase === "drafting" &&
+                <button disabled={busy} onClick={rebuildNow} title="Rebuild teams from registered captains" style={shellBtn("warn", { padding: "8px 12px" })}>⟳ Rebuild teams</button>}
+              {phase === "matches_live" &&
+                <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { padding: "8px 12px" })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
+              {phase !== "settled" &&
+                <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { padding: "8px 16px" })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+            </>)}
         {account && <AccountChip account={account} onSignOut={onSignOut} />}
       </div>
     </div>
@@ -4847,6 +5062,8 @@ function MatchReport({ ev, onDone }) {
   const [winner, setWinner] = useState("A");
   const [label, setLabel] = useState("");
   const [lines, setLines] = useState({});     // userId → {k,a,acs}
+  const [extras, setExtras] = useState({ A: [], B: [] }); // subs pulled into this match
+  const [allRegs, setAllRegs] = useState([]); // every registrant this weekend (sub pool)
   const [saved, setSaved] = useState([]);     // reported matches for this weekend
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -4867,6 +5084,7 @@ function MatchReport({ ev, onDone }) {
     setTeams(board);
     if (board[0]) setTA(board[0].id);
     if (board[1]) setTB(board[1].id);
+    try { const r = await fetchRosterForEvent(ev.id); setAllRegs(r.all); } catch (e) { console.error(e); }
     const { data } = await __sb.from("match_results").select("match_label, team_won, points_computed, user_id, stat_payload").eq("event_id", ev.id).order("created_at", { ascending: false });
     const byLabel = {};
     (data || []).forEach(r => { const k = r.match_label || "match"; (byLabel[k] = byLabel[k] || []).push(r); });
@@ -4886,8 +5104,8 @@ function MatchReport({ ev, onDone }) {
       if (!A || !B || A.id === B.id) throw new Error("Pick two different teams.");
       const ml = label.trim() || `${A.name} vs ${B.name}`;
       const rows = [];
-      [[A, winner === "A"], [B, winner === "B"]].forEach(([team, won]) => {
-        team.players.forEach(p => {
+      [[A, extras.A, winner === "A"], [B, extras.B, winner === "B"]].forEach(([team, subs, won]) => {
+        [...team.players, ...subs].forEach(p => {
           if (typeof p.id !== "string" || p.id.length < 30) return; // skip guest/sample players (no account)
           const l = line(p.id);
           rows.push({
@@ -4901,7 +5119,7 @@ function MatchReport({ ev, onDone }) {
       if (!rows.length) throw new Error("No registered players on these rosters.");
       const { error } = await __sb.from("match_results").insert(rows);
       if (error) throw error;
-      setLines({}); setLabel(""); await load();
+      setLines({}); setLabel(""); setExtras({ A: [], B: [] }); await load();
     } catch (e) { setErr(e.message || "Could not save the match."); }
     setBusy(false);
   }
@@ -4917,6 +5135,9 @@ function MatchReport({ ev, onDone }) {
   const rosterBlock = (teamId, side) => {
     const t = teamOf(teamId); if (!t) return null;
     const won = winner === side;
+    const shown = new Set([...(teamOf(tA)?.players || []).map(p => p.id), ...(teamOf(tB)?.players || []).map(p => p.id), ...extras.A.map(p => p.id), ...extras.B.map(p => p.id)]);
+    const subPool = allRegs.filter(r => !shown.has(r.userId));
+    const linePlayers = [...t.players, ...extras[side]];
     return (
       <div style={{ flex: 1, minWidth: 280 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -4925,18 +5146,27 @@ function MatchReport({ ev, onDone }) {
           </select>
           <button onClick={() => setWinner(side)} style={shellBtn(won ? "accent" : "ghost", { padding: "7px 12px", fontSize: 11 })}>{won ? "✓ Won" : "Mark won"}</button>
         </div>
-        {t.players.length === 0 && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 12 }}>No players on this roster yet.</p>}
+        {linePlayers.length === 0 && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 12 }}>No players on this roster yet.</p>}
         <div style={{ display: "grid", gap: 6 }}>
-          {t.players.map(p => (
+          {linePlayers.map(p => (
             <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
               <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{p.name}</span>
               <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
               <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} style={fieldS} aria-label={`${p.name} assists`} />
               <input placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} style={fieldS} aria-label={`${p.name} ACS`} />
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: won ? "#3ddc84" : "#7da6ff", width: 58, textAlign: "right" }}>{ptsFor(p.id, won)} pts</span>
+              {extras[side].some(x => x.id === p.id) &&
+                <button onClick={() => setExtras(ex => ({ ...ex, [side]: ex[side].filter(x => x.id !== p.id) }))} aria-label={`Remove sub ${p.name}`} style={{ background: "none", border: "none", color: "#ff8a94", cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>}
             </div>
           ))}
         </div>
+        {subPool.length > 0 && (
+          <select value="" onChange={e => { const r = subPool.find(x => x.userId === e.target.value); if (r) setExtras(ex => ({ ...ex, [side]: [...ex[side], { id: r.userId, name: r.name }] })); }}
+            style={{ marginTop: 8, padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px dashed rgba(61,220,132,0.4)", color: "#9af5c2", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", cursor: "pointer" }}>
+            <option value="">+ Add sub…</option>
+            {subPool.map(r => <option key={r.userId} value={r.userId}>{r.name}{r.rank ? ` · ${r.rank}` : ""}</option>)}
+          </select>
+        )}
       </div>
     );
   };
@@ -5034,6 +5264,9 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
         <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {ev?.weekend_label}</div>
         <h1 style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
         <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 14 }}>{regOpen ? "Claim your spot in this weekend's draft pool." : "Registration is closed — the draft opens soon."}</p>
+        <p style={{ color: "rgba(200,215,255,0.4)", margin: "8px auto 0", fontSize: 12.5, maxWidth: 520 }}>
+          {ev?.draft_at && <span style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace" }}>Draft: {new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · {new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} — </span>}
+          Teams form from whoever registers (roughly one per 5 players). Not drafted? You can still be subbed into matches — every match you play banks season points.</p>
       </div>
 
       {reg === undefined ? <p style={{ color: "rgba(200,215,255,0.5)", textAlign: "center" }}>…</p> : <>
