@@ -3516,7 +3516,6 @@ function DraftApp({ auth, browse, chrome }) {
           <span className="volt-rail-label">Expand</span>
         </button>
       )}
-      {chrome && railItem("__back", "‹", "Back to " + chrome.backLabel, { onClick: chrome.onBack, color: "rgba(200,215,255,0.55)" })}
       <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
       {railSections.map((sec, si) => (
         <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", gap: 2 }}>
@@ -3525,6 +3524,10 @@ function DraftApp({ auth, browse, chrome }) {
           {sec.items.map(nav => railItem(nav.id, nav.glyph, nav.label, { active: view === nav.id, liveDot: nav.id === "block" && (block || spinLive), onClick: () => setView(nav.id) }))}
         </div>
       ))}
+      {chrome && <>
+        <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "10px 6px" : "10px auto", background: "rgba(120,150,220,0.2)" }} />
+        {railItem("__back", "‹", "Back to " + chrome.backLabel, { onClick: chrome.onBack, color: "rgba(200,215,255,0.55)" })}
+      </>}
       <div style={{ marginTop: "auto" }} />
       {chrome?.account && railItem("__account", "◉", "My Account", { active: view === "account", onClick: () => setView("account") })}
       <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
@@ -5563,6 +5566,8 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
   const [susp, setSusp] = useState(0);            // weekends left on suspension
   const [myStrikes, setMyStrikes] = useState(0);  // my season no-show count
   const [avail, setAvail] = useState(false);      // availability confirmation
+  const [wantCap, setWantCap] = useState(false);  // captain volunteer (optional)
+  const [openApp, setOpenApp] = useState(null);   // expanded applicant in the host queue
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -5578,8 +5583,9 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
       setMyProf(p || null);
     } catch (e) { console.error(e); setMyProf(null); }
     try {
-      const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", window.__VOLT.userId).maybeSingle();
+      const { data: u } = await __sb.from("users").select("suspension_remaining, wants_captain").eq("id", window.__VOLT.userId).maybeSingle();
       setSusp(u?.suspension_remaining || 0);
+      setWantCap(w => reg === undefined ? !!u?.wants_captain : w);
       const { data: ns } = await __sb.from("registrations").select("id")
         .eq("community_id", window.__VOLT.communityId).eq("user_id", window.__VOLT.userId).eq("no_show", true);
       setMyStrikes((ns || []).length);
@@ -5594,6 +5600,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     setBusy(true);
     try {
       await __sb.from("registrations").insert({ event_id: ev.id, community_id: window.__VOLT.communityId, user_id: window.__VOLT.userId, status: isHost ? "approved" : "pending", availability_confirmed: true });
+      await __sb.from("users").update({ wants_captain: wantCap }).eq("id", window.__VOLT.userId);
       await load();
     } catch (e) { console.error(e); }
     setBusy(false);
@@ -5625,6 +5632,31 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     catch (e) { console.error(e); }
     setBusy(false);
   }
+
+  // Full submitted profile — one renderer for the queue and the roster.
+  const profileDetail = (r, borderColor) => {
+    const stat = (label, val) => val != null && val !== "" && (
+      <div key={label} style={{ padding: "7px 11px", background: "rgba(10,16,30,0.7)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(6), minWidth: 62 }}>
+        <div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{label}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }}>{val}</div>
+      </div>
+    );
+    return (
+      <div style={{ padding: "2px 14px 14px 34px", borderTop: `1px solid ${borderColor}` }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          {stat("Rank", r.rank)}{stat("Role", r.role)}{stat("Agent", r.agent)}{stat("KDA", r.kda)}{stat("ACS", r.acs)}{stat("HS%", r.hs != null && r.hs !== "" ? r.hs + "%" : null)}{stat("Win%", r.win != null && r.win !== "" ? r.win + "%" : null)}
+        </div>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 10, flexWrap: "wrap", fontSize: 12, color: "rgba(200,215,255,0.55)" }}>
+          {r.volunteered && <span style={{ color: "#7da6ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11 }}>✋ wants to captain</span>}
+          <span>{r.noShows > 0 ? `${r.noShows} no-show${r.noShows === 1 ? "" : "s"} this season` : "Clean attendance record"}</span>
+          {r.tracker
+            ? <a href={r.tracker} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: "#7da6ff", textDecoration: "underline", fontWeight: 600 }}>Open tracker profile ↗</a>
+            : <span style={{ color: "rgba(200,215,255,0.35)" }}>No tracker link provided</span>}
+        </div>
+        {!r.rank && !r.role && <p style={{ margin: "10px 0 0", fontSize: 12, color: "#ff8f9a" }}>⚠ Empty scouting profile — likely not a serious application.</p>}
+      </div>
+    );
+  };
 
   const myStatus = reg ? (reg.status || "approved") : null;
   const isIn = myStatus === "approved";
@@ -5692,6 +5724,10 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
               <input type="checkbox" checked={avail} onChange={e => setAvail(e.target.checked)} style={{ accentColor: "#3ddc84", marginTop: 2, width: 16, height: 16 }} />
               <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>② I confirm I'm available this weekend</b> — {ev?.draft_at ? `draft on ${new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" })} ${new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} and` : "the draft and"} up to 4 matches. No-shows hurt your team.</span>
             </label>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 12, cursor: "pointer", color: wantCap ? "#7da6ff" : "rgba(200,215,255,0.55)", fontSize: 13, lineHeight: 1.4 }}>
+              <input type="checkbox" checked={wantCap} onChange={e => setWantCap(e.target.checked)} style={{ accentColor: "#3d7bff", marginTop: 2, width: 16, height: 16 }} />
+              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>Available to captain</b> <span style={{ color: "rgba(200,215,255,0.4)" }}>(optional)</span> — you'd run the auction budget and draft your squad. The Commissioner makes the final call.</span>
+            </label>
             <button disabled={busy || !profileComplete || !avail} onClick={apply}
               style={shellBtn("primary", { width: "100%", marginTop: 14, padding: "13px", fontSize: 14, opacity: (busy || !profileComplete || !avail) ? 0.45 : 1 })}>
               {busy ? "…" : "Submit application →"}</button>
@@ -5717,17 +5753,25 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
             {secLabel(`Applications · ${pendingQ.length} pending`)}
             {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
             <div style={{ display: "grid", gap: 6 }}>
-              {pendingQ.map(r => (
-                <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "rgba(245,196,83,0.05)", border: "1px solid rgba(245,196,83,0.25)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
-                  {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
-                  {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
-                  <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
-                  {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 3 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
-                  <button disabled={busy} onClick={() => hostDecide(r, "approved")} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
-                  <button disabled={busy} onClick={() => hostDecide(r, "rejected")} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
-                </div>
-              ))}
+              {pendingQ.map(r => {
+                const openIt = openApp === r.userId;
+                return (
+                  <div key={r.userId} style={{ background: "rgba(245,196,83,0.05)", border: `1px solid rgba(245,196,83,${openIt ? "0.45" : "0.25"})`, clipPath: SHELL_NOTCH(7) }}>
+                    <div onClick={() => setOpenApp(openIt ? null : r.userId)} role="button" title="View full profile"
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flexWrap: "wrap", cursor: "pointer" }}>
+                      <span style={{ color: "#f5c453", fontSize: 11, width: 12 }}>{openIt ? "▾" : "▸"}</span>
+                      <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
+                      {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
+                      {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
+                      <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
+                      {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 3 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "approved"); }} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "rejected"); }} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
+                    </div>
+                    {openIt && profileDetail(r, "rgba(245,196,83,0.15)")}
+                  </div>
+                );
+              })}
             </div>
             {rejectedQ.length > 0 && <div style={{ marginTop: 10 }}>
               <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginBottom: 6 }}>// Rejected · {rejectedQ.length}</div>
@@ -5749,8 +5793,13 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           {roster.length === 0
             ? <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>No approved players yet.</p>
             : <div style={{ display: "grid", gap: 6 }}>
-                {roster.map(r => (
-                  <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
+                {roster.map(r => {
+                  const openIt = openApp === "roster:" + r.userId;
+                  return (
+                  <div key={r.userId} style={{ background: "rgba(255,255,255,0.03)", border: `1px solid rgba(120,150,220,${openIt ? "0.3" : "0.14"})`, clipPath: SHELL_NOTCH(7) }}>
+                  <div onClick={() => setOpenApp(openIt ? null : "roster:" + r.userId)} role="button" title="View full profile"
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", cursor: "pointer", flexWrap: "wrap" }}>
+                    <span style={{ color: "#7da6ff", fontSize: 11, width: 12 }}>{openIt ? "▾" : "▸"}</span>
                     <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1 }}>{r.name}
                       {r.userId === window.__VOLT.userId && <span style={{ color: "rgba(200,215,255,0.4)", fontWeight: 500, marginLeft: 6, fontSize: 11 }}>(you)</span>}
                     </span>
@@ -5759,11 +5808,14 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
                     {r.isCaptain && <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Captain</span>}
                     {!r.isCaptain && r.volunteered && <span title="Available to captain" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>available</span>}
                     {isHost && (
-                      <button disabled={busy} onClick={() => hostSetCaptain(r, !r.isCaptain)} style={shellBtn(r.isCaptain ? "ghost" : "warn", { padding: "5px 10px", fontSize: 10 })}>
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostSetCaptain(r, !r.isCaptain); }} style={shellBtn(r.isCaptain ? "ghost" : "warn", { padding: "5px 10px", fontSize: 10 })}>
                         {r.isCaptain ? "Remove" : "Make captain"}</button>
                     )}
                   </div>
-                ))}
+                  {openIt && profileDetail(r, "rgba(120,150,220,0.15)")}
+                  </div>
+                  );
+                })}
               </div>}
           {isHost && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "12px 0 0" }}>Captains you assign here become the teams when you open the draft. "Available" marks players who volunteered.</p>}
         </div>
