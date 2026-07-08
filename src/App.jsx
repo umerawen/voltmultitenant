@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 
 // ── Multi-tenant storage layer ──────────────────────────────────────────
@@ -2866,9 +2867,10 @@ function DraftApp({ auth, browse, chrome }) {
     if (browse) { setIdentity("spectator"); return; }
     const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
     if (mine) { setIdentity(mine.id); return; }
-    // Logged-in non-captain on a real board (every seat owned by someone else):
-    // there is nothing to claim — skip the seat gate, go straight to spectator.
-    if (auth.userId && state.teams.length && state.teams.every(t => t.captainUserId)) setIdentity("spectator");
+    // League users never self-claim seats — the Commissioner assigns captains.
+    // Anyone logged in without an owned seat watches as spectator, even on a
+    // sample/unbuilt board. The seat gate remains only for legacy/preview mode.
+    if (auth.userId) setIdentity("spectator");
   }, [state, auth, identity, browse]);
 
   // draft time lives in shared state so the countdown matches for everyone
@@ -3494,61 +3496,82 @@ function DraftApp({ auth, browse, chrome }) {
         </div>
       </div>
 
-      {/* ── side drawer — every view, one calm list ── */}
-      {drawerOpen && <>
-        <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(3,5,10,0.7)", backdropFilter: "blur(2px)" }} />
-        <aside style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 96, width: 272, background: "linear-gradient(160deg, rgba(13,18,32,0.99), rgba(7,10,18,0.99))", borderRight: "1px solid rgba(61,123,255,0.3)", boxShadow: "24px 0 60px rgba(0,0,0,0.55)", padding: "18px 14px", overflowY: "auto", fontFamily: "'Rajdhani',sans-serif" }}>
-          <div className="flex items-center justify-between" style={{ padding: "0 6px 14px" }}>
-            <span className="text-base font-bold uppercase tracking-wide" style={{ color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>{window.__VOLT.communityName || "VOLT"}</span>
-            <button onClick={() => setDrawerOpen(false)} aria-label="Close navigation" style={{ color: "rgba(200,215,255,0.6)", fontSize: 16, padding: "2px 8px" }}>✕</button>
+      {/* ── side drawer — floating HUD panel, portaled to <body> because the
+             sticky header's backdrop-filter traps fixed descendants ── */}
+      {drawerOpen && createPortal(<>
+        <style>{`
+          @keyframes voltDrawerIn { from { transform: translateX(-24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+          @keyframes voltFadeIn { from { opacity: 0; } to { opacity: 1; } }
+          .volt-drawer-item { transition: background .15s ease, color .15s ease, padding-left .15s ease; }
+          .volt-drawer-item:hover { background: rgba(61,123,255,0.1) !important; color: #eaf1ff !important; padding-left: 16px !important; }
+        `}</style>
+        <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(3,5,10,0.65)", backdropFilter: "blur(3px)", animation: "voltFadeIn .18s ease" }} />
+        <aside style={{ position: "fixed", left: 16, top: 16, bottom: 16, zIndex: 96, width: 288, display: "flex", flexDirection: "column",
+          background: "linear-gradient(165deg, rgba(16,23,42,0.97), rgba(8,11,20,0.97))",
+          border: "1px solid rgba(61,123,255,0.4)",
+          clipPath: "polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px))",
+          boxShadow: "0 0 60px rgba(61,123,255,0.14), 24px 0 80px rgba(0,0,0,0.6)",
+          padding: "20px 14px 16px", overflowY: "auto", fontFamily: "'Rajdhani',sans-serif",
+          animation: "voltDrawerIn .22s cubic-bezier(.2,.8,.3,1)" }}>
+          <span style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+          <span style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+          <div className="flex items-center justify-between" style={{ padding: "0 8px 6px" }}>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.34em", textTransform: "uppercase", color: "rgba(120,150,220,0.6)", fontWeight: 700 }}>// VOLT LEAGUE</div>
+              <div className="text-lg font-bold uppercase tracking-wide" style={{ color: "#3d7bff", textShadow: "0 0 16px rgba(61,123,255,0.65)" }}>{window.__VOLT.communityName || "VOLT"}</div>
+            </div>
+            <button onClick={() => setDrawerOpen(false)} aria-label="Close navigation"
+              style={{ color: "rgba(200,215,255,0.6)", fontSize: 14, width: 30, height: 30, display: "grid", placeItems: "center", clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)" }}>✕</button>
           </div>
+          <div style={{ height: 1, margin: "8px 6px 14px", background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
           {[{ title: "League", items: NAV }, { title: "Tournament", items: TOURNEY_NAV }].map(sec => {
             const items = sec.items.filter(n => !n.adminOnly || isAdmin);
             if (!items.length) return null;
             return (
-              <div key={sec.title} style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 6px" }}>// {sec.title}</div>
+              <div key={sec.title} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 7px" }}>// {sec.title}</div>
                 {items.map(nav => {
                   const active = view === nav.id;
                   const live = nav.id === "block" && (block || spinLive);
                   return (
                     <button key={nav.id} onClick={() => { setView(nav.id); setDrawerOpen(false); }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
-                      style={{ background: active ? "rgba(61,123,255,0.16)" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.75)", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
-                      <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
+                      className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left"
+                      style={{ paddingLeft: 12, paddingRight: 12, background: active ? "linear-gradient(90deg, rgba(61,123,255,0.18), rgba(61,123,255,0.03))" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.72)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
+                      <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.4)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none" }}>{nav.glyph}</span>
                       <span className="font-semibold uppercase tracking-[0.12em] text-sm">{nav.label}</span>
-                      {live && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655" }} />}
+                      {live && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
+                      {active && !live && <span className="ml-auto" style={{ fontSize: 9, letterSpacing: "0.2em", color: "#3d7bff", fontWeight: 700 }}>◂</span>}
                     </button>
                   );
                 })}
               </div>
             );
           })}
-          <div style={{ borderTop: "1px solid rgba(120,150,220,0.15)", paddingTop: 12 }}>
-            <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 6px" }}>// You</div>
+          <div style={{ marginTop: "auto", borderTop: "1px solid rgba(120,150,220,0.15)", paddingTop: 12 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 7px" }}>// You</div>
             {chrome?.account && (
               <button onClick={() => { setView("account"); setDrawerOpen(false); }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
-                style={{ background: view === "account" ? "rgba(61,123,255,0.16)" : "transparent", color: view === "account" ? "#eaf1ff" : "rgba(200,215,255,0.75)", borderLeft: view === "account" ? "2px solid #3d7bff" : "2px solid transparent" }}>
-                <span className="text-base" style={{ color: view === "account" ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>◉</span>
+                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left"
+                style={{ paddingLeft: 12, paddingRight: 12, background: view === "account" ? "linear-gradient(90deg, rgba(61,123,255,0.18), rgba(61,123,255,0.03))" : "transparent", color: view === "account" ? "#eaf1ff" : "rgba(200,215,255,0.72)", borderLeft: view === "account" ? "2px solid #3d7bff" : "2px solid transparent" }}>
+                <span className="text-base" style={{ color: view === "account" ? "#3d7bff" : "rgba(200,215,255,0.4)" }}>◉</span>
                 <span className="font-semibold uppercase tracking-[0.12em] text-sm">My Account</span>
               </button>
             )}
             <button onClick={() => { setDrawerOpen(false); setIdentity(null); }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-left" style={{ color: "rgba(200,215,255,0.75)" }}>
-              <span className="text-base" style={{ color: "rgba(200,215,255,0.45)" }}>⇄</span>
+              className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
+              <span className="text-base" style={{ color: "rgba(200,215,255,0.4)" }}>⇄</span>
               <span className="font-semibold uppercase tracking-[0.12em] text-sm">Switch Seat</span>
             </button>
             {chrome && (
               <button onClick={() => { setDrawerOpen(false); chrome.onBack(); }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 text-left" style={{ color: "#aec6ff" }}>
-                <span className="text-base" style={{ color: "rgba(200,215,255,0.45)" }}>‹</span>
+                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "#aec6ff", borderLeft: "2px solid transparent" }}>
+                <span className="text-base" style={{ color: "rgba(200,215,255,0.4)" }}>‹</span>
                 <span className="font-semibold uppercase tracking-[0.12em] text-sm">Back to {chrome.backLabel}</span>
               </button>
             )}
           </div>
         </aside>
-      </>}
+      </>, document.body)}
     </header>
   );
 
