@@ -2767,6 +2767,14 @@ function DraftApp({ auth, browse, chrome }) {
   const [tourneyOpen, setTourneyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false); // side nav
+  const [isDesk, setIsDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    const on = (e) => setIsDesk(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
   useEffect(() => { if (!tourneyOpen) return; const close = () => setTourneyOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [tourneyOpen]);
   useEffect(() => { if (!mobileNavOpen) return; const close = () => setMobileNavOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [mobileNavOpen]);
   const [liveCount, setLiveCount] = useState(1);
@@ -3412,7 +3420,7 @@ function DraftApp({ auth, browse, chrome }) {
   );
 
   const shell = (children) => (
-    <div className="min-h-screen" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden" }}>
+    <div className="min-h-screen" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk && identity ? 60 : 0 }}>
       {fonts}
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
       <div className="relative min-h-screen">
@@ -3442,57 +3450,104 @@ function DraftApp({ auth, browse, chrome }) {
   const spinLive = state.spin && Date.now() < state.spin.startTs + state.spin.duration + REVEAL_MS;
   const teamOf = (id) => state.teams.find((t) => t.id === id);
 
+  // Seat identity folded into the account chip — no separate pill.
+  const chipSeat = isAdmin ? { label: "Commissioner", color: "#3d7bff" }
+    : isSpectator ? { label: "Spectator", color: "#7da6ff", sub: "View only · bidding disabled" }
+    : myTeam ? { label: myTeam.name, color: myTeam.hue, sub: `${fmt(myTeam.budget)} · ${emptySlots(myTeam)} slots open` } : null;
+
+  /* ── desktop icon rail — persistent primary navigation ── */
+  const railSections = [
+    { title: "League", items: NAV },
+    { title: "Tournament", items: TOURNEY_NAV },
+  ].map(s => ({ ...s, items: s.items.filter(n => !n.adminOnly || isAdmin) })).filter(s => s.items.length);
+  const Rail = isDesk && createPortal(
+    <nav aria-label="Primary" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: 60, display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif" }}>
+      <style>{`
+        .volt-rail-item { position: relative; }
+        .volt-rail-label { position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%) translateX(-4px); white-space: nowrap; padding: 5px 11px; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #eaf1ff; background: linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98)); border: 1px solid rgba(61,123,255,0.4); clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px)); opacity: 0; pointer-events: none; transition: opacity .12s ease, transform .12s ease; z-index: 45; }
+        .volt-rail-item:hover .volt-rail-label { opacity: 1; transform: translateY(-50%) translateX(0); }
+        .volt-rail-item:hover .volt-rail-glyph { color: #eaf1ff !important; }
+      `}</style>
+      {/* league mark — opens the expanded panel */}
+      <button onClick={() => setDrawerOpen(true)} className="volt-rail-item grid place-items-center" aria-label="Open league menu"
+        style={{ width: 42, height: 42, marginBottom: 4, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
+        <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)", fontFamily: "'Rajdhani',sans-serif" }}>{(window.__VOLT.communityName || "V").slice(0, 1).toUpperCase()}</span>
+        <span className="volt-rail-label">{window.__VOLT.communityName || "VOLT"} — menu</span>
+      </button>
+      {chrome && (
+        <button onClick={chrome.onBack} className="volt-rail-item grid place-items-center" aria-label={"Back to " + chrome.backLabel}
+          style={{ width: 42, height: 38, color: "rgba(200,215,255,0.55)" }}>
+          <span className="volt-rail-glyph" style={{ fontSize: 17, transition: "color .12s" }}>‹</span>
+          <span className="volt-rail-label">Back to {chrome.backLabel}</span>
+        </button>
+      )}
+      <div style={{ width: 26, height: 1, margin: "8px 0 10px", background: "rgba(61,123,255,0.35)" }} />
+      {railSections.map((sec, si) => (
+        <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+          {si > 0 && <div style={{ width: 26, height: 1, margin: "8px 0", background: "rgba(120,150,220,0.2)" }} />}
+          {sec.items.map(nav => {
+            const active = view === nav.id;
+            const liveDot = nav.id === "block" && (block || spinLive);
+            return (
+              <button key={nav.id} onClick={() => setView(nav.id)} className="volt-rail-item grid place-items-center" aria-label={nav.label}
+                style={{ width: 44, height: 42, background: active ? "linear-gradient(90deg, rgba(61,123,255,0.2), rgba(61,123,255,0.04))" : "transparent", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
+                <span className="volt-rail-glyph" style={{ fontSize: 17, color: active ? "#3d7bff" : "rgba(200,215,255,0.5)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none", transition: "color .12s" }}>{nav.glyph}</span>
+                {liveDot && <span className="animate-pulse" style={{ position: "absolute", top: 7, right: 8, width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
+                <span className="volt-rail-label">{nav.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ))}
+      <div style={{ marginTop: "auto" }} />
+      {/* set-and-forget controls live at the rail's foot */}
+      <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item grid place-items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
+        style={{ width: 42, height: 40, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)" }}>
+        <span style={{ fontSize: 15 }}>{soundOn ? "🔊" : "🔇"}</span>
+        <span className="volt-rail-label">{soundOn ? "Sound on" : "Sound off"}</span>
+      </button>
+    </nav>, document.body);
+
   /* ── top nav (transparent, hero-themed) ── */
   const TopNav = (
     <header className="sticky top-0 z-30" style={{ background: "rgba(6,9,16,0.94)", borderBottom: "1px solid rgba(61,123,255,0.14)", backdropFilter: "blur(12px)" }}>
       <div className="page-wrap flex items-center gap-3 py-4 flex-wrap">
-        {/* side-nav trigger — all views live in the drawer now */}
-        <button onClick={() => setDrawerOpen(true)} aria-label="Open navigation"
-          className="shrink-0 grid place-items-center transition-all hover:scale-105"
-          style={{ width: 42, height: 40, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.45)" }}>
-          <span className="flex flex-col gap-1">
-            <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
-            <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
-            <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
-          </span>
-        </button>
-        {/* league chrome: back to schedule/registration */}
-        {chrome && (
-          <button onClick={chrome.onBack} title={"Back to " + chrome.backLabel}
-            className="shrink-0 px-2.5 py-2 text-sm font-semibold uppercase tracking-[0.14em] transition-all hover:scale-[1.04]"
-            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.4)", color: "#aec6ff" }}>‹ {chrome.backLabel}</button>
+        {/* mobile: hamburger opens the floating drawer; desktop uses the rail */}
+        {!isDesk && (
+          <button onClick={() => setDrawerOpen(true)} aria-label="Open navigation"
+            className="shrink-0 grid place-items-center transition-all hover:scale-105"
+            style={{ width: 42, height: 40, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.45)" }}>
+            <span className="flex flex-col gap-1">
+              <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
+              <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
+              <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
+            </span>
+          </button>
         )}
-        {/* brand with HUD corner bracket */}
+        {/* context — which weekend, which phase. Identity lives on the rail. */}
         <div className="relative flex items-center gap-2 mr-2 shrink-0 pl-3 pr-4 py-1.5">
           <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
           <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>{window.__VOLT.communityName || "VOLT"}</span>
-          <span className="text-xl font-bold" style={{ color: "rgba(180,200,255,0.3)" }}>//</span>
+          {!isDesk && chrome?.phaseTag && <span title={chrome.phaseTag} style={{ width: 8, height: 8, borderRadius: "50%", background: chrome.phaseColor || "#5b8dff", boxShadow: `0 0 8px ${chrome.phaseColor || "#5b8dff"}` }} />}
           <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#eaf1ff" }}>{window.__VOLT.weekendLabel || "DRAFT"}</span>
-          {chrome?.phaseTag && <span className="hidden md:inline text-[11px] font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", color: chrome.phaseColor || "#5b8dff", marginLeft: 4 }}>· {chrome.phaseTag}</span>}
+          {isDesk && chrome?.phaseTag && <span className="text-[11px] font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", color: chrome.phaseColor || "#5b8dff", marginLeft: 4 }}>· {chrome.phaseTag}</span>}
         </div>
 
         {/* spacer — view tabs moved to the side drawer */}
         <div className="flex-1 min-w-0" />
 
-        {/* seat status + switch, framed with HUD brackets */}
+        {/* right cluster: Manage + account. Seat/budget lives inside the chip. */}
         <div className="relative flex items-center gap-3 shrink-0 pl-4 pr-3 py-1.5">
           <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid rgba(61,123,255,0.6)", borderTop: "2px solid rgba(61,123,255,0.6)" }} />
           <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid rgba(61,123,255,0.6)", borderBottom: "2px solid rgba(61,123,255,0.6)" }} />
-          <div className="hidden sm:flex flex-col items-end leading-tight">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full" style={{ background: isAdmin ? "#3d7bff" : isSpectator ? "#7da6ff" : myTeam.hue, boxShadow: (isAdmin || isSpectator) ? "0 0 8px #3d7bff" : "none" }} />
-              <span className="text-sm font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: isAdmin ? "#7da6ff" : isSpectator ? "#aec6ff" : myTeam.hue }}>{isAdmin ? "Commissioner" : isSpectator ? "Player · Spectator" : myTeam.name}</span>
-            </div>
-            {myTeam && <span className="text-xs" style={{ color: "rgba(200,215,255,0.45)" }}>{fmt(myTeam.budget)} · {emptySlots(myTeam)} slots open</span>}
-            {isSpectator && <span className="text-xs" style={{ color: "rgba(200,215,255,0.45)" }}>View only · bidding disabled</span>}
-          </div>
-          <button data-snd="off" data-nohover="1" onClick={() => setSoundOn((v) => !v)} aria-label={soundOn ? "Mute sound" : "Unmute sound"} title={soundOn ? "Mute" : "Unmute"}
-            className="grid place-items-center transition-all hover:scale-110" style={{ width: 38, height: 38, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
-            {soundOn ? "🔊" : "🔇"}
-          </button>
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
-          {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} />}
+          {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} seat={chipSeat} />}
+          {!chrome && (
+            <button data-snd="off" data-nohover="1" onClick={() => setSoundOn((v) => !v)} aria-label={soundOn ? "Mute sound" : "Unmute sound"}
+              className="grid place-items-center transition-all hover:scale-110" style={{ width: 38, height: 38, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
+              {soundOn ? "🔊" : "🔇"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -3506,7 +3561,7 @@ function DraftApp({ auth, browse, chrome }) {
           .volt-drawer-item:hover { background: rgba(61,123,255,0.1) !important; color: #eaf1ff !important; padding-left: 16px !important; }
         `}</style>
         <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(3,5,10,0.65)", backdropFilter: "blur(3px)", animation: "voltFadeIn .18s ease" }} />
-        <aside style={{ position: "fixed", left: 16, top: 16, bottom: 16, zIndex: 96, width: 288, display: "flex", flexDirection: "column",
+        <aside style={{ position: "fixed", left: 16, top: 16, maxHeight: "calc(100vh - 32px)", zIndex: 96, width: 288, display: "flex", flexDirection: "column",
           background: "linear-gradient(165deg, rgba(16,23,42,0.97), rgba(8,11,20,0.97))",
           border: "1px solid rgba(61,123,255,0.4)",
           clipPath: "polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px))",
@@ -3523,7 +3578,14 @@ function DraftApp({ auth, browse, chrome }) {
             <button onClick={() => setDrawerOpen(false)} aria-label="Close navigation"
               style={{ color: "rgba(200,215,255,0.6)", fontSize: 14, width: 30, height: 30, display: "grid", placeItems: "center", clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)" }}>✕</button>
           </div>
-          <div style={{ height: 1, margin: "8px 6px 14px", background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
+          {chrome && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px 0" }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: chrome.phaseColor || "#5b8dff", boxShadow: `0 0 8px ${chrome.phaseColor || "#5b8dff"}` }} />
+              <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(200,215,255,0.75)" }}>{window.__VOLT.weekendLabel || "Weekend"}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.14em", color: chrome.phaseColor || "#5b8dff" }}>· {chrome.phaseTag}</span>
+            </div>
+          )}
+          <div style={{ height: 1, margin: "10px 6px 14px", background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
           {[{ title: "League", items: NAV }, { title: "Tournament", items: TOURNEY_NAV }].map(sec => {
             const items = sec.items.filter(n => !n.adminOnly || isAdmin);
             if (!items.length) return null;
@@ -3557,11 +3619,20 @@ function DraftApp({ auth, browse, chrome }) {
                 <span className="font-semibold uppercase tracking-[0.12em] text-sm">My Account</span>
               </button>
             )}
-            <button onClick={() => { setDrawerOpen(false); setIdentity(null); }}
-              className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
-              <span className="text-base" style={{ color: "rgba(200,215,255,0.4)" }}>⇄</span>
-              <span className="font-semibold uppercase tracking-[0.12em] text-sm">Switch Seat</span>
-            </button>
+            {!auth?.userId && (
+              <button onClick={() => { setDrawerOpen(false); setIdentity(null); }}
+                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
+                <span className="text-base" style={{ color: "rgba(200,215,255,0.4)" }}>⇄</span>
+                <span className="font-semibold uppercase tracking-[0.12em] text-sm">Switch Seat</span>
+              </button>
+            )}
+            {!isDesk && (
+              <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)}
+                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
+                <span className="text-base" style={{ color: soundOn ? "#7da6ff" : "rgba(200,215,255,0.4)" }}>{soundOn ? "🔊" : "🔇"}</span>
+                <span className="font-semibold uppercase tracking-[0.12em] text-sm">{soundOn ? "Sound on" : "Sound off"}</span>
+              </button>
+            )}
             {chrome && (
               <button onClick={() => { setDrawerOpen(false); chrome.onBack(); }}
                 className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "#aec6ff", borderLeft: "2px solid transparent" }}>
@@ -4178,6 +4249,7 @@ function DraftApp({ auth, browse, chrome }) {
   return shell(
     <>
       {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} />}
+      {Rail}
       {TopNav}
       {views[view]}
     </>
@@ -4589,12 +4661,12 @@ function HostMenu({ children }) {
 }
 
 // Persistent account control — shows who you are + sign out. Used on every shell screen.
-function AccountChip({ account, onSignOut, onProfile }) {
+function AccountChip({ account, onSignOut, onProfile, seat }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
       <button onClick={() => setOpen(o => !o)} aria-label="Account menu" style={shellBtn("ghost", { display: "flex", alignItems: "center", gap: 8, letterSpacing: "0.1em", fontSize: 13 })}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#3ddc84", boxShadow: "0 0 8px rgba(61,220,132,0.8)" }} />
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: seat?.color || "#3ddc84", boxShadow: `0 0 8px ${seat?.color || "rgba(61,220,132,0.8)"}` }} />
         <span style={{ textTransform: "uppercase" }}>{account.name}</span>
         <span style={{ color: "rgba(200,215,255,0.5)", fontSize: 11 }}>▾</span>
       </button>
@@ -4603,8 +4675,17 @@ function AccountChip({ account, onSignOut, onProfile }) {
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 210, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
           <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", color: "#ecf3ff" }}>{account.name}</div>
           <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: account.role === "host" ? "#f5c453" : "#5b8dff", marginTop: 2, fontWeight: 600 }}>{account.role === "host" ? "Host" : "Player"}</div>
+          {seat && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: seat.color, boxShadow: `0 0 8px ${seat.color}` }} />
+                <span style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: seat.color }}>{seat.label}</span>
+              </div>
+              {seat.sub && <div style={{ fontSize: 11, color: "rgba(200,215,255,0.5)", marginTop: 3 }}>{seat.sub}</div>}
+            </div>
+          )}
           {account.community && <div style={{ fontSize: 12, color: "rgba(200,215,255,0.55)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(120,150,220,0.15)" }}>{account.community}{account.code && <span style={{ display: "block", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#7da6ff", marginTop: 2 }}>code: {account.code}</span>}</div>}
-          {onProfile && <button onClick={() => { setOpen(false); onProfile(); }} style={shellBtn("ghost", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>⊞ My profile</button>}
+          {onProfile && <button onClick={() => { setOpen(false); onProfile(); }} style={shellBtn("ghost", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>⊞ My Account</button>}
           <button onClick={onSignOut} style={shellBtn("danger", { width: "100%", marginTop: onProfile ? 8 : 12, padding: "9px", letterSpacing: "0.1em" })}>Sign out</button>
         </div>
       </>}
