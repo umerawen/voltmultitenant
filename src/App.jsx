@@ -2768,6 +2768,8 @@ function DraftApp({ auth, browse, chrome }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false); // side nav
   const [isDesk, setIsDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
+  const [railWide, setRailWide] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem("volt_rail_wide", railWide ? "1" : "0"); } catch {} }, [railWide]);
   useEffect(() => {
     if (!window.matchMedia) return;
     const mq = window.matchMedia("(min-width: 768px)");
@@ -3420,7 +3422,7 @@ function DraftApp({ auth, browse, chrome }) {
   );
 
   const shell = (children) => (
-    <div className="min-h-screen" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk && identity ? 60 : 0 }}>
+    <div className="min-h-screen" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk && identity ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
       {fonts}
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
       <div className="relative min-h-screen">
@@ -3450,61 +3452,87 @@ function DraftApp({ auth, browse, chrome }) {
   const spinLive = state.spin && Date.now() < state.spin.startTs + state.spin.duration + REVEAL_MS;
   const teamOf = (id) => state.teams.find((t) => t.id === id);
 
+  // Current view name for the bar (rail may be collapsed to glyphs).
+  const viewLabel = view === "account" ? "My Account" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
+  // Draft countdown — only rendered while the draft is still ahead.
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => { if (!chrome?.draftAt) return; const t = setInterval(() => setNowTick(Date.now()), 30000); return () => clearInterval(t); }, [chrome?.draftAt]);
+  const draftMs = chrome?.draftAt ? new Date(chrome.draftAt).getTime() - nowTick : -1;
+  const draftIn = draftMs > 0 ? (() => {
+    const m = Math.floor(draftMs / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+    return d > 0 ? `${d}D ${h}H` : h > 0 ? `${h}H ${String(mm).padStart(2, "0")}M` : `${mm}M`;
+  })() : null;
+
   // Seat identity folded into the account chip — no separate pill.
   const chipSeat = isAdmin ? { label: "Commissioner", color: "#3d7bff" }
     : isSpectator ? { label: "Spectator", color: "#7da6ff", sub: "View only · bidding disabled" }
     : myTeam ? { label: myTeam.name, color: myTeam.hue, sub: `${fmt(myTeam.budget)} · ${emptySlots(myTeam)} slots open` } : null;
 
-  /* ── desktop icon rail — persistent primary navigation ── */
+  /* ── desktop rail — persistent primary nav, collapsible ↔ wide ── */
   const railSections = [
     { title: "League", items: NAV },
     { title: "Tournament", items: TOURNEY_NAV },
   ].map(s => ({ ...s, items: s.items.filter(n => !n.adminOnly || isAdmin) })).filter(s => s.items.length);
+  const RAIL_W = railWide ? 224 : 60;
+  const railItem = (key, glyph, label, { active = false, liveDot = false, onClick, color } = {}) => (
+    <button key={key} onClick={onClick} className="volt-rail-item flex items-center" aria-label={label}
+      style={{ width: railWide ? RAIL_W - 16 : 44, height: 42, justifyContent: railWide ? "flex-start" : "center", gap: 10, paddingLeft: railWide ? 12 : 0, paddingRight: railWide ? 10 : 0,
+        background: active ? "linear-gradient(90deg, rgba(61,123,255,0.2), rgba(61,123,255,0.04))" : "transparent",
+        clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+        borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
+      <span className="volt-rail-glyph" style={{ fontSize: 17, color: active ? "#3d7bff" : color || "rgba(200,215,255,0.5)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none", transition: "color .12s", position: "relative" }}>
+        {glyph}
+        {liveDot && !railWide && <span className="animate-pulse" style={{ position: "absolute", top: -3, right: -6, width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
+      </span>
+      {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: active ? "#eaf1ff" : "rgba(200,215,255,0.72)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>}
+      {liveDot && railWide && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
+      {!railWide && <span className="volt-rail-label">{label}</span>}
+    </button>
+  );
   const Rail = isDesk && createPortal(
-    <nav aria-label="Primary" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: 60, display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif" }}>
+    <nav aria-label="Primary" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: RAIL_W, display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", padding: railWide ? "12px 8px 14px" : "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif", transition: "width .18s cubic-bezier(.2,.8,.3,1)", overflowY: "auto", overflowX: "hidden" }}>
       <style>{`
         .volt-rail-item { position: relative; }
         .volt-rail-label { position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%) translateX(-4px); white-space: nowrap; padding: 5px 11px; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #eaf1ff; background: linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98)); border: 1px solid rgba(61,123,255,0.4); clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px)); opacity: 0; pointer-events: none; transition: opacity .12s ease, transform .12s ease; z-index: 45; }
         .volt-rail-item:hover .volt-rail-label { opacity: 1; transform: translateY(-50%) translateX(0); }
         .volt-rail-item:hover .volt-rail-glyph { color: #eaf1ff !important; }
       `}</style>
-      {/* league mark — opens the expanded panel */}
-      <button onClick={() => setDrawerOpen(true)} className="volt-rail-item grid place-items-center" aria-label="Open league menu"
-        style={{ width: 42, height: 42, marginBottom: 4, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
-        <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)", fontFamily: "'Rajdhani',sans-serif" }}>{(window.__VOLT.communityName || "V").slice(0, 1).toUpperCase()}</span>
-        <span className="volt-rail-label">{window.__VOLT.communityName || "VOLT"} — menu</span>
-      </button>
-      {chrome && (
-        <button onClick={chrome.onBack} className="volt-rail-item grid place-items-center" aria-label={"Back to " + chrome.backLabel}
-          style={{ width: 42, height: 38, color: "rgba(200,215,255,0.55)" }}>
-          <span className="volt-rail-glyph" style={{ fontSize: 17, transition: "color .12s" }}>‹</span>
-          <span className="volt-rail-label">Back to {chrome.backLabel}</span>
+      {/* league mark + collapse toggle */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: railWide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: railWide ? 4 : 0 }}>
+        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+          <span className="grid place-items-center shrink-0" style={{ width: 42, height: 42, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
+            <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>{(window.__VOLT.communityName || "V").slice(0, 1).toUpperCase()}</span>
+          </span>
+          {railWide && <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{window.__VOLT.communityName || "VOLT"}</span>}
+        </div>
+        {railWide && (
+          <button onClick={() => setRailWide(false)} aria-label="Collapse navigation" title="Collapse"
+            style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}>«</button>
+        )}
+      </div>
+      {!railWide && (
+        <button onClick={() => setRailWide(true)} aria-label="Expand navigation" className="volt-rail-item grid place-items-center"
+          style={{ width: 42, height: 30, color: "rgba(200,215,255,0.55)", margin: "0 auto" }}>
+          <span className="volt-rail-glyph" style={{ fontSize: 13, transition: "color .12s" }}>»</span>
+          <span className="volt-rail-label">Expand</span>
         </button>
       )}
-      <div style={{ width: 26, height: 1, margin: "8px 0 10px", background: "rgba(61,123,255,0.35)" }} />
+      {chrome && railItem("__back", "‹", "Back to " + chrome.backLabel, { onClick: chrome.onBack, color: "rgba(200,215,255,0.55)" })}
+      <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
       {railSections.map((sec, si) => (
-        <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-          {si > 0 && <div style={{ width: 26, height: 1, margin: "8px 0", background: "rgba(120,150,220,0.2)" }} />}
-          {sec.items.map(nav => {
-            const active = view === nav.id;
-            const liveDot = nav.id === "block" && (block || spinLive);
-            return (
-              <button key={nav.id} onClick={() => setView(nav.id)} className="volt-rail-item grid place-items-center" aria-label={nav.label}
-                style={{ width: 44, height: 42, background: active ? "linear-gradient(90deg, rgba(61,123,255,0.2), rgba(61,123,255,0.04))" : "transparent", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
-                <span className="volt-rail-glyph" style={{ fontSize: 17, color: active ? "#3d7bff" : "rgba(200,215,255,0.5)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none", transition: "color .12s" }}>{nav.glyph}</span>
-                {liveDot && <span className="animate-pulse" style={{ position: "absolute", top: 7, right: 8, width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
-                <span className="volt-rail-label">{nav.label}</span>
-              </button>
-            );
-          })}
+        <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", gap: 2 }}>
+          {si > 0 && <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px" : "8px auto", background: "rgba(120,150,220,0.2)" }} />}
+          {railWide && <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "2px 12px 6px" }}>// {sec.title}</div>}
+          {sec.items.map(nav => railItem(nav.id, nav.glyph, nav.label, { active: view === nav.id, liveDot: nav.id === "block" && (block || spinLive), onClick: () => setView(nav.id) }))}
         </div>
       ))}
       <div style={{ marginTop: "auto" }} />
-      {/* set-and-forget controls live at the rail's foot */}
-      <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item grid place-items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
-        style={{ width: 42, height: 40, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)" }}>
+      {chrome?.account && railItem("__account", "◉", "My Account", { active: view === "account", onClick: () => setView("account") })}
+      <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
+        style={{ width: railWide ? RAIL_W - 16 : 42, height: 40, justifyContent: railWide ? "flex-start" : "center", gap: 10, paddingLeft: railWide ? 12 : 0, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)", margin: railWide ? 0 : "0 auto" }}>
         <span style={{ fontSize: 15 }}>{soundOn ? "🔊" : "🔇"}</span>
-        <span className="volt-rail-label">{soundOn ? "Sound on" : "Sound off"}</span>
+        {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" }}>{soundOn ? "Sound on" : "Sound off"}</span>}
+        {!railWide && <span className="volt-rail-label">{soundOn ? "Sound on" : "Sound off"}</span>}
       </button>
     </nav>, document.body);
 
@@ -3532,6 +3560,12 @@ function DraftApp({ auth, browse, chrome }) {
           <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#eaf1ff" }}>{window.__VOLT.weekendLabel || "DRAFT"}</span>
           {isDesk && chrome?.phaseTag && <span className="text-[11px] font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", color: chrome.phaseColor || "#5b8dff", marginLeft: 4 }}>· {chrome.phaseTag}</span>}
         </div>
+        {viewLabel && (
+          <div className="hidden sm:flex items-center gap-2 shrink-0" style={{ fontFamily: "'Rajdhani',sans-serif" }}>
+            <span style={{ color: "rgba(120,150,220,0.4)", fontSize: 15, fontWeight: 700 }}>/</span>
+            <span className="text-sm font-bold uppercase" style={{ letterSpacing: "0.2em", color: "#7da6ff" }}>{viewLabel}</span>
+          </div>
+        )}
 
         {/* spacer — view tabs moved to the side drawer */}
         <div className="flex-1 min-w-0" />
@@ -3540,6 +3574,14 @@ function DraftApp({ auth, browse, chrome }) {
         <div className="relative flex items-center gap-3 shrink-0 pl-4 pr-3 py-1.5">
           <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid rgba(61,123,255,0.6)", borderTop: "2px solid rgba(61,123,255,0.6)" }} />
           <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid rgba(61,123,255,0.6)", borderBottom: "2px solid rgba(61,123,255,0.6)" }} />
+          {draftIn && (
+            <div className="hidden sm:flex items-center gap-2" title={new Date(chrome.draftAt).toLocaleString()}
+              style={{ padding: "7px 12px", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", background: "rgba(245,196,83,0.07)", border: "1px solid rgba(245,196,83,0.4)" }}>
+              <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
+              <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "#f5c453" }}>Draft in</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, fontWeight: 700, color: "#ffe9b0" }}>{draftIn}</span>
+            </div>
+          )}
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
           {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} seat={chipSeat} />}
           {!chrome && (
@@ -5238,6 +5280,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       backLabel: inReg ? "Registration" : "Schedule",
       onBack: inReg ? () => setRegView("gate") : onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
+      draftAt: ev?.draft_at || null,
       account, onSignOut, hostControls,
     };
     return <DraftApp auth={auth} browse={inReg} chrome={chrome} />;
