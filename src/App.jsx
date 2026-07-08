@@ -2765,6 +2765,7 @@ function DraftApp({ auth, browse, chrome }) {
   const [view, setView] = useState("lobby");
   const [tourneyOpen, setTourneyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false); // side nav
   useEffect(() => { if (!tourneyOpen) return; const close = () => setTourneyOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [tourneyOpen]);
   useEffect(() => { if (!mobileNavOpen) return; const close = () => setMobileNavOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [mobileNavOpen]);
   const [liveCount, setLiveCount] = useState(1);
@@ -3443,6 +3444,16 @@ function DraftApp({ auth, browse, chrome }) {
   const TopNav = (
     <header className="sticky top-0 z-30" style={{ background: "rgba(6,9,16,0.94)", borderBottom: "1px solid rgba(61,123,255,0.14)", backdropFilter: "blur(12px)" }}>
       <div className="page-wrap flex items-center gap-3 py-4 flex-wrap">
+        {/* side-nav trigger — all views live in the drawer now */}
+        <button onClick={() => setDrawerOpen(true)} aria-label="Open navigation"
+          className="shrink-0 grid place-items-center transition-all hover:scale-105"
+          style={{ width: 42, height: 40, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.45)" }}>
+          <span className="flex flex-col gap-1">
+            <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
+            <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
+            <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
+          </span>
+        </button>
         {/* league chrome: back to schedule/registration */}
         {chrome && (
           <button onClick={chrome.onBack} title={"Back to " + chrome.backLabel}
@@ -3459,93 +3470,8 @@ function DraftApp({ auth, browse, chrome }) {
           {chrome?.phaseTag && <span className="hidden md:inline text-[11px] font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", color: chrome.phaseColor || "#5b8dff", marginLeft: 4 }}>· {chrome.phaseTag}</span>}
         </div>
 
-        {/* nav tabs — centered between brand and right controls (desktop) */}
-        <div className="nav-desktop items-center justify-center flex-1 min-w-0 gap-1">
-        <nav className="flex items-center gap-1 min-w-0 overflow-x-auto">
-          {NAV.filter((nav) => !nav.adminOnly || isAdmin).map((nav) => {
-            const active = view === nav.id;
-            const live = nav.id === "block" && (block || spinLive);
-            return (
-              <button key={nav.id} onClick={() => setView(nav.id)} className="relative flex items-center gap-2 px-3.5 py-2 transition-all shrink-0 group"
-                style={{ color: active ? "#eaf1ff" : "rgba(200,215,255,0.55)" }}>
-                <span className="text-base transition-colors" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
-                <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{nav.label}</span>
-                {live && <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: "#3d7bff", boxShadow: "0 0 8px #3d7bff" }} />}
-                {/* active underline — short centered tick (reference style) */}
-                <span className="absolute left-1/2" style={{ bottom: 2, height: 2, width: active ? 22 : 0, transform: "translateX(-50%)", background: "#3d7bff", boxShadow: active ? "0 0 10px rgba(61,123,255,0.9)" : "none", transition: "width .2s ease" }} />
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* Tournament group dropdown — sits outside the scrollable nav so its menu can overlay the page */}
-        {(() => {
-          const items = TOURNEY_NAV.filter((nav) => !nav.adminOnly || isAdmin);
-          if (!items.length) return null;
-          const groupActive = items.some((nav) => nav.id === view);
-          return (
-            <div className="relative shrink-0 flex items-center">
-              <span className="mr-2 shrink-0" style={{ width: 1, height: 18, background: "rgba(120,150,220,0.25)" }} />
-              <button onClick={(e) => { e.stopPropagation(); setTourneyOpen((o) => !o); }}
-                className="relative flex items-center gap-2 px-3.5 py-2 transition-all group"
-                style={{ color: groupActive ? "#eaf1ff" : "rgba(200,215,255,0.7)",
-                  background: tourneyOpen || groupActive ? "rgba(61,123,255,0.1)" : "rgba(255,255,255,0.025)",
-                  border: `1px solid ${tourneyOpen || groupActive ? "rgba(61,123,255,0.45)" : "rgba(120,150,220,0.2)"}`,
-                  clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
-                <span className="text-base" style={{ color: groupActive ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>◇</span>
-                <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>Tournament</span>
-                <span className="text-[9px] transition-transform" style={{ color: "rgba(200,215,255,0.5)", transform: tourneyOpen ? "rotate(180deg)" : "none" }}>▼</span>
-              </button>
-              {tourneyOpen && (
-                <div className="absolute right-0 z-50 py-1.5" style={{ top: "calc(100% + 8px)", minWidth: 190, background: "rgba(9,13,22,0.98)", border: "1px solid rgba(61,123,255,0.3)", backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))", boxShadow: "0 18px 40px rgba(0,0,0,0.5)" }}>
-                  {items.map((nav) => {
-                    const active = view === nav.id;
-                    return (
-                      <button key={nav.id} onClick={(e) => { e.stopPropagation(); setView(nav.id); setTourneyOpen(false); }}
-                        className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors"
-                        style={{ background: active ? "rgba(61,123,255,0.14)" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.7)" }}>
-                        <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
-                        <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{nav.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-        </div>
-
-        {/* mobile hamburger — shows full nav as a dropdown */}
-        <div className="nav-mobile-btn relative items-center ml-auto">
-          <button onClick={(e) => { e.stopPropagation(); setMobileNavOpen((o) => !o); }}
-            className="relative flex items-center gap-2 px-3 py-2"
-            style={{ background: mobileNavOpen ? "rgba(61,123,255,0.12)" : "rgba(255,255,255,0.03)", border: "1px solid rgba(61,123,255,0.35)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
-            <span className="flex flex-col gap-1">
-              <span style={{ width: 18, height: 2, background: "#7da6ff" }} />
-              <span style={{ width: 18, height: 2, background: "#7da6ff" }} />
-              <span style={{ width: 18, height: 2, background: "#7da6ff" }} />
-            </span>
-            <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#cfe0ff" }}>Menu</span>
-          </button>
-          {mobileNavOpen && (
-            <div className="absolute right-0 z-50 py-1.5" style={{ top: "calc(100% + 10px)", minWidth: 220, background: "rgba(9,13,22,0.99)", border: "1px solid rgba(61,123,255,0.3)", backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", boxShadow: "0 18px 44px rgba(0,0,0,0.6)" }}>
-              {[...NAV, ...TOURNEY_NAV].filter((nav) => !nav.adminOnly || isAdmin).map((nav) => {
-                const active = view === nav.id;
-                const live = nav.id === "block" && (block || spinLive);
-                return (
-                  <button key={nav.id} onClick={(e) => { e.stopPropagation(); setView(nav.id); setMobileNavOpen(false); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors"
-                    style={{ background: active ? "rgba(61,123,255,0.16)" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.75)" }}>
-                    <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
-                    <span className="font-semibold uppercase tracking-[0.12em] text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{nav.label}</span>
-                    {live && <span className="cd-pulse ml-auto" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", color: "#ff4655" }} />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        {/* spacer — view tabs moved to the side drawer */}
+        <div className="flex-1 min-w-0" />
 
         {/* seat status + switch, framed with HUD brackets */}
         <div className="relative flex items-center gap-3 shrink-0 pl-4 pr-3 py-1.5">
@@ -3563,12 +3489,66 @@ function DraftApp({ auth, browse, chrome }) {
             className="grid place-items-center transition-all hover:scale-110" style={{ width: 38, height: 38, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
             {soundOn ? "🔊" : "🔇"}
           </button>
-          <button onClick={() => setIdentity(null)} className="px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition-all hover:scale-[1.03]"
-            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff" }}>Switch Seat</button>
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
-          {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} />}
+          {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} />}
         </div>
       </div>
+
+      {/* ── side drawer — every view, one calm list ── */}
+      {drawerOpen && <>
+        <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(3,5,10,0.7)", backdropFilter: "blur(2px)" }} />
+        <aside style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 96, width: 272, background: "linear-gradient(160deg, rgba(13,18,32,0.99), rgba(7,10,18,0.99))", borderRight: "1px solid rgba(61,123,255,0.3)", boxShadow: "24px 0 60px rgba(0,0,0,0.55)", padding: "18px 14px", overflowY: "auto", fontFamily: "'Rajdhani',sans-serif" }}>
+          <div className="flex items-center justify-between" style={{ padding: "0 6px 14px" }}>
+            <span className="text-base font-bold uppercase tracking-wide" style={{ color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>{window.__VOLT.communityName || "VOLT"}</span>
+            <button onClick={() => setDrawerOpen(false)} aria-label="Close navigation" style={{ color: "rgba(200,215,255,0.6)", fontSize: 16, padding: "2px 8px" }}>✕</button>
+          </div>
+          {[{ title: "League", items: NAV }, { title: "Tournament", items: TOURNEY_NAV }].map(sec => {
+            const items = sec.items.filter(n => !n.adminOnly || isAdmin);
+            if (!items.length) return null;
+            return (
+              <div key={sec.title} style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 6px" }}>// {sec.title}</div>
+                {items.map(nav => {
+                  const active = view === nav.id;
+                  const live = nav.id === "block" && (block || spinLive);
+                  return (
+                    <button key={nav.id} onClick={() => { setView(nav.id); setDrawerOpen(false); }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
+                      style={{ background: active ? "rgba(61,123,255,0.16)" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.75)", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
+                      <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>{nav.glyph}</span>
+                      <span className="font-semibold uppercase tracking-[0.12em] text-sm">{nav.label}</span>
+                      {live && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655" }} />}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+          <div style={{ borderTop: "1px solid rgba(120,150,220,0.15)", paddingTop: 12 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 6px" }}>// You</div>
+            {chrome?.account && (
+              <button onClick={() => { setView("account"); setDrawerOpen(false); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
+                style={{ background: view === "account" ? "rgba(61,123,255,0.16)" : "transparent", color: view === "account" ? "#eaf1ff" : "rgba(200,215,255,0.75)", borderLeft: view === "account" ? "2px solid #3d7bff" : "2px solid transparent" }}>
+                <span className="text-base" style={{ color: view === "account" ? "#3d7bff" : "rgba(200,215,255,0.45)" }}>◉</span>
+                <span className="font-semibold uppercase tracking-[0.12em] text-sm">My Account</span>
+              </button>
+            )}
+            <button onClick={() => { setDrawerOpen(false); setIdentity(null); }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-left" style={{ color: "rgba(200,215,255,0.75)" }}>
+              <span className="text-base" style={{ color: "rgba(200,215,255,0.45)" }}>⇄</span>
+              <span className="font-semibold uppercase tracking-[0.12em] text-sm">Switch Seat</span>
+            </button>
+            {chrome && (
+              <button onClick={() => { setDrawerOpen(false); chrome.onBack(); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-left" style={{ color: "#aec6ff" }}>
+                <span className="text-base" style={{ color: "rgba(200,215,255,0.45)" }}>‹</span>
+                <span className="font-semibold uppercase tracking-[0.12em] text-sm">Back to {chrome.backLabel}</span>
+              </button>
+            )}
+          </div>
+        </aside>
+      </>}
     </header>
   );
 
@@ -4169,7 +4149,7 @@ function DraftApp({ auth, browse, chrome }) {
     <Leaderboard isAdmin={isAdmin} />
   );
 
-  const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView };
+  const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView, account: <AccountView auth={auth} chrome={chrome} /> };
   const scoutedPlayer = scouted ? state.players.find((p) => p.id === scouted) : null;
 
   return shell(
@@ -4443,6 +4423,132 @@ function ShellStyles() {
   `}</style>;
 }
 
+// ── ACCOUNT PAGE — who you are in this league, and your season so far ──
+//    Details (editable display name), season stat tiles from match_results,
+//    and the scouting profile editor captains see before bidding.
+function AccountView({ auth, chrome }) {
+  const [me, setMe] = useState(null);        // users row
+  const [stats, setStats] = useState(null);  // season aggregates
+  const [nameDraft, setNameDraft] = useState("");
+  const [saveMsg, setSaveMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!HAS_SUPABASE || !auth?.userId) return;
+      try {
+        const { data: u } = await __sb.from("users").select("*").eq("id", auth.userId).maybeSingle();
+        if (alive && u) { setMe(u); setNameDraft(u.display_name || ""); }
+        const { data: mrs } = await __sb.from("match_results")
+          .select("points_computed, team_won, stat_payload, created_at")
+          .eq("community_id", window.__VOLT.communityId).eq("user_id", auth.userId);
+        if (!alive) return;
+        const rows = mrs || [];
+        const agg = rows.reduce((a, r) => {
+          const sp = r.stat_payload || {};
+          a.pts += Number(r.points_computed || 0); a.matches += 1; a.wins += r.team_won ? 1 : 0;
+          a.k += Number(sp.k || 0); a.a += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
+          return a;
+        }, { pts: 0, matches: 0, wins: 0, k: 0, a: 0, acsSum: 0 });
+        try {
+          const { data: ns } = await __sb.from("registrations").select("id")
+            .eq("community_id", window.__VOLT.communityId).eq("user_id", auth.userId).eq("no_show", true);
+          agg.noShows = (ns || []).length;
+        } catch { agg.noShows = 0; }
+        setStats(agg);
+      } catch (e) { console.error(e); }
+    })();
+    return () => { alive = false; };
+  }, [auth?.userId]);
+
+  async function saveName() {
+    const v = nameDraft.trim();
+    if (!v || !HAS_SUPABASE) return;
+    setBusy(true); setSaveMsg("");
+    try {
+      const { error } = await __sb.from("users").update({ display_name: v }).eq("id", auth.userId);
+      if (error) throw error;
+      window.__VOLT.userName = v;
+      setMe(m => ({ ...m, display_name: v }));
+      setSaveMsg("Saved — shows everywhere from your next match on.");
+    } catch (e) { console.error(e); setSaveMsg(e.message || "Couldn't save."); }
+    setBusy(false);
+  }
+
+  const tile = (label, value, accent) => (
+    <div style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", textAlign: "center" }}>
+      <div style={{ fontSize: 26, fontWeight: 700, color: accent || "#ecf3ff", fontFamily: "'Rajdhani',sans-serif" }}>{value}</div>
+      <div style={{ fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginTop: 3 }}>{label}</div>
+    </div>
+  );
+  const winrate = stats && stats.matches ? Math.round((stats.wins / stats.matches) * 100) + "%" : "—";
+  const avgAcs = stats && stats.matches ? Math.round(stats.acsSum / stats.matches) : "—";
+  const panel = { padding: "20px 22px", background: "linear-gradient(160deg, rgba(18,24,40,0.9), rgba(9,12,21,0.9))", border: "1px solid rgba(61,123,255,0.25)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" };
+  const overline = { fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", marginBottom: 12 };
+
+  return (
+    <div className="view-in" style={{ maxWidth: 760, margin: "0 auto", padding: "28px 0 60px", display: "grid", gap: 18 }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", fontFamily: "'Rajdhani',sans-serif" }}>// My Account</div>
+        <div style={{ fontSize: 32, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", fontFamily: "'Rajdhani',sans-serif" }}>{me?.display_name || auth?.name || "Player"}</div>
+      </div>
+
+      {/* season stat tiles */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+        {tile("Season pts", stats ? stats.pts.toLocaleString() : "—", "#f5c453")}
+        {tile("Matches", stats ? stats.matches : "—")}
+        {tile("Wins", stats ? stats.wins : "—", "#3ddc84")}
+        {tile("Winrate", winrate)}
+        {tile("Avg ACS", avgAcs, "#7da6ff")}
+        {tile("K / A", stats ? `${stats.k} / ${stats.a}` : "—")}
+        {tile("No-shows", stats ? (stats.noShows || 0) : "—", stats?.noShows >= 3 ? "#ff4655" : stats?.noShows > 0 ? "#f5c453" : "#3ddc84")}
+      </div>
+
+      {(me?.suspension_remaining || 0) > 0 && (
+        <div style={{ padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", fontFamily: "'Rajdhani',sans-serif" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {me.suspension_remaining} weekend{me.suspension_remaining === 1 ? "" : "s"} remaining</div>
+          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Triggered by repeated no-shows. It counts down automatically as league weekends settle.</p>
+        </div>
+      )}
+
+      {/* account details */}
+      <div style={panel}>
+        <div style={overline}>// Account details</div>
+        <div style={{ display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", marginBottom: 5 }}>Display name</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} maxLength={24}
+                style={{ flex: 1, minWidth: 180, padding: "10px 12px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, fontWeight: 600 }} />
+              <button disabled={busy || !nameDraft.trim() || nameDraft.trim() === (me?.display_name || "")} onClick={saveName}
+                style={shellBtn("primary", { padding: "10px 20px", opacity: (busy || !nameDraft.trim() || nameDraft.trim() === (me?.display_name || "")) ? 0.5 : 1 })}>{busy ? "…" : "Save"}</button>
+            </div>
+            {saveMsg && <div style={{ fontSize: 12, color: saveMsg.startsWith("Saved") ? "#9af5c2" : "#ff8f9a", marginTop: 6 }}>{saveMsg}</div>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, fontFamily: "'Rajdhani',sans-serif" }}>
+            {me?.email && <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>Email</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>{me.email}</div></div>}
+            <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>Role</div><div style={{ fontWeight: 700, textTransform: "uppercase", color: (me?.role || auth?.role) === "host" ? "#7da6ff" : "#ecf3ff" }}>{(me?.role || auth?.role) === "host" ? "Commissioner" : "Player"}</div></div>
+            <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>League</div><div style={{ fontWeight: 700, textTransform: "uppercase" }}>{window.__VOLT.communityName || "—"}</div></div>
+            {chrome?.account?.code && <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>Join code</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#7da6ff" }}>{chrome.account.code}</div></div>}
+          </div>
+        </div>
+      </div>
+
+      {/* scouting profile — same card captains study before bidding */}
+      <div style={panel}>
+        <div style={overline}>// Scouting profile</div>
+        <p style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif" }}>Captains see this on the auction block — keep it honest, keep it current.</p>
+        <ScoutProfileCard userId={auth?.userId} />
+      </div>
+
+      {chrome?.onSignOut && (
+        <button onClick={chrome.onSignOut} style={shellBtn("danger", { padding: "12px", letterSpacing: "0.14em" })}>Sign out</button>
+      )}
+    </div>
+  );
+}
+
 // Collapsed host controls for narrow screens — same overlay pattern as the chip.
 function HostMenu({ children }) {
   const [open, setOpen] = useState(false);
@@ -4512,8 +4618,11 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     const cur = pickCurrent(data);
     if (cur) {
       try {
-        const { data: regs } = await __sb.from("registrations").select("user_id").eq("event_id", cur.id);
-        setLive({ count: (regs || []).length, mine: (regs || []).some(r => r.user_id === window.__VOLT.userId) });
+        const { data: regs } = await __sb.from("registrations").select("user_id, status").eq("event_id", cur.id);
+        const rows = regs || [];
+        const appr = rows.filter(r => (r.status || "approved") === "approved");
+        const mineRow = rows.find(r => r.user_id === window.__VOLT.userId);
+        setLive({ count: appr.length, pending: rows.filter(r => r.status === "pending").length, mineStatus: mineRow ? (mineRow.status || "approved") : null });
       } catch (e) { console.error(e); setLive(null); }
     } else setLive(null);
     loadSeason();
@@ -4572,8 +4681,11 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     const cur = pickCurrent(data);
     if (cur) {
       try {
-        const { data: regs } = await __sb.from("registrations").select("user_id").eq("event_id", cur.id);
-        setLive({ count: (regs || []).length, mine: (regs || []).some(r => r.user_id === window.__VOLT.userId) });
+        const { data: regs } = await __sb.from("registrations").select("user_id, status").eq("event_id", cur.id);
+        const rows = regs || [];
+        const appr = rows.filter(r => (r.status || "approved") === "approved");
+        const mineRow = rows.find(r => r.user_id === window.__VOLT.userId);
+        setLive({ count: appr.length, pending: rows.filter(r => r.status === "pending").length, mineStatus: mineRow ? (mineRow.status || "approved") : null });
       } catch (e) { console.error(e); }
     } else setLive(null);
   }
@@ -4680,7 +4792,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
 
   const PHASE_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#3d7bff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.4)" };
   const heroCTA = !current ? "" :
-    current.phase === "registration_open" ? (live?.mine ? "Enter weekend →" : "Register now →") :
+    current.phase === "registration_open" ? (live?.mineStatus === "approved" ? "Enter weekend →" : live?.mineStatus ? "View application →" : "Apply now →") :
     current.phase === "registration_closed" ? "Enter weekend →" :
     current.phase === "drafting" ? "Enter the draft →" : "Watch matches →";
 
@@ -4722,9 +4834,11 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
                       <span style={{ width: 7, height: 7, borderRadius: "50%", background: PHASE_COLOR[current.phase], boxShadow: `0 0 8px ${PHASE_COLOR[current.phase]}` }} />
                       {PHASE_LABEL[current.phase]}
                     </span>
-                    {live && <span style={{ fontSize: 12, color: "rgba(200,215,255,0.55)" }}>{live.count} registered</span>}
-                    {live?.mine && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9af5c2", border: "1px solid rgba(61,220,132,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>You're in ✓</span>}
-                    {current.phase === "registration_open" && live && !live.mine && <span style={{ fontSize: 12, color: "#f5c453" }}>You haven't registered yet</span>}
+                    {live && <span style={{ fontSize: 12, color: "rgba(200,215,255,0.55)" }}>{live.count} in the pool{isHost && live.pending > 0 && <span style={{ color: "#f5c453", fontWeight: 700 }}> · {live.pending} awaiting review</span>}</span>}
+                    {live?.mineStatus === "approved" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9af5c2", border: "1px solid rgba(61,220,132,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>You're in ✓</span>}
+                    {live?.mineStatus === "pending" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Application pending</span>}
+                    {live?.mineStatus === "rejected" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#ff8f9a", border: "1px solid rgba(255,70,85,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Not approved</span>}
+                    {current.phase === "registration_open" && live && !live.mineStatus && <span style={{ fontSize: 12, color: "#f5c453" }}>You haven't applied yet</span>}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                     {editTime && isHost
@@ -4794,27 +4908,37 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
 // draft app's live browse mode) ──────────────────────────────────────────
 async function fetchRosterForEvent(eventId) {
   const { data: regs } = await __sb.from("registrations")
-    .select("id, user_id, is_captain, users(display_name, wants_captain)")
+    .select("id, user_id, is_captain, status, availability_confirmed, no_show, users(display_name, wants_captain)")
     .eq("event_id", eventId);
-  const all = regs || [];
-  const ids = all.map(r => r.user_id);
-  let profs = {};
+  const rows = regs || [];
+  const ids = rows.map(r => r.user_id);
+  let profs = {}, noShowCounts = {};
   if (ids.length) {
     const { data: pp } = await __sb.from("player_profiles").select("*").in("user_id", ids);
     (pp || []).forEach(p => { profs[p.user_id] = p; });
+    // season no-show history — the reliability signal hosts review against
+    const { data: ns } = await __sb.from("registrations").select("user_id")
+      .eq("community_id", window.__VOLT.communityId).eq("no_show", true).in("user_id", ids);
+    (ns || []).forEach(r => { noShowCounts[r.user_id] = (noShowCounts[r.user_id] || 0) + 1; });
   }
   const withProfile = (r) => {
     const p = profs[r.user_id] || {};
     return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain, volunteered: !!r.users?.wants_captain,
+      status: r.status || "approved", available: !!r.availability_confirmed,
+      noShow: !!r.no_show, noShows: noShowCounts[r.user_id] || 0,
       name: r.users?.display_name || "Player",
       rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges,
       tracker: p.tracker_url || null };
   };
-  const mapped = all.map(withProfile);
+  const mapped = rows.map(withProfile);
+  // Only host-approved players exist to the league — pools, boards, subs.
+  const approved = mapped.filter(r => r.status === "approved");
   return {
-    captains: mapped.filter(r => r.isCaptain),
-    pool: mapped.filter(r => !r.isCaptain),
-    all: mapped,
+    captains: approved.filter(r => r.isCaptain),
+    pool: approved.filter(r => !r.isCaptain),
+    all: approved,
+    pending: mapped.filter(r => r.status === "pending"),
+    rejected: mapped.filter(r => r.status === "rejected"),
   };
 }
 
@@ -5024,7 +5148,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
 
 // Scouting profile — the stats captains study before bidding. Saved once per
 // player (player_profiles), reused across weekends, feeds the draft-pool cards.
-function ScoutProfileCard({ userId }) {
+function ScoutProfileCard({ userId, onSaved }) {
   const [prof, setProf] = useState(undefined);
   const [editing, setEditing] = useState(false);
   const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "" });
@@ -5051,7 +5175,7 @@ function ScoutProfileCard({ userId }) {
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
     if (error) console.error("saveProfile:", error.message);
-    setBusy(false); setEditing(false); load();
+    setBusy(false); setEditing(false); load(); if (!error) onSaved?.();
   }
 
   if (prof === undefined) return null;
@@ -5251,6 +5375,30 @@ function MatchReport({ ev, onDone }) {
           ))}
         </div>
       </div>}
+
+      {/* ── Attendance — flag players who confirmed availability but ghosted.
+             3rd strike auto-suspends them for the next 3 weekends (DB trigger).
+             Unmarking a mistake lifts an active suspension. ── */}
+      {allRegs.length > 0 && <div style={{ ...panel, marginTop: 16, borderColor: "rgba(255,70,85,0.3)" }}>
+        {secLabel(`Attendance · ${allRegs.filter(r => r.noShow).length} no-show${allRegs.filter(r => r.noShow).length === 1 ? "" : "s"} this weekend`)}
+        <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: "0 0 10px" }}>Mark players who confirmed availability but didn't show. Every 3rd strike auto-suspends for the next 3 weekends; unmark to forgive (this also lifts an active suspension).</p>
+        <div style={{ display: "grid", gap: 5 }}>
+          {allRegs.map(r => {
+            const played = saved.some(([, rows]) => rows.some(x => x.user_id === r.userId));
+            return (
+              <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: r.noShow ? "rgba(255,70,85,0.06)" : "rgba(255,255,255,0.02)", border: `1px solid ${r.noShow ? "rgba(255,70,85,0.3)" : "rgba(120,150,220,0.12)"}`, clipPath: SHELL_NOTCH(6), flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: 13, flex: 1, minWidth: 110, color: r.noShow ? "#ff8f9a" : "#ecf3ff" }}>{r.name}</span>
+                {played && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2", fontWeight: 700 }}>played ✓</span>}
+                {!played && !r.noShow && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)" }}>no matches yet</span>}
+                {r.noShows > 0 && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 3 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} strike{r.noShows === 1 ? "" : "s"}</span>}
+                <button disabled={busy} onClick={async () => { setBusy(true); try { await __sb.from("registrations").update({ no_show: !r.noShow }).eq("id", r.regId); await load(); } catch (e) { console.error(e); } setBusy(false); }}
+                  style={shellBtn(r.noShow ? "ghost" : "danger", { padding: "5px 11px", fontSize: 10 })}>
+                  {r.noShow ? "Unmark" : "No-show"}</button>
+              </div>
+            );
+          })}
+        </div>
+      </div>}
     </div>
   </div>;
 }
@@ -5262,24 +5410,59 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
   const regOpen = phase === "registration_open";
   const isHost = auth?.role === "host";
   const [reg, setReg] = useState(undefined);
-  const [roster, setRoster] = useState([]);
+  const [roster, setRoster] = useState([]);       // approved
+  const [pendingQ, setPendingQ] = useState([]);   // host queue
+  const [rejectedQ, setRejectedQ] = useState([]);
+  const [myProf, setMyProf] = useState(undefined);
+  const [susp, setSusp] = useState(0);            // weekends left on suspension
+  const [myStrikes, setMyStrikes] = useState(0);  // my season no-show count
+  const [avail, setAvail] = useState(false);      // availability confirmation
   const [busy, setBusy] = useState(false);
 
   async function load() {
-    if (!HAS_SUPABASE) { setReg(null); setRoster([]); return; }
+    if (!HAS_SUPABASE) { setReg(null); setRoster([]); setMyProf(null); return; }
     const { data } = await __sb.from("registrations").select("*").eq("event_id", ev.id).eq("user_id", window.__VOLT.userId).maybeSingle();
     setReg(data || null);
-    try { const r = await fetchRosterForEvent(ev.id); setRoster(r.all); } catch (e) { console.error(e); }
+    try {
+      const r = await fetchRosterForEvent(ev.id);
+      setRoster(r.all); setPendingQ(r.pending); setRejectedQ(r.rejected);
+    } catch (e) { console.error(e); }
+    try {
+      const { data: p } = await __sb.from("player_profiles").select("rank, role").eq("user_id", window.__VOLT.userId).maybeSingle();
+      setMyProf(p || null);
+    } catch (e) { console.error(e); setMyProf(null); }
+    try {
+      const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", window.__VOLT.userId).maybeSingle();
+      setSusp(u?.suspension_remaining || 0);
+      const { data: ns } = await __sb.from("registrations").select("id")
+        .eq("community_id", window.__VOLT.communityId).eq("user_id", window.__VOLT.userId).eq("no_show", true);
+      setMyStrikes((ns || []).length);
+    } catch (e) { console.error(e); }
   }
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [ev?.id]);
 
-  async function toggleReg() {
+  const profileComplete = !!(myProf?.rank && myProf?.role);
+
+  async function apply() {
+    if (!profileComplete || !avail) return;
     setBusy(true);
     try {
-      if (reg) { await __sb.from("registrations").delete().eq("id", reg.id); }
-      else { await __sb.from("registrations").insert({ event_id: ev.id, community_id: window.__VOLT.communityId, user_id: window.__VOLT.userId }); }
+      await __sb.from("registrations").insert({ event_id: ev.id, community_id: window.__VOLT.communityId, user_id: window.__VOLT.userId, status: isHost ? "approved" : "pending", availability_confirmed: true });
       await load();
     } catch (e) { console.error(e); }
+    setBusy(false);
+  }
+  async function withdraw() {
+    setBusy(true);
+    try { await __sb.from("registrations").delete().eq("id", reg.id); await load(); }
+    catch (e) { console.error(e); }
+    setBusy(false);
+  }
+  // Host decision — the only way into the weekend pool.
+  async function hostDecide(entry, status) {
+    setBusy(true);
+    try { await __sb.from("registrations").update({ status }).eq("id", entry.regId); await load(); }
+    catch (e) { console.error(e); }
     setBusy(false);
   }
   // Player side: a quiet availability signal only — not a captain claim.
@@ -5297,7 +5480,8 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     setBusy(false);
   }
 
-  const isIn = !!reg;
+  const myStatus = reg ? (reg.status || "approved") : null;
+  const isIn = myStatus === "approved";
   const me = roster.find(r => r.userId === window.__VOLT.userId);
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
   const corner = <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />;
@@ -5314,18 +5498,63 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           Teams form from whoever registers (roughly one per 5 players). Not drafted? You can still be subbed into matches — every match you play banks season points.</p>
       </div>
 
-      {reg === undefined ? <p style={{ color: "rgba(200,215,255,0.5)", textAlign: "center" }}>…</p> : <>
+      {reg === undefined ? <p className="vg-loading">// Syncing…</p> : <>
         <div style={panel}>
           {corner}
-          {secLabel("Your registration")}
+          {secLabel(isHost && !reg ? "Your registration (host)" : "Your application")}
+          {/* status line */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: isIn ? "#3ddc84" : "rgba(200,215,255,0.25)", boxShadow: isIn ? "0 0 10px rgba(61,220,132,0.8)" : "none" }} />
-              <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 15, color: isIn ? "#9af5c2" : "rgba(200,215,255,0.7)" }}>
-                {isIn ? "Registered for this weekend" : regOpen ? "Not registered" : "You didn't register this weekend"}</span>
+              <span style={{ width: 8, height: 8, borderRadius: "50%",
+                background: isIn ? "#3ddc84" : myStatus === "pending" ? "#f5c453" : myStatus === "rejected" ? "#ff4655" : "rgba(200,215,255,0.25)",
+                boxShadow: isIn ? "0 0 10px rgba(61,220,132,0.8)" : myStatus === "pending" ? "0 0 10px rgba(245,196,83,0.7)" : "none" }} />
+              <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 15,
+                color: isIn ? "#9af5c2" : myStatus === "pending" ? "#f5c453" : myStatus === "rejected" ? "#ff8f9a" : "rgba(200,215,255,0.7)" }}>
+                {isIn ? "You're in this weekend" :
+                 myStatus === "pending" ? "Application pending — waiting for host approval" :
+                 myStatus === "rejected" ? "Not approved for this weekend" :
+                 regOpen ? "Not applied" : "You didn't apply this weekend"}</span>
             </div>
-            {regOpen && <button disabled={busy} onClick={toggleReg} style={shellBtn(isIn ? "ghost" : "primary", { padding: "10px 22px", fontSize: 13 })}>{busy ? "…" : isIn ? "Drop out" : "Register →"}</button>}
+            {regOpen && myStatus === "pending" && <button disabled={busy} onClick={withdraw} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>{busy ? "…" : "Withdraw"}</button>}
+            {regOpen && isIn && <button disabled={busy} onClick={withdraw} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>{busy ? "…" : "Drop out"}</button>}
           </div>
+
+          {/* suspended players sit out — the DB blocks the insert anyway */}
+          {regOpen && !reg && susp > 0 && (
+            <div style={{ marginTop: 14, padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: SHELL_NOTCH(8) }}>
+              <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {susp} weekend{susp === 1 ? "" : "s"} remaining</div>
+              <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Repeated no-shows triggered an automatic suspension. It counts down as league weekends settle. Talk to the Commissioner if you think this is a mistake.</p>
+            </div>
+          )}
+
+          {/* application form — profile completeness + availability gate the button */}
+          {regOpen && !reg && susp === 0 && <>
+            <div style={{ marginTop: 14, padding: "12px 14px", background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.2)", clipPath: SHELL_NOTCH(8) }}>
+              <div style={{ fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700, color: profileComplete ? "#9af5c2" : "#f5c453" }}>
+                {myProf === undefined ? "Checking your profile…" : profileComplete ? "✓ Scouting profile complete" : "① Complete your scouting profile — rank and role are required"}</div>
+              {HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} onSaved={load} />}
+            </div>
+            {myStrikes > 0 && (
+              <div style={{ marginTop: 14, padding: "11px 14px", background: myStrikes % 3 === 2 ? "rgba(255,70,85,0.07)" : "rgba(245,196,83,0.06)", border: `1px solid ${myStrikes % 3 === 2 ? "rgba(255,70,85,0.45)" : "rgba(245,196,83,0.35)"}`, clipPath: SHELL_NOTCH(7) }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: myStrikes % 3 === 2 ? "#ff8f9a" : "#f5c453" }}>
+                  ⚠ {myStrikes} no-show{myStrikes === 1 ? "" : "s"} on record</span>
+                <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginLeft: 6 }}>
+                  {myStrikes % 3 === 2 ? "— one more triggers an automatic 3-weekend suspension. Only apply if you can really make it." : "— every 3rd triggers an automatic 3-weekend suspension."}</span>
+              </div>
+            )}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 14, cursor: "pointer", color: avail ? "#9af5c2" : "rgba(200,215,255,0.65)", fontSize: 13.5, lineHeight: 1.4 }}>
+              <input type="checkbox" checked={avail} onChange={e => setAvail(e.target.checked)} style={{ accentColor: "#3ddc84", marginTop: 2, width: 16, height: 16 }} />
+              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>② I confirm I'm available this weekend</b> — {ev?.draft_at ? `draft on ${new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" })} ${new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} and` : "the draft and"} up to 4 matches. No-shows hurt your team.</span>
+            </label>
+            <button disabled={busy || !profileComplete || !avail} onClick={apply}
+              style={shellBtn("primary", { width: "100%", marginTop: 14, padding: "13px", fontSize: 14, opacity: (busy || !profileComplete || !avail) ? 0.45 : 1 })}>
+              {busy ? "…" : "Submit application →"}</button>
+            <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "8px 0 0", textAlign: "center" }}>The Commissioner reviews every application before you enter the player pool.</p>
+          </>}
+
+          {myStatus === "pending" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>Your profile and availability were sent to the Commissioner. You'll appear in the Scout Hub once approved — check back here.</p>}
+          {myStatus === "rejected" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>The Commissioner didn't approve this application. Reach out to them if you think that's a mistake.</p>}
+
           {isIn && regOpen && (
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", color: "rgba(200,215,255,0.5)", fontSize: 12.5 }}>
               <input type="checkbox" checked={!!me?.volunteered} disabled={busy} onChange={e => volunteer(e.target.checked)} style={{ accentColor: "#3d7bff" }} />
@@ -5335,11 +5564,44 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
         </div>
 
+        {/* ── HOST: application review queue ── */}
+        {isHost && (pendingQ.length > 0 || rejectedQ.length > 0) && (
+          <div style={{ ...panel, marginTop: 16, borderColor: "rgba(245,196,83,0.4)" }}>
+            {corner}
+            {secLabel(`Applications · ${pendingQ.length} pending`)}
+            {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
+            <div style={{ display: "grid", gap: 6 }}>
+              {pendingQ.map(r => (
+                <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "rgba(245,196,83,0.05)", border: "1px solid rgba(245,196,83,0.25)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
+                  {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
+                  {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
+                  <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
+                  {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 3 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+                  <button disabled={busy} onClick={() => hostDecide(r, "approved")} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
+                  <button disabled={busy} onClick={() => hostDecide(r, "rejected")} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
+                </div>
+              ))}
+            </div>
+            {rejectedQ.length > 0 && <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginBottom: 6 }}>// Rejected · {rejectedQ.length}</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {rejectedQ.map(r => (
+                  <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", opacity: 0.6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.1)", clipPath: SHELL_NOTCH(6) }}>
+                    <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: 12.5, flex: 1 }}>{r.name}</span>
+                    <button disabled={busy} onClick={() => hostDecide(r, "approved")} style={shellBtn("ghost", { padding: "4px 10px", fontSize: 10 })}>Approve anyway</button>
+                  </div>
+                ))}
+              </div>
+            </div>}
+          </div>
+        )}
+
         <div style={{ ...panel, marginTop: 16 }}>
           {corner}
-          {secLabel(`Registered · ${roster.length}`)}
+          {secLabel(`Approved roster · ${roster.length}`)}
           {roster.length === 0
-            ? <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>No one has registered yet.</p>
+            ? <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>No approved players yet.</p>
             : <div style={{ display: "grid", gap: 6 }}>
                 {roster.map(r => (
                   <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
@@ -5347,6 +5609,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
                       {r.userId === window.__VOLT.userId && <span style={{ color: "rgba(200,215,255,0.4)", fontWeight: 500, marginLeft: 6, fontSize: 11 }}>(you)</span>}
                     </span>
                     {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
+                    {isHost && r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700 }}>⚠ {r.noShows}</span>}
                     {r.isCaptain && <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Captain</span>}
                     {!r.isCaptain && r.volunteered && <span title="Available to captain" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>available</span>}
                     {isHost && (
