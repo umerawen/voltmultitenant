@@ -2770,6 +2770,7 @@ function DraftApp({ auth, browse, chrome }) {
   const [isDesk, setIsDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
   const [railWide, setRailWide] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem("volt_rail_wide", railWide ? "1" : "0"); } catch {} }, [railWide]);
+  const [railTip, setRailTip] = useState(null); // { label, y } — collapsed-rail hover tooltip
   const [nowTick, setNowTick] = useState(Date.now()); // draft countdown tick
   useEffect(() => { if (!chrome?.draftAt) return; const t = setInterval(() => setNowTick(Date.now()), 30000); return () => clearInterval(t); }, [chrome?.draftAt]);
   useEffect(() => {
@@ -3475,6 +3476,8 @@ function DraftApp({ auth, browse, chrome }) {
   const RAIL_W = railWide ? 224 : 60;
   const railItem = (key, glyph, label, { active = false, liveDot = false, onClick, color } = {}) => (
     <button key={key} onClick={onClick} className="volt-rail-item flex items-center" aria-label={label}
+      onMouseEnter={e => { if (!railWide) setRailTip({ label, y: e.currentTarget.getBoundingClientRect().top + e.currentTarget.getBoundingClientRect().height / 2 }); }}
+      onMouseLeave={() => setRailTip(null)}
       style={{ width: railWide ? RAIL_W - 16 : 44, height: 42, justifyContent: railWide ? "flex-start" : "center", gap: 10, paddingLeft: railWide ? 12 : 0, paddingRight: railWide ? 10 : 0,
         background: active ? "linear-gradient(90deg, rgba(61,123,255,0.2), rgba(61,123,255,0.04))" : "transparent",
         clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
@@ -3485,16 +3488,14 @@ function DraftApp({ auth, browse, chrome }) {
       </span>
       {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: active ? "#eaf1ff" : "rgba(200,215,255,0.72)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>}
       {liveDot && railWide && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
-      {!railWide && <span className="volt-rail-label">{label}</span>}
     </button>
   );
-  const Rail = isDesk && createPortal(
+  const Rail = isDesk && createPortal(<>
     <nav aria-label="Primary" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: RAIL_W, display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", padding: railWide ? "12px 8px 14px" : "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif", transition: "width .18s cubic-bezier(.2,.8,.3,1)", overflowY: "auto", overflowX: "hidden" }}>
       <style>{`
         .volt-rail-item { position: relative; }
-        .volt-rail-label { position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%) translateX(-4px); white-space: nowrap; padding: 5px 11px; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #eaf1ff; background: linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98)); border: 1px solid rgba(61,123,255,0.4); clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px)); opacity: 0; pointer-events: none; transition: opacity .12s ease, transform .12s ease; z-index: 45; }
-        .volt-rail-item:hover .volt-rail-label { opacity: 1; transform: translateY(-50%) translateX(0); }
         .volt-rail-item:hover .volt-rail-glyph { color: #eaf1ff !important; }
+        @keyframes voltTipIn { from { opacity: 0; transform: translateY(-50%) translateX(-8px); } to { opacity: 1; transform: translateY(-50%) translateX(0); } }
       `}</style>
       {/* league mark + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: railWide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: railWide ? 4 : 0 }}>
@@ -3511,9 +3512,10 @@ function DraftApp({ auth, browse, chrome }) {
       </div>
       {!railWide && (
         <button onClick={() => setRailWide(true)} aria-label="Expand navigation" className="volt-rail-item grid place-items-center"
+          onMouseEnter={e => setRailTip({ label: "Expand menu", y: e.currentTarget.getBoundingClientRect().top + 15 })}
+          onMouseLeave={() => setRailTip(null)}
           style={{ width: 42, height: 30, color: "rgba(200,215,255,0.55)", margin: "0 auto" }}>
           <span className="volt-rail-glyph" style={{ fontSize: 13, transition: "color .12s" }}>»</span>
-          <span className="volt-rail-label">Expand</span>
         </button>
       )}
       <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
@@ -3531,12 +3533,25 @@ function DraftApp({ auth, browse, chrome }) {
       <div style={{ marginTop: "auto" }} />
       {chrome?.account && railItem("__account", "◉", "My Account", { active: view === "account", onClick: () => setView("account") })}
       <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
+        onMouseEnter={e => { if (!railWide) setRailTip({ label: soundOn ? "Sound on" : "Sound off", y: e.currentTarget.getBoundingClientRect().top + 20 }); }}
+        onMouseLeave={() => setRailTip(null)}
         style={{ width: railWide ? RAIL_W - 16 : 42, height: 40, justifyContent: railWide ? "flex-start" : "center", gap: 10, paddingLeft: railWide ? 12 : 0, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)", margin: railWide ? 0 : "0 auto" }}>
         <span style={{ fontSize: 15 }}>{soundOn ? "🔊" : "🔇"}</span>
         {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" }}>{soundOn ? "Sound on" : "Sound off"}</span>}
-        {!railWide && <span className="volt-rail-label">{soundOn ? "Sound on" : "Sound off"}</span>}
       </button>
-    </nav>, document.body);
+    </nav>
+    {!railWide && railTip && (
+      <div style={{ position: "fixed", left: RAIL_W + 12, top: railTip.y, transform: "translateY(-50%)", zIndex: 46, pointerEvents: "none",
+        padding: "6px 13px", whiteSpace: "nowrap", fontFamily: "'Rajdhani',sans-serif", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "#eaf1ff",
+        background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.45)",
+        clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+        boxShadow: "0 0 24px rgba(61,123,255,0.18), 8px 8px 30px rgba(0,0,0,0.5)",
+        animation: "voltTipIn .16s cubic-bezier(.2,.8,.3,1)" }}>
+        <span style={{ position: "absolute", left: 0, top: 0, width: 7, height: 7, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        <span style={{ color: "#3d7bff", marginRight: 6 }}>//</span>{railTip.label}
+      </div>
+    )}
+  </>, document.body);
 
   /* ── top nav (transparent, hero-themed) ── */
   const TopNav = (
@@ -4693,7 +4708,8 @@ function HostMenu({ children }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
-      <button onClick={() => setOpen(o => !o)} aria-label="Host controls" style={shellBtn("primary", { padding: "8px 12px", fontSize: 13 })}>⚙ Manage</button>
+      <button onClick={() => setOpen(o => !o)} aria-label="Host controls"
+        style={shellBtn("ghost", { padding: "8px 14px", fontSize: 12.5, background: "rgba(61,123,255,0.1)", borderColor: "rgba(61,123,255,0.5)", color: "#aec6ff", textShadow: "0 0 10px rgba(61,123,255,0.45)" })}>⚙ Manage</button>
       {open && <>
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 230, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
@@ -5809,7 +5825,19 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
                     {!r.isCaptain && r.volunteered && <span title="Available to captain" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>available</span>}
                     {isHost && (
                       <button disabled={busy} onClick={e => { e.stopPropagation(); hostSetCaptain(r, !r.isCaptain); }} style={shellBtn(r.isCaptain ? "ghost" : "warn", { padding: "5px 10px", fontSize: 10 })}>
-                        {r.isCaptain ? "Remove" : "Make captain"}</button>
+                        {r.isCaptain ? "Unmake captain" : "Make captain"}</button>
+                    )}
+                    {isHost && r.userId !== window.__VOLT.userId && (
+                      <button disabled={busy} title="Remove from this weekend's pool"
+                        onClick={async e => {
+                          e.stopPropagation();
+                          if (!window.confirm(`Remove ${r.name} from this weekend's pool? They'll move to the rejected list (you can re-approve).`)) return;
+                          setBusy(true);
+                          try { await __sb.from("registrations").update({ status: "rejected", is_captain: false }).eq("id", r.regId); await load(); }
+                          catch (err) { console.error(err); }
+                          setBusy(false);
+                        }}
+                        style={shellBtn("danger", { padding: "5px 9px", fontSize: 10 })}>✕</button>
                     )}
                   </div>
                   {openIt && profileDetail(r, "rgba(120,150,220,0.15)")}
