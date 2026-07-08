@@ -2770,6 +2770,8 @@ function DraftApp({ auth, browse, chrome }) {
   const [isDesk, setIsDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
   const [railWide, setRailWide] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem("volt_rail_wide", railWide ? "1" : "0"); } catch {} }, [railWide]);
+  const [nowTick, setNowTick] = useState(Date.now()); // draft countdown tick
+  useEffect(() => { if (!chrome?.draftAt) return; const t = setInterval(() => setNowTick(Date.now()), 30000); return () => clearInterval(t); }, [chrome?.draftAt]);
   useEffect(() => {
     if (!window.matchMedia) return;
     const mq = window.matchMedia("(min-width: 768px)");
@@ -3454,9 +3456,6 @@ function DraftApp({ auth, browse, chrome }) {
 
   // Current view name for the bar (rail may be collapsed to glyphs).
   const viewLabel = view === "account" ? "My Account" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
-  // Draft countdown — only rendered while the draft is still ahead.
-  const [nowTick, setNowTick] = useState(Date.now());
-  useEffect(() => { if (!chrome?.draftAt) return; const t = setInterval(() => setNowTick(Date.now()), 30000); return () => clearInterval(t); }, [chrome?.draftAt]);
   const draftMs = chrome?.draftAt ? new Date(chrome.draftAt).getTime() - nowTick : -1;
   const draftIn = draftMs > 0 ? (() => {
     const m = Math.floor(draftMs / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
