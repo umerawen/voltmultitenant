@@ -4709,7 +4709,7 @@ function HostMenu({ children }) {
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
       <button onClick={() => setOpen(o => !o)} aria-label="Host controls"
-        style={shellBtn("ghost", { padding: "8px 14px", fontSize: 12.5, background: "rgba(61,123,255,0.1)", borderColor: "rgba(61,123,255,0.5)", color: "#aec6ff", textShadow: "0 0 10px rgba(61,123,255,0.45)" })}>⚙ Manage</button>
+        style={shellBtn("ghost", { padding: "8px 14px", fontSize: 12.5, background: "rgba(61,123,255,0.1)", borderColor: "rgba(61,123,255,0.5)", color: "#aec6ff", textShadow: "0 0 10px rgba(61,123,255,0.45)", display: "inline-flex", alignItems: "center", gap: 7 })}>⚙ Manage<span style={{ fontSize: 9, color: "rgba(174,198,255,0.65)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease", display: "inline-block" }}>▼</span></button>
       {open && <>
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 230, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
