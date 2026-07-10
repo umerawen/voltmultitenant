@@ -241,6 +241,10 @@ async function writeWarRoom(teamId, data) {
    ════════════════════════════════════════════════════════════════════ */
 const tuid = () => "m" + Math.random().toString(36).slice(2, 9);
 
+// stats label linking a fixture to its match_results rows (must stay stable)
+function fxLabel(a, b, match) {
+  return a && b ? `${a.name} vs ${b.name}${match.id ? " · " + String(match.id).slice(-4).toUpperCase() : ""}` : null;
+}
 // round-robin pairing for a list of teamIds (each plays each once)
 function roundRobinMatches(teamIds, bo) {
   const ms = [];
@@ -461,6 +465,10 @@ function TTeamChip({ team, onClick, active, sub }) {
 function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
   const a = teamOf(match.teamA), b = teamOf(match.teamB);
   const bo = match.bo || 1;
+  // League mode: fixtures hand off to the player-stats report, pre-filled.
+  const statsLabel = fxLabel(a, b, match);
+  const statsRecorded = statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel);
+  const canReport = !!(a && b && window.__VOLT?.openReport);
   const mapsNeeded = bo === 3 ? 3 : 1;
   const winA = match.done && match.winner === match.teamA;
   const winB = match.done && match.winner === match.teamB;
@@ -503,11 +511,162 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
           )}
         </div>
       )}
+      {(canReport || statsRecorded) && !bye && (
+        <div className="flex items-center justify-center gap-2 flex-wrap" style={{ marginTop: 2 }}>
+          {statsRecorded && (
+            <span className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 10, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.35)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>✓ stats recorded</span>
+          )}
+          {canReport && (
+            <button onClick={() => window.__VOLT.openReport({
+                teamAName: a.name, teamBName: b.name, label: statsLabel,
+                winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null,
+              })}
+              className="uppercase tracking-widest px-3 py-1 transition-all hover:scale-[1.03]"
+              style={{ fontSize: 10.5, color: statsRecorded ? "rgba(200,215,255,0.55)" : "#9af5c2", border: `1px solid ${statsRecorded ? "rgba(120,150,220,0.25)" : "rgba(61,220,132,0.45)"}`, background: statsRecorded ? "transparent" : "rgba(61,220,132,0.06)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
+              ▦ {statsRecorded ? "Edit stats" : "Player stats"}</button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 // standings table
+// ── MATCHDAY VIEW — the league's fixtures as a season, not a form ──
+//    Completed rounds collapse to result strips (score, winner glow, match MVP),
+//    the active matchday gets full cards with stakes/form context, future
+//    rounds wait dimmed. Standings feed position chips + stakes lines.
+function TMatchdays({ t, teamOf, isAdmin, A }) {
+  const standings = computeStandings(t.teamIds, t.matches, t.overrides);
+  const pos = {}; standings.forEach((r, i) => { pos[r.teamId] = { rank: i + 1, pts: r.pts }; });
+  const topPts = standings[0]?.pts ?? 0;
+  const n = standings.length;
+  const rounds = {}; (t.matches || []).forEach(m => { const r = m.round || 1; (rounds[r] = rounds[r] || []).push(m); });
+  const keys = Object.keys(rounds).map(Number).sort((x, y) => x - y);
+  const isDone = (k) => rounds[k].every(m => m.done || m.teamB == null);
+  const active = keys.find(k => !isDone(k)) ?? keys[keys.length - 1];
+
+  const formOf = (teamId) => (t.matches || []).filter(m => m.done && (m.teamA === teamId || m.teamB === teamId)).slice(-4).map(m => m.winner === teamId);
+  const streakOf = (teamId) => { const f = formOf(teamId); let s = 0; for (let i = f.length - 1; i >= 0 && f[i]; i--) s++; return s; };
+  const scoreOf = (m) => {
+    const maps = (m.maps || []).filter(x => x && x.a != null && x.b != null);
+    if (!maps.length) return null;
+    if ((m.bo || 1) === 1) return [maps[0].a, maps[0].b];
+    return [maps.filter(x => Number(x.a) > Number(x.b)).length, maps.filter(x => Number(x.b) > Number(x.a)).length];
+  };
+  const stakesOf = (m) => {
+    const a = pos[m.teamA], b = pos[m.teamB];
+    if (!a || !b) return null;
+    if (a.rank <= 2 && b.rank <= 2) return "TOP-OF-THE-TABLE CLASH";
+    if ((a.rank !== 1 && a.pts + 3 >= topPts) || (b.rank !== 1 && b.pts + 3 >= topPts)) return "WINNER CAN GO TOP";
+    if (n >= 4 && a.rank >= n - 1 && b.rank >= n - 1) return "BASEMENT BATTLE";
+    if (Math.abs(a.rank - b.rank) === 1) return `#${Math.min(a.rank, b.rank)} VS #${Math.max(a.rank, b.rank)} · DIRECT RANK FIGHT`;
+    return null;
+  };
+  const mvpOf = (m) => {
+    const a = teamOf(m.teamA), b = teamOf(m.teamB);
+    const lbl = fxLabel(a, b, m);
+    return lbl ? window.__VOLT?.reportedStats?.[lbl] : null;
+  };
+  const posChip = (teamId, right) => {
+    const p = pos[teamId]; if (!p) return null;
+    return <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>#{p.rank} · {p.pts} PTS</span>;
+  };
+  const pips = (teamId) => {
+    const f = formOf(teamId); if (!f.length) return null;
+    const s = streakOf(teamId);
+    return (
+      <span className="inline-flex items-center gap-1">
+        {f.map((w, i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: w ? "#3ddc84" : "rgba(255,70,85,0.7)", boxShadow: w ? "0 0 5px rgba(61,220,132,0.6)" : "none" }} />)}
+        {s >= 3 && <span style={{ fontSize: 10, color: "#f5c453", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif" }}>🔥{s}W</span>}
+      </span>
+    );
+  };
+  const mvpChip = (m) => {
+    const v = mvpOf(m); if (!v) return null;
+    return <span className="uppercase" style={{ fontSize: 10.5, color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.1em" }}>⭐ {v.name} · {v.pts} PTS</span>;
+  };
+
+  const roundTag = (k) => isDone(k)
+    ? <span style={{ fontSize: 10, letterSpacing: "0.2em", color: "#3ddc84", fontWeight: 700 }}>✓ COMPLETE</span>
+    : k === active
+      ? <span className="inline-flex items-center gap-1.5" style={{ fontSize: 10, letterSpacing: "0.2em", color: "#5b8dff", fontWeight: 700 }}><span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#5b8dff", boxShadow: "0 0 8px rgba(61,123,255,0.9)" }} />IN PLAY</span>
+      : <span style={{ fontSize: 10, letterSpacing: "0.2em", color: "rgba(200,215,255,0.3)", fontWeight: 700 }}>UPCOMING</span>;
+
+  return (
+    <div className="flex flex-col gap-5">
+      {keys.map(k => (
+        <div key={k} style={{ opacity: !isDone(k) && k !== active ? 0.55 : 1 }}>
+          <div className="flex items-center gap-3 mb-2">
+            <span className="uppercase font-bold tracking-widest" style={{ color: k === active && !isDone(k) ? "#eaf1ff" : "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontSize: 14 }}>Matchday {k}</span>
+            {roundTag(k)}
+            <span className="flex-1" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.3), transparent)" }} />
+          </div>
+
+          {/* completed round → result strips */}
+          {isDone(k) && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              {rounds[k].map(m => {
+                const a = teamOf(m.teamA), b = teamOf(m.teamB);
+                if (!b) return null;
+                const sc = scoreOf(m); const winA = m.winner === m.teamA;
+                return (
+                  <div key={m.id} className="flex flex-col gap-1 px-4 py-2.5" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.12)", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 15, color: a?.hue, opacity: winA ? 1 : 0.45, textShadow: winA ? `0 0 12px ${a?.hue}66` : "none", flex: 1 }}>{a?.name}{winA && " ✓"}</span>
+                      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 17, fontWeight: 700, color: "#eaf1ff" }}>{sc ? `${sc[0]} : ${sc[1]}` : "—"}</span>
+                      <span className="font-bold uppercase truncate text-right" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 15, color: b?.hue, opacity: winA ? 0.45 : 1, textShadow: !winA ? `0 0 12px ${b?.hue}66` : "none", flex: 1 }}>{!winA && "✓ "}{b?.name}</span>
+                    </div>
+                    <div className="flex items-center justify-center">{mvpChip(m) || (isAdmin && window.__VOLT?.openReport && <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: fxLabel(a, b, m), winner: winA ? "A" : "B" })} className="uppercase" style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>▦ add player stats</button>)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* active round → full cards with context */}
+          {!isDone(k) && k === active && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              {rounds[k].map(m => {
+                const a = teamOf(m.teamA), b = teamOf(m.teamB);
+                const st = b ? stakesOf(m) : null;
+                return (
+                  <div key={m.id} className="flex flex-col gap-1.5">
+                    {st && <div className="text-center uppercase" style={{ fontSize: 10, letterSpacing: "0.22em", color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>⚡ {st}</div>}
+                    {b && (
+                      <div className="flex items-center justify-between px-1">
+                        <span className="flex items-center gap-2">{posChip(m.teamA)}{pips(m.teamA)}</span>
+                        <span className="flex items-center gap-2">{pips(m.teamB)}{posChip(m.teamB)}</span>
+                      </div>
+                    )}
+                    <TMatchRow match={m} locator={{ kind: "rr", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* future rounds → quiet schedule */}
+          {!isDone(k) && k !== active && (
+            <div className="grid sm:grid-cols-2 gap-1.5">
+              {rounds[k].map(m => {
+                const a = teamOf(m.teamA), b = teamOf(m.teamB);
+                return (
+                  <div key={m.id} className="flex items-center justify-between px-4 py-2" style={{ background: "rgba(255,255,255,0.015)", border: "1px solid rgba(120,150,220,0.08)" }}>
+                    <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, color: a?.hue, flex: 1 }}>{a?.name || "TBD"}</span>
+                    <span style={{ fontSize: 10, color: "rgba(200,215,255,0.3)", fontFamily: "'IBM Plex Mono',monospace", padding: "0 10px" }}>VS</span>
+                    <span className="font-bold uppercase truncate text-right" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, color: b?.hue, flex: 1 }}>{b?.name || (m.teamA ? "BYE" : "TBD")}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#3d7bff" }) {
   const rows = computeStandings(teamIds, matches, overrides);
   return (
@@ -950,11 +1109,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           </TPanel>
           <TPanel>
             <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Fixtures</p>
-            <div className="grid sm:grid-cols-2 gap-2">
-              {t.matches.map((m) => (
-                <TMatchRow key={m.id} match={m} locator={{ kind: "rr", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
-              ))}
-            </div>
+            <TMatchdays t={t} teamOf={teamOf} isAdmin={isAdmin} A={A} />
           </TPanel>
         </div>
       )}
@@ -2199,7 +2354,7 @@ function MatchAddRow({ pid, hue, onAdd }) {
 }
 
 // SEASON LEADERBOARD — the league's single source of truth for player points.
-// Reads match_results (host's Report Match): +100 win · ACS÷4 · K+⅓A, summed
+// Reads match_results (host's Report Match): +50 win · ACS÷4 · K+⅓A, summed
 // across every match of every weekend in the community.
 function Leaderboard({ isAdmin }) {
   const [rows, setRows] = useState(null);
@@ -2237,7 +2392,7 @@ function Leaderboard({ isAdmin }) {
         <span className="uppercase text-xs tracking-[0.3em]" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>Season standings · every match counts</span>
       </div>
       <h1 className="text-5xl font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.02em" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
-      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>+100 win · ACS÷4 · K+⅓A — summed across all weekends.{isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}</p>
+      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>+50 win · ACS÷4 · K+⅓A — summed across all weekends.{isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}</p>
 
       {rows === null && <p style={{ color: "rgba(200,215,255,0.5)" }}>Loading…</p>}
       {rows && rows.length === 0 && (
@@ -3591,6 +3746,10 @@ function DraftApp({ auth, browse, chrome }) {
         <div className="relative flex items-center gap-3 shrink-0 pl-4 pr-3 py-1.5">
           <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid rgba(61,123,255,0.6)", borderTop: "2px solid rgba(61,123,255,0.6)" }} />
           <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid rgba(61,123,255,0.6)", borderBottom: "2px solid rgba(61,123,255,0.6)" }} />
+          {chrome?.onReport && (
+            <button onClick={chrome.onReport}
+              style={shellBtn("ghost", { padding: "8px 14px", fontSize: 12.5, background: "rgba(61,220,132,0.08)", borderColor: "rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)" })}>▦ Report</button>
+          )}
           {draftIn && (
             <div className="hidden sm:flex items-center gap-2" title={new Date(chrome.draftAt).toLocaleString()}
               style={{ padding: "7px 12px", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", background: "rgba(245,196,83,0.07)", border: "1px solid rgba(245,196,83,0.4)" }}>
@@ -3706,9 +3865,27 @@ function DraftApp({ auth, browse, chrome }) {
   );
 
   /* global ticker tape (lobby + reused) */
-  const tickerItems = sold.length
-    ? sold.map((p) => `${teamOf(p.soldTo)?.name ?? "?"} secured ${p.name} (${p.rank}) for ${fmt(p.soldPrice)}`)
-    : ["No players sold yet — the board is wide open", "Spin the wheel to nominate the first name", `${state.teams.length} captains · $10,000 each · 4 slots to fill`];
+  // League headlines: results + match MVPs outrank auction chatter once matches exist.
+  const leagueHeadlines = (() => {
+    const out = [];
+    const tt = state.tournament || {};
+    ((tt.matches || [])).forEach(m => {
+      if (!m.done || m.teamB == null) return;
+      const w = state.teams.find(x => x.id === m.winner), l = state.teams.find(x => x.id === (m.winner === m.teamA ? m.teamB : m.teamA));
+      if (!w || !l) return;
+      const maps = (m.maps || []).filter(x => x && x.a != null && x.b != null);
+      const sc = maps.length ? ((m.bo || 1) === 1 ? `${maps[0].a}-${maps[0].b}` : `${maps.filter(x => Number(x.a) > Number(x.b)).length}-${maps.filter(x => Number(x.b) > Number(x.a)).length}`) : "";
+      out.push(`${w.name} DEF. ${l.name}${sc ? " " + sc : ""}`.toUpperCase());
+      const mvp = window.__VOLT?.reportedStats?.[fxLabel(state.teams.find(x => x.id === m.teamA), state.teams.find(x => x.id === m.teamB), m)];
+      if (mvp) out.push(`⭐ ${mvp.name} DROPS ${mvp.pts} PTS`.toUpperCase());
+    });
+    return out.slice(-10);
+  })();
+  const tickerItems = leagueHeadlines.length
+    ? leagueHeadlines
+    : sold.length
+      ? sold.map((p) => `${teamOf(p.soldTo)?.name ?? "?"} secured ${p.name} (${p.rank}) for ${fmt(p.soldPrice)}`)
+      : ["No players sold yet — the board is wide open", "Spin the wheel to nominate the first name", `${state.teams.length} captains · $10,000 each · 4 slots to fill`];
   const TickerTape = (
     <div className="overflow-hidden py-2" style={{ borderTop: "1px solid rgba(61,123,255,0.18)", borderBottom: "1px solid rgba(61,123,255,0.18)", background: "linear-gradient(180deg, rgba(8,14,28,0.6), rgba(5,9,18,0.6))" }}>
       <div className="marquee">
@@ -4793,21 +4970,36 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     loadPlayerBoard();
   }
 
-  // Player season leaderboard: sum of every match's points (+100 win · ACS÷4 · K+⅓A).
+  // Player season leaderboard: sum of every match's points (+50 win · ACS÷4 · K+⅓A).
   async function loadPlayerBoard() {
     try {
       const { data: mrs } = await __sb.from("match_results")
-        .select("user_id, points_computed, team_won")
+        .select("user_id, points_computed, team_won, event_id")
         .eq("community_id", window.__VOLT.communityId);
       if (!mrs || !mrs.length) { setBoard(null); return; }
       const { data: us } = await __sb.from("users").select("id, display_name").eq("community_id", window.__VOLT.communityId);
       const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
-      const agg = {};
-      mrs.forEach(r => {
-        const a = (agg[r.user_id] = agg[r.user_id] || { name: names[r.user_id] || "Player", pts: 0, matches: 0, wins: 0 });
-        a.pts += Number(r.points_computed || 0); a.matches++; if (r.team_won) a.wins++;
-      });
-      setBoard(Object.values(agg).sort((x, y) => y.pts - x.pts));
+      // rank movement: current standings vs standings before the latest settled weekend
+      let lastSettled = null;
+      try {
+        const { data: le } = await __sb.from("events").select("id").eq("community_id", window.__VOLT.communityId).eq("phase", "settled").order("created_at", { ascending: false }).limit(1);
+        lastSettled = le?.[0]?.id || null;
+      } catch {}
+      const build = (rows) => {
+        const agg = {};
+        rows.forEach(r => {
+          const a = (agg[r.user_id] = agg[r.user_id] || { uid: r.user_id, name: names[r.user_id] || "Player", pts: 0, matches: 0, wins: 0 });
+          a.pts += Number(r.points_computed || 0); a.matches++; if (r.team_won) a.wins++;
+        });
+        return Object.values(agg).sort((x, y) => y.pts - x.pts);
+      };
+      const cur = build(mrs);
+      if (lastSettled) {
+        const prev = build(mrs.filter(r => r.event_id !== lastSettled));
+        const prevRank = {}; prev.forEach((p, i) => { prevRank[p.uid] = i + 1; });
+        cur.forEach((p, i) => { p.move = prevRank[p.uid] == null ? "new" : prevRank[p.uid] - (i + 1); });
+      }
+      setBoard(cur);
     } catch (e) { console.error("playerBoard", e); }
   }
 
@@ -5036,13 +5228,17 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
         <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Season <span style={{ color: "#3d7bff" }}>Race</span></div>
-        <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>+100 win · ACS÷4 · K+⅓A — every match counts, subs included</div>
+        <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>+50 win · ACS÷4 · K+⅓A — every match counts, subs included</div>
       </div>
       <div style={{ display: "grid", gap: 6 }}>
         {board.map((r, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
-            <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}</span>
+            <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}
+              {r.move === "new" && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "#7da6ff", fontWeight: 700, marginLeft: 8, border: "1px solid rgba(61,123,255,0.4)", padding: "1px 6px", clipPath: SHELL_NOTCH(4) }}>NEW</span>}
+              {typeof r.move === "number" && r.move > 0 && <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▲{r.move}</span>}
+              {typeof r.move === "number" && r.move < 0 && <span style={{ fontSize: 11.5, color: "#ff8f9a", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▼{-r.move}</span>}
+            </span>
             <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>{r.matches}m · {r.wins}w</span>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 66, textAlign: "right" }}>{r.pts} pts</span>
           </div>
@@ -5107,10 +5303,10 @@ async function fetchRosterForEvent(eventId) {
 }
 
 // ── SEASON SCORING — per-match player points ────────────────────────────
-//   +100 win bonus (heaviest) · ACS÷4 (middle) · K + ⅓A (lightest)
+//   +50 win bonus (heaviest) · ACS÷4 (middle) · K + ⅓A (lightest)
 //   Season total = sum of every match's points across all weekends.
 function matchPoints({ won, acs, kills, assists }) {
-  const win = won ? 100 : 0;
+  const win = won ? 50 : 0;
   const perf = Math.round((Number(acs) || 0) / 4);
   const frags = Math.round((Number(kills) || 0) + (Number(assists) || 0) / 3);
   return win + perf + frags;
@@ -5125,6 +5321,32 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
   const phase = ev?.phase || "drafting";
   const [regView, setRegView] = useState("gate"); // gate | app — browsing during registration
   const [matchView, setMatchView] = useState(false); // host match-report form
+  const [reportPrefill, setReportPrefill] = useState(null); // fixture → report handoff
+  // Which fixtures already have player stats banked (by match_label) — lets
+  // the fixtures screen show "✓ recorded" and keeps the two systems in sync.
+  async function refreshReported() {
+    if (!HAS_SUPABASE || !ev?.id) return;
+    try {
+      const { data } = await __sb.from("match_results").select("match_label, points_computed, stat_payload").eq("event_id", ev.id);
+      const labels = new Set(); const stats = {};
+      (data || []).forEach(r => {
+        labels.add(r.match_label);
+        const cur = stats[r.match_label];
+        if (!cur || Number(r.points_computed || 0) > cur.pts)
+          stats[r.match_label] = { name: r.stat_payload?.name || "Player", pts: Number(r.points_computed || 0) };
+      });
+      window.__VOLT.reportedLabels = labels;
+      window.__VOLT.reportedStats = stats;
+    } catch (e) { console.error(e); }
+  }
+  useEffect(() => { if (phase === "matches_live" || phase === "settled") refreshReported(); }, [phase, ev?.id]);
+  // Bridge: fixture cards deep in DraftApp open the report form pre-filled.
+  useEffect(() => {
+    if (isHost && phase === "matches_live" && HAS_SUPABASE) {
+      window.__VOLT.openReport = (pf) => { setReportPrefill(pf || null); setMatchView(true); };
+      return () => { delete window.__VOLT.openReport; };
+    }
+  }, [isHost, phase]);
   const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 640px)").matches : false);
   useEffect(() => {
     if (!window.matchMedia) return;
@@ -5299,13 +5521,14 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       onBack: inReg ? () => setRegView("gate") : onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
       draftAt: ev?.draft_at || null,
+      onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
       account, onSignOut, hostControls,
     };
     return <DraftApp auth={auth} browse={inReg} chrome={chrome} />;
   }
 
   const inner = showReport
-    ? <MatchReport ev={ev} onDone={() => setMatchView(false)} />
+    ? <MatchReport ev={ev} prefill={reportPrefill} onDone={() => { setMatchView(false); setReportPrefill(null); refreshReported(); }} />
     : <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />;
 
   return <div>{bar}{inner}</div>;
@@ -5388,9 +5611,9 @@ function ScoutProfileCard({ userId, onSaved }) {
 
 /* ════════════════════════════════════════════════════════════════════
    MATCH REPORT — host records a match; every player earns season points.
-   +100 win · ACS÷4 · K+⅓A  → one match_results row per player.
+   +50 win · ACS÷4 · K+⅓A  → one match_results row per player.
    ════════════════════════════════════════════════════════════════════ */
-function MatchReport({ ev, onDone }) {
+function MatchReport({ ev, onDone, prefill }) {
   const [teams, setTeams] = useState(null);   // [{id,name,captain,captainUserId,roster:[{id,name}]}]
   const [tA, setTA] = useState(""); const [tB, setTB] = useState("");
   const [winner, setWinner] = useState("A");
@@ -5416,8 +5639,13 @@ function MatchReport({ ev, onDone }) {
       ],
     }));
     setTeams(board);
-    if (board[0]) setTA(board[0].id);
-    if (board[1]) setTB(board[1].id);
+    // Opened from a fixture card → teams, label, and winner arrive pre-filled.
+    const pA = prefill && board.find(t => t.name === prefill.teamAName);
+    const pB = prefill && board.find(t => t.name === prefill.teamBName);
+    if (pA) setTA(pA.id); else if (board[0]) setTA(board[0].id);
+    if (pB) setTB(pB.id); else if (board[1]) setTB(board[1].id);
+    if (prefill?.winner) setWinner(prefill.winner);
+    if (prefill?.label) setLabel(l => l || prefill.label);
     try { const r = await fetchRosterForEvent(ev.id); setAllRegs(r.all); } catch (e) { console.error(e); }
     const { data } = await __sb.from("match_results").select("match_label, team_won, points_computed, user_id, stat_payload").eq("event_id", ev.id).order("created_at", { ascending: false });
     const byLabel = {};
@@ -5510,7 +5738,7 @@ function MatchReport({ ev, onDone }) {
       <div style={{ textAlign: "center", marginBottom: 24 }}>
         <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {ev?.weekend_label} · Match report</div>
         <h1 style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Record a <span style={{ color: "#3d7bff" }}>Match</span></h1>
-        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+100 win · ACS÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · ACS÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
       </div>
       <div style={panel}>
         <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
