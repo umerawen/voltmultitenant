@@ -5110,30 +5110,34 @@ function NotifBell() {
 // Public player profile — the Season Race makes individuals the product;
 // this is their page. Opened from leaderboard rows; My Account stays the
 // private edit surface behind it.
-function PlayerProfileModal({ userId, onClose }) {
+function PlayerProfile({ userId, onBack }) {
   const [d, setD] = useState(null);
   useEffect(() => {
     (async () => {
       try {
         const cid = window.__VOLT.communityId;
         const [{ data: u }, { data: p }, { data: mrs }, { data: evs }] = await Promise.all([
-          __sb.from("users").select("display_name, trophy_streak, best_streak").eq("id", userId).maybeSingle(),
+          __sb.from("users").select("display_name, trophy_streak, best_streak, weekends_won, brackets_won").eq("id", userId).maybeSingle(),
           __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle(),
           __sb.from("match_results").select("event_id, points_computed, team_won, stat_payload, created_at").eq("community_id", cid).eq("user_id", userId).order("created_at", { ascending: true }),
-          __sb.from("events").select("id, weekend_label, created_at").eq("community_id", cid),
+          __sb.from("events").select("id, weekend_label, created_at, recap").eq("community_id", cid),
         ]);
         setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [] });
       } catch (e) { console.error(e); setD({ u: {}, p: {}, mrs: [], evs: [] }); }
     })();
   }, [userId]);
-  const tile = (label, val, hue) => (
-    <div style={{ padding: "10px 12px", background: "rgba(10,16,30,0.7)", border: `1px solid ${hue || "rgba(61,123,255,0.3)"}44`, clipPath: SHELL_NOTCH(7), textAlign: "center" }}>
-      <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: hue || "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", marginTop: 2 }}>{val}</div>
+
+  const tile = (label, val, hue, sub) => (
+    <div style={{ padding: "14px 14px", background: "rgba(10,16,30,0.7)", border: `1px solid ${hue || "rgba(61,123,255,0.3)"}44`, clipPath: SHELL_NOTCH(8), textAlign: "center" }}>
+      <div style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: hue || "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", marginTop: 3, lineHeight: 1 }}>{val}</div>
+      {sub && <div style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>{sub}</div>}
     </div>
   );
+  const sectionLabel = (t) => <div style={{ fontSize: 10, letterSpacing: "0.26em", textTransform: "uppercase", color: "rgba(120,150,220,0.6)", fontWeight: 700, margin: "26px 0 10px" }}>// {t}</div>;
+
   let inner;
-  if (!d) inner = <p className="vg-loading">// Pulling the file…</p>;
+  if (!d) inner = <p className="vg-loading" style={{ padding: "40px 0" }}>// Pulling the file…</p>;
   else {
     const { u, p, mrs, evs } = d;
     const pts = mrs.reduce((a, r) => a + Number(r.points_computed || 0), 0);
@@ -5142,7 +5146,10 @@ function PlayerProfileModal({ userId, onClose }) {
     const avgAcs = acsRows.length ? Math.round(acsRows.reduce((a, b) => a + b, 0) / acsRows.length) : "—";
     const k = mrs.reduce((a, r) => a + Number(r.stat_payload?.k || 0), 0);
     const asst = mrs.reduce((a, r) => a + Number(r.stat_payload?.a || 0), 0);
+    const totalAcs = acsRows.reduce((a, b) => a + b, 0);
     const evMap = {}; evs.forEach(e => { evMap[e.id] = e; });
+    // Weekends this player was crowned champion in (from settled recaps).
+    const champEvents = evs.filter(e => Array.isArray(e.recap?.ids) && e.recap.ids.includes(userId));
     const byWeekend = {};
     mrs.forEach(r => {
       const w = (byWeekend[r.event_id] = byWeekend[r.event_id] || { pts: 0, m: 0, w: 0 });
@@ -5150,52 +5157,93 @@ function PlayerProfileModal({ userId, onClose }) {
     });
     const weekendRows = Object.entries(byWeekend)
       .sort((a, b) => new Date(evMap[a[0]]?.created_at || 0) - new Date(evMap[b[0]]?.created_at || 0));
+
+    // Self-entered scouting/tracker numbers (no live scrape — the tracker link is the source of truth).
+    const trackerStats = [
+      p.rank && ["Rank", p.rank, (RANKS[p.rank] || {}).c || "#8d97a8"],
+      p.role && ["Role", p.role],
+      p.agent && ["Main agent", p.agent],
+      (p.kda != null) && ["Tracker KDA", p.kda],
+      (p.acs != null) && ["Tracker ACS", p.acs],
+      (p.hs != null) && ["HS %", p.hs + "%"],
+      (p.win != null) && ["Win %", p.win + "%"],
+    ].filter(Boolean);
+
     inner = <>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      {/* header row */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Player file</div>
-          <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", display: "flex", alignItems: "center" }}>{u.display_name || "Player"}<TrophyChip n={u.trophy_streak} big /></div>
-          <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 12, color: "rgba(200,215,255,0.55)", flexWrap: "wrap" }}>
+          <div style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", display: "flex", alignItems: "center", lineHeight: 1.05 }}>{u.display_name || "Player"}<TrophyChip n={u.trophy_streak} big /></div>
+          <div style={{ display: "flex", gap: 10, marginTop: 6, fontSize: 12.5, color: "rgba(200,215,255,0.55)", flexWrap: "wrap" }}>
             {p.rank && <span style={{ color: (RANKS[p.rank] || {}).c || "#8d97a8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{p.rank}</span>}
             {p.role && <span style={{ textTransform: "uppercase" }}>{p.role}</span>}
             {p.agent && <span>{p.agent}</span>}
             {u.best_streak > 0 && <span style={{ color: "#f5c453" }}>best streak 🏆×{u.best_streak}</span>}
           </div>
         </div>
-        <button onClick={onClose} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>✕</button>
+        <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>‹ Back</button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))", gap: 8, marginTop: 16 }}>
+
+      {sectionLabel("Season record")}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
         {tile("Season pts", pts, "#f5c453")}
-        {tile("Matches", mrs.length)}
-        {tile("Wins", wins, "#3ddc84")}
-        {tile("Win %", mrs.length ? Math.round(wins / mrs.length * 100) + "%" : "—")}
-        {tile("Avg ACS", avgAcs, "#ff4655")}
-        {tile("K / A", k + " / " + asst, "#00e5ff")}
+        {tile("Weekends won", u.weekends_won || 0, "#f5c453", "champion team")}
+        {tile("Brackets won", u.brackets_won || 0, "#af9aec", "elimination")}
+        {tile("Matches played", mrs.length)}
+        {tile("Matches won", wins, "#3ddc84", mrs.length ? Math.round(wins / mrs.length * 100) + "% win rate" : null)}
       </div>
-      {weekendRows.length > 0 && <div style={{ marginTop: 18 }}>
-        <div style={{ fontSize: 10, letterSpacing: "0.26em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700, marginBottom: 8 }}>// Weekend by weekend</div>
-        <div style={{ display: "grid", gap: 5 }}>
-          {weekendRows.map(([eid, w]) => (
-            <div key={eid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
-              <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 12.5 }}>{evMap[eid]?.weekend_label || "Weekend"}</span>
-              <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{w.m}m · {w.w}w</span>
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 60, textAlign: "right" }}>{w.pts} pts</span>
+
+      {sectionLabel("Combat — league matches")}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+        {tile("Avg ACS", avgAcs, "#ff4655")}
+        {tile("Total kills", k, "#00e5ff")}
+        {tile("Total assists", asst, "#00e5ff")}
+        {tile("K + ⅓A", Math.round(k + asst / 3), "#00e5ff", "scoring stat")}
+        {tile("Pts / match", mrs.length ? Math.round(pts / mrs.length) : "—", "#f5c453")}
+      </div>
+
+      {trackerStats.length > 0 && <>
+        {sectionLabel("Valorant tracker")}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 8 }}>
+          {trackerStats.map(([label, val, hue], i) => (
+            <div key={i} style={{ padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6), textAlign: "center" }}>
+              <div style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>{label}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 3, color: hue || "#ecf3ff", textTransform: "uppercase" }}>{val}</div>
             </div>
           ))}
         </div>
-      </div>}
-      {p.tracker_url && <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 14, color: "#7da6ff", textDecoration: "underline", fontWeight: 600, fontSize: 13 }}>⌖ View tracker profile ↗</a>}
+        <p style={{ fontSize: 11, color: "rgba(200,215,255,0.35)", marginTop: 8 }}>Self-reported from the player's scouting profile. The live source is their tracker below.</p>
+        {p.tracker_url && <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, color: "#7da6ff", textDecoration: "underline", fontWeight: 600, fontSize: 13.5 }}>⌖ Open full tracker.gg profile ↗</a>}
+      </>}
+      {trackerStats.length === 0 && p.tracker_url && <>
+        {sectionLabel("Valorant tracker")}
+        <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", color: "#7da6ff", textDecoration: "underline", fontWeight: 600, fontSize: 13.5 }}>⌖ Open full tracker.gg profile ↗</a>
+      </>}
+
+      {weekendRows.length > 0 && <>
+        {sectionLabel("Weekend by weekend")}
+        <div style={{ display: "grid", gap: 6 }}>
+          {weekendRows.map(([eid, w]) => {
+            const won = champEvents.some(e => e.id === eid);
+            return (
+              <div key={eid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", background: won ? "rgba(245,196,83,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${won ? "rgba(245,196,83,0.3)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(7) }}>
+                <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{evMap[eid]?.weekend_label || "Weekend"}
+                  {won && <span style={{ color: "#f5c453", marginLeft: 8, fontSize: 12 }}>🏆 champion</span>}</span>
+                <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{w.m} matches · {w.w}W</span>
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 64, textAlign: "right" }}>{w.pts} pts</span>
+              </div>
+            );
+          })}
+        </div>
+      </>}
+      {mrs.length === 0 && <p style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", marginTop: 24 }}>No matches played yet — the record starts the first weekend they take the server.</p>}
     </>;
   }
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 125, background: "rgba(4,6,12,0.82)", display: "grid", placeItems: "center", padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(16), padding: "22px 24px" }}>
-        {inner}
-      </div>
-    </div>
+    <div style={{ maxWidth: 860, margin: "0 auto", padding: "28px 22px 60px" }}>{inner}</div>
   );
 }
-
 // League-level left rail for the dashboard/hub. Mirrors the in-weekend rail
 // (league mark, same view glyphs, My Account, sound) so stepping up to the hub
 // never feels like leaving the app. Per-weekend view shortcuts route into the
@@ -5286,7 +5334,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [myProf, setMyProf] = useState(null); // rank/role — gates the play toggle
   const [mySusp, setMySusp] = useState(0);
   const [myStrikes, setMyStrikes] = useState(0);
-  const [showPlayer, setShowPlayer] = useState(null); // public player-profile modal
+  const [showPlayer, setShowPlayer] = useState(null); // public player-profile screen (full-screen, rail intact)
   const [expandPast, setExpandPast] = useState(null); // settled strip → recap card
   const [railWideHub, setRailWideHub] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
   const setRailWide = (v) => { setRailWideHub(v); try { localStorage.setItem("volt_rail_wide", v ? "1" : "0"); } catch {} };
@@ -5510,7 +5558,6 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
           </div>
         </div>
       )}
-      {showPlayer && <PlayerProfileModal userId={showPlayer} onClose={() => setShowPlayer(null)} />}
       <div style={{ maxWidth: 840, margin: "0 auto", padding: "34px 20px 0" }}>
         <div style={{ textAlign: "center", marginBottom: 26 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.4em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT LEAGUE</div>
@@ -5538,6 +5585,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   );
 
   if (events === null) return wrap(<p className="vg-loading">// Loading league…</p>);
+  if (showPlayer) return wrap(<PlayerProfile userId={showPlayer} onBack={() => setShowPlayer(null)} />);
 
   const btn = (primary) => shellBtn(primary ? "primary" : "ghost", { padding: "11px 22px", fontSize: 13 });
   const PHASE_LABEL = { registration_open: "Registration open", registration_closed: "Registration closed", drafting: "Draft live", matches_live: "Matches live", settled: "Settled" };
@@ -5949,9 +5997,12 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   async function settleTrophiesAndRecap() {
     try {
       const s = await readState();
-      let team = null, championIds = [], recap = {};
+      let team = null, championIds = [], recap = {}, kind = "weekend";
       if (s && s.tournament && s.teams) {
         const t = s.tournament;
+        // A single-elim bracket crowns a bracket champion; league-play crowns
+        // the weekend (top of the table). Both count as champions for trophies.
+        kind = t.format === "single" ? "bracket" : "weekend";
         const standings = computeStandings(t.teamIds || s.teams.map(x => x.id), t.matches || [], t.overrides);
         const champ = standings.find(r => r.played > 0) ? standings[0] : null;
         if (champ) {
@@ -5977,7 +6028,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
         recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.pts + " pts" : null, topFrag: topFrag ? topFrag[0] : null };
       } catch (e) { console.error("recap stats", e); }
       // Fire the security-definer RPC: streak +1 for champions, reset for the rest.
-      await __sb.rpc("volt_settle_trophies", { p_event: ev.id, p_team: team, p_champions: championIds, p_recap: recap });
+      await __sb.rpc("volt_settle_trophies", { p_event: ev.id, p_team: team, p_champions: championIds, p_recap: recap, p_kind: kind });
       // Notify every approved player the weekend settled (+ champions get the crown).
       try {
         const r = await fetchRosterForEvent(ev.id);
