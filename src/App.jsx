@@ -5112,8 +5112,6 @@ function PlayerProfile({ userId, onBack, footer }) {
   const wins = mrs.filter(x => x.team_won).length;
   const acsRows = mrs.map(x => Number(x.stat_payload?.acs || 0)).filter(Boolean);
   const avgAcs = acsRows.length ? Math.round(acsRows.reduce((a, b) => a + b, 0) / acsRows.length) : null;
-  const k = mrs.reduce((a, x) => a + Number(x.stat_payload?.k || 0), 0);
-  const asst = mrs.reduce((a, x) => a + Number(x.stat_payload?.a || 0), 0);
   const winRate = mrs.length ? Math.round(wins / mrs.length * 100) : null;
   const evMap = {}; evs.forEach(e => { evMap[e.id] = e; });
   const champEvents = evs.filter(e => Array.isArray(e.recap?.ids) && e.recap.ids.includes(userId));
@@ -5151,7 +5149,7 @@ function PlayerProfile({ userId, onBack, footer }) {
       {/* HERO — two equal panels, identity + radar, matched heights */}
       <style>{`@media (max-width: 720px){ .volt-hero-grid{ grid-template-columns: 1fr !important; } }`}</style>
       <div className="volt-hero-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "stretch" }}>
-        <div style={{ position: "relative", clipPath: NOTCH, padding: "24px 26px", overflow: "hidden", minHeight: 300, display: "flex", flexDirection: "column", justifyContent: "space-between",
+        <div style={{ position: "relative", clipPath: NOTCH, padding: "26px 26px 22px", overflow: "hidden", minHeight: 300, display: "flex", flexDirection: "column",
           background: `linear-gradient(150deg, ${hue}26, rgba(14,20,34,0.92) 52%, rgba(10,13,22,0.96))`, border: `1px solid ${hue}55` }}>
           <div style={{ position: "absolute", top: -34, right: -6, fontSize: 168, fontWeight: 800, color: hue, opacity: 0.08, fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1, pointerEvents: "none", letterSpacing: "-0.04em" }}>{avgAcs || p.acs || ""}</div>
           {/* top: crest + identity */}
@@ -5164,12 +5162,24 @@ function PlayerProfile({ userId, onBack, footer }) {
                 {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
                 {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
               </div>
-              {u.best_streak > 0 && <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 7 }}>best streak 🏆×{u.best_streak}</div>}
             </div>
           </div>
-          {/* bottom: scouting stat row as bordered mini-tiles (fills the panel) */}
+
+          {/* middle: season line — fills the band with real info instead of empty gradient */}
+          <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center", margin: "18px 0" }}>
+            <div style={{ display: "flex", alignItems: "stretch", width: "100%", border: `1px solid ${hue}22`, background: "rgba(6,10,20,0.4)", clipPath: SHELL_NOTCH(7) }}>
+              {[["Season pts", pts, "#f5c453"], ["Win rate", winRate != null ? winRate + "%" : "—", "#3ddc84"], ["Trophies", "🏆×" + (u.trophy_streak || 0), "#f5c453"]].map(([lb, v, c], i) => (
+                <div key={i} style={{ flex: 1, padding: "11px 6px", textAlign: "center", borderLeft: i ? "1px solid rgba(120,150,220,0.12)" : "none" }}>
+                  <div style={{ fontSize: 8.5, letterSpacing: "0.16em", color: "rgba(200,215,255,0.5)", fontWeight: 700, textTransform: "uppercase" }}>{lb}</div>
+                  <div style={{ fontSize: 19, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", marginTop: 3, color: c, lineHeight: 1 }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* bottom: scouting stat row */}
           {hasScout ? (
-            <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 20 }}>
+            <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
               {[["KDA", p.kda, "#00e5ff"], ["ACS", p.acs, "#ff4655"], ["HS%", p.hs != null ? p.hs + "%" : null, "#af9aec"], ["WIN%", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
                 <div key={i} style={{ padding: "8px 4px", textAlign: "center", background: "rgba(6,10,20,0.5)", border: `1px solid ${c}33`, clipPath: SHELL_NOTCH(5) }}>
                   <div style={{ fontSize: 8.5, letterSpacing: "0.14em", color: c, fontWeight: 700, textTransform: "uppercase" }}>{lb}</div>
@@ -5178,7 +5188,7 @@ function PlayerProfile({ userId, onBack, footer }) {
               ))}
             </div>
           ) : (
-            <div style={{ position: "relative", marginTop: 20, fontSize: 12, color: "rgba(200,215,255,0.4)" }}>No scouting profile set yet.</div>
+            <div style={{ position: "relative", fontSize: 12, color: "rgba(200,215,255,0.4)" }}>No scouting profile set yet.</div>
           )}
         </div>
 
@@ -5193,22 +5203,13 @@ function PlayerProfile({ userId, onBack, footer }) {
         </div>
       </div>
 
-      {sec("Season record")}
+      {sec("This season")}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: 12 }} className="volt-statgrid">
         {bigTile("Season pts", pts, "#f5c453")}
-        {bigTile("Weekends won", u.weekends_won || 0, "#f5c453", "champion team")}
-        {bigTile("Brackets won", u.brackets_won || 0, "#af9aec", "elimination")}
         {bigTile("Matches", mrs.length, "#5b8dff")}
         {bigTile("Wins", wins, "#3ddc84", winRate != null ? winRate + "% win rate" : null)}
-      </div>
-
-      {sec("Combat — league matches")}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: 12 }} className="volt-statgrid">
+        {bigTile("Weekends won", u.weekends_won || 0, "#f5c453")}
         {bigTile("Avg ACS", avgAcs, "#ff4655")}
-        {bigTile("Kills", k, "#00e5ff")}
-        {bigTile("Assists", asst, "#00e5ff")}
-        {bigTile("K + ⅓A", Math.round(k + asst / 3), "#00e5ff", "scoring stat")}
-        {bigTile("Pts / match", mrs.length ? Math.round(pts / mrs.length) : null, "#f5c453")}
       </div>
       <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
 
@@ -5532,7 +5533,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
   const showRail = HAS_SUPABASE && hubDesk;
   const railPad = showRail ? (railWideHub ? 224 : 60) : 0;
 
-  const wrap = (inner) => (
+  const wrap = (inner, hideHeader) => (
     <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px", paddingLeft: railPad, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
       <ShellStyles />
       {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={() => setShowProfile(true)} isHost={isHost} wide={railWideHub} setWide={setRailWide} />}
@@ -5552,8 +5553,8 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
           </div>
         </div>
       )}
-      <div style={{ maxWidth: 840, margin: "0 auto", padding: "34px 20px 0" }}>
-        <div style={{ textAlign: "center", marginBottom: 26 }}>
+      <div style={{ maxWidth: hideHeader ? 1000 : 840, margin: "0 auto", padding: hideHeader ? "16px 20px 0" : "34px 20px 0" }}>
+        {!hideHeader && <div style={{ textAlign: "center", marginBottom: 26 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.4em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT LEAGUE</div>
           <div style={{ fontSize: "clamp(34px, 6vw, 52px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.05, marginTop: 6, textShadow: "0 0 40px rgba(61,123,255,0.35)" }}>
             {community?.name || "Community"}</div>
@@ -5571,7 +5572,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
               {board && board[0] && <span>race leader <span style={{ color: "#f5c453", fontWeight: 700, textTransform: "uppercase" }}>{board[0].name}</span> · {board[0].pts} pts</span>}
             </div>
           )}
-        </div>
+        </div>}
         {inner}
         {err && <p style={{ color: "#ff8a94", fontSize: 13, marginTop: 12, textAlign: "center" }}>{err}</p>}
       </div>
@@ -5579,7 +5580,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
   );
 
   if (events === null) return wrap(<p className="vg-loading">// Loading league…</p>);
-  if (showPlayer) return wrap(<PlayerProfile userId={showPlayer} onBack={() => setShowPlayer(null)} />);
+  if (showPlayer) return wrap(<PlayerProfile userId={showPlayer} onBack={() => setShowPlayer(null)} />, true);
 
   const btn = (primary) => shellBtn(primary ? "primary" : "ghost", { padding: "11px 22px", fontSize: 13 });
   const PHASE_LABEL = { registration_open: "Registration open", registration_closed: "Registration closed", drafting: "Draft live", matches_live: "Matches live", settled: "Settled" };
