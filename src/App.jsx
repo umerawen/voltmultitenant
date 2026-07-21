@@ -3510,6 +3510,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const fonts = (
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
+      /* Global UI scale — bumps the whole app up a notch, like a light browser zoom. */
+      html { zoom: 1.1; }
       /* Keyboard focus — visible ring for keyboard users only (not mouse clicks). */
       *:focus { outline: none; }
       *:focus-visible { outline: 2px solid #6fa0ff; outline-offset: 2px; border-radius: 2px; }
@@ -4777,6 +4779,7 @@ function shellBtn(kind, extra) {
 }
 function ShellStyles() {
   return <style>{`
+    html { zoom: 1.1; }
     .vg-shell button { transition: transform .16s ease, box-shadow .16s ease, filter .16s ease; }
     .vg-shell button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.15); box-shadow: 0 0 20px rgba(61,123,255,0.3); }
     .vg-shell button:active:not(:disabled) { transform: translateY(0) scale(.98); }
@@ -5206,7 +5209,7 @@ function PlayerProfile({ userId, onBack, footer }) {
           <div style={{ fontSize: 10.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700 }}>Performance profile</div>
           <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
             {hasScout
-              ? <StatRadar player={radarPlayer} size={244} hue={hue} />
+              ? <StatRadar player={radarPlayer} size={300} hue={hue} />
               : <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", textAlign: "center", padding: "40px 10px" }}>No scouting profile yet — the radar fills in once stats are set.</p>}
           </div>
         </div>
