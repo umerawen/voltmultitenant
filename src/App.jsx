@@ -5149,57 +5149,55 @@ function PlayerProfile({ userId, onBack, footer }) {
       {/* HERO — two equal panels, identity + radar, matched heights */}
       <style>{`@media (max-width: 720px){ .volt-hero-grid{ grid-template-columns: 1fr !important; } }`}</style>
       <div className="volt-hero-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "stretch" }}>
-        <div style={{ position: "relative", clipPath: NOTCH, padding: "26px 26px 22px", overflow: "hidden", minHeight: 300, display: "flex", flexDirection: "column",
-          background: `linear-gradient(150deg, ${hue}26, rgba(14,20,34,0.92) 52%, rgba(10,13,22,0.96))`, border: `1px solid ${hue}55` }}>
-          <div style={{ position: "absolute", top: -34, right: -6, fontSize: 168, fontWeight: 800, color: hue, opacity: 0.08, fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1, pointerEvents: "none", letterSpacing: "-0.04em" }}>{avgAcs || p.acs || ""}</div>
-          {/* top: crest + identity */}
-          <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 18 }}>
-            <RankCrest rank={rank} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 38, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.02, display: "flex", alignItems: "center", flexWrap: "wrap" }}>{name}<TrophyChip n={u.trophy_streak} big /></div>
-              <div style={{ display: "flex", gap: 10, marginTop: 9, fontSize: 13, flexWrap: "wrap", alignItems: "center" }}>
-                <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{rank}</span>
-                {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
-                {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
+        <div style={{ position: "relative", clipPath: NOTCH, padding: 14, overflow: "hidden", minHeight: 300, display: "flex", flexDirection: "column", gap: 12,
+          background: "linear-gradient(160deg, rgba(20,26,42,0.92), rgba(10,13,22,0.92))", border: `1px solid ${hue}66`, boxShadow: "0 0 0 1px rgba(255,255,255,0.04) inset" }}>
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 4px)" }} />
+
+          {/* identity panel — contained gradient, watermark lives INSIDE it (no bleed) */}
+          <div style={{ position: "relative", overflow: "hidden", borderRadius: 14, padding: "22px 22px 18px", border: "1px solid rgba(255,255,255,0.08)",
+            background: `linear-gradient(120deg, ${hue}3a, ${hue}18 55%, rgba(10,13,22,0.35))` }}>
+            <span style={{ position: "absolute", right: -8, top: -22, fontSize: 128, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.04em", color: "rgba(255,255,255,0.07)", fontFamily: "'Rajdhani',sans-serif", pointerEvents: "none", userSelect: "none" }}>{avgAcs || p.acs || ""}</span>
+            {(avgAcs || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>ACS</span> : null}
+            <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
+              <RankCrest rank={rank} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 34, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.03, display: "flex", alignItems: "center", flexWrap: "wrap", textShadow: `0 0 24px ${r.glow}` }}>{name}<TrophyChip n={u.trophy_streak} big /></div>
+                <div style={{ display: "flex", gap: 9, marginTop: 8, fontSize: 12.5, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textShadow: `0 0 10px ${r.glow}` }}>{rank}</span>
+                  <span style={{ color: "rgba(236,243,255,0.3)" }}>·</span>
+                  {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
+                  {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
+                </div>
+                {p.tracker_url
+                  ? <a href={p.tracker_url} target="_blank" rel="noopener noreferrer"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "6px 13px", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7deaff", background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.5)", borderRadius: 6, textDecoration: "none" }}>⌖ View tracker ↗</a>
+                  : !onBack && <span style={{ display: "inline-block", marginTop: 12, fontSize: 11, color: "rgba(200,215,255,0.4)" }}>No tracker link — add one in your scouting profile below.</span>}
               </div>
-              {/* tracker: a real button up top, always visible when a link exists */}
-              {p.tracker_url
-                ? <a href={p.tracker_url} target="_blank" rel="noopener noreferrer"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "7px 14px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7deaff", background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.5)", clipPath: SHELL_NOTCH(6), textDecoration: "none", boxShadow: "0 0 14px rgba(0,229,255,0.15)" }}>⌖ View tracker ↗</a>
-                : !onBack && <span style={{ display: "inline-block", marginTop: 12, fontSize: 11.5, color: "rgba(200,215,255,0.4)" }}>No tracker link yet — add one in your scouting profile below.</span>}
             </div>
           </div>
 
-          {/* middle: season line — fills the band with real info instead of empty gradient */}
-          <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center", margin: "18px 0" }}>
-            <div style={{ display: "flex", alignItems: "stretch", width: "100%", border: `1px solid ${hue}22`, background: "rgba(6,10,20,0.4)", clipPath: SHELL_NOTCH(7) }}>
-              {[["Season pts", pts, "#f5c453"], ["Win rate", winRate != null ? winRate + "%" : "—", "#3ddc84"], ["Trophies", "🏆×" + (u.trophy_streak || 0), "#f5c453"]].map(([lb, v, c], i) => (
-                <div key={i} style={{ flex: 1, padding: "11px 6px", textAlign: "center", borderLeft: i ? "1px solid rgba(120,150,220,0.12)" : "none" }}>
-                  <div style={{ fontSize: 8.5, letterSpacing: "0.16em", color: "rgba(200,215,255,0.5)", fontWeight: 700, textTransform: "uppercase" }}>{lb}</div>
-                  <div style={{ fontSize: 19, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", marginTop: 3, color: c, lineHeight: 1 }}>{v}</div>
+          {/* season strip — three summary cells, value-first like the card's Stat boxes */}
+          <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+            {[["Season pts", String(pts), "#f5c453"], ["Win rate", winRate != null ? winRate + "%" : "—", "#3ddc84"], ["Trophies", "🏆×" + (u.trophy_streak || 0), "#f5c453"]].map(([lb, v, c], i) => (
+              <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "12px 6px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <span style={{ fontSize: 20, fontWeight: 700, lineHeight: 1, color: c, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 14px ${c}66` }}>{v}</span>
+                <span style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(236,243,255,0.5)", fontWeight: 600 }}>{lb}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* scouting stats — value-first, exactly the card's Stat treatment */}
+          {hasScout ? (
+            <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: "auto" }}>
+              {[["KDA", p.kda != null ? p.kda : null, "#00e5ff"], ["ACS", p.acs != null ? p.acs : null, "#ff4655"], ["HS %", p.hs != null ? p.hs + "%" : null, "#9d6bff"], ["WIN %", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
+                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "12px 4px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <span style={{ fontSize: 21, fontWeight: 700, lineHeight: 1, color: v == null ? "rgba(200,215,255,0.3)" : c, fontFamily: "'Rajdhani',sans-serif", textShadow: v == null ? "none" : `0 0 14px ${c}66` }}>{v == null ? "—" : v}</span>
+                  <span style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(236,243,255,0.5)", fontWeight: 600 }}>{lb}</span>
                 </div>
               ))}
             </div>
-          </div>
-
-          {/* bottom: scouting stat row — accent-capped cells, matches the card's layered feel */}
-          {hasScout ? (
-            <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-              {[["KDA", p.kda, "#00e5ff"], ["ACS", p.acs, "#ff4655"], ["HS%", p.hs != null ? p.hs + "%" : null, "#af9aec"], ["WIN%", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => {
-                const empty = v == null;
-                return (
-                  <div key={i} style={{ position: "relative", padding: "12px 6px 11px", textAlign: "center", overflow: "hidden",
-                    background: empty ? "rgba(6,10,20,0.4)" : `linear-gradient(180deg, ${c}14, rgba(6,10,20,0.55) 60%)`,
-                    border: "1px solid rgba(120,150,220,0.14)", borderTop: `2px solid ${empty ? "rgba(120,150,220,0.25)" : c}`,
-                    clipPath: SHELL_NOTCH(6) }}>
-                    <div style={{ fontSize: 9, letterSpacing: "0.16em", color: empty ? "rgba(200,215,255,0.4)" : c, fontWeight: 700, textTransform: "uppercase" }}>{lb}</div>
-                    <div style={{ fontSize: 17, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", marginTop: 4, lineHeight: 1, color: empty ? "rgba(200,215,255,0.3)" : "#ecf3ff", textShadow: empty ? "none" : `0 0 12px ${c}44` }}>{empty ? "—" : v}</div>
-                  </div>
-                );
-              })}
-            </div>
           ) : (
-            <div style={{ position: "relative", fontSize: 12, color: "rgba(200,215,255,0.4)" }}>No scouting profile set yet.</div>
+            <div style={{ position: "relative", fontSize: 12, color: "rgba(200,215,255,0.4)", marginTop: "auto" }}>No scouting profile set yet.</div>
           )}
         </div>
 
