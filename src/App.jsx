@@ -4792,8 +4792,7 @@ function ShellStyles() {
 //    Details (editable display name), season stat tiles from match_results,
 //    and the scouting profile editor captains see before bidding.
 function AccountView({ auth, chrome }) {
-  const [me, setMe] = useState(null);        // users row
-  const [stats, setStats] = useState(null);  // season aggregates
+  const [me, setMe] = useState(null);
   const [nameDraft, setNameDraft] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -4805,23 +4804,6 @@ function AccountView({ auth, chrome }) {
       try {
         const { data: u } = await __sb.from("users").select("*").eq("id", auth.userId).maybeSingle();
         if (alive && u) { setMe(u); setNameDraft(u.display_name || ""); }
-        const { data: mrs } = await __sb.from("match_results")
-          .select("points_computed, team_won, stat_payload, created_at")
-          .eq("community_id", window.__VOLT.communityId).eq("user_id", auth.userId);
-        if (!alive) return;
-        const rows = mrs || [];
-        const agg = rows.reduce((a, r) => {
-          const sp = r.stat_payload || {};
-          a.pts += Number(r.points_computed || 0); a.matches += 1; a.wins += r.team_won ? 1 : 0;
-          a.k += Number(sp.k || 0); a.a += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
-          return a;
-        }, { pts: 0, matches: 0, wins: 0, k: 0, a: 0, acsSum: 0 });
-        try {
-          const { data: ns } = await __sb.from("registrations").select("id")
-            .eq("community_id", window.__VOLT.communityId).eq("user_id", auth.userId).eq("no_show", true);
-          agg.noShows = (ns || []).length;
-        } catch { agg.noShows = 0; }
-        setStats(agg);
       } catch (e) { console.error(e); }
     })();
     return () => { alive = false; };
@@ -4841,35 +4823,13 @@ function AccountView({ auth, chrome }) {
     setBusy(false);
   }
 
-  const tile = (label, value, accent) => (
-    <div style={{ padding: "16px 18px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", textAlign: "center" }}>
-      <div style={{ fontSize: 26, fontWeight: 700, color: accent || "#ecf3ff", fontFamily: "'Rajdhani',sans-serif" }}>{value}</div>
-      <div style={{ fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginTop: 3 }}>{label}</div>
-    </div>
-  );
-  const winrate = stats && stats.matches ? Math.round((stats.wins / stats.matches) * 100) + "%" : "—";
-  const avgAcs = stats && stats.matches ? Math.round(stats.acsSum / stats.matches) : "—";
   const panel = { padding: "20px 22px", background: "linear-gradient(160deg, rgba(18,24,40,0.9), rgba(9,12,21,0.9))", border: "1px solid rgba(61,123,255,0.25)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" };
   const overline = { fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", marginBottom: 12 };
+  const fieldLabel = { fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", marginBottom: 3 };
 
-  return (
-    <div className="view-in" style={{ maxWidth: 760, margin: "0 auto", padding: "28px 0 60px", display: "grid", gap: 18 }}>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", fontFamily: "'Rajdhani',sans-serif" }}>// My Account</div>
-        <div style={{ fontSize: 32, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", fontFamily: "'Rajdhani',sans-serif" }}>{me?.display_name || auth?.name || "Player"}</div>
-      </div>
-
-      {/* season stat tiles */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
-        {tile("Season pts", stats ? stats.pts.toLocaleString() : "—", "#f5c453")}
-        {tile("Matches", stats ? stats.matches : "—")}
-        {tile("Wins", stats ? stats.wins : "—", "#3ddc84")}
-        {tile("Winrate", winrate)}
-        {tile("Avg ACS", avgAcs, "#7da6ff")}
-        {tile("K / A", stats ? `${stats.k} / ${stats.a}` : "—")}
-        {tile("No-shows", stats ? (stats.noShows || 0) : "—", stats?.noShows >= 3 ? "#ff4655" : stats?.noShows > 0 ? "#f5c453" : "#3ddc84")}
-      </div>
-
+  // Editing lives below the read-only profile — same screen, clear separation.
+  const editor = (
+    <div className="view-in" style={{ display: "grid", gap: 18, marginTop: 34 }}>
       {(me?.suspension_remaining || 0) > 0 && (
         <div style={{ padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", fontFamily: "'Rajdhani',sans-serif" }}>
           <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {me.suspension_remaining} weekend{me.suspension_remaining === 1 ? "" : "s"} remaining</div>
@@ -4877,12 +4837,11 @@ function AccountView({ auth, chrome }) {
         </div>
       )}
 
-      {/* account details */}
       <div style={panel}>
         <div style={overline}>// Account details</div>
-        <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 14 }}>
           <div>
-            <div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", marginBottom: 5 }}>Display name</div>
+            <div style={fieldLabel}>Display name</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} maxLength={24}
                 style={{ flex: 1, minWidth: 180, padding: "10px 12px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, fontWeight: 600 }} />
@@ -4892,19 +4851,18 @@ function AccountView({ auth, chrome }) {
             {saveMsg && <div style={{ fontSize: 12, color: saveMsg.startsWith("Saved") ? "#9af5c2" : "#ff8f9a", marginTop: 6 }}>{saveMsg}</div>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, fontFamily: "'Rajdhani',sans-serif" }}>
-            {me?.email && <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>Email</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>{me.email}</div></div>}
-            <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>Role</div><div style={{ fontWeight: 700, textTransform: "uppercase", color: (me?.role || auth?.role) === "host" ? "#7da6ff" : "#ecf3ff" }}>{(me?.role || auth?.role) === "host" ? "Commissioner" : "Player"}</div></div>
-            <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>League</div><div style={{ fontWeight: 700, textTransform: "uppercase" }}>{window.__VOLT.communityName || "—"}</div></div>
-            {chrome?.account?.code && <div><div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 3 }}>Join code</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#7da6ff" }}>{chrome.account.code}</div></div>}
+            {me?.email && <div><div style={fieldLabel}>Email</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>{me.email}</div></div>}
+            <div><div style={fieldLabel}>Role</div><div style={{ fontWeight: 700, textTransform: "uppercase", color: (me?.role || auth?.role) === "host" ? "#7da6ff" : "#ecf3ff" }}>{(me?.role || auth?.role) === "host" ? "Commissioner" : "Player"}</div></div>
+            <div><div style={fieldLabel}>League</div><div style={{ fontWeight: 700, textTransform: "uppercase" }}>{window.__VOLT.communityName || "—"}</div></div>
+            {chrome?.account?.code && <div><div style={fieldLabel}>Join code</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#7da6ff" }}>{chrome.account.code}</div></div>}
           </div>
         </div>
       </div>
 
-      {/* scouting profile — same card captains study before bidding */}
       <div style={panel}>
         <div style={overline}>// Scouting profile</div>
-        <p style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif" }}>Captains see this on the auction block — keep it honest, keep it current.</p>
-        <ScoutProfileCard userId={auth?.userId} />
+        <p style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif" }}>Captains see this on the auction block — keep it honest, keep it current. Edits update the radar above.</p>
+        <ScoutProfileCard userId={auth?.userId} onSaved={() => { try { __sb.from("users").select("*").eq("id", auth.userId).maybeSingle().then(({ data }) => data && setMe(data)); } catch {} }} />
       </div>
 
       {chrome?.onSignOut && (
@@ -4912,6 +4870,10 @@ function AccountView({ auth, chrome }) {
       )}
     </div>
   );
+
+  // The rich profile screen, rendered for the logged-in user, with the editor
+  // dropped in as its footer. One coherent page, same visual language.
+  return <PlayerProfile userId={auth?.userId} onBack={null} footer={editor} />;
 }
 
 // Collapsed host controls for narrow screens — same overlay pattern as the chip.
@@ -5120,7 +5082,7 @@ function NotifBell() {
 // Public player profile — the Season Race makes individuals the product;
 // this is their page. Opened from leaderboard rows; My Account stays the
 // private edit surface behind it.
-function PlayerProfile({ userId, onBack }) {
+function PlayerProfile({ userId, onBack, footer }) {
   const [d, setD] = useState(null);
   useEffect(() => {
     (async () => {
@@ -5164,64 +5126,75 @@ function PlayerProfile({ userId, onBack }) {
   const hasScout = p.kda != null || p.acs != null || p.hs != null || p.rank;
 
   const NOTCH = "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))";
-  const bigTile = (label, val, c, sub) => (
-    <div style={{ padding: "16px 16px", background: "rgba(10,16,30,0.72)", border: `1px solid ${(c || "#3d7bff")}44`, clipPath: SHELL_NOTCH(9), textAlign: "center", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "absolute", inset: 0, background: `radial-gradient(120% 90% at 50% 0%, ${(c || "#3d7bff")}14, transparent 70%)`, pointerEvents: "none" }} />
-      <div style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, position: "relative" }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, color: c || "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", marginTop: 4, lineHeight: 1, position: "relative", textShadow: `0 0 16px ${(c || "#3d7bff")}55` }}>{val}</div>
-      {sub && <div style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", marginTop: 4, position: "relative" }}>{sub}</div>}
-    </div>
-  );
-  const sec = (t) => <div style={{ fontSize: 11, letterSpacing: "0.26em", textTransform: "uppercase", color: hue, fontWeight: 700, margin: "30px 0 12px", opacity: 0.85 }}>// {t}</div>;
+  // Every primary value renders at one fixed size/weight; a null shows a muted
+  // dash that occupies the same box, so a row of tiles reads as one scale.
+  const bigTile = (label, val, c, sub) => {
+    const empty = val == null || val === "—" || val === "";
+    return (
+      <div style={{ padding: "15px 14px", minHeight: 96, display: "flex", flexDirection: "column", justifyContent: "center", background: "rgba(10,16,30,0.72)", border: `1px solid ${(c || "#3d7bff")}${empty ? "22" : "44"}`, clipPath: SHELL_NOTCH(9), textAlign: "center", position: "relative", overflow: "hidden" }}>
+        {!empty && <div style={{ position: "absolute", inset: 0, background: `radial-gradient(120% 90% at 50% 0%, ${(c || "#3d7bff")}14, transparent 70%)`, pointerEvents: "none" }} />}
+        <div style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.55)", fontWeight: 700, position: "relative" }}>{label}</div>
+        <div style={{ fontSize: 30, fontWeight: 700, color: empty ? "rgba(200,215,255,0.28)" : (c || "#ecf3ff"), fontFamily: "'IBM Plex Mono',monospace", marginTop: 6, lineHeight: 1, position: "relative", textShadow: empty ? "none" : `0 0 16px ${(c || "#3d7bff")}55` }}>{empty ? "—" : val}</div>
+        <div style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", marginTop: 5, position: "relative", minHeight: 12 }}>{sub || ""}</div>
+      </div>
+    );
+  };
+  const sec = (t) => <div style={{ fontSize: 11, letterSpacing: "0.26em", textTransform: "uppercase", color: hue, fontWeight: 700, margin: "28px 0 12px", opacity: 0.85 }}>// {t}</div>;
 
   return (
     <div style={{ maxWidth: 980, margin: "0 auto", padding: "24px 20px 70px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Player file</span>
-        <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>‹ Back</button>
+        <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// {onBack ? "Player file" : "My Account"}</span>
+        {onBack && <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>‹ Back</button>}
       </div>
 
-      {/* HERO — gradient panel with rank crest + identity, scout-file language */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16 }}>
-        <div style={{ position: "relative", clipPath: NOTCH, padding: "26px 26px", overflow: "hidden",
-          background: `linear-gradient(150deg, ${hue}22, rgba(14,20,34,0.9) 55%, rgba(10,13,22,0.95))`, border: `1px solid ${hue}55` }}>
-          <div style={{ position: "absolute", top: -30, right: -10, fontSize: 150, fontWeight: 800, color: hue, opacity: 0.07, fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1, pointerEvents: "none" }}>{avgAcs || p.acs || ""}</div>
+      {/* HERO — two equal panels, identity + radar, matched heights */}
+      <style>{`@media (max-width: 720px){ .volt-hero-grid{ grid-template-columns: 1fr !important; } }`}</style>
+      <div className="volt-hero-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "stretch" }}>
+        <div style={{ position: "relative", clipPath: NOTCH, padding: "24px 26px", overflow: "hidden", minHeight: 300, display: "flex", flexDirection: "column", justifyContent: "space-between",
+          background: `linear-gradient(150deg, ${hue}26, rgba(14,20,34,0.92) 52%, rgba(10,13,22,0.96))`, border: `1px solid ${hue}55` }}>
+          <div style={{ position: "absolute", top: -34, right: -6, fontSize: 168, fontWeight: 800, color: hue, opacity: 0.08, fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1, pointerEvents: "none", letterSpacing: "-0.04em" }}>{avgAcs || p.acs || ""}</div>
+          {/* top: crest + identity */}
           <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 18 }}>
             <RankCrest rank={rank} />
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 40, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1, display: "flex", alignItems: "center", flexWrap: "wrap" }}>{name}<TrophyChip n={u.trophy_streak} big /></div>
-              <div style={{ display: "flex", gap: 10, marginTop: 8, fontSize: 13, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 38, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.02, display: "flex", alignItems: "center", flexWrap: "wrap" }}>{name}<TrophyChip n={u.trophy_streak} big /></div>
+              <div style={{ display: "flex", gap: 10, marginTop: 9, fontSize: 13, flexWrap: "wrap", alignItems: "center" }}>
                 <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{rank}</span>
                 {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
                 {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
               </div>
-              {u.best_streak > 0 && <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 6 }}>best streak 🏆×{u.best_streak}</div>}
+              {u.best_streak > 0 && <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 7 }}>best streak 🏆×{u.best_streak}</div>}
             </div>
           </div>
-          {/* quick scouting stat strip */}
-          {hasScout && (
-            <div style={{ position: "relative", display: "flex", gap: 8, marginTop: 22, flexWrap: "wrap" }}>
-              {p.kda != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5 }}><span style={{ color: "#00e5ff" }}>KDA</span> {p.kda}</span>}
-              {p.acs != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, marginLeft: 8 }}><span style={{ color: "#ff4655" }}>ACS</span> {p.acs}</span>}
-              {p.hs != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, marginLeft: 8 }}><span style={{ color: "#af9aec" }}>HS</span> {p.hs}%</span>}
-              {p.win != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, marginLeft: 8 }}><span style={{ color: "#3ddc84" }}>WIN</span> {p.win}%</span>}
+          {/* bottom: scouting stat row as bordered mini-tiles (fills the panel) */}
+          {hasScout ? (
+            <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 20 }}>
+              {[["KDA", p.kda, "#00e5ff"], ["ACS", p.acs, "#ff4655"], ["HS%", p.hs != null ? p.hs + "%" : null, "#af9aec"], ["WIN%", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
+                <div key={i} style={{ padding: "8px 4px", textAlign: "center", background: "rgba(6,10,20,0.5)", border: `1px solid ${c}33`, clipPath: SHELL_NOTCH(5) }}>
+                  <div style={{ fontSize: 8.5, letterSpacing: "0.14em", color: c, fontWeight: 700, textTransform: "uppercase" }}>{lb}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", marginTop: 2, color: v == null ? "rgba(200,215,255,0.3)" : "#ecf3ff" }}>{v == null ? "—" : v}</div>
+                </div>
+              ))}
             </div>
+          ) : (
+            <div style={{ position: "relative", marginTop: 20, fontSize: 12, color: "rgba(200,215,255,0.4)" }}>No scouting profile set yet.</div>
           )}
         </div>
 
-        {/* RADAR panel */}
-        <div style={{ clipPath: NOTCH, padding: "18px 18px 8px", background: "linear-gradient(160deg, rgba(18,24,40,0.85), rgba(10,13,22,0.92))", border: "1px solid rgba(61,123,255,0.28)", display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 10.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, marginBottom: 4 }}>Performance profile</div>
+        {/* RADAR panel — matched min-height */}
+        <div style={{ clipPath: NOTCH, padding: "18px 18px 14px", minHeight: 300, background: "linear-gradient(160deg, rgba(18,24,40,0.85), rgba(10,13,22,0.92))", border: "1px solid rgba(61,123,255,0.28)", display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 10.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700 }}>Performance profile</div>
           <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
             {hasScout
-              ? <StatRadar player={radarPlayer} size={230} hue={hue} />
-              : <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", textAlign: "center", padding: "40px 10px" }}>No scouting profile yet — the radar fills in once they set their stats.</p>}
+              ? <StatRadar player={radarPlayer} size={244} hue={hue} />
+              : <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", textAlign: "center", padding: "40px 10px" }}>No scouting profile yet — the radar fills in once stats are set.</p>}
           </div>
         </div>
       </div>
 
       {sec("Season record")}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: 12 }} className="volt-statgrid">
         {bigTile("Season pts", pts, "#f5c453")}
         {bigTile("Weekends won", u.weekends_won || 0, "#f5c453", "champion team")}
         {bigTile("Brackets won", u.brackets_won || 0, "#af9aec", "elimination")}
@@ -5230,13 +5203,14 @@ function PlayerProfile({ userId, onBack }) {
       </div>
 
       {sec("Combat — league matches")}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
-        {bigTile("Avg ACS", avgAcs != null ? avgAcs : "—", "#ff4655")}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: 12 }} className="volt-statgrid">
+        {bigTile("Avg ACS", avgAcs, "#ff4655")}
         {bigTile("Kills", k, "#00e5ff")}
         {bigTile("Assists", asst, "#00e5ff")}
         {bigTile("K + ⅓A", Math.round(k + asst / 3), "#00e5ff", "scoring stat")}
-        {bigTile("Pts / match", mrs.length ? Math.round(pts / mrs.length) : "—", "#f5c453")}
+        {bigTile("Pts / match", mrs.length ? Math.round(pts / mrs.length) : null, "#f5c453")}
       </div>
+      <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
 
       {p.tracker_url && <>
         {sec("Valorant tracker")}
@@ -5263,6 +5237,7 @@ function PlayerProfile({ userId, onBack }) {
         </div>
       </>}
       {mrs.length === 0 && <p style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", marginTop: 28 }}>No matches played yet — the record starts the first weekend they take the server.</p>}
+      {footer}
     </div>
   );
 }
