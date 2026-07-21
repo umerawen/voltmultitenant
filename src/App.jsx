@@ -3569,7 +3569,15 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       .view-in { animation: viewin 0.4s ease; }
       @keyframes viewin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
       @media (prefers-reduced-motion: reduce) { .holo-sweep,.bid-pop,.animate-pulse,.idle-rotor,.reel-drift,.burst,.float-soft,.marquee,.sale-flash,.view-in { animation: none !important; } }
-      select option { background: #0b0f1a; }
+      /* Branded dropdowns — arrow + dark on-brand option list (all selects) */
+      select { -webkit-appearance: none; -moz-appearance: none; appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%235b8dff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px !important;
+        accent-color: #3d7bff; color-scheme: dark; cursor: pointer; }
+      select:hover { border-color: rgba(111,160,255,0.6) !important; }
+      select option { background: #0b0f1a !important; color: #ecf3ff !important; font-weight: 600;
+        padding: 8px 10px; }
+      select option:checked, select option:hover { background: #16233f !important; color: #7da6ff !important; }
       .nav-desktop { display: flex; }
       .nav-mobile-btn { display: none; }
       @media (max-width: 860px) {
@@ -3668,16 +3676,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       `}</style>
       {/* league mark + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: railWide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: railWide ? 4 : 0 }}>
-        <button onClick={chrome ? chrome.onBack : undefined} className={chrome ? "volt-rail-item flex items-center gap-2" : "flex items-center gap-2"}
-          title={chrome ? (chrome.portalLabel || "League hub") : undefined}
-          onMouseEnter={chrome && !railWide ? e => setRailTip({ label: chrome.portalLabel || "League hub", y: e.currentTarget.getBoundingClientRect().top + 20 }) : undefined}
-          onMouseLeave={chrome && !railWide ? () => setRailTip(null) : undefined}
-          style={{ minWidth: 0, background: "none", border: "none", padding: 0, cursor: chrome ? "pointer" : "default" }}>
+        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
           <span className="grid place-items-center shrink-0" style={{ width: 42, height: 42, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
             <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>{(window.__VOLT.communityName || "V").slice(0, 1).toUpperCase()}</span>
           </span>
           {railWide && <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{window.__VOLT.communityName || "VOLT"}</span>}
-        </button>
+        </div>
         {railWide && (
           <button onClick={() => setRailWide(false)} aria-label="Collapse navigation" title="Collapse"
             style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}>«</button>
@@ -3692,6 +3696,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </button>
       )}
       <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
+      {chrome && <>
+        {railItem("__portal", "⊞", chrome.portalLabel || "League hub", { onClick: chrome.onBack, color: "#7da6ff" })}
+        <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "10px 6px" : "10px auto", background: "rgba(120,150,220,0.2)" }} />
+      </>}
       {railSections.map((sec, si) => (
         <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", gap: 2 }}>
           {si > 0 && <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px" : "8px auto", background: "rgba(120,150,220,0.2)" }} />}
@@ -3699,10 +3707,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           {sec.items.map(nav => railItem(nav.id, nav.glyph, nav.label, { active: view === nav.id, liveDot: nav.id === "block" && (block || spinLive), onClick: () => setView(nav.id) }))}
         </div>
       ))}
-      {chrome && <>
-        <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "10px 6px" : "10px auto", background: "rgba(120,150,220,0.2)" }} />
-        {railItem("__portal", "⊞", chrome.portalLabel || ("Back to " + chrome.backLabel), { onClick: chrome.onBack, color: "#7da6ff" })}
-      </>}
       <div style={{ marginTop: "auto" }} />
       {chrome?.account && railItem("__account", "◉", "My Account", { active: view === "account", onClick: () => setView("account") })}
       <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
@@ -3952,28 +3956,53 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
               {/* ENTER AUCTION button — outlined HUD frame, only bottom-right notched,
                   with card-style corner brackets on the three square corners */}
-              <div className="mt-7">
-                <button onClick={() => setView("block")} className="ea-btn hero-cta relative group"
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 18,
-                    padding: "18px 44px",
-                    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
-                    fontSize: "clamp(0.85rem,1.3vw,1.05rem)", letterSpacing: "0.34em",
-                    textTransform: "uppercase", color: "#cfe0ff",
-                    background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))",
-                    border: "1px solid rgba(61,123,255,0.5)",
-                    clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%)",
-                    backdropFilter: "blur(2px)",
-                    boxShadow: "0 0 24px rgba(61,123,255,0.18), inset 0 0 18px rgba(61,123,255,0.06)",
-                  }}>
-                  {/* card-style corner brackets — top-left, top-right, bottom-left (bottom-right is the notch) */}
-                  <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                  <span className="absolute right-0 top-0" style={{ width: 12, height: 12, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                  <span className="absolute left-0 bottom-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-                  <span>Enter Auction</span>
-                  <span className="ea-arrow" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400, fontSize: "1.15em" }}>→</span>
-                </button>
-              </div>
+              {(() => {
+                // Registration open → the toggle IS the primary action (flipping it applies).
+                if (chrome?.regToggle) {
+                  return (
+                    <div className="mt-7" style={{ maxWidth: 380, padding: "18px 20px", background: "linear-gradient(180deg, rgba(13,22,42,0.72), rgba(7,13,24,0.6))", border: "1px solid rgba(61,220,132,0.4)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)", backdropFilter: "blur(3px)", boxShadow: "0 0 26px rgba(61,220,132,0.12)" }}>
+                      <div style={{ fontSize: "0.72rem", letterSpacing: "0.3em", textTransform: "uppercase", color: "#3ddc84", fontWeight: 700, marginBottom: 12, fontFamily: "'Rajdhani',sans-serif" }}>// Registration open</div>
+                      {chrome.regToggle}
+                    </div>
+                  );
+                }
+                const cta = identity === "admin"
+                  ? { label: "Run the Draft", view: "block" }
+                  : (identity && identity !== "spectator")
+                    ? { label: "Enter Auction", view: "block" }
+                    : { label: "Watch the Draft", view: "block" };
+                return (
+                  <div className="mt-7">
+                    <button onClick={() => setView(cta.view)} className="ea-btn hero-cta relative group"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 18,
+                        padding: "18px 44px",
+                        fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+                        fontSize: "clamp(0.85rem,1.3vw,1.05rem)", letterSpacing: "0.34em",
+                        textTransform: "uppercase", color: "#cfe0ff",
+                        background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))",
+                        border: "1px solid rgba(61,123,255,0.5)",
+                        clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%)",
+                        backdropFilter: "blur(2px)",
+                        boxShadow: "0 0 24px rgba(61,123,255,0.18), inset 0 0 18px rgba(61,123,255,0.06)",
+                      }}>
+                      <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                      <span className="absolute right-0 top-0" style={{ width: 12, height: 12, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                      <span className="absolute left-0 bottom-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+                      <span>{cta.label}</span>
+                      <span className="ea-arrow" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400, fontSize: "1.15em" }}>→</span>
+                    </button>
+                    {/* your locked-in status for THIS live weekend — the registration decision is already closed */}
+                    <div className="mt-4" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.9rem", letterSpacing: "0.04em" }}>
+                      {identity === "admin"
+                        ? <span style={{ color: "#7da6ff" }}>◈ You're running this weekend as Commissioner.</span>
+                        : (identity && identity !== "spectator")
+                          ? <span style={{ color: "#3ddc84" }}>✓ You're a captain this weekend — {(state.teams.find(t => t.id === identity)?.name) || "your squad"}.</span>
+                          : <span style={{ color: "rgba(200,215,255,0.6)" }}>● You're spectating this weekend's draft.</span>}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* command-center system status — bottom-RIGHT corner, framed with its own
@@ -4780,6 +4809,13 @@ function shellBtn(kind, extra) {
 function ShellStyles() {
   return <style>{`
     html { zoom: 1.1; }
+    .vg-shell select { -webkit-appearance: none; -moz-appearance: none; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%235b8dff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px !important;
+      accent-color: #3d7bff; color-scheme: dark; cursor: pointer; }
+    .vg-shell select:hover { border-color: rgba(111,160,255,0.6) !important; }
+    .vg-shell select option { background: #0b0f1a !important; color: #ecf3ff !important; font-weight: 600; }
+    .vg-shell select option:checked, .vg-shell select option:hover { background: #16233f !important; color: #7da6ff !important; }
     .vg-shell button { transition: transform .16s ease, box-shadow .16s ease, filter .16s ease; }
     .vg-shell button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.15); box-shadow: 0 0 20px rgba(61,123,255,0.3); }
     .vg-shell button:active:not(:disabled) { transform: translateY(0) scale(.98); }
@@ -5330,6 +5366,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
   const [showProfile, setShowProfile] = useState(false);
   const [editTime, setEditTime] = useState(false);
   const [myRegs, setMyRegs] = useState({});   // eventId → my registration row (open weekends)
+  const [pendingByEvent, setPendingByEvent] = useState({}); // host: eventId → # awaiting review
   const [myProf, setMyProf] = useState(null); // rank/role — gates the play toggle
   const [mySusp, setMySusp] = useState(0);
   const [myStrikes, setMyStrikes] = useState(0);
@@ -5356,6 +5393,15 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
         .eq("user_id", window.__VOLT.userId).in("event_id", ids);
       const map = {}; (data || []).forEach(r => { map[r.event_id] = r; });
       setMyRegs(map);
+      // Host: how many applications are waiting on each open weekend.
+      if (isHost) {
+        const openIds = (evs || []).filter(e => e.phase === "registration_open").map(e => e.id);
+        if (openIds.length) {
+          const { data: pend } = await __sb.from("registrations").select("event_id").eq("status", "pending").in("event_id", openIds);
+          const pc = {}; (pend || []).forEach(r => { pc[r.event_id] = (pc[r.event_id] || 0) + 1; });
+          setPendingByEvent(pc);
+        } else setPendingByEvent({});
+      }
     } catch (e) { console.error(e); }
   }
   async function loadMyMeta() {
@@ -5660,7 +5706,15 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
                         </>}
                   </div>
                 </div>
-                {current.phase === "registration_open" && HAS_SUPABASE
+                {current.phase === "registration_open" && HAS_SUPABASE && isHost
+                  ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${live?.pending > 0 ? "rgba(245,196,83,0.4)" : "rgba(61,123,255,0.25)"}`, clipPath: SHELL_NOTCH(10) }}>
+                      <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Commissioner</div>
+                      {live?.pending > 0
+                        ? <span style={{ fontSize: 14, color: "#f5c453", fontWeight: 700 }}>{live.pending} application{live.pending === 1 ? "" : "s"} awaiting your review</span>
+                        : <span style={{ fontSize: 13, color: "rgba(200,215,255,0.55)" }}>No applications waiting. Approvals show up here.</span>}
+                      <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "primary", { padding: "11px 18px", fontSize: 12.5 })}>Review applications →</button>
+                    </div>
+                  : current.phase === "registration_open" && HAS_SUPABASE
                   ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "14px 16px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
                       <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
                         onEditProfile={() => setShowProfile(true)} onChanged={load} />
@@ -5689,8 +5743,17 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
                       {nextReg.draft_at && <span style={{ fontWeight: 500, textTransform: "none", color: "rgba(200,215,255,0.45)", fontSize: 12, marginLeft: 10, fontFamily: "'IBM Plex Mono',monospace" }}>{fmtDraftAt(nextReg.draft_at)}</span>}</div>
                   </div>
                   <div style={{ flex: "0 1 300px" }}>
-                    <PlayToggle ev={nextReg} mine={myRegs[nextReg.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
-                      onEditProfile={() => setShowProfile(true)} onChanged={load} compact />
+                    {isHost ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                        {pendingByEvent[nextReg.id] > 0
+                          ? <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 700 }}>{pendingByEvent[nextReg.id]} application{pendingByEvent[nextReg.id] === 1 ? "" : "s"} awaiting review</span>
+                          : <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>No applications yet.</span>}
+                        <button onClick={() => onEnter(nextReg)} style={shellBtn(pendingByEvent[nextReg.id] > 0 ? "warn" : "ghost", { padding: "9px 16px", fontSize: 12 })}>Review applications →</button>
+                      </div>
+                    ) : (
+                      <PlayToggle ev={nextReg} mine={myRegs[nextReg.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
+                        onEditProfile={() => setShowProfile(true)} onChanged={load} compact />
+                    )}
                   </div>
                 </div>
               </div>
@@ -5850,9 +5913,31 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   const [ev, setEv] = useState(event);
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
-  const [regView, setRegView] = useState("gate"); // gate | app — browsing during registration
+  // During registration a player lands on the Lobby (app) — the "I'm playing"
+  // toggle is there. Hosts still default to the gate to review applications.
+  const [regView, setRegView] = useState(isHost ? "gate" : "app");
   const [matchView, setMatchView] = useState(false); // host match-report form
   const [reportPrefill, setReportPrefill] = useState(null); // fixture → report handoff
+  // My registration status for this weekend — powers the Lobby's "I'm playing"
+  // toggle while registration is open.
+  const [myReg, setMyReg] = useState(null);
+  const [myProfile, setMyProfile] = useState(null);
+  const [mySusp2, setMySusp2] = useState(0);
+  const [myStrikes2, setMyStrikes2] = useState(0);
+  async function loadMyReg() {
+    if (!HAS_SUPABASE || !auth?.userId || !ev?.id) return;
+    try {
+      const { data: r } = await __sb.from("registrations").select("id, status, wants_captain, is_captain").eq("event_id", ev.id).eq("user_id", auth.userId).maybeSingle();
+      setMyReg(r || null);
+      const { data: p } = await __sb.from("player_profiles").select("rank, role").eq("user_id", auth.userId).maybeSingle();
+      setMyProfile(p || null);
+      const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", auth.userId).maybeSingle();
+      setMySusp2(u?.suspension_remaining || 0);
+      const { data: ns } = await __sb.from("registrations").select("id").eq("community_id", window.__VOLT.communityId).eq("user_id", auth.userId).eq("no_show", true);
+      setMyStrikes2((ns || []).length);
+    } catch (e) { console.error(e); }
+  }
+  useEffect(() => { if (phase === "registration_open" || phase === "registration_closed") loadMyReg(); }, [phase, ev?.id]);
   // Which fixtures already have player stats banked (by match_label) — lets
   // the fixtures screen show "✓ recorded" and keeps the two systems in sync.
   async function refreshReported() {
@@ -5886,7 +5971,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
     return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
   }, []);
-  useEffect(() => { setRegView("gate"); setMatchView(false); }, [phase]);
+  useEffect(() => { setRegView(isHost ? "gate" : "app"); setMatchView(false); }, [phase]);
 
   // Poll the weekend's phase so players follow the host's transitions live.
   useEffect(() => {
@@ -6113,6 +6198,11 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       draftAt: ev?.draft_at || null,
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
       account, onSignOut, hostControls,
+      // The Lobby shows this when registration is open — flipping it IS applying.
+      regToggle: (phase === "registration_open" && HAS_SUPABASE && auth?.userId && !isHost)
+        ? <PlayToggle ev={ev} mine={myReg} profileComplete={!!(myProfile?.rank && myProfile?.role)} susp={mySusp2} strikes={myStrikes2}
+            onEditProfile={() => setRegView("gate")} onChanged={loadMyReg} />
+        : null,
     };
     return <DraftApp auth={auth} browse={inReg} chrome={chrome} initialView={initialView} />;
   }
