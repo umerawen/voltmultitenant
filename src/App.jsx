@@ -169,6 +169,34 @@ function computeSeasonPoints(s) {
   return Object.values(acc);
 }
 
+// Weekend display name from its date — "Jul 20\u201321" (Sat\u2013Sun) with an
+// optional nickname. Falls back to the legacy counter label when no date exists.
+// A weekend is Sat\u2013Sun; starts_on is the Saturday.
+function weekendName(ev) {
+  if (!ev) return "";
+  const raw = ev.starts_on;
+  if (!raw) return ev.weekend_label || "Weekend";
+  const sat = new Date(raw + "T00:00:00");
+  if (isNaN(sat)) return ev.weekend_label || "Weekend";
+  const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
+  const mon = sat.toLocaleDateString(undefined, { month: "short" });
+  const monS = sun.toLocaleDateString(undefined, { month: "short" });
+  const label = mon === monS
+    ? `${mon} ${sat.getDate()}\u2013${sun.getDate()}`
+    : `${mon} ${sat.getDate()} \u2013 ${monS} ${sun.getDate()}`;
+  // Keep a nickname only if the host set one that isn't the old auto counter.
+  const nick = ev.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : null;
+  return nick ? `${label} \u00b7 ${nick}` : label;
+}
+
+// The coming Saturday (local), as a yyyy-mm-dd string — the default for a new weekend.
+function comingSaturday() {
+  const d = new Date();
+  d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7));
+  const p = x => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function freshState(captains, poolPlayers) {  // captains: optional [{ userId, name, teamName? }] from the real community.
   // When present, teams are built from real registered captains (each tied to a
   // userId so login-based seat claiming maps to the right seat). Otherwise the
@@ -4597,7 +4625,7 @@ function VoltGate() {
         const live = (evs || []).filter(e => e.phase === "drafting" || e.phase === "matches_live")
           .sort((a, b) => (RANK[b.phase] - RANK[a.phase]) || (new Date(a.created_at) - new Date(b.created_at)))[0];
         if (live) {
-          window.__VOLT.weekendId = live.id; window.__VOLT.weekendLabel = live.weekend_label;
+          window.__VOLT.weekendId = live.id; window.__VOLT.weekendLabel = weekendName(live);
           setActiveEvent(live); setPhase("ready"); return;
         }
       } catch (e) { console.error("auto-route", e); }
@@ -4720,7 +4748,7 @@ function VoltGate() {
   if (phase === "schedule") return <WeekendSchedule community={community} isHost={profile?.role === "host"}
     account={account} onSignOut={signOut}
     openProfile={pendingProfile} onProfileOpened={() => setPendingProfile(null)}
-    onEnter={(ev, view) => { window.__VOLT.weekendId = ev.id; window.__VOLT.weekendLabel = ev.weekend_label; setActiveEvent(ev); setTargetView(view || null); setPhase("ready"); }} />;
+    onEnter={(ev, view) => { window.__VOLT.weekendId = ev.id; window.__VOLT.weekendLabel = weekendName(ev); setActiveEvent(ev); setTargetView(view || null); setPhase("ready"); }} />;
 
   if (phase === "ready") {
     const auth = HAS_SUPABASE
@@ -5012,7 +5040,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
       catch (e) { setNote(e.message || "Could not apply."); }
       setBusy(false);
     } else {
-      if (status === "approved" && !window.confirm(`Drop out of ${ev.weekend_label}? Your spot opens up — captains won't be able to draft you.`)) return;
+      if (status === "approved" && !window.confirm(`Drop out of ${weekendName(ev)}? Your spot opens up — captains won't be able to draft you.`)) return;
       setBusy(true);
       try { const { error } = await __sb.rpc("volt_withdraw", { p_event: ev.id }); if (error) throw error; onChanged && await onChanged(); }
       catch (e) { setNote(e.message || "Could not withdraw."); }
@@ -5269,7 +5297,7 @@ function PlayerProfile({ userId, onBack, footer }) {
             const won = champEvents.some(e => e.id === eid);
             return (
               <div key={eid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: won ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.03)", border: `1px solid ${won ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(8) }}>
-                <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13.5 }}>{evMap[eid]?.weekend_label || "Weekend"}
+                <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13.5 }}>{weekendName(evMap[eid]) || "Weekend"}
                   {won && <span style={{ color: "#f5c453", marginLeft: 8, fontSize: 12 }}>🏆 champion</span>}</span>
                 <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{w.m} matches · {w.w}W</span>
                 <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 68, textAlign: "right" }}>{w.pts} pts</span>
@@ -5526,13 +5554,24 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
 
   // ── Host weekend management ──
   async function renameWeekend(ev) {
-    const v = window.prompt("Rename weekend:", ev.weekend_label);
-    if (!v || !v.trim() || v.trim() === ev.weekend_label) return;
-    try { const { error } = await __sb.from("events").update({ weekend_label: v.trim() }).eq("id", ev.id); if (error) throw error; await refreshEvents(); }
-    catch (e) { setErr(e.message || "Rename failed."); }
+    // Primary edit is the date (the Saturday). Nickname is optional/secondary.
+    const cur = ev.starts_on || comingSaturday();
+    const d = window.prompt("Weekend date (the Saturday, YYYY-MM-DD):", cur);
+    if (d === null) return;
+    const date = (d || "").trim();
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { setErr("Use the format YYYY-MM-DD, e.g. 2026-07-25."); return; }
+    const nick = window.prompt("Optional nickname (blank for none):", (ev.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim())) ? ev.weekend_label : "");
+    try {
+      const patch = {};
+      if (date) patch.starts_on = date;
+      if (nick !== null) patch.weekend_label = nick.trim() || null;
+      if (!Object.keys(patch).length) return;
+      const { error } = await __sb.from("events").update(patch).eq("id", ev.id); if (error) throw error;
+      await refreshEvents();
+    } catch (e) { setErr(e.message || "Update failed."); }
   }
   async function deleteWeekend(ev) {
-    if (!window.confirm(`Delete ${ev.weekend_label}? This removes the weekend and its registrations. Reported match points are kept.`)) return;
+    if (!window.confirm(`Delete ${weekendName(ev)}? This removes the weekend and its registrations. Reported match points are kept.`)) return;
     try {
       await __sb.from("registrations").delete().eq("event_id", ev.id);
       const { error } = await __sb.from("events").delete().eq("id", ev.id);
@@ -5557,18 +5596,19 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
   async function createWeekend() {
     setErr(""); setBusy(true);
     try {
-      const n = (events?.length || 0) + 1;
+      const sat = comingSaturday();
       const { data: created, error } = await __sb.from("events").insert({
         community_id: window.__VOLT.communityId,
-        weekend_label: `Weekend ${n}`,
+        starts_on: sat,
         phase: "registration_open",
       }).select().maybeSingle();
       if (error) throw error;
+      const nm = weekendName(created);
       // Ping every member: registration is open.
       try {
         const { data: us } = await __sb.from("users").select("id").eq("community_id", window.__VOLT.communityId).neq("id", window.__VOLT.userId);
         await voltNotify((us || []).map(u => ({ community_id: window.__VOLT.communityId, user_id: u.id, event_id: created?.id,
-          kind: "weekend_open", title: `Weekend ${n} — registration open`, body: "Flip \"I'm playing\" on your dashboard to enter the pool." })));
+          kind: "weekend_open", title: `${nm} — registration open`, body: "Flip \"I'm playing\" on your dashboard to enter the pool." })));
       } catch (e) { console.error(e); }
       await load();
     } catch (e) { setErr(e.message || "Could not create weekend."); }
@@ -5649,12 +5689,12 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
 
   const strip = (ev, dim) => (
     <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220," + (dim ? "0.1" : "0.18") + ")", clipPath: SHELL_NOTCH(8), opacity: dim ? 0.6 : 1 }}>
-      <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14 }}>{ev.weekend_label}
+      <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14 }}>{weekendName(ev)}
         {ev.draft_at && <span style={{ fontWeight: 500, textTransform: "none", color: "rgba(200,215,255,0.4)", fontSize: 11.5, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>{fmtDraftAt(ev.draft_at)}</span>}
       </span>
       <span style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: PHASE_COLOR[ev.phase] || "#5b8dff", fontWeight: 600 }}>{PHASE_LABEL[ev.phase] || ev.phase}</span>
       {isHost && <>
-        <button onClick={() => renameWeekend(ev)} title="Rename" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
+        <button onClick={() => renameWeekend(ev)} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
         <button onClick={() => deleteWeekend(ev)} title="Delete weekend" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
       </>}
       <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>{dim ? "View" : "Enter"} →</button>
@@ -5674,9 +5714,9 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
               <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 6 }}>// This weekend</div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                 <div>
-                  <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{current.weekend_label}
+                  <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{weekendName(current)}
                     {isHost && <>
-                      <button onClick={() => renameWeekend(current)} title="Rename" style={shellBtn("ghost", { padding: "3px 8px", fontSize: 10, marginLeft: 10, verticalAlign: "middle" })}>✎</button>
+                      <button onClick={() => renameWeekend(current)} title="Edit date / nickname" style={shellBtn("ghost", { padding: "3px 8px", fontSize: 10, marginLeft: 10, verticalAlign: "middle" })}>✎</button>
                       <button onClick={() => deleteWeekend(current)} title="Delete weekend" style={shellBtn("danger", { padding: "3px 8px", fontSize: 10, marginLeft: 6, verticalAlign: "middle" })}>✕</button>
                     </>}
                   </div>
@@ -5739,7 +5779,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                   <div>
                     <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#3ddc84", fontWeight: 700 }}>// Next weekend · registration open</div>
-                    <div style={{ fontSize: 19, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 3 }}>{nextReg.weekend_label}
+                    <div style={{ fontSize: 19, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 3 }}>{weekendName(nextReg)}
                       {nextReg.draft_at && <span style={{ fontWeight: 500, textTransform: "none", color: "rgba(200,215,255,0.45)", fontSize: 12, marginLeft: 10, fontFamily: "'IBM Plex Mono',monospace" }}>{fmtDraftAt(nextReg.draft_at)}</span>}</div>
                   </div>
                   <div style={{ flex: "0 1 300px" }}>
@@ -5761,20 +5801,28 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
           })()}
           {upcoming.filter(e => !(current?.phase !== "registration_open" && e.phase === "registration_open")).map(ev => strip(ev, false))}
           {past.length > 0 && <>
-            <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginTop: 6 }}>// Past weekends</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 6, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700 }}>// Past weekends</div>
+              {/* Always-on history jump — pick any settled weekend, its recap opens. */}
+              <select value="" onChange={e => { const id = e.target.value; if (id) { setExpandPast(id); const el = document.getElementById("volt-past-" + id); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" }); } }}
+                style={{ padding: "7px 30px 7px 12px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 600, letterSpacing: "0.04em", clipPath: SHELL_NOTCH(6) }}>
+                <option value="">Jump to a weekend…</option>
+                {[...past].reverse().map(ev => <option key={ev.id} value={ev.id}>{weekendName(ev)}{ev.recap?.team ? " — 🏆 " + ev.recap.team : ""}</option>)}
+              </select>
+            </div>
             {past.map(ev => {
               const rc = ev.recap || null;
               const openIt = expandPast === ev.id;
               return (
-                <div key={ev.id} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.12)", clipPath: SHELL_NOTCH(8) }}>
+                <div key={ev.id} id={"volt-past-" + ev.id} style={{ background: openIt ? "rgba(61,123,255,0.05)" : "rgba(255,255,255,0.02)", border: `1px solid ${openIt ? "rgba(61,123,255,0.35)" : "rgba(120,150,220,0.12)"}`, clipPath: SHELL_NOTCH(8), transition: "border-color .2s, background .2s" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", flexWrap: "wrap" }}>
-                    <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 13.5, opacity: 0.75 }}>{ev.weekend_label}</span>
+                    <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 13.5, opacity: 0.75 }}>{weekendName(ev)}</span>
                     {rc?.team && <span style={{ fontSize: 11.5, color: "#f5c453", fontWeight: 700, letterSpacing: "0.06em" }}>🏆 {rc.team}</span>}
                     {rc?.mvp && <span style={{ fontSize: 11, color: "rgba(200,215,255,0.6)" }}>⭐ {rc.mvp}{rc.mvpPts ? " · " + rc.mvpPts : ""}</span>}
                     <span style={{ flex: 1 }} />
                     {rc && <button onClick={() => setExpandPast(openIt ? null : ev.id)} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 10.5 })}>{openIt ? "Hide" : "Recap"}</button>}
                     {isHost && <>
-                      <button onClick={() => renameWeekend(ev)} title="Rename" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
+                      <button onClick={() => renameWeekend(ev)} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
                       <button onClick={() => deleteWeekend(ev)} title="Delete weekend" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
                     </>}
                     <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>View →</button>
@@ -5801,7 +5849,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
       const advLabel = { registration_open: "Close registration", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle the weekend" }[current.phase];
       return stale && advLabel ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 16, padding: "11px 16px", background: "rgba(245,196,83,0.06)", border: "1px solid rgba(245,196,83,0.35)", clipPath: SHELL_NOTCH(9), flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 600 }}>⚙ {current.weekend_label} is waiting on you — next step: <b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>{advLabel}</b></span>
+          <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 600 }}>⚙ {weekendName(current)} is waiting on you — next step: <b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>{advLabel}</b></span>
           <button onClick={() => onEnter(current)} style={shellBtn("warn", { padding: "7px 14px", fontSize: 11.5 })}>Manage weekend →</button>
         </div>
       ) : null;
@@ -6121,7 +6169,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
         const notes = r.all.map(p => ({
           community_id: window.__VOLT.communityId, user_id: p.userId, event_id: ev.id,
           kind: "settled",
-          title: champSet.has(p.userId) ? "🏆 You won the weekend!" : ev.weekend_label + " settled",
+          title: champSet.has(p.userId) ? "🏆 You won the weekend!" : weekendName(ev) + " settled",
           body: champSet.has(p.userId)
             ? (team ? team + " took the crown — your trophy streak grew." : "Your trophy streak grew.")
             : (team ? team + " won it. See where you land on the Season Race." : "See where you land on the Season Race."),
@@ -6147,7 +6195,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     <div className="vg-shell" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(8,11,19,0.96))", borderBottom: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 10px 30px rgba(0,0,0,0.35)", fontFamily: "'Rajdhani',sans-serif", position: "sticky", top: 0, zIndex: 60 }}>
       <ShellStyles />
       <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 14px" })}>‹ Schedule</button>
-      <div style={{ fontSize: 13, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, textShadow: "0 0 14px rgba(61,123,255,0.65)" }}>// {ev?.weekend_label} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
+      <div style={{ fontSize: 13, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, textShadow: "0 0 14px rgba(61,123,255,0.65)" }}>// {weekendName(ev)} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {(phase === "registration_open" || phase === "registration_closed") && regView === "app" &&
           <button onClick={() => setRegView("gate")} style={shellBtn("accent", { padding: "8px 12px" })}>‹ Registration</button>}
@@ -6416,7 +6464,7 @@ function MatchReport({ ev, onDone, prefill }) {
   return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "40px 20px 60px" }}>
     <div style={{ maxWidth: 980, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 24 }}>
-        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {ev?.weekend_label} · Match report</div>
+        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)} · Match report</div>
         <h1 style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Record a <span style={{ color: "#3d7bff" }}>Match</span></h1>
         <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · ACS÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
       </div>
@@ -6540,7 +6588,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     try {
       await __sb.from("registrations").update({ status }).eq("id", entry.regId);
       await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: status === "approved" ? "approved" : "rejected",
-        title: status === "approved" ? "You're in — " + ev.weekend_label : "Application not approved",
+        title: status === "approved" ? "You're in — " + weekendName(ev) : "Application not approved",
         body: status === "approved" ? "Approved for the pool. Captains can draft you now." : "The Commissioner didn't approve this one. Reach out if that's a mistake." }]);
       await load();
     } catch (e) { console.error(e); }
@@ -6559,7 +6607,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     try {
       await __sb.from("registrations").update({ is_captain: v }).eq("id", entry.regId);
       if (v) await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: "captain",
-        title: "★ You're a captain this weekend", body: "$10,000 budget in " + ev.weekend_label + ". Scout the pool and build your squad." }]);
+        title: "★ You're a captain this weekend", body: "$10,000 budget in " + weekendName(ev) + ". Scout the pool and build your squad." }]);
       await load();
     } catch (e) { console.error(e); }
     setBusy(false);
@@ -6600,7 +6648,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
   return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "44px 20px 60px" }}>
     <div style={{ maxWidth: 680, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 26 }}>
-        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {ev?.weekend_label}</div>
+        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)}</div>
         <h1 style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
         <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 14 }}>{regOpen ? "Claim your spot in this weekend's draft pool." : "Registration is closed — the draft opens soon."}</p>
         <p style={{ color: "rgba(200,215,255,0.4)", margin: "8px auto 0", fontSize: 12.5, maxWidth: 520 }}>
