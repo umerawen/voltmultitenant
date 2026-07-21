@@ -3149,6 +3149,23 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     return () => clearInterval(t);
   }, [state?.spin?.startTs]);
 
+  // Guaranteed transition: force a render exactly when the spin animation ends
+  // and again when the reveal window closes (spinLive → false), so the view
+  // flips from the reel to the bidding panel even if the tick loop missed it.
+  useEffect(() => {
+    const sp = state?.spin;
+    if (!sp) return;
+    const landAt = sp.startTs + sp.duration;          // reel stops
+    const liveEnd = landAt + REVEAL_MS;                // spinLive expires → bidding
+    const timers = [];
+    const bump = () => setTick((x) => x + 1);
+    [landAt + 60, liveEnd + 60].forEach((at) => {
+      const d = at - Date.now();
+      if (d > -2000) timers.push(setTimeout(bump, Math.max(d, 0)));
+    });
+    return () => timers.forEach(clearTimeout);
+  }, [state?.spin?.startTs]);
+
   // red sale flash + sale sound
   const [saleFlash, setSaleFlash] = useState(false);
   useEffect(() => {
@@ -5013,6 +5030,79 @@ function ToggleSwitch({ on, color, disabled, onClick }) {
   );
 }
 
+// First-time onboarding — shown when a profile-less player flips "I'm playing".
+// Explains the one-time setup, embeds the scouting editor, and auto-continues
+// (applies them) on save so they never have to hunt for the toggle again.
+function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
+  const [phase, setPhase] = useState("intro"); // intro → edit → applying
+  const [note, setNote] = useState("");
+  const draftLine = ev?.draft_at
+    ? new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" }) + " " + new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : null;
+
+  async function applyNow() {
+    setPhase("applying"); setNote("");
+    try {
+      const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: !!wantCap });
+      if (error) throw error;
+      onApplied && await onApplied();
+      onClose();
+    } catch (e) { setNote(e.message || "Could not enter you in — try the toggle again."); setPhase("edit"); }
+  }
+
+  const step = (n, label, active, done) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ width: 22, height: 22, display: "grid", placeItems: "center", borderRadius: "50%", fontSize: 11, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace",
+        background: done ? "#3ddc84" : active ? "rgba(61,123,255,0.2)" : "rgba(255,255,255,0.05)",
+        color: done ? "#06210f" : active ? "#7da6ff" : "rgba(200,215,255,0.4)", border: `1px solid ${done ? "#3ddc84" : active ? "#3d7bff" : "rgba(120,150,220,0.25)"}` }}>{done ? "✓" : n}</span>
+      <span style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: active || done ? "#ecf3ff" : "rgba(200,215,255,0.4)" }}>{label}</span>
+    </div>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 130, background: "rgba(4,6,12,0.85)", display: "grid", placeItems: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto", background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)", clipPath: SHELL_NOTCH(16), padding: "26px 26px 24px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Welcome to the league</div>
+          <button onClick={onClose} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>✕</button>
+        </div>
+
+        {/* step rail */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0 20px", flexWrap: "wrap" }}>
+          {step(1, "Your stats", phase === "intro" || phase === "edit", false)}
+          <span style={{ flex: 1, height: 1, minWidth: 20, background: "rgba(120,150,220,0.2)" }} />
+          {step(2, "You're in", phase === "applying", false)}
+        </div>
+
+        {phase === "intro" && <>
+          <div style={{ fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.1 }}>Set up your scouting profile</div>
+          <p style={{ fontSize: 13.5, lineHeight: 1.55, color: "rgba(200,215,255,0.7)", marginTop: 10 }}>
+            This is a <b style={{ color: "#7da6ff" }}>one-time setup</b>. Captains study it at the auction to decide who to draft, and it powers your player card and radar. You won't fill this in again — it carries across every weekend, and your match stats stack onto it automatically as you play.
+          </p>
+          <div style={{ display: "grid", gap: 8, margin: "16px 0", padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(8) }}>
+            <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.75)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> rank + role. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
+            <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.75)" }}><b style={{ color: "#ecf3ff" }}>Then you're entered</b> — available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches this weekend.</div>
+          </div>
+          <button onClick={() => setPhase("edit")} style={shellBtn("primary", { width: "100%", padding: "13px", letterSpacing: "0.14em" })}>Set up my profile →</button>
+        </>}
+
+        {phase === "edit" && <>
+          <div style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Your scouting profile</div>
+          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginBottom: 14 }}>Rank and role are required. Save to enter the weekend.</p>
+          <ScoutProfileCard userId={window.__VOLT.userId} onSaved={applyNow} />
+          {note && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{note}</div>}
+        </>}
+
+        {phase === "applying" && (
+          <div style={{ textAlign: "center", padding: "30px 0" }}>
+            <div className="vg-loading" style={{ fontSize: 14 }}>// Entering you in the pool…</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // The weekly ritual, one tap: OFF → PENDING (amber) → IN ✓ (green).
 // Flipping on IS the application (availability implied); veterans with 2+
 // played weekends and a clean record are auto-approved by the volt_apply RPC.
@@ -5021,6 +5111,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
   const [busy, setBusy] = useState(false);
   const [wantCap, setWantCap] = useState(false); // captain intent before the row exists
   const [note, setNote] = useState("");
+  const [onboard, setOnboard] = useState(false); // first-timer welcome + profile setup
   const status = mine ? (mine.status || "approved") : null;
   const on = status === "pending" || status === "approved";
   const capOn = mine ? !!mine.wants_captain : wantCap;
@@ -5034,7 +5125,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
     if (busy || susp > 0 || rejected) return;
     setNote("");
     if (!on) {
-      if (!profileComplete) { setNote("① Complete your scouting profile first — rank and role. Then flip again."); onEditProfile && onEditProfile(); return; }
+      if (!profileComplete) { setOnboard(true); return; } // first-timer → guided setup + auto-continue
       setBusy(true);
       try { const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: wantCap }); if (error) throw error; onChanged && await onChanged(); }
       catch (e) { setNote(e.message || "Could not apply."); }
@@ -5083,6 +5174,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
         </div>
       )}
       {note && <div style={{ fontSize: 11.5, color: "#f5c453" }}>{note}</div>}
+      {onboard && <FirstTimeOnboard ev={ev} wantCap={wantCap} onClose={() => setOnboard(false)} onApplied={onChanged} />}
     </div>
   );
 }
@@ -6329,7 +6421,7 @@ function ScoutProfileCard({ userId, onSaved }) {
             <input value={d.tracker} placeholder="tracker.gg/valorant/profile/riot/yourname" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button disabled={busy || !d.rank} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
+          <button disabled={busy || !d.rank || !d.role} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
           <button onClick={() => setEditing(false)} style={shellBtn("ghost", { padding: "9px 18px", fontSize: 12 })}>Cancel</button>
         </div>
       </>}
