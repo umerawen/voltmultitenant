@@ -2918,12 +2918,12 @@ const SndFX = (() => {
 /* ════════════════════════════════════════════════════════════════════
    MAIN
    ════════════════════════════════════════════════════════════════════ */
-function DraftApp({ auth, browse, chrome }) {
+function DraftApp({ auth, browse, chrome, initialView }) {
   const [state, setState] = useState(null);
   // Auto-resolve in-app identity from the logged-in role:
   //  host  → "admin" (Commissioner)   ·   others start unpicked (choose seat/spectator)
   const [identity, setIdentity] = useState(auth?.role === "host" ? "admin" : null);
-  const [view, setView] = useState("lobby");
+  const [view, setView] = useState(initialView || "lobby");
   const [tourneyOpen, setTourneyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false); // side nav
@@ -4519,6 +4519,7 @@ function VoltGate() {
   const [busy, setBusy] = useState(false);
   const [pendingIntent, setPendingIntent] = useState(null); // host | join — what to do after auth
   const [activeEvent, setActiveEvent] = useState(null);
+  const [targetView, setTargetView] = useState(null); // deep-link a rail view when entering a weekend
 
   // In preview (no Supabase), skip straight into the app with a memory community.
   useEffect(() => {
@@ -4679,7 +4680,7 @@ function VoltGate() {
 
   if (phase === "schedule") return <WeekendSchedule community={community} isHost={profile?.role === "host"}
     account={account} onSignOut={signOut}
-    onEnter={(ev) => { window.__VOLT.weekendId = ev.id; window.__VOLT.weekendLabel = ev.weekend_label; setActiveEvent(ev); setPhase("ready"); }} />;
+    onEnter={(ev, view) => { window.__VOLT.weekendId = ev.id; window.__VOLT.weekendLabel = ev.weekend_label; setActiveEvent(ev); setTargetView(view || null); setPhase("ready"); }} />;
 
   if (phase === "ready") {
     const auth = HAS_SUPABASE
@@ -4690,7 +4691,8 @@ function VoltGate() {
       event={activeEvent}
       isHost={profile?.role === "host"}
       account={account} onSignOut={signOut}
-      onBack={() => { window.__VOLT.weekendId = null; setActiveEvent(null); setPhase("schedule"); }} />;
+      initialView={targetView}
+      onBack={() => { window.__VOLT.weekendId = null; setActiveEvent(null); setTargetView(null); setPhase("schedule"); }} />;
   }
 
   const backLink = (
@@ -5194,6 +5196,83 @@ function PlayerProfileModal({ userId, onClose }) {
   );
 }
 
+// League-level left rail for the dashboard/hub. Mirrors the in-weekend rail
+// (league mark, same view glyphs, My Account, sound) so stepping up to the hub
+// never feels like leaving the app. Per-weekend view shortcuts route into the
+// live/enterable weekend and open that view directly; when nothing's enterable
+// they sit disabled with a hint.
+function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide }) {
+  const [tip, setTip] = useState(null);
+  const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("volt_sound") !== "0"; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem("volt_sound", soundOn ? "1" : "0"); } catch {} }, [soundOn]);
+  const W = wide ? 224 : 60;
+  const enterable = !!target; // a weekend you can actually open (draft/matches/reg-closed)
+  const mark = (community?.name || "V").slice(0, 1).toUpperCase();
+
+  const item = (glyph, label, { onClick, disabled, accent, liveDot } = {}) => (
+    <button key={label} disabled={disabled} onClick={disabled ? undefined : onClick}
+      className="volt-rail-item flex items-center"
+      onMouseEnter={e => { if (!wide) setTip({ label: disabled ? label + " — enter a live weekend first" : label, y: e.currentTarget.getBoundingClientRect().top + 21 }); }}
+      onMouseLeave={() => setTip(null)}
+      style={{ width: wide ? W - 16 : 44, height: 42, justifyContent: wide ? "flex-start" : "center", gap: 10, paddingLeft: wide ? 12 : 0, paddingRight: wide ? 10 : 0, background: "none", border: "none", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.32 : 1, color: accent || "rgba(200,215,255,0.72)", position: "relative", margin: wide ? 0 : "0 auto" }}>
+      <span className="volt-rail-glyph" style={{ fontSize: 16, transition: "color .12s", position: "relative" }}>{glyph}
+        {liveDot && <span style={{ position: "absolute", top: -2, right: -4, width: 6, height: 6, borderRadius: "50%", background: "#af9aec", boxShadow: "0 0 6px #af9aec" }} />}</span>
+      {wide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{label}</span>}
+    </button>
+  );
+  const divider = (mt = 8, mb = 8) => <div style={{ width: wide ? "auto" : 26, height: 1, margin: wide ? `${mt}px 6px ${mb}px` : `${mt}px auto ${mb}px`, background: "rgba(120,150,220,0.2)" }} />;
+  const secLabel = (t) => wide && <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "2px 12px 6px" }}>// {t}</div>;
+
+  const go = (view) => enterable && onEnter(target, view);
+  const leagueViews = NAV.map(n => item(n.glyph, n.label, { onClick: () => go(n.id), disabled: !enterable, liveDot: n.id === "block" && target?.phase === "drafting" }));
+  const tourneyViews = TOURNEY_NAV.filter(n => !n.adminOnly || isHost).map(n => item(n.glyph, n.label, { onClick: () => go(n.id), disabled: !enterable }));
+
+  return (
+    <nav aria-label="League" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: W, display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", padding: wide ? "12px 8px 14px" : "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif", transition: "width .18s cubic-bezier(.2,.8,.3,1)", overflowY: "auto", overflowX: "hidden" }}>
+      <style>{`.volt-rail-item:hover .volt-rail-glyph { color: #eaf1ff !important; } @keyframes voltTipIn { from { opacity: 0; transform: translateY(-50%) translateX(-8px); } to { opacity: 1; transform: translateY(-50%) translateX(0); } }`}</style>
+      {/* league mark + collapse toggle */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: wide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: wide ? 4 : 0 }}>
+        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+          <span className="grid place-items-center shrink-0" style={{ width: 42, height: 42, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
+            <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>{mark}</span>
+          </span>
+          {wide && <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{community?.name || "VOLT"}</span>}
+        </div>
+        {wide && <button onClick={() => setWide(false)} aria-label="Collapse" title="Collapse" style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}>«</button>}
+      </div>
+      {!wide && <button onClick={() => setWide(true)} aria-label="Expand" className="volt-rail-item grid place-items-center"
+        onMouseEnter={e => setTip({ label: "Expand menu", y: e.currentTarget.getBoundingClientRect().top + 15 })} onMouseLeave={() => setTip(null)}
+        style={{ width: 42, height: 30, color: "rgba(200,215,255,0.55)", margin: "0 auto" }}><span className="volt-rail-glyph" style={{ fontSize: 13 }}>»</span></button>}
+      <div style={{ width: wide ? "auto" : 26, height: 1, margin: wide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
+
+      {/* live-weekend entry — the inverse of the in-weekend portal button */}
+      {item(enterable ? "▸" : "○", enterable ? "Live weekend" : "No live weekend", { onClick: () => enterable && onEnter(target), disabled: !enterable, accent: enterable ? "#af9aec" : undefined })}
+
+      {divider()}
+      {secLabel("League")}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", gap: 2 }}>{leagueViews}</div>
+      {tourneyViews.length > 0 && <>{divider()}{secLabel("Tournament")}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", gap: 2 }}>{tourneyViews}</div></>}
+
+      <div style={{ marginTop: "auto" }} />
+      {divider()}
+      {onAccount && item("◉", "My Account", { onClick: onAccount, accent: "rgba(200,215,255,0.72)" })}
+      <button onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute" : "Unmute"}
+        onMouseEnter={e => { if (!wide) setTip({ label: soundOn ? "Sound on" : "Sound off", y: e.currentTarget.getBoundingClientRect().top + 20 }); }} onMouseLeave={() => setTip(null)}
+        style={{ width: wide ? W - 16 : 42, height: 40, justifyContent: wide ? "flex-start" : "center", gap: 10, paddingLeft: wide ? 12 : 0, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)", margin: wide ? 0 : "0 auto", background: "none", border: "none", cursor: "pointer" }}>
+        <span style={{ fontSize: 15 }}>{soundOn ? "🔊" : "🔇"}</span>
+        {wide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" }}>{soundOn ? "Sound on" : "Sound off"}</span>}
+      </button>
+
+      {!wide && tip && (
+        <div style={{ position: "fixed", left: W + 12, top: tip.y, transform: "translateY(-50%)", zIndex: 46, pointerEvents: "none", padding: "6px 11px", background: "rgba(10,14,26,0.97)", border: "1px solid rgba(61,123,255,0.5)", clipPath: SHELL_NOTCH(6), fontSize: 11.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#eaf1ff", whiteSpace: "nowrap", animation: "voltTipIn 160ms ease", fontFamily: "'Rajdhani',sans-serif" }}>
+          <span style={{ color: "#3d7bff", marginRight: 6 }}>//</span>{tip.label}
+        </div>
+      )}
+    </nav>
+  );
+}
+
 function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [events, setEvents] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -5209,6 +5288,16 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [myStrikes, setMyStrikes] = useState(0);
   const [showPlayer, setShowPlayer] = useState(null); // public player-profile modal
   const [expandPast, setExpandPast] = useState(null); // settled strip → recap card
+  const [railWideHub, setRailWideHub] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
+  const setRailWide = (v) => { setRailWideHub(v); try { localStorage.setItem("volt_rail_wide", v ? "1" : "0"); } catch {} };
+  const [hubDesk, setHubDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    const on = e => setHubDesk(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
 
   // My registration rows for every non-settled weekend — powers the toggles.
   async function loadMyRegs(evs) {
@@ -5392,9 +5481,19 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     setBusy(false);
   }
 
+  // Weekend to route the rail's view shortcuts into: the furthest-along
+  // enterable weekend (matches/draft/reg-closed — reg-open lands on the gate).
+  const RANK_ENTER = { matches_live: 4, drafting: 3, registration_closed: 2 };
+  const railTarget = HAS_SUPABASE && Array.isArray(events)
+    ? events.filter(e => RANK_ENTER[e.phase]).sort((a, b) => (RANK_ENTER[b.phase] - RANK_ENTER[a.phase]) || (new Date(a.created_at) - new Date(b.created_at)))[0] || null
+    : null;
+  const showRail = HAS_SUPABASE && hubDesk;
+  const railPad = showRail ? (railWideHub ? 224 : 60) : 0;
+
   const wrap = (inner) => (
-    <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px" }}>
+    <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px", paddingLeft: railPad, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
       <ShellStyles />
+      {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={() => setShowProfile(true)} isHost={isHost} wide={railWideHub} setWide={setRailWide} />}
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
         {HAS_SUPABASE && <NotifBell />}
         {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? () => setShowProfile(true) : null} />}
@@ -5699,7 +5798,7 @@ function matchPoints({ won, acs, kills, assists }) {
 /* ════════════════════════════════════════════════════════════════════
    WEEKEND APP — phase router. Registration → Draft → Matches, per weekend.
    ════════════════════════════════════════════════════════════════════ */
-function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
+function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialView }) {
   const [ev, setEv] = useState(event);
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
@@ -5963,7 +6062,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
       account, onSignOut, hostControls,
     };
-    return <DraftApp auth={auth} browse={inReg} chrome={chrome} />;
+    return <DraftApp auth={auth} browse={inReg} chrome={chrome} initialView={initialView} />;
   }
 
   const inner = showReport
