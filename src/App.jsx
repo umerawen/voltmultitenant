@@ -3128,6 +3128,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       if (!alive || !s) return;
       // ignore remote state that isn't newer than what we have locally (prevents clobbering optimistic writes)
       if (s.stamp <= localStampRef.current) return;
+      // Guard the draw: if WE have a live spin (or a block the remote lacks) that
+      // the incoming state would erase, keep ours until our write propagates.
+      const local = stateRef.current;
+      if (local) {
+        const localSpinLive = local.spin && Date.now() < local.spin.startTs + local.spin.duration + 2000;
+        if (localSpinLive && (!s.spin || s.spin.startTs !== local.spin.startTs)) return;
+        if (local.block && !s.block && (!s.spin || (local.spin && s.spin?.startTs !== local.spin.startTs))) return;
+      }
       if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
     }, POLL_MS);
     return () => { alive = false; clearInterval(t); };
