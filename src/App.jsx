@@ -188,7 +188,7 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
         id: p.userId, status: "pool", soldTo: null, soldPrice: null,
         name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
         kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
-        badges: p.badges || [], tracker: p.tracker || null,
+        badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
       }))
     : SAMPLE_PLAYERS.map((p) => ({ id: uid(), status: "pool", soldTo: null, soldPrice: null, ...p }));
   return {
@@ -540,6 +540,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
   const standings = computeStandings(t.teamIds, t.matches, t.overrides);
   const pos = {}; standings.forEach((r, i) => { pos[r.teamId] = { rank: i + 1, pts: r.pts }; });
   const topPts = standings[0]?.pts ?? 0;
+  const anyPlayed = standings.some(r => r.played > 0); // no context noise at 0-0
   const n = standings.length;
   const rounds = {}; (t.matches || []).forEach(m => { const r = m.round || 1; (rounds[r] = rounds[r] || []).push(m); });
   const keys = Object.keys(rounds).map(Number).sort((x, y) => x - y);
@@ -555,12 +556,13 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
     return [maps.filter(x => Number(x.a) > Number(x.b)).length, maps.filter(x => Number(x.b) > Number(x.a)).length];
   };
   const stakesOf = (m) => {
+    if (!anyPlayed || topPts === 0) return null; // stakes only exist once the table does
     const a = pos[m.teamA], b = pos[m.teamB];
     if (!a || !b) return null;
     if (a.rank <= 2 && b.rank <= 2) return "TOP-OF-THE-TABLE CLASH";
+    // "go top": a non-leader whose win overtakes or ties the current leader
     if ((a.rank !== 1 && a.pts + 3 >= topPts) || (b.rank !== 1 && b.pts + 3 >= topPts)) return "WINNER CAN GO TOP";
     if (n >= 4 && a.rank >= n - 1 && b.rank >= n - 1) return "BASEMENT BATTLE";
-    if (Math.abs(a.rank - b.rank) === 1) return `#${Math.min(a.rank, b.rank)} VS #${Math.max(a.rank, b.rank)} · DIRECT RANK FIGHT`;
     return null;
   };
   const mvpOf = (m) => {
@@ -569,10 +571,12 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
     return lbl ? window.__VOLT?.reportedStats?.[lbl] : null;
   };
   const posChip = (teamId, right) => {
+    if (!anyPlayed) return null;
     const p = pos[teamId]; if (!p) return null;
     return <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>#{p.rank} · {p.pts} PTS</span>;
   };
   const pips = (teamId) => {
+    if (!anyPlayed) return null;
     const f = formOf(teamId); if (!f.length) return null;
     const s = streakOf(teamId);
     return (
@@ -598,7 +602,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
       {keys.map(k => (
         <div key={k} style={{ opacity: !isDone(k) && k !== active ? 0.55 : 1 }}>
           <div className="flex items-center gap-3 mb-2">
-            <span className="uppercase font-bold tracking-widest" style={{ color: k === active && !isDone(k) ? "#eaf1ff" : "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontSize: 14 }}>Matchday {k}</span>
+            <span className="uppercase font-bold tracking-widest" style={{ color: k === active && !isDone(k) ? "#eaf1ff" : "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontSize: 14 }}>Round {k}</span>
             {roundTag(k)}
             <span className="flex-1" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.3), transparent)" }} />
           </div>
@@ -1305,8 +1309,9 @@ function PlayerCard({ player, lite = false }) {
         <div className="px-5 pt-5 pb-7">
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "rgba(236,243,255,0.4)" }}>Trophy cabinet</p>
           <div className="flex flex-wrap items-center gap-2" style={{ minHeight: 40 }}>
+            {player.trophies > 0 && <Tag hue="#f5c453">🏆 ×{player.trophies} weekend streak</Tag>}
             {player.badges?.length ? player.badges.map((b, i) => <Tag key={i} hue={i % 2 ? "#00e5ff" : "#9d6bff"}>{b}</Tag>)
-              : <span className="text-sm" style={{ color: "rgba(236,243,255,0.3)" }}>No titles yet — write the first chapter.</span>}
+              : !player.trophies && <span className="text-sm" style={{ color: "rgba(236,243,255,0.3)" }}>No titles yet — write the first chapter.</span>}
           </div>
         </div>
         <div style={{ height: 4, background: `linear-gradient(90deg, transparent, ${r.c}, transparent)` }} />
@@ -4933,6 +4938,245 @@ function AccountChip({ account, onSignOut, onProfile, seat }) {
 /* ════════════════════════════════════════════════════════════════════
    SEASON SHELL — weekend schedule. Each weekend is its own scoped draft.
    ════════════════════════════════════════════════════════════════════ */
+// ── Weekly-loop surfaces: trophy chips, play toggle, notifications, ──────
+// public player profiles. All shell-level; the old app stays untouched.
+
+const TrophyChip = ({ n, big }) => !n ? null : (
+  <span title={`${n}-weekend champion streak`} style={{ display: "inline-flex", alignItems: "center", gap: 3, marginLeft: 8, padding: big ? "3px 10px" : "1px 7px", fontSize: big ? 13 : 10.5, fontWeight: 700, letterSpacing: "0.08em", color: "#f5c453", border: "1px solid rgba(245,196,83,0.5)", background: "rgba(245,196,83,0.08)", clipPath: SHELL_NOTCH(5), fontFamily: "'IBM Plex Mono',monospace", textShadow: "0 0 10px rgba(245,196,83,0.5)" }}>🏆{n > 1 ? "×" + n : ""}</span>
+);
+
+function ToggleSwitch({ on, color, disabled, onClick }) {
+  const c = color || "#3ddc84";
+  return (
+    <button onClick={disabled ? undefined : onClick} aria-pressed={on}
+      style={{ position: "relative", width: 56, height: 28, flex: "0 0 auto", background: on ? c + "26" : "rgba(255,255,255,0.05)", border: `1px solid ${on ? c : "rgba(120,150,220,0.35)"}`, clipPath: SHELL_NOTCH(7), cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1, padding: 0, boxShadow: on ? `0 0 14px ${c}44` : "none", transition: "all 160ms" }}>
+      <span style={{ position: "absolute", top: 3, left: on ? 31 : 3, width: 20, height: 20, background: on ? c : "rgba(200,215,255,0.35)", clipPath: SHELL_NOTCH(5), transition: "left 160ms ease" }} />
+    </button>
+  );
+}
+
+// The weekly ritual, one tap: OFF → PENDING (amber) → IN ✓ (green).
+// Flipping on IS the application (availability implied); veterans with 2+
+// played weekends and a clean record are auto-approved by the volt_apply RPC.
+// Flipping off while registration runs is a clean, strike-free withdrawal.
+function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, onChanged, compact }) {
+  const [busy, setBusy] = useState(false);
+  const [wantCap, setWantCap] = useState(false); // captain intent before the row exists
+  const [note, setNote] = useState("");
+  const status = mine ? (mine.status || "approved") : null;
+  const on = status === "pending" || status === "approved";
+  const capOn = mine ? !!mine.wants_captain : wantCap;
+  const rejected = status === "rejected";
+  const color = status === "approved" ? "#3ddc84" : status === "pending" ? "#f5c453" : "#3ddc84";
+  const draftLine = ev?.draft_at
+    ? new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" }) + " " + new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : null;
+
+  async function flipPlay() {
+    if (busy || susp > 0 || rejected) return;
+    setNote("");
+    if (!on) {
+      if (!profileComplete) { setNote("① Complete your scouting profile first — rank and role. Then flip again."); onEditProfile && onEditProfile(); return; }
+      setBusy(true);
+      try { const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: wantCap }); if (error) throw error; onChanged && await onChanged(); }
+      catch (e) { setNote(e.message || "Could not apply."); }
+      setBusy(false);
+    } else {
+      if (status === "approved" && !window.confirm(`Drop out of ${ev.weekend_label}? Your spot opens up — captains won't be able to draft you.`)) return;
+      setBusy(true);
+      try { const { error } = await __sb.rpc("volt_withdraw", { p_event: ev.id }); if (error) throw error; onChanged && await onChanged(); }
+      catch (e) { setNote(e.message || "Could not withdraw."); }
+      setBusy(false);
+    }
+  }
+  async function flipCap() {
+    if (busy || rejected) return;
+    const v = !capOn;
+    if (!mine) { setWantCap(v); return; }
+    setBusy(true);
+    try { const { error } = await __sb.rpc("volt_wants_captain", { p_event: ev.id, p_v: v }); if (error) throw error; onChanged && await onChanged(); }
+    catch (e) { console.error(e); }
+    setBusy(false);
+  }
+
+  const row = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 };
+  const label = { fontSize: compact ? 13 : 14.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" };
+  return (
+    <div style={{ display: "grid", gap: compact ? 8 : 10, minWidth: compact ? 220 : 260 }}>
+      <div style={row}>
+        <span style={{ ...label, color: on ? (status === "approved" ? "#9af5c2" : "#f5c453") : "#ecf3ff" }}>I'm playing this weekend</span>
+        <ToggleSwitch on={on} color={color} disabled={busy || susp > 0 || rejected} onClick={flipPlay} />
+      </div>
+      <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "rgba(200,215,255,0.55)", marginTop: -4 }}>
+        {susp > 0 ? <span style={{ color: "#ff8f9a", fontWeight: 700 }}>Suspended — {susp} weekend{susp === 1 ? "" : "s"} remaining. You can't enter yet.</span>
+          : rejected ? <span style={{ color: "#ff8f9a" }}>Not approved this weekend — talk to the Commissioner.</span>
+          : status === "approved" ? <span style={{ color: "#9af5c2" }}>You're in ✓{draftLine ? ` — draft ${draftLine}` : ""} · flip off to drop out</span>
+          : status === "pending" ? <span style={{ color: "#f5c453" }}>Application pending — the Commissioner reviews it · flip off to withdraw</span>
+          : <>One tap enters you in the pool — it confirms you're available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches. No-shows hurt your team.</>}
+      </div>
+      {strikes > 0 && !on && susp === 0 && (
+        <div style={{ fontSize: 11, color: strikes % 3 === 2 ? "#ff8f9a" : "#f5c453", fontWeight: 600 }}>
+          ⚠ {strikes} no-show{strikes === 1 ? "" : "s"} on record{strikes % 3 === 2 ? " — one more triggers a 3-weekend suspension" : ""}</div>
+      )}
+      {!rejected && susp === 0 && (
+        <div style={row}>
+          <span style={{ ...label, fontSize: compact ? 12 : 13, color: capOn ? "#7da6ff" : "rgba(200,215,255,0.6)" }}>I'll captain <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "rgba(200,215,255,0.4)" }}>(the Commissioner decides)</span></span>
+          <ToggleSwitch on={capOn} color="#3d7bff" disabled={busy} onClick={flipCap} />
+        </div>
+      )}
+      {note && <div style={{ fontSize: 11.5, color: "#f5c453" }}>{note}</div>}
+    </div>
+  );
+}
+
+// Batch notification insert — fire-and-forget, host-side actions only.
+async function voltNotify(rows) {
+  try { if (HAS_SUPABASE && rows && rows.length) await __sb.from("notifications").insert(rows); }
+  catch (e) { console.error("notify", e); }
+}
+
+const NOTIF_GLYPH = { approved: "✓", rejected: "✕", captain: "★", settled: "🏆", weekend_open: "▸", suspension: "⚠" };
+const NOTIF_COLOR = { approved: "#3ddc84", rejected: "#ff4655", captain: "#f5c453", settled: "#f5c453", weekend_open: "#3ddc84", suspension: "#ff4655" };
+
+function NotifBell() {
+  const [rows, setRows] = useState([]);
+  const [open, setOpen] = useState(false);
+  async function pull() {
+    try {
+      const { data } = await __sb.from("notifications").select("*").eq("user_id", window.__VOLT.userId).order("created_at", { ascending: false }).limit(15);
+      setRows(data || []);
+    } catch (e) { console.error(e); }
+  }
+  useEffect(() => { pull(); const t = setInterval(pull, 20000); return () => clearInterval(t); }, []);
+  const unread = rows.filter(r => !r.read).length;
+  async function openPanel() {
+    const v = !open; setOpen(v);
+    if (v && unread) {
+      try { await __sb.from("notifications").update({ read: true }).eq("user_id", window.__VOLT.userId).eq("read", false); } catch (e) {}
+      setRows(rs => rs.map(r => ({ ...r, read: true })));
+    }
+  }
+  const ago = (d) => {
+    const s = Math.max(1, Math.floor((Date.now() - new Date(d).getTime()) / 1000));
+    if (s < 60) return s + "s"; if (s < 3600) return Math.floor(s / 60) + "m";
+    if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d";
+  };
+  return (
+    <div style={{ position: "relative", marginRight: 10 }}>
+      <button onClick={openPanel} title="Notifications" style={shellBtn("ghost", { padding: "7px 12px", fontSize: 13, position: "relative" })}>
+        ◈{unread > 0 && <span style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, padding: "0 4px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10, fontWeight: 700, clipPath: SHELL_NOTCH(4), fontFamily: "'IBM Plex Mono',monospace" }}>{unread}</span>}
+      </button>
+      {open && (
+        <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 320, maxHeight: 400, overflowY: "auto", zIndex: 130, background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(10), padding: "12px 14px", boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 8 }}>// Notifications</div>
+          {rows.length === 0 && <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.45)", margin: 0 }}>Nothing yet — league news lands here.</p>}
+          <div style={{ display: "grid", gap: 6 }}>
+            {rows.map(r => (
+              <div key={r.id} style={{ display: "flex", gap: 10, padding: "9px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
+                <span style={{ color: NOTIF_COLOR[r.kind] || "#5b8dff", fontWeight: 700, fontSize: 13, width: 16, textAlign: "center" }}>{NOTIF_GLYPH[r.kind] || "▪"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#ecf3ff" }}>{r.title}</div>
+                  {r.body && <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.55)", marginTop: 2 }}>{r.body}</div>}
+                </div>
+                <span style={{ fontSize: 10, color: "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace", flex: "0 0 auto" }}>{ago(r.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Public player profile — the Season Race makes individuals the product;
+// this is their page. Opened from leaderboard rows; My Account stays the
+// private edit surface behind it.
+function PlayerProfileModal({ userId, onClose }) {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const cid = window.__VOLT.communityId;
+        const [{ data: u }, { data: p }, { data: mrs }, { data: evs }] = await Promise.all([
+          __sb.from("users").select("display_name, trophy_streak, best_streak").eq("id", userId).maybeSingle(),
+          __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle(),
+          __sb.from("match_results").select("event_id, points_computed, team_won, stat_payload, created_at").eq("community_id", cid).eq("user_id", userId).order("created_at", { ascending: true }),
+          __sb.from("events").select("id, weekend_label, created_at").eq("community_id", cid),
+        ]);
+        setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [] });
+      } catch (e) { console.error(e); setD({ u: {}, p: {}, mrs: [], evs: [] }); }
+    })();
+  }, [userId]);
+  const tile = (label, val, hue) => (
+    <div style={{ padding: "10px 12px", background: "rgba(10,16,30,0.7)", border: `1px solid ${hue || "rgba(61,123,255,0.3)"}44`, clipPath: SHELL_NOTCH(7), textAlign: "center" }}>
+      <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: hue || "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", marginTop: 2 }}>{val}</div>
+    </div>
+  );
+  let inner;
+  if (!d) inner = <p className="vg-loading">// Pulling the file…</p>;
+  else {
+    const { u, p, mrs, evs } = d;
+    const pts = mrs.reduce((a, r) => a + Number(r.points_computed || 0), 0);
+    const wins = mrs.filter(r => r.team_won).length;
+    const acsRows = mrs.map(r => Number(r.stat_payload?.acs || 0)).filter(Boolean);
+    const avgAcs = acsRows.length ? Math.round(acsRows.reduce((a, b) => a + b, 0) / acsRows.length) : "—";
+    const k = mrs.reduce((a, r) => a + Number(r.stat_payload?.k || 0), 0);
+    const asst = mrs.reduce((a, r) => a + Number(r.stat_payload?.a || 0), 0);
+    const evMap = {}; evs.forEach(e => { evMap[e.id] = e; });
+    const byWeekend = {};
+    mrs.forEach(r => {
+      const w = (byWeekend[r.event_id] = byWeekend[r.event_id] || { pts: 0, m: 0, w: 0 });
+      w.pts += Number(r.points_computed || 0); w.m++; if (r.team_won) w.w++;
+    });
+    const weekendRows = Object.entries(byWeekend)
+      .sort((a, b) => new Date(evMap[a[0]]?.created_at || 0) - new Date(evMap[b[0]]?.created_at || 0));
+    inner = <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Player file</div>
+          <div style={{ fontSize: 30, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", display: "flex", alignItems: "center" }}>{u.display_name || "Player"}<TrophyChip n={u.trophy_streak} big /></div>
+          <div style={{ display: "flex", gap: 10, marginTop: 4, fontSize: 12, color: "rgba(200,215,255,0.55)", flexWrap: "wrap" }}>
+            {p.rank && <span style={{ color: (RANKS[p.rank] || {}).c || "#8d97a8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{p.rank}</span>}
+            {p.role && <span style={{ textTransform: "uppercase" }}>{p.role}</span>}
+            {p.agent && <span>{p.agent}</span>}
+            {u.best_streak > 0 && <span style={{ color: "#f5c453" }}>best streak 🏆×{u.best_streak}</span>}
+          </div>
+        </div>
+        <button onClick={onClose} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>✕</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))", gap: 8, marginTop: 16 }}>
+        {tile("Season pts", pts, "#f5c453")}
+        {tile("Matches", mrs.length)}
+        {tile("Wins", wins, "#3ddc84")}
+        {tile("Win %", mrs.length ? Math.round(wins / mrs.length * 100) + "%" : "—")}
+        {tile("Avg ACS", avgAcs, "#ff4655")}
+        {tile("K / A", k + " / " + asst, "#00e5ff")}
+      </div>
+      {weekendRows.length > 0 && <div style={{ marginTop: 18 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.26em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700, marginBottom: 8 }}>// Weekend by weekend</div>
+        <div style={{ display: "grid", gap: 5 }}>
+          {weekendRows.map(([eid, w]) => (
+            <div key={eid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
+              <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 12.5 }}>{evMap[eid]?.weekend_label || "Weekend"}</span>
+              <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{w.m}m · {w.w}w</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 60, textAlign: "right" }}>{w.pts} pts</span>
+            </div>
+          ))}
+        </div>
+      </div>}
+      {p.tracker_url && <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 14, color: "#7da6ff", textDecoration: "underline", fontWeight: 600, fontSize: 13 }}>⌖ View tracker profile ↗</a>}
+    </>;
+  }
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 125, background: "rgba(4,6,12,0.82)", display: "grid", placeItems: "center", padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(16), padding: "22px 24px" }}>
+        {inner}
+      </div>
+    </div>
+  );
+}
+
 function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [events, setEvents] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -4942,6 +5186,35 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [live, setLive] = useState(null);     // { count, mine } — registrations for the current weekend
   const [showProfile, setShowProfile] = useState(false);
   const [editTime, setEditTime] = useState(false);
+  const [myRegs, setMyRegs] = useState({});   // eventId → my registration row (open weekends)
+  const [myProf, setMyProf] = useState(null); // rank/role — gates the play toggle
+  const [mySusp, setMySusp] = useState(0);
+  const [myStrikes, setMyStrikes] = useState(0);
+  const [showPlayer, setShowPlayer] = useState(null); // public player-profile modal
+  const [expandPast, setExpandPast] = useState(null); // settled strip → recap card
+
+  // My registration rows for every non-settled weekend — powers the toggles.
+  async function loadMyRegs(evs) {
+    try {
+      const ids = (evs || []).filter(e => e.phase !== "settled").map(e => e.id);
+      if (!ids.length) { setMyRegs({}); return; }
+      const { data } = await __sb.from("registrations").select("id, event_id, status, wants_captain, is_captain")
+        .eq("user_id", window.__VOLT.userId).in("event_id", ids);
+      const map = {}; (data || []).forEach(r => { map[r.event_id] = r; });
+      setMyRegs(map);
+    } catch (e) { console.error(e); }
+  }
+  async function loadMyMeta() {
+    try {
+      const { data: p } = await __sb.from("player_profiles").select("rank, role").eq("user_id", window.__VOLT.userId).maybeSingle();
+      setMyProf(p || null);
+      const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", window.__VOLT.userId).maybeSingle();
+      setMySusp(u?.suspension_remaining || 0);
+      const { data: ns } = await __sb.from("registrations").select("id")
+        .eq("community_id", window.__VOLT.communityId).eq("user_id", window.__VOLT.userId).eq("no_show", true);
+      setMyStrikes((ns || []).length);
+    } catch (e) { console.error(e); }
+  }
 
   // The weekend that IS the league right now: the non-settled one that's
   // furthest along (matches > draft > reg closed > reg open); ties → oldest.
@@ -4966,6 +5239,8 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
         setLive({ count: appr.length, pending: rows.filter(r => r.status === "pending").length, mineStatus: mineRow ? (mineRow.status || "approved") : null });
       } catch (e) { console.error(e); setLive(null); }
     } else setLive(null);
+    loadMyRegs(data);
+    loadMyMeta();
     loadSeason();
     loadPlayerBoard();
   }
@@ -4977,8 +5252,8 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
         .select("user_id, points_computed, team_won, event_id")
         .eq("community_id", window.__VOLT.communityId);
       if (!mrs || !mrs.length) { setBoard(null); return; }
-      const { data: us } = await __sb.from("users").select("id, display_name").eq("community_id", window.__VOLT.communityId);
-      const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
+      const { data: us } = await __sb.from("users").select("id, display_name, trophy_streak").eq("community_id", window.__VOLT.communityId);
+      const names = {}, streaks = {}; (us || []).forEach(u => { names[u.id] = u.display_name; streaks[u.id] = u.trophy_streak || 0; });
       // rank movement: current standings vs standings before the latest settled weekend
       let lastSettled = null;
       try {
@@ -4994,6 +5269,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
         return Object.values(agg).sort((x, y) => y.pts - x.pts);
       };
       const cur = build(mrs);
+      cur.forEach(p => { p.trophies = streaks[p.uid] || 0; });
       if (lastSettled) {
         const prev = build(mrs.filter(r => r.event_id !== lastSettled));
         const prevRank = {}; prev.forEach((p, i) => { prevRank[p.uid] = i + 1; });
@@ -5044,6 +5320,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
         setLive({ count: appr.length, pending: rows.filter(r => r.status === "pending").length, mineStatus: mineRow ? (mineRow.status || "approved") : null });
       } catch (e) { console.error(e); }
     } else setLive(null);
+    loadMyRegs(data);
   }
   useEffect(() => { const t = setInterval(refreshEvents, 8000); return () => clearInterval(t); }, []);
 
@@ -5081,12 +5358,18 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     setErr(""); setBusy(true);
     try {
       const n = (events?.length || 0) + 1;
-      const { error } = await __sb.from("events").insert({
+      const { data: created, error } = await __sb.from("events").insert({
         community_id: window.__VOLT.communityId,
         weekend_label: `Weekend ${n}`,
         phase: "registration_open",
-      });
+      }).select().maybeSingle();
       if (error) throw error;
+      // Ping every member: registration is open.
+      try {
+        const { data: us } = await __sb.from("users").select("id").eq("community_id", window.__VOLT.communityId).neq("id", window.__VOLT.userId);
+        await voltNotify((us || []).map(u => ({ community_id: window.__VOLT.communityId, user_id: u.id, event_id: created?.id,
+          kind: "weekend_open", title: `Weekend ${n} — registration open`, body: "Flip \"I'm playing\" on your dashboard to enter the pool." })));
+      } catch (e) { console.error(e); }
       await load();
     } catch (e) { setErr(e.message || "Could not create weekend."); }
     setBusy(false);
@@ -5096,6 +5379,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
     <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px" }}>
       <ShellStyles />
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
+        {HAS_SUPABASE && <NotifBell />}
         {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? () => setShowProfile(true) : null} />}
       </div>
       {showProfile && (
@@ -5106,10 +5390,11 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
               <button onClick={() => setShowProfile(false)} style={shellBtn("ghost", { padding: "5px 10px", fontSize: 11 })}>✕</button>
             </div>
             <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "0 0 6px" }}>Captains study this before bidding — keep it current between weekends.</p>
-            <ScoutProfileCard userId={window.__VOLT.userId} />
+            <ScoutProfileCard userId={window.__VOLT.userId} onSaved={loadMyMeta} />
           </div>
         </div>
       )}
+      {showPlayer && <PlayerProfileModal userId={showPlayer} onClose={() => setShowPlayer(null)} />}
       <div style={{ maxWidth: 840, margin: "0 auto", padding: "34px 20px 0" }}>
         <div style={{ textAlign: "center", marginBottom: 26 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.4em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT LEAGUE</div>
@@ -5211,18 +5496,97 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
                         </>}
                   </div>
                 </div>
-                <button onClick={() => onEnter(current)} style={shellBtn("primary", { padding: "13px 26px", fontSize: 13.5 })}>{heroCTA}</button>
+                {current.phase === "registration_open" && HAS_SUPABASE
+                  ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "14px 16px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
+                      <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
+                        onEditProfile={() => setShowProfile(true)} onChanged={load} />
+                      <button onClick={() => onEnter(current)} style={shellBtn("ghost", { padding: "8px 14px", fontSize: 11.5, alignSelf: "flex-start" })}>⊞ Open the weekend →</button>
+                    </div>
+                  : <button onClick={() => onEnter(current)} style={shellBtn("primary", { padding: "13px 26px", fontSize: 13.5 })}>{heroCTA}</button>}
               </div>
+              {myRegs[current.id]?.is_captain && (myRegs[current.id]?.status || "approved") === "approved" && (
+                <div style={{ marginTop: 16, padding: "13px 16px", background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.55)", clipPath: SHELL_NOTCH(9), boxShadow: "0 0 24px rgba(245,196,83,0.12)" }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", textShadow: "0 0 12px rgba(245,196,83,0.6)" }}>★ You're a captain this weekend</span>
+                  <span style={{ fontSize: 12, color: "rgba(200,215,255,0.6)", marginLeft: 10 }}>$10,000 budget{current.draft_at ? ` · draft ${fmtDraftAt(current.draft_at)}` : ""} — scout the pool, then run your auction.</span>
+                </div>
+              )}
             </div>
           )}
-          {upcoming.length > 0 && upcoming.map(ev => strip(ev, false))}
+          {(() => {
+            // Next weekend already open while this one runs → its toggle rides
+            // right on home. The weekly rhythm on one screen.
+            const nextReg = current?.phase !== "registration_open" && events.find(e => e.phase === "registration_open" && e.id !== current?.id);
+            return nextReg && HAS_SUPABASE ? (
+              <div style={{ padding: "16px 18px", background: "linear-gradient(160deg,rgba(16,24,40,0.9),rgba(10,13,22,0.9))", border: "1px solid rgba(61,220,132,0.3)", clipPath: SHELL_NOTCH(12) }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#3ddc84", fontWeight: 700 }}>// Next weekend · registration open</div>
+                    <div style={{ fontSize: 19, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 3 }}>{nextReg.weekend_label}
+                      {nextReg.draft_at && <span style={{ fontWeight: 500, textTransform: "none", color: "rgba(200,215,255,0.45)", fontSize: 12, marginLeft: 10, fontFamily: "'IBM Plex Mono',monospace" }}>{fmtDraftAt(nextReg.draft_at)}</span>}</div>
+                  </div>
+                  <div style={{ flex: "0 1 300px" }}>
+                    <PlayToggle ev={nextReg} mine={myRegs[nextReg.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
+                      onEditProfile={() => setShowProfile(true)} onChanged={load} compact />
+                  </div>
+                </div>
+              </div>
+            ) : null;
+          })()}
+          {upcoming.filter(e => !(current?.phase !== "registration_open" && e.phase === "registration_open")).map(ev => strip(ev, false))}
           {past.length > 0 && <>
             <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginTop: 6 }}>// Past weekends</div>
-            {past.map(ev => strip(ev, true))}
+            {past.map(ev => {
+              const rc = ev.recap || null;
+              const openIt = expandPast === ev.id;
+              return (
+                <div key={ev.id} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.12)", clipPath: SHELL_NOTCH(8) }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 13.5, opacity: 0.75 }}>{ev.weekend_label}</span>
+                    {rc?.team && <span style={{ fontSize: 11.5, color: "#f5c453", fontWeight: 700, letterSpacing: "0.06em" }}>🏆 {rc.team}</span>}
+                    {rc?.mvp && <span style={{ fontSize: 11, color: "rgba(200,215,255,0.6)" }}>⭐ {rc.mvp}{rc.mvpPts ? " · " + rc.mvpPts : ""}</span>}
+                    <span style={{ flex: 1 }} />
+                    {rc && <button onClick={() => setExpandPast(openIt ? null : ev.id)} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 10.5 })}>{openIt ? "Hide" : "Recap"}</button>}
+                    {isHost && <>
+                      <button onClick={() => renameWeekend(ev)} title="Rename" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
+                      <button onClick={() => deleteWeekend(ev)} title="Delete weekend" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
+                    </>}
+                    <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>View →</button>
+                  </div>
+                  {openIt && rc && (
+                    <div style={{ padding: "4px 16px 16px", borderTop: "1px solid rgba(120,150,220,0.12)" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginTop: 12 }}>
+                        {rc.team && <div style={{ padding: "10px 12px", background: "rgba(245,196,83,0.06)", border: "1px solid rgba(245,196,83,0.3)", clipPath: SHELL_NOTCH(6) }}><div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#f5c453", fontWeight: 700 }}>Champion</div><div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 2 }}>{rc.team}</div></div>}
+                        {rc.mvp && <div style={{ padding: "10px 12px", background: "rgba(10,16,30,0.7)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(6) }}><div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>⭐ Weekend MVP</div><div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 2 }}>{rc.mvp}<span style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#7da6ff", marginLeft: 6, fontSize: 12 }}>{rc.mvpPts || ""}</span></div></div>}
+                        {rc.topFrag && <div style={{ padding: "10px 12px", background: "rgba(10,16,30,0.7)", border: "1px solid rgba(255,70,85,0.25)", clipPath: SHELL_NOTCH(6) }}><div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#ff8f9a", fontWeight: 700 }}>Top fragger</div><div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 2 }}>{rc.topFrag}</div></div>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </>}
         </div>}
+    {isHost && current && (() => {
+      // Nudge the host when a weekend has been sitting in a live phase — the
+      // loop needs a manual flip and it's easy to forget one on a busy night.
+      const hrs = current.created_at ? (Date.now() - new Date(current.created_at).getTime()) / 3.6e6 : 0;
+      const stale = { registration_open: hrs > 72, registration_closed: true, drafting: true, matches_live: true }[current.phase];
+      const advLabel = { registration_open: "Close registration", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle the weekend" }[current.phase];
+      return stale && advLabel ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 16, padding: "11px 16px", background: "rgba(245,196,83,0.06)", border: "1px solid rgba(245,196,83,0.35)", clipPath: SHELL_NOTCH(9), flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 600 }}>⚙ {current.weekend_label} is waiting on you — next step: <b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>{advLabel}</b></span>
+          <button onClick={() => onEnter(current)} style={shellBtn("warn", { padding: "7px 14px", fontSize: 11.5 })}>Manage weekend →</button>
+        </div>
+      ) : null;
+    })()}
+    {!isHost && !current && events.length > 0 && (
+      <div style={{ textAlign: "center", padding: "22px 0", color: "rgba(200,215,255,0.55)" }}>
+        <p style={{ fontSize: 14 }}>Next weekend hasn't been announced yet.</p>
+        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>You'll get a notification the moment the Commissioner opens registration.</p>
+      </div>
+    )}
     {isHost && <div style={{ textAlign: "center" }}>
-      <button disabled={busy} onClick={createWeekend} style={btn(events.length === 0)}>{busy ? "…" : "+ Create weekend"}</button>
+      <button disabled={busy} onClick={createWeekend} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next weekend" : "+ Create weekend"}</button>
     </div>}
     {board && <div style={{ marginTop: 34 }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
@@ -5234,7 +5598,8 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
         {board.map((r, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
-            <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}
+            <span onClick={() => r.uid && setShowPlayer(r.uid)} title="View player profile" style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", cursor: r.uid ? "pointer" : "default", display: "inline-flex", alignItems: "center" }}>{r.name}
+              <TrophyChip n={r.trophies} />
               {r.move === "new" && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "#7da6ff", fontWeight: 700, marginLeft: 8, border: "1px solid rgba(61,123,255,0.4)", padding: "1px 6px", clipPath: SHELL_NOTCH(4) }}>NEW</span>}
               {typeof r.move === "number" && r.move > 0 && <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▲{r.move}</span>}
               {typeof r.move === "number" && r.move < 0 && <span style={{ fontSize: 11.5, color: "#ff8f9a", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▼{-r.move}</span>}
@@ -5268,7 +5633,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
 // draft app's live browse mode) ──────────────────────────────────────────
 async function fetchRosterForEvent(eventId) {
   const { data: regs } = await __sb.from("registrations")
-    .select("id, user_id, is_captain, status, availability_confirmed, no_show, users(display_name, wants_captain)")
+    .select("id, user_id, is_captain, status, availability_confirmed, no_show, wants_captain, users(display_name, wants_captain, trophy_streak)")
     .eq("event_id", eventId);
   const rows = regs || [];
   const ids = rows.map(r => r.user_id);
@@ -5283,7 +5648,9 @@ async function fetchRosterForEvent(eventId) {
   }
   const withProfile = (r) => {
     const p = profs[r.user_id] || {};
-    return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain, volunteered: !!r.users?.wants_captain,
+    return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain,
+      volunteered: !!(r.wants_captain || r.users?.wants_captain), // per-weekend hand; legacy users flag as fallback
+      trophies: r.users?.trophy_streak || 0,
       status: r.status || "approved", available: !!r.availability_confirmed,
       noShow: !!r.no_show, noShows: noShowCounts[r.user_id] || 0,
       name: r.users?.display_name || "Player",
@@ -5422,8 +5789,9 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       const next = NEXT[phase];
       // Opening the draft: (re)build the board from this weekend's captains first.
       if (next === "drafting") await buildBoardFromRegistrations();
-      // Settling the weekend: snapshot final standings so the season can aggregate.
-      if (next === "settled") await snapshotStandings();
+      // Settling the weekend: snapshot standings, crown champions (trophy streak),
+      // build the recap card, and notify players.
+      if (next === "settled") { await snapshotStandings(); await settleTrophiesAndRecap(); }
       const { data } = await __sb.from("events").update({ phase: next }).eq("id", ev.id).select().maybeSingle();
       if (data) setEv(data);
     } catch (e) { console.error(e); }
@@ -5456,6 +5824,59 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
       await window.storage.set("season-standings::" + ev.id, JSON.stringify(payload), true);
       window.__VOLT.weekendId = prevWin;
     } catch (e) { console.error("snapshotStandings", e); }
+  }
+
+  // Crown the weekend champion team, extend/reset trophy streaks league-wide,
+  // build the recap card, and notify every approved player. Champion = top of
+  // the weekend standings (wins → round diff via computeStandings ordering);
+  // champion players = that team's drafted roster + any subs who played for it.
+  async function settleTrophiesAndRecap() {
+    try {
+      const s = await readState();
+      let team = null, championIds = [], recap = {};
+      if (s && s.tournament && s.teams) {
+        const t = s.tournament;
+        const standings = computeStandings(t.teamIds || s.teams.map(x => x.id), t.matches || [], t.overrides);
+        const champ = standings.find(r => r.played > 0) ? standings[0] : null;
+        if (champ) {
+          const ct = s.teams.find(x => x.id === champ.teamId);
+          team = ct?.name || null;
+          // Drafted roster userIds (pool player ids are their userIds).
+          const rosterIds = new Set((ct?.roster || []).map(p => p.id).filter(Boolean));
+          if (ct?.captainUserId) rosterIds.add(ct.captainUserId);
+          championIds = [...rosterIds];
+        }
+      }
+      // Subs who actually played on the champion team this weekend (match_results).
+      // Plus MVP + top fragger for the recap, all from banked stats.
+      try {
+        const { data: mrs } = await __sb.from("match_results").select("user_id, points_computed, team_won, stat_payload").eq("event_id", ev.id);
+        const rows = mrs || [];
+        // MVP: single highest-scoring match line.
+        let mvp = null; rows.forEach(r => { if (!mvp || Number(r.points_computed || 0) > mvp.pts) mvp = { name: r.stat_payload?.name || "Player", pts: Number(r.points_computed || 0) }; });
+        // Top fragger: most kills summed across the weekend.
+        const kills = {};
+        rows.forEach(r => { const nm = r.stat_payload?.name || "Player"; kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0); });
+        const topFrag = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
+        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.pts + " pts" : null, topFrag: topFrag ? topFrag[0] : null };
+      } catch (e) { console.error("recap stats", e); }
+      // Fire the security-definer RPC: streak +1 for champions, reset for the rest.
+      await __sb.rpc("volt_settle_trophies", { p_event: ev.id, p_team: team, p_champions: championIds, p_recap: recap });
+      // Notify every approved player the weekend settled (+ champions get the crown).
+      try {
+        const r = await fetchRosterForEvent(ev.id);
+        const champSet = new Set(championIds);
+        const notes = r.all.map(p => ({
+          community_id: window.__VOLT.communityId, user_id: p.userId, event_id: ev.id,
+          kind: "settled",
+          title: champSet.has(p.userId) ? "🏆 You won the weekend!" : ev.weekend_label + " settled",
+          body: champSet.has(p.userId)
+            ? (team ? team + " took the crown — your trophy streak grew." : "Your trophy streak grew.")
+            : (team ? team + " won it. See where you land on the Season Race." : "See where you land on the Season Race."),
+        }));
+        await voltNotify(notes);
+      } catch (e) { console.error("settle notify", e); }
+    } catch (e) { console.error("settleTrophies", e); }
   }
 
   // Force a rebuild from current registered captains (wipes the weekend board).
@@ -5829,7 +6250,6 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     try {
       const { data: u } = await __sb.from("users").select("suspension_remaining, wants_captain").eq("id", window.__VOLT.userId).maybeSingle();
       setSusp(u?.suspension_remaining || 0);
-      setWantCap(w => reg === undefined ? !!u?.wants_captain : w);
       const { data: ns } = await __sb.from("registrations").select("id")
         .eq("community_id", window.__VOLT.communityId).eq("user_id", window.__VOLT.userId).eq("no_show", true);
       setMyStrikes((ns || []).length);
@@ -5843,37 +6263,46 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
     if (!profileComplete || !avail) return;
     setBusy(true);
     try {
-      await __sb.from("registrations").insert({ event_id: ev.id, community_id: window.__VOLT.communityId, user_id: window.__VOLT.userId, status: isHost ? "approved" : "pending", availability_confirmed: true });
-      await __sb.from("users").update({ wants_captain: wantCap }).eq("id", window.__VOLT.userId);
+      const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: wantCap });
+      if (error) throw error;
       await load();
     } catch (e) { console.error(e); }
     setBusy(false);
   }
   async function withdraw() {
     setBusy(true);
-    try { await __sb.from("registrations").delete().eq("id", reg.id); await load(); }
+    try { const { error } = await __sb.rpc("volt_withdraw", { p_event: ev.id }); if (error) throw error; await load(); }
     catch (e) { console.error(e); }
     setBusy(false);
   }
   // Host decision — the only way into the weekend pool.
   async function hostDecide(entry, status) {
     setBusy(true);
-    try { await __sb.from("registrations").update({ status }).eq("id", entry.regId); await load(); }
-    catch (e) { console.error(e); }
+    try {
+      await __sb.from("registrations").update({ status }).eq("id", entry.regId);
+      await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: status === "approved" ? "approved" : "rejected",
+        title: status === "approved" ? "You're in — " + ev.weekend_label : "Application not approved",
+        body: status === "approved" ? "Approved for the pool. Captains can draft you now." : "The Commissioner didn't approve this one. Reach out if that's a mistake." }]);
+      await load();
+    } catch (e) { console.error(e); }
     setBusy(false);
   }
   // Player side: a quiet availability signal only — not a captain claim.
   async function volunteer(v) {
     setBusy(true);
-    try { await __sb.from("users").update({ wants_captain: v }).eq("id", window.__VOLT.userId); await load(); }
+    try { const { error } = await __sb.rpc("volt_wants_captain", { p_event: ev.id, p_v: v }); if (error) throw error; await load(); }
     catch (e) { console.error(e); }
     setBusy(false);
   }
   // Host side: the actual captain decision.
   async function hostSetCaptain(entry, v) {
     setBusy(true);
-    try { await __sb.from("registrations").update({ is_captain: v }).eq("id", entry.regId); await load(); }
-    catch (e) { console.error(e); }
+    try {
+      await __sb.from("registrations").update({ is_captain: v }).eq("id", entry.regId);
+      if (v) await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: "captain",
+        title: "★ You're a captain this weekend", body: "$10,000 budget in " + ev.weekend_label + ". Scout the pool and build your squad." }]);
+      await load();
+    } catch (e) { console.error(e); }
     setBusy(false);
   }
 
@@ -5981,10 +6410,16 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           {myStatus === "pending" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>Your profile and availability were sent to the Commissioner. You'll appear in the Scout Hub once approved — check back here.</p>}
           {myStatus === "rejected" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>The Commissioner didn't approve this application. Reach out to them if you think that's a mistake.</p>}
 
-          {isIn && regOpen && (
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", color: "rgba(200,215,255,0.5)", fontSize: 12.5 }}>
+          {isIn && me?.isCaptain && (
+            <div style={{ marginTop: 14, padding: "12px 15px", background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.55)", clipPath: SHELL_NOTCH(8), boxShadow: "0 0 22px rgba(245,196,83,0.12)" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#f5c453", textShadow: "0 0 10px rgba(245,196,83,0.5)" }}>★ You're a captain this weekend</span>
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.6)", marginLeft: 8 }}>$10,000 budget — scout the pool, then run your auction at the draft.</span>
+            </div>
+          )}
+          {isIn && !me?.isCaptain && (regOpen || phase === "registration_closed") && (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", color: me?.volunteered ? "#7da6ff" : "rgba(200,215,255,0.5)", fontSize: 12.5 }}>
               <input type="checkbox" checked={!!me?.volunteered} disabled={busy} onChange={e => volunteer(e.target.checked)} style={{ accentColor: "#3d7bff" }} />
-              Available to captain if needed — the Commissioner makes the final call.
+              I'll captain if picked — the Commissioner makes the final call.
             </label>
           )}
           {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
