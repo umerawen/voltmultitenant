@@ -5162,6 +5162,11 @@ function PlayerProfile({ userId, onBack, footer }) {
                 {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
                 {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
               </div>
+              {/* tracker: a real button up top, always visible when a link exists */}
+              {p.tracker_url
+                ? <a href={p.tracker_url} target="_blank" rel="noopener noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "7px 14px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7deaff", background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.5)", clipPath: SHELL_NOTCH(6), textDecoration: "none", boxShadow: "0 0 14px rgba(0,229,255,0.15)" }}>⌖ View tracker ↗</a>
+                : !onBack && <span style={{ display: "inline-block", marginTop: 12, fontSize: 11.5, color: "rgba(200,215,255,0.4)" }}>No tracker link yet — add one in your scouting profile below.</span>}
             </div>
           </div>
 
@@ -5177,15 +5182,21 @@ function PlayerProfile({ userId, onBack, footer }) {
             </div>
           </div>
 
-          {/* bottom: scouting stat row */}
+          {/* bottom: scouting stat row — accent-capped cells, matches the card's layered feel */}
           {hasScout ? (
             <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
-              {[["KDA", p.kda, "#00e5ff"], ["ACS", p.acs, "#ff4655"], ["HS%", p.hs != null ? p.hs + "%" : null, "#af9aec"], ["WIN%", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
-                <div key={i} style={{ padding: "8px 4px", textAlign: "center", background: "rgba(6,10,20,0.5)", border: `1px solid ${c}33`, clipPath: SHELL_NOTCH(5) }}>
-                  <div style={{ fontSize: 8.5, letterSpacing: "0.14em", color: c, fontWeight: 700, textTransform: "uppercase" }}>{lb}</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", marginTop: 2, color: v == null ? "rgba(200,215,255,0.3)" : "#ecf3ff" }}>{v == null ? "—" : v}</div>
-                </div>
-              ))}
+              {[["KDA", p.kda, "#00e5ff"], ["ACS", p.acs, "#ff4655"], ["HS%", p.hs != null ? p.hs + "%" : null, "#af9aec"], ["WIN%", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => {
+                const empty = v == null;
+                return (
+                  <div key={i} style={{ position: "relative", padding: "12px 6px 11px", textAlign: "center", overflow: "hidden",
+                    background: empty ? "rgba(6,10,20,0.4)" : `linear-gradient(180deg, ${c}14, rgba(6,10,20,0.55) 60%)`,
+                    border: "1px solid rgba(120,150,220,0.14)", borderTop: `2px solid ${empty ? "rgba(120,150,220,0.25)" : c}`,
+                    clipPath: SHELL_NOTCH(6) }}>
+                    <div style={{ fontSize: 9, letterSpacing: "0.16em", color: empty ? "rgba(200,215,255,0.4)" : c, fontWeight: 700, textTransform: "uppercase" }}>{lb}</div>
+                    <div style={{ fontSize: 17, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", marginTop: 4, lineHeight: 1, color: empty ? "rgba(200,215,255,0.3)" : "#ecf3ff", textShadow: empty ? "none" : `0 0 12px ${c}44` }}>{empty ? "—" : v}</div>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div style={{ position: "relative", fontSize: 12, color: "rgba(200,215,255,0.4)" }}>No scouting profile set yet.</div>
@@ -5213,13 +5224,6 @@ function PlayerProfile({ userId, onBack, footer }) {
       </div>
       <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
 
-      {p.tracker_url && <>
-        {sec("Valorant tracker")}
-        <div style={{ padding: "16px 18px", clipPath: SHELL_NOTCH(9), background: "linear-gradient(160deg, rgba(18,24,40,0.7), rgba(10,13,22,0.85))", border: `1px solid ${hue}33`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)" }}>Self-reported stats above are from this player's scouting profile. Their live match history lives on tracker.gg.</span>
-          <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ ...shellBtn("primary", { padding: "10px 18px", fontSize: 12.5 }), textDecoration: "none", whiteSpace: "nowrap" }}>⌖ Open tracker.gg ↗</a>
-        </div>
-      </>}
 
       {weekendRows.length > 0 && <>
         {sec("Weekend by weekend")}
