@@ -1321,7 +1321,7 @@ function PlayerCard({ player, lite = false }) {
 }
 
 /* ── full scouting modal with radar ── */
-function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain }) {
+function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain, onViewProfile }) {
   const [confirmDel, setConfirmDel] = useState(false);
   useEffect(() => { setConfirmDel(false); }, [player && player.id]);
   // Close on Escape for keyboard users.
@@ -1349,6 +1349,13 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Opens at</span><span style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(r.bid)}</span></div>
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Status</span><span style={{ color: player.status === "sold" ? "#3ddc84" : "#5b8dff" }}>{player.status === "sold" ? "Drafted" : player.status === "block" ? "On block" : "Available"}</span></div>
           </div>
+          {onViewProfile && typeof player.id === "string" && player.id.length > 30 && (
+            <button onClick={() => onViewProfile(player.id)}
+              className="mt-3 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: `${r.c}1f`, border: `1px solid ${r.c}`, color: r.c, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", textShadow: `0 0 12px ${r.c}66` }}>
+              ⊹ View full profile →
+            </button>
+          )}
           {player.tracker && (
             <a href={player.tracker} target="_blank" rel="noopener noreferrer"
               className="mt-3 block w-full py-2.5 text-center text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
@@ -4493,7 +4500,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
   return shell(
     <>
-      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} />}
+      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onViewProfile={chrome?.onViewProfile ? (uid) => { setScouted(null); chrome.onViewProfile(uid); } : null} />}
       {Rail}
       {TopNav}
       {views[view]}
@@ -4520,6 +4527,7 @@ function VoltGate() {
   const [pendingIntent, setPendingIntent] = useState(null); // host | join — what to do after auth
   const [activeEvent, setActiveEvent] = useState(null);
   const [targetView, setTargetView] = useState(null); // deep-link a rail view when entering a weekend
+  const [pendingProfile, setPendingProfile] = useState(null); // open a player profile after routing to the hub
 
   // In preview (no Supabase), skip straight into the app with a memory community.
   useEffect(() => {
@@ -4680,6 +4688,7 @@ function VoltGate() {
 
   if (phase === "schedule") return <WeekendSchedule community={community} isHost={profile?.role === "host"}
     account={account} onSignOut={signOut}
+    openProfile={pendingProfile} onProfileOpened={() => setPendingProfile(null)}
     onEnter={(ev, view) => { window.__VOLT.weekendId = ev.id; window.__VOLT.weekendLabel = ev.weekend_label; setActiveEvent(ev); setTargetView(view || null); setPhase("ready"); }} />;
 
   if (phase === "ready") {
@@ -4692,6 +4701,7 @@ function VoltGate() {
       isHost={profile?.role === "host"}
       account={account} onSignOut={signOut}
       initialView={targetView}
+      onViewProfile={(uid) => { window.__VOLT.weekendId = null; setActiveEvent(null); setTargetView(null); setPendingProfile(uid); setPhase("schedule"); }}
       onBack={() => { window.__VOLT.weekendId = null; setActiveEvent(null); setTargetView(null); setPhase("schedule"); }} />;
   }
 
@@ -5127,128 +5137,136 @@ function PlayerProfile({ userId, onBack }) {
     })();
   }, [userId]);
 
-  const tile = (label, val, hue, sub) => (
-    <div style={{ padding: "14px 14px", background: "rgba(10,16,30,0.7)", border: `1px solid ${hue || "rgba(61,123,255,0.3)"}44`, clipPath: SHELL_NOTCH(8), textAlign: "center" }}>
-      <div style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 700, color: hue || "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", marginTop: 3, lineHeight: 1 }}>{val}</div>
-      {sub && <div style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>{sub}</div>}
+  if (!d) return <div style={{ maxWidth: 980, margin: "0 auto", padding: "60px 22px" }}><p className="vg-loading">// Pulling the file…</p></div>;
+
+  const { u, p, mrs, evs } = d;
+  const rank = p.rank || "Iron";
+  const r = RANKS[rank] || RANKS.Iron;
+  const hue = r.c;
+  const name = u.display_name || "Player";
+
+  // Season aggregates from banked match results.
+  const pts = mrs.reduce((a, x) => a + Number(x.points_computed || 0), 0);
+  const wins = mrs.filter(x => x.team_won).length;
+  const acsRows = mrs.map(x => Number(x.stat_payload?.acs || 0)).filter(Boolean);
+  const avgAcs = acsRows.length ? Math.round(acsRows.reduce((a, b) => a + b, 0) / acsRows.length) : null;
+  const k = mrs.reduce((a, x) => a + Number(x.stat_payload?.k || 0), 0);
+  const asst = mrs.reduce((a, x) => a + Number(x.stat_payload?.a || 0), 0);
+  const winRate = mrs.length ? Math.round(wins / mrs.length * 100) : null;
+  const evMap = {}; evs.forEach(e => { evMap[e.id] = e; });
+  const champEvents = evs.filter(e => Array.isArray(e.recap?.ids) && e.recap.ids.includes(userId));
+  const byWeekend = {};
+  mrs.forEach(x => { const w = (byWeekend[x.event_id] = byWeekend[x.event_id] || { pts: 0, m: 0, w: 0 }); w.pts += Number(x.points_computed || 0); w.m++; if (x.team_won) w.w++; });
+  const weekendRows = Object.entries(byWeekend).sort((a, b) => new Date(evMap[a[0]]?.created_at || 0) - new Date(evMap[b[0]]?.created_at || 0));
+
+  // Radar wants raw kda/acs/hs/win/rank — feed the scouting-profile numbers.
+  const radarPlayer = { kda: Number(p.kda) || 0, acs: Number(p.acs) || 0, hs: Number(p.hs) || 0, win: Number(p.win) || 0, rank };
+  const hasScout = p.kda != null || p.acs != null || p.hs != null || p.rank;
+
+  const NOTCH = "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))";
+  const bigTile = (label, val, c, sub) => (
+    <div style={{ padding: "16px 16px", background: "rgba(10,16,30,0.72)", border: `1px solid ${(c || "#3d7bff")}44`, clipPath: SHELL_NOTCH(9), textAlign: "center", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0, background: `radial-gradient(120% 90% at 50% 0%, ${(c || "#3d7bff")}14, transparent 70%)`, pointerEvents: "none" }} />
+      <div style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, position: "relative" }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, color: c || "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", marginTop: 4, lineHeight: 1, position: "relative", textShadow: `0 0 16px ${(c || "#3d7bff")}55` }}>{val}</div>
+      {sub && <div style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", marginTop: 4, position: "relative" }}>{sub}</div>}
     </div>
   );
-  const sectionLabel = (t) => <div style={{ fontSize: 10, letterSpacing: "0.26em", textTransform: "uppercase", color: "rgba(120,150,220,0.6)", fontWeight: 700, margin: "26px 0 10px" }}>// {t}</div>;
+  const sec = (t) => <div style={{ fontSize: 11, letterSpacing: "0.26em", textTransform: "uppercase", color: hue, fontWeight: 700, margin: "30px 0 12px", opacity: 0.85 }}>// {t}</div>;
 
-  let inner;
-  if (!d) inner = <p className="vg-loading" style={{ padding: "40px 0" }}>// Pulling the file…</p>;
-  else {
-    const { u, p, mrs, evs } = d;
-    const pts = mrs.reduce((a, r) => a + Number(r.points_computed || 0), 0);
-    const wins = mrs.filter(r => r.team_won).length;
-    const acsRows = mrs.map(r => Number(r.stat_payload?.acs || 0)).filter(Boolean);
-    const avgAcs = acsRows.length ? Math.round(acsRows.reduce((a, b) => a + b, 0) / acsRows.length) : "—";
-    const k = mrs.reduce((a, r) => a + Number(r.stat_payload?.k || 0), 0);
-    const asst = mrs.reduce((a, r) => a + Number(r.stat_payload?.a || 0), 0);
-    const totalAcs = acsRows.reduce((a, b) => a + b, 0);
-    const evMap = {}; evs.forEach(e => { evMap[e.id] = e; });
-    // Weekends this player was crowned champion in (from settled recaps).
-    const champEvents = evs.filter(e => Array.isArray(e.recap?.ids) && e.recap.ids.includes(userId));
-    const byWeekend = {};
-    mrs.forEach(r => {
-      const w = (byWeekend[r.event_id] = byWeekend[r.event_id] || { pts: 0, m: 0, w: 0 });
-      w.pts += Number(r.points_computed || 0); w.m++; if (r.team_won) w.w++;
-    });
-    const weekendRows = Object.entries(byWeekend)
-      .sort((a, b) => new Date(evMap[a[0]]?.created_at || 0) - new Date(evMap[b[0]]?.created_at || 0));
-
-    // Self-entered scouting/tracker numbers (no live scrape — the tracker link is the source of truth).
-    const trackerStats = [
-      p.rank && ["Rank", p.rank, (RANKS[p.rank] || {}).c || "#8d97a8"],
-      p.role && ["Role", p.role],
-      p.agent && ["Main agent", p.agent],
-      (p.kda != null) && ["Tracker KDA", p.kda],
-      (p.acs != null) && ["Tracker ACS", p.acs],
-      (p.hs != null) && ["HS %", p.hs + "%"],
-      (p.win != null) && ["Win %", p.win + "%"],
-    ].filter(Boolean);
-
-    inner = <>
-      {/* header row */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Player file</div>
-          <div style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", display: "flex", alignItems: "center", lineHeight: 1.05 }}>{u.display_name || "Player"}<TrophyChip n={u.trophy_streak} big /></div>
-          <div style={{ display: "flex", gap: 10, marginTop: 6, fontSize: 12.5, color: "rgba(200,215,255,0.55)", flexWrap: "wrap" }}>
-            {p.rank && <span style={{ color: (RANKS[p.rank] || {}).c || "#8d97a8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{p.rank}</span>}
-            {p.role && <span style={{ textTransform: "uppercase" }}>{p.role}</span>}
-            {p.agent && <span>{p.agent}</span>}
-            {u.best_streak > 0 && <span style={{ color: "#f5c453" }}>best streak 🏆×{u.best_streak}</span>}
-          </div>
-        </div>
+  return (
+    <div style={{ maxWidth: 980, margin: "0 auto", padding: "24px 20px 70px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Player file</span>
         <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>‹ Back</button>
       </div>
 
-      {sectionLabel("Season record")}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
-        {tile("Season pts", pts, "#f5c453")}
-        {tile("Weekends won", u.weekends_won || 0, "#f5c453", "champion team")}
-        {tile("Brackets won", u.brackets_won || 0, "#af9aec", "elimination")}
-        {tile("Matches played", mrs.length)}
-        {tile("Matches won", wins, "#3ddc84", mrs.length ? Math.round(wins / mrs.length * 100) + "% win rate" : null)}
-      </div>
-
-      {sectionLabel("Combat — league matches")}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
-        {tile("Avg ACS", avgAcs, "#ff4655")}
-        {tile("Total kills", k, "#00e5ff")}
-        {tile("Total assists", asst, "#00e5ff")}
-        {tile("K + ⅓A", Math.round(k + asst / 3), "#00e5ff", "scoring stat")}
-        {tile("Pts / match", mrs.length ? Math.round(pts / mrs.length) : "—", "#f5c453")}
-      </div>
-
-      {trackerStats.length > 0 && <>
-        {sectionLabel("Valorant tracker")}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 8 }}>
-          {trackerStats.map(([label, val, hue], i) => (
-            <div key={i} style={{ padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6), textAlign: "center" }}>
-              <div style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>{label}</div>
-              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 3, color: hue || "#ecf3ff", textTransform: "uppercase" }}>{val}</div>
+      {/* HERO — gradient panel with rank crest + identity, scout-file language */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16 }}>
+        <div style={{ position: "relative", clipPath: NOTCH, padding: "26px 26px", overflow: "hidden",
+          background: `linear-gradient(150deg, ${hue}22, rgba(14,20,34,0.9) 55%, rgba(10,13,22,0.95))`, border: `1px solid ${hue}55` }}>
+          <div style={{ position: "absolute", top: -30, right: -10, fontSize: 150, fontWeight: 800, color: hue, opacity: 0.07, fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1, pointerEvents: "none" }}>{avgAcs || p.acs || ""}</div>
+          <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 18 }}>
+            <RankCrest rank={rank} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 40, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1, display: "flex", alignItems: "center", flexWrap: "wrap" }}>{name}<TrophyChip n={u.trophy_streak} big /></div>
+              <div style={{ display: "flex", gap: 10, marginTop: 8, fontSize: 13, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{rank}</span>
+                {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
+                {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
+              </div>
+              {u.best_streak > 0 && <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 6 }}>best streak 🏆×{u.best_streak}</div>}
             </div>
-          ))}
+          </div>
+          {/* quick scouting stat strip */}
+          {hasScout && (
+            <div style={{ position: "relative", display: "flex", gap: 8, marginTop: 22, flexWrap: "wrap" }}>
+              {p.kda != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5 }}><span style={{ color: "#00e5ff" }}>KDA</span> {p.kda}</span>}
+              {p.acs != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, marginLeft: 8 }}><span style={{ color: "#ff4655" }}>ACS</span> {p.acs}</span>}
+              {p.hs != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, marginLeft: 8 }}><span style={{ color: "#af9aec" }}>HS</span> {p.hs}%</span>}
+              {p.win != null && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, marginLeft: 8 }}><span style={{ color: "#3ddc84" }}>WIN</span> {p.win}%</span>}
+            </div>
+          )}
         </div>
-        <p style={{ fontSize: 11, color: "rgba(200,215,255,0.35)", marginTop: 8 }}>Self-reported from the player's scouting profile. The live source is their tracker below.</p>
-        {p.tracker_url && <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, color: "#7da6ff", textDecoration: "underline", fontWeight: 600, fontSize: 13.5 }}>⌖ Open full tracker.gg profile ↗</a>}
-      </>}
-      {trackerStats.length === 0 && p.tracker_url && <>
-        {sectionLabel("Valorant tracker")}
-        <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", color: "#7da6ff", textDecoration: "underline", fontWeight: 600, fontSize: 13.5 }}>⌖ Open full tracker.gg profile ↗</a>
+
+        {/* RADAR panel */}
+        <div style={{ clipPath: NOTCH, padding: "18px 18px 8px", background: "linear-gradient(160deg, rgba(18,24,40,0.85), rgba(10,13,22,0.92))", border: "1px solid rgba(61,123,255,0.28)", display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 10.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, marginBottom: 4 }}>Performance profile</div>
+          <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
+            {hasScout
+              ? <StatRadar player={radarPlayer} size={230} hue={hue} />
+              : <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", textAlign: "center", padding: "40px 10px" }}>No scouting profile yet — the radar fills in once they set their stats.</p>}
+          </div>
+        </div>
+      </div>
+
+      {sec("Season record")}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
+        {bigTile("Season pts", pts, "#f5c453")}
+        {bigTile("Weekends won", u.weekends_won || 0, "#f5c453", "champion team")}
+        {bigTile("Brackets won", u.brackets_won || 0, "#af9aec", "elimination")}
+        {bigTile("Matches", mrs.length, "#5b8dff")}
+        {bigTile("Wins", wins, "#3ddc84", winRate != null ? winRate + "% win rate" : null)}
+      </div>
+
+      {sec("Combat — league matches")}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
+        {bigTile("Avg ACS", avgAcs != null ? avgAcs : "—", "#ff4655")}
+        {bigTile("Kills", k, "#00e5ff")}
+        {bigTile("Assists", asst, "#00e5ff")}
+        {bigTile("K + ⅓A", Math.round(k + asst / 3), "#00e5ff", "scoring stat")}
+        {bigTile("Pts / match", mrs.length ? Math.round(pts / mrs.length) : "—", "#f5c453")}
+      </div>
+
+      {p.tracker_url && <>
+        {sec("Valorant tracker")}
+        <div style={{ padding: "16px 18px", clipPath: SHELL_NOTCH(9), background: "linear-gradient(160deg, rgba(18,24,40,0.7), rgba(10,13,22,0.85))", border: `1px solid ${hue}33`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)" }}>Self-reported stats above are from this player's scouting profile. Their live match history lives on tracker.gg.</span>
+          <a href={p.tracker_url} target="_blank" rel="noopener noreferrer" style={{ ...shellBtn("primary", { padding: "10px 18px", fontSize: 12.5 }), textDecoration: "none", whiteSpace: "nowrap" }}>⌖ Open tracker.gg ↗</a>
+        </div>
       </>}
 
       {weekendRows.length > 0 && <>
-        {sectionLabel("Weekend by weekend")}
-        <div style={{ display: "grid", gap: 6 }}>
+        {sec("Weekend by weekend")}
+        <div style={{ display: "grid", gap: 7 }}>
           {weekendRows.map(([eid, w]) => {
             const won = champEvents.some(e => e.id === eid);
             return (
-              <div key={eid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", background: won ? "rgba(245,196,83,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${won ? "rgba(245,196,83,0.3)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(7) }}>
-                <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{evMap[eid]?.weekend_label || "Weekend"}
+              <div key={eid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: won ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.03)", border: `1px solid ${won ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(8) }}>
+                <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13.5 }}>{evMap[eid]?.weekend_label || "Weekend"}
                   {won && <span style={{ color: "#f5c453", marginLeft: 8, fontSize: 12 }}>🏆 champion</span>}</span>
                 <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{w.m} matches · {w.w}W</span>
-                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 64, textAlign: "right" }}>{w.pts} pts</span>
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 68, textAlign: "right" }}>{w.pts} pts</span>
               </div>
             );
           })}
         </div>
       </>}
-      {mrs.length === 0 && <p style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", marginTop: 24 }}>No matches played yet — the record starts the first weekend they take the server.</p>}
-    </>;
-  }
-  return (
-    <div style={{ maxWidth: 860, margin: "0 auto", padding: "28px 22px 60px" }}>{inner}</div>
+      {mrs.length === 0 && <p style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", marginTop: 28 }}>No matches played yet — the record starts the first weekend they take the server.</p>}
+    </div>
   );
 }
-// League-level left rail for the dashboard/hub. Mirrors the in-weekend rail
-// (league mark, same view glyphs, My Account, sound) so stepping up to the hub
-// never feels like leaving the app. Per-weekend view shortcuts route into the
-// live/enterable weekend and open that view directly; when nothing's enterable
-// they sit disabled with a hint.
+
 function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide }) {
   const [tip, setTip] = useState(null);
   const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("volt_sound") !== "0"; } catch { return true; } });
@@ -5321,7 +5339,7 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
   );
 }
 
-function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
+function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openProfile, onProfileOpened }) {
   const [events, setEvents] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -5335,6 +5353,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter }) {
   const [mySusp, setMySusp] = useState(0);
   const [myStrikes, setMyStrikes] = useState(0);
   const [showPlayer, setShowPlayer] = useState(null); // public player-profile screen (full-screen, rail intact)
+  useEffect(() => { if (openProfile) { setShowPlayer(openProfile); onProfileOpened && onProfileOpened(); } }, [openProfile]);
   const [expandPast, setExpandPast] = useState(null); // settled strip → recap card
   const [railWideHub, setRailWideHub] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
   const setRailWide = (v) => { setRailWideHub(v); try { localStorage.setItem("volt_rail_wide", v ? "1" : "0"); } catch {} };
@@ -5846,7 +5865,7 @@ function matchPoints({ won, acs, kills, assists }) {
 /* ════════════════════════════════════════════════════════════════════
    WEEKEND APP — phase router. Registration → Draft → Matches, per weekend.
    ════════════════════════════════════════════════════════════════════ */
-function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialView }) {
+function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialView, onViewProfile }) {
   const [ev, setEv] = useState(event);
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
@@ -6108,6 +6127,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       backLabel: inReg ? "Registration" : "Schedule",
       portalLabel: inReg ? "Registration" : "League hub",
       onBack: inReg ? () => setRegView("gate") : onBack,
+      onViewProfile,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
       draftAt: ev?.draft_at || null,
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
