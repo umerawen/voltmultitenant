@@ -3659,12 +3659,16 @@ function DraftApp({ auth, browse, chrome }) {
       `}</style>
       {/* league mark + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: railWide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: railWide ? 4 : 0 }}>
-        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+        <button onClick={chrome ? chrome.onBack : undefined} className={chrome ? "volt-rail-item flex items-center gap-2" : "flex items-center gap-2"}
+          title={chrome ? (chrome.portalLabel || "League hub") : undefined}
+          onMouseEnter={chrome && !railWide ? e => setRailTip({ label: chrome.portalLabel || "League hub", y: e.currentTarget.getBoundingClientRect().top + 20 }) : undefined}
+          onMouseLeave={chrome && !railWide ? () => setRailTip(null) : undefined}
+          style={{ minWidth: 0, background: "none", border: "none", padding: 0, cursor: chrome ? "pointer" : "default" }}>
           <span className="grid place-items-center shrink-0" style={{ width: 42, height: 42, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
             <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>{(window.__VOLT.communityName || "V").slice(0, 1).toUpperCase()}</span>
           </span>
           {railWide && <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{window.__VOLT.communityName || "VOLT"}</span>}
-        </div>
+        </button>
         {railWide && (
           <button onClick={() => setRailWide(false)} aria-label="Collapse navigation" title="Collapse"
             style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}>«</button>
@@ -3688,7 +3692,7 @@ function DraftApp({ auth, browse, chrome }) {
       ))}
       {chrome && <>
         <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "10px 6px" : "10px auto", background: "rgba(120,150,220,0.2)" }} />
-        {railItem("__back", "‹", "Back to " + chrome.backLabel, { onClick: chrome.onBack, color: "rgba(200,215,255,0.55)" })}
+        {railItem("__portal", "⊞", chrome.portalLabel || ("Back to " + chrome.backLabel), { onClick: chrome.onBack, color: "#7da6ff" })}
       </>}
       <div style={{ marginTop: "auto" }} />
       {chrome?.account && railItem("__account", "◉", "My Account", { active: view === "account", onClick: () => setView("account") })}
@@ -3859,8 +3863,8 @@ function DraftApp({ auth, browse, chrome }) {
             {chrome && (
               <button onClick={() => { setDrawerOpen(false); chrome.onBack(); }}
                 className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "#aec6ff", borderLeft: "2px solid transparent" }}>
-                <span className="text-base" style={{ color: "rgba(200,215,255,0.4)" }}>‹</span>
-                <span className="font-semibold uppercase tracking-[0.12em] text-sm">Back to {chrome.backLabel}</span>
+                <span className="text-base" style={{ color: "#7da6ff" }}>⊞</span>
+                <span className="font-semibold uppercase tracking-[0.12em] text-sm">{chrome.portalLabel || ("Back to " + chrome.backLabel)}</span>
               </button>
             )}
           </div>
@@ -4544,6 +4548,19 @@ function VoltGate() {
       setProfile(u); setCommunity(u.communities);
       window.__VOLT.communityId = u.community_id;
       window.__VOLT.communityName = u.communities?.name || null;
+      // Dive straight into a LIVE weekend (draft/matches) — login shouldn't
+      // land on a list when there's a weekend to be inside. Registration and
+      // "all settled" fall through to the hub (that's where the play toggle is).
+      try {
+        const { data: evs } = await __sb.from("events").select("*").eq("community_id", u.community_id);
+        const RANK = { matches_live: 4, drafting: 3, registration_closed: 2, registration_open: 1, settled: 0 };
+        const live = (evs || []).filter(e => e.phase === "drafting" || e.phase === "matches_live")
+          .sort((a, b) => (RANK[b.phase] - RANK[a.phase]) || (new Date(a.created_at) - new Date(b.created_at)))[0];
+        if (live) {
+          window.__VOLT.weekendId = live.id; window.__VOLT.weekendLabel = live.weekend_label;
+          setActiveEvent(live); setPhase("ready"); return;
+        }
+      } catch (e) { console.error("auto-route", e); }
       setPhase("schedule");
     } else {
       // Authenticated but not yet in a community — route by the intent they picked.
@@ -5939,6 +5956,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack }) {
     </> : null;
     const chrome = {
       backLabel: inReg ? "Registration" : "Schedule",
+      portalLabel: inReg ? "Registration" : "League hub",
       onBack: inReg ? () => setRegView("gate") : onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
       draftAt: ev?.draft_at || null,
