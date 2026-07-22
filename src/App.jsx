@@ -5227,28 +5227,48 @@ function VoltGate() {
   const wrap = (inner) => (
     <div className="vg-shell" style={{ position: "relative", minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif", padding: 20, overflow: "hidden" }}>
       <ShellStyles />
-      {/* ── Animated landing backdrop: art at full clarity + electric arcs,
+      {/* ── Animated landing backdrop: dimmed art, real forked lightning,
              drifting particle field, and a perspective circuit grid. ── */}
       <style>{`
         @keyframes voltDrift { 0% { transform: scale(1.06); } 50% { transform: scale(1.11) translate3d(-1.2%, -0.8%, 0); } 100% { transform: scale(1.06); } }
-        @keyframes voltPulseA { 0%,100% { opacity: .18; transform: scale(1); } 50% { opacity: .34; transform: translate3d(2%, -2%, 0) scale(1.1); } }
-        @keyframes voltArc { 0%, 88%, 100% { opacity: 0; } 89% { opacity: .9; } 91% { opacity: .15; } 93% { opacity: .75; } 96% { opacity: 0; } }
+        @keyframes voltPulseA { 0%,100% { opacity: .16; transform: scale(1); } 50% { opacity: .30; transform: translate3d(2%, -2%, 0) scale(1.1); } }
+        /* strike: near-instant rise, double re-strike, fast decay — like real lightning */
+        @keyframes voltStrike {
+          0%, 84% { opacity: 0; }
+          84.4%   { opacity: 1; }
+          85.2%   { opacity: .25; }
+          85.8%   { opacity: .95; }
+          86.4%   { opacity: .12; }
+          87%     { opacity: .7; }
+          89%     { opacity: 0; }
+          100%    { opacity: 0; }
+        }
+        /* the flash the bolt throws onto the scene */
+        @keyframes voltFlash {
+          0%, 84% { opacity: 0; }
+          84.6%   { opacity: .5; }
+          86%     { opacity: .12; }
+          87%     { opacity: .32; }
+          89.5%   { opacity: 0; }
+          100%    { opacity: 0; }
+        }
         @keyframes voltGridPulse { 0% { transform: translateY(0); opacity: 0; } 12% { opacity: .55; } 100% { transform: translateY(-220px); opacity: 0; } }
         @keyframes voltMote { 0% { transform: translate3d(0,0,0); opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { transform: translate3d(var(--dx), var(--dy), 0); opacity: 0; } }
-        .volt-arc { stroke-linecap: round; filter: drop-shadow(0 0 6px rgba(80,170,255,0.9)); }
         @media (prefers-reduced-motion: reduce) {
-          .volt-bg-img, .volt-bg-a, .volt-arc, .volt-mote, .volt-gridline { animation: none !important; }
+          .volt-bg-img, .volt-bg-a, .volt-bolt, .volt-flash, .volt-mote, .volt-gridline { animation: none !important; opacity: 0; }
+          .volt-bg-img { opacity: 1 !important; }
         }
       `}</style>
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
-        {/* the art — full clarity, only a gentle drift */}
+        {/* the art — dimmed so the UI reads clearly on top */}
         <img src={IMG_GATE_BG} alt="" className="volt-bg-img"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%",
+            opacity: 0.38, filter: "brightness(0.62) saturate(1.08)",
             animation: "voltDrift 34s ease-in-out infinite", willChange: "transform" }} />
 
         {/* circuit grid — perspective floor with pulses running up its lines */}
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "42%", overflow: "hidden",
-          perspective: "340px", perspectiveOrigin: "50% 0%", opacity: 0.4 }}>
+          perspective: "340px", perspectiveOrigin: "50% 0%", opacity: 0.34 }}>
           <div style={{ position: "absolute", inset: "-40% -20% -10% -20%", transform: "rotateX(66deg)", transformOrigin: "50% 0%",
             backgroundImage: "linear-gradient(rgba(61,123,255,0.34) 1px, transparent 1px), linear-gradient(90deg, rgba(61,123,255,0.34) 1px, transparent 1px)",
             backgroundSize: "58px 58px", maskImage: "linear-gradient(to top, #000 5%, transparent 82%)", WebkitMaskImage: "linear-gradient(to top, #000 5%, transparent 82%)" }}>
@@ -5260,19 +5280,48 @@ function VoltGate() {
           </div>
         </div>
 
-        {/* electric arcs — thin branching bolts that flicker in at random intervals */}
+        {/* lightning — each bolt is a jagged trunk + forks, drawn as three stacked
+            strokes (wide glow / mid / hot white core) so it reads as real plasma */}
         <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <filter id="voltGlow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="5" result="b" />
+              <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
           {[
-            { d: "M120,40 L160,150 L120,180 L190,300 L150,330 L210,470", delay: 0, dur: 9 },
-            { d: "M880,60 L830,170 L890,210 L820,330 L870,380 L810,520", delay: 3.4, dur: 11 },
-            { d: "M480,0 L520,90 L470,130 L530,220", delay: 6.1, dur: 13 },
-            { d: "M60,300 L150,340 L110,390 L220,430", delay: 8.2, dur: 10 },
-            { d: "M940,340 L860,390 L910,430 L820,470", delay: 1.7, dur: 12 },
-          ].map((a, i) => (
-            <path key={i} className="volt-arc" d={a.d} fill="none" stroke="rgba(140,205,255,0.95)" strokeWidth="1.6"
-              style={{ animation: `voltArc ${a.dur}s linear infinite`, animationDelay: `${a.delay}s` }} />
+            { dur: 14, delay: 0,
+              trunk: "M180,-20 L206,58 L178,74 L214,150 L186,168 L232,252 L206,268 L246,360",
+              forks: ["M214,150 L258,182 L240,196 L276,238", "M232,252 L196,286 L214,300 L182,338"] },
+            { dur: 17, delay: 5.5,
+              trunk: "M812,-20 L784,64 L816,84 L778,166 L810,188 L764,276 L792,298 L750,392",
+              forks: ["M778,166 L734,196 L752,212 L716,248", "M764,276 L806,312 L788,326 L822,362"] },
+            { dur: 21, delay: 11,
+              trunk: "M498,-20 L522,52 L494,70 L528,138 L502,156 L534,232",
+              forks: ["M528,138 L570,168 L552,182 L588,216"] },
+          ].map((b, i) => (
+            <g key={i} className="volt-bolt" style={{ animation: `voltStrike ${b.dur}s linear infinite`, animationDelay: `${b.delay}s` }}>
+              <g filter="url(#voltGlow)">
+                {[b.trunk, ...b.forks].map((d, j) => (
+                  <path key={"g" + j} d={d} fill="none" stroke="rgba(70,150,255,0.55)" strokeWidth={j === 0 ? 7 : 4} strokeLinecap="round" strokeLinejoin="round" />
+                ))}
+              </g>
+              {[b.trunk, ...b.forks].map((d, j) => (
+                <path key={"m" + j} d={d} fill="none" stroke="rgba(150,205,255,0.9)" strokeWidth={j === 0 ? 2.6 : 1.5} strokeLinecap="round" strokeLinejoin="round" />
+              ))}
+              {[b.trunk, ...b.forks].map((d, j) => (
+                <path key={"c" + j} d={d} fill="none" stroke="rgba(245,251,255,0.95)" strokeWidth={j === 0 ? 1.1 : 0.6} strokeLinecap="round" strokeLinejoin="round" />
+              ))}
+            </g>
           ))}
         </svg>
+
+        {/* the flash each strike throws across the scene */}
+        {[{ dur: 14, delay: 0, x: "18%" }, { dur: 17, delay: 5.5, x: "80%" }, { dur: 21, delay: 11, x: "50%" }].map((f, i) => (
+          <div key={i} className="volt-flash" style={{ position: "absolute", left: f.x, top: "-10%", width: "60vw", height: "70vh",
+            transform: "translateX(-50%)", background: "radial-gradient(ellipse at 50% 0%, rgba(120,180,255,0.55), rgba(90,150,255,0) 62%)",
+            animation: `voltFlash ${f.dur}s linear infinite`, animationDelay: `${f.delay}s` }} />
+        ))}
 
         {/* particle drift — glowing motes rising slowly, "system online" */}
         {Array.from({ length: 26 }).map((_, i) => {
@@ -5290,10 +5339,10 @@ function VoltGate() {
           );
         })}
 
-        {/* one soft bloom + edge-only vignette (no full-screen wash) */}
+        {/* soft bloom + edge vignette */}
         <div className="volt-bg-a" style={{ position: "absolute", right: "8%", top: "14%", width: "38vw", height: "38vw", borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(61,123,255,0.30), rgba(61,123,255,0) 70%)", filter: "blur(30px)", animation: "voltPulseA 12s ease-in-out infinite" }} />
-        <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 34vw 12vw rgba(6,9,18,0.92)" }} />
+          background: "radial-gradient(circle, rgba(61,123,255,0.26), rgba(61,123,255,0) 70%)", filter: "blur(30px)", animation: "voltPulseA 12s ease-in-out infinite" }} />
+        <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 30vw 10vw rgba(6,9,18,0.9)" }} />
       </div>
       <div style={{ position: "relative", width: "100%", maxWidth: 420 }}>
         <div style={{ textAlign: "center", marginBottom: 26 }}>
