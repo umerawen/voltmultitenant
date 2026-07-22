@@ -5227,29 +5227,73 @@ function VoltGate() {
   const wrap = (inner) => (
     <div className="vg-shell" style={{ position: "relative", minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif", padding: 20, overflow: "hidden" }}>
       <ShellStyles />
-      {/* ── Animated landing backdrop: embedded art + slow ken-burns drift,
-             electric glow pulses, scanlines, and a vignette so the card reads. ── */}
+      {/* ── Animated landing backdrop: art at full clarity + electric arcs,
+             drifting particle field, and a perspective circuit grid. ── */}
       <style>{`
-        @keyframes voltDrift { 0% { transform: scale(1.08) translate3d(0,0,0); } 50% { transform: scale(1.14) translate3d(-1.5%, -1%, 0); } 100% { transform: scale(1.08) translate3d(0,0,0); } }
-        @keyframes voltPulseA { 0%,100% { opacity: .28; transform: translate3d(0,0,0) scale(1); } 50% { opacity: .55; transform: translate3d(2%, -2%, 0) scale(1.12); } }
-        @keyframes voltPulseB { 0%,100% { opacity: .22; transform: translate3d(0,0,0) scale(1.05); } 50% { opacity: .45; transform: translate3d(-3%, 2%, 0) scale(1); } }
-        @keyframes voltFlicker { 0%,92%,100% { opacity: .30; } 93% { opacity: .52; } 95% { opacity: .24; } 97% { opacity: .46; } }
+        @keyframes voltDrift { 0% { transform: scale(1.06); } 50% { transform: scale(1.11) translate3d(-1.2%, -0.8%, 0); } 100% { transform: scale(1.06); } }
+        @keyframes voltPulseA { 0%,100% { opacity: .18; transform: scale(1); } 50% { opacity: .34; transform: translate3d(2%, -2%, 0) scale(1.1); } }
+        @keyframes voltArc { 0%, 88%, 100% { opacity: 0; } 89% { opacity: .9; } 91% { opacity: .15; } 93% { opacity: .75; } 96% { opacity: 0; } }
+        @keyframes voltGridPulse { 0% { transform: translateY(0); opacity: 0; } 12% { opacity: .55; } 100% { transform: translateY(-220px); opacity: 0; } }
+        @keyframes voltMote { 0% { transform: translate3d(0,0,0); opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { transform: translate3d(var(--dx), var(--dy), 0); opacity: 0; } }
+        .volt-arc { stroke-linecap: round; filter: drop-shadow(0 0 6px rgba(80,170,255,0.9)); }
         @media (prefers-reduced-motion: reduce) {
-          .volt-bg-img, .volt-bg-a, .volt-bg-b { animation: none !important; }
+          .volt-bg-img, .volt-bg-a, .volt-arc, .volt-mote, .volt-gridline { animation: none !important; }
         }
       `}</style>
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+        {/* the art — full clarity, only a gentle drift */}
         <img src={IMG_GATE_BG} alt="" className="volt-bg-img"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%",
-            opacity: 0.55, animation: "voltDrift 32s ease-in-out infinite", willChange: "transform" }} />
-        {/* electric glow blooms */}
-        <div className="volt-bg-a" style={{ position: "absolute", right: "6%", top: "12%", width: "46vw", height: "46vw", borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(61,123,255,0.42), rgba(61,123,255,0) 68%)", filter: "blur(28px)", animation: "voltPulseA 11s ease-in-out infinite" }} />
-        <div className="volt-bg-b" style={{ position: "absolute", left: "-8%", bottom: "-6%", width: "40vw", height: "40vw", borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(0,229,255,0.26), rgba(0,229,255,0) 70%)", filter: "blur(34px)", animation: "voltPulseB 14s ease-in-out infinite" }} />
-        {/* scanlines + vignette so the sign-in card stays legible */}
-        <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(0deg, rgba(255,255,255,0.028) 0 1px, transparent 1px 4px)", animation: "voltFlicker 7s linear infinite" }} />
-        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 80% at 50% 45%, rgba(10,13,24,0.28), rgba(10,13,24,0.86) 78%)" }} />
+            animation: "voltDrift 34s ease-in-out infinite", willChange: "transform" }} />
+
+        {/* circuit grid — perspective floor with pulses running up its lines */}
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "42%", overflow: "hidden",
+          perspective: "340px", perspectiveOrigin: "50% 0%", opacity: 0.4 }}>
+          <div style={{ position: "absolute", inset: "-40% -20% -10% -20%", transform: "rotateX(66deg)", transformOrigin: "50% 0%",
+            backgroundImage: "linear-gradient(rgba(61,123,255,0.34) 1px, transparent 1px), linear-gradient(90deg, rgba(61,123,255,0.34) 1px, transparent 1px)",
+            backgroundSize: "58px 58px", maskImage: "linear-gradient(to top, #000 5%, transparent 82%)", WebkitMaskImage: "linear-gradient(to top, #000 5%, transparent 82%)" }}>
+            {[0, 1, 2].map(i => (
+              <div key={i} className="volt-gridline" style={{ position: "absolute", left: 0, right: 0, height: 2,
+                background: "linear-gradient(90deg, transparent, rgba(120,200,255,0.85), transparent)",
+                bottom: 0, animation: `voltGridPulse ${7 + i * 2.5}s linear infinite`, animationDelay: `${i * 2.6}s` }} />
+            ))}
+          </div>
+        </div>
+
+        {/* electric arcs — thin branching bolts that flicker in at random intervals */}
+        <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
+          {[
+            { d: "M120,40 L160,150 L120,180 L190,300 L150,330 L210,470", delay: 0, dur: 9 },
+            { d: "M880,60 L830,170 L890,210 L820,330 L870,380 L810,520", delay: 3.4, dur: 11 },
+            { d: "M480,0 L520,90 L470,130 L530,220", delay: 6.1, dur: 13 },
+            { d: "M60,300 L150,340 L110,390 L220,430", delay: 8.2, dur: 10 },
+            { d: "M940,340 L860,390 L910,430 L820,470", delay: 1.7, dur: 12 },
+          ].map((a, i) => (
+            <path key={i} className="volt-arc" d={a.d} fill="none" stroke="rgba(140,205,255,0.95)" strokeWidth="1.6"
+              style={{ animation: `voltArc ${a.dur}s linear infinite`, animationDelay: `${a.delay}s` }} />
+          ))}
+        </svg>
+
+        {/* particle drift — glowing motes rising slowly, "system online" */}
+        {Array.from({ length: 26 }).map((_, i) => {
+          const seed = (i * 37) % 100;
+          const size = 1.5 + (i % 4) * 0.9;
+          return (
+            <span key={i} className="volt-mote" style={{
+              position: "absolute", left: `${seed}%`, top: `${(i * 23) % 100}%`,
+              width: size, height: size, borderRadius: "50%",
+              background: i % 3 === 0 ? "rgba(120,220,255,0.95)" : "rgba(110,165,255,0.85)",
+              boxShadow: `0 0 ${5 + size * 2}px rgba(90,180,255,0.75)`,
+              "--dx": `${((i % 5) - 2) * 22}px`, "--dy": `-${90 + (i % 7) * 32}px`,
+              animation: `voltMote ${13 + (i % 9) * 2.6}s linear infinite`, animationDelay: `${(i * 0.9) % 14}s`,
+            }} />
+          );
+        })}
+
+        {/* one soft bloom + edge-only vignette (no full-screen wash) */}
+        <div className="volt-bg-a" style={{ position: "absolute", right: "8%", top: "14%", width: "38vw", height: "38vw", borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(61,123,255,0.30), rgba(61,123,255,0) 70%)", filter: "blur(30px)", animation: "voltPulseA 12s ease-in-out infinite" }} />
+        <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 34vw 12vw rgba(6,9,18,0.92)" }} />
       </div>
       <div style={{ position: "relative", width: "100%", maxWidth: 420 }}>
         <div style={{ textAlign: "center", marginBottom: 26 }}>
