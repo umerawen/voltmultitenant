@@ -4288,7 +4288,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const leagueHeadlines = (() => {
     const out = [];
     const tt = state.tournament || {};
-    ((tt.matches || [])).forEach(m => {
+    // matches: array (league/rr) | object keyed by group | rounds[] (single elim)
+    const allMs = [];
+    if (Array.isArray(tt.matches)) allMs.push(...tt.matches);
+    else if (tt.matches && typeof tt.matches === "object") Object.values(tt.matches).forEach(arr => Array.isArray(arr) && allMs.push(...arr));
+    if (Array.isArray(tt.rounds)) tt.rounds.forEach(r => Array.isArray(r) && allMs.push(...r));
+    if (tt.final) allMs.push(tt.final);
+    allMs.filter(Boolean).forEach(m => {
       if (!m.done || m.teamB == null) return;
       const w = state.teams.find(x => x.id === m.winner), l = state.teams.find(x => x.id === (m.winner === m.teamA ? m.teamB : m.teamA));
       if (!w || !l) return;
