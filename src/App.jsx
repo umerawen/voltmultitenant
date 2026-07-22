@@ -3786,58 +3786,51 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   /* ── top nav (transparent, hero-themed) ── */
   const TopNav = (
     <header className="sticky top-0 z-30" style={{ background: "rgba(6,9,16,0.94)", borderBottom: "1px solid rgba(61,123,255,0.14)", backdropFilter: "blur(12px)" }}>
-      <div className="page-wrap flex items-center gap-3 py-4 flex-wrap">
+      <div className="page-wrap flex items-center gap-4 py-3.5 flex-wrap" style={{ fontFamily: "'Rajdhani',sans-serif" }}>
         {/* mobile: hamburger opens the floating drawer; desktop uses the rail */}
         {!isDesk && (
           <button onClick={() => setDrawerOpen(true)} aria-label="Open navigation"
             className="shrink-0 grid place-items-center transition-all hover:scale-105"
-            style={{ width: 42, height: 40, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.45)" }}>
+            style={{ width: 40, height: 38, borderRadius: 8, background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.4)" }}>
             <span className="flex flex-col gap-1">
-              <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
-              <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
-              <span style={{ width: 17, height: 2, background: "#7da6ff" }} />
+              <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
+              <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
+              <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
             </span>
           </button>
         )}
-        {/* context — which weekend, which phase. Identity lives on the rail. */}
-        <div className="relative flex items-center gap-2 mr-2 shrink-0 pl-3 pr-4 py-1.5">
-          <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-          <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-          {!isDesk && chrome?.phaseTag && <span title={chrome.phaseTag} style={{ width: 8, height: 8, borderRadius: "50%", background: chrome.phaseColor || "#5b8dff", boxShadow: `0 0 8px ${chrome.phaseColor || "#5b8dff"}` }} />}
-          <span className="text-xl font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#eaf1ff" }}>{window.__VOLT.weekendLabel || "DRAFT"}</span>
-          {isDesk && chrome?.phaseTag && <span className="text-[11px] font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", color: chrome.phaseColor || "#5b8dff", marginLeft: 4 }}>· {chrome.phaseTag}</span>}
+        {/* context — weekend · phase · view, one consistent breadcrumb line */}
+        <div className="flex items-center gap-2.5 min-w-0 shrink">
+          {chrome?.phaseTag && <span title={chrome.phaseTag} style={{ width: 8, height: 8, borderRadius: "50%", flex: "0 0 auto", background: chrome.phaseColor || "#5b8dff", boxShadow: `0 0 8px ${chrome.phaseColor || "#5b8dff"}` }} />}
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#eaf1ff", whiteSpace: "nowrap" }}>{window.__VOLT.weekendLabel || "Draft"}</span>
+          {chrome?.phaseTag && <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: chrome.phaseColor || "#5b8dff", whiteSpace: "nowrap" }}>{chrome.phaseTag}</span>}
+          {viewLabel && <>
+            <span className="hidden sm:inline" style={{ color: "rgba(120,150,220,0.35)", fontSize: 13 }}>/</span>
+            <span className="hidden sm:inline" style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.55)", whiteSpace: "nowrap" }}>{viewLabel}</span>
+          </>}
         </div>
-        {viewLabel && (
-          <div className="hidden sm:flex items-center gap-2 shrink-0" style={{ fontFamily: "'Rajdhani',sans-serif" }}>
-            <span style={{ color: "rgba(120,150,220,0.4)", fontSize: 15, fontWeight: 700 }}>/</span>
-            <span className="text-sm font-bold uppercase" style={{ letterSpacing: "0.2em", color: "#7da6ff" }}>{viewLabel}</span>
-          </div>
-        )}
 
-        {/* spacer — view tabs moved to the side drawer */}
         <div className="flex-1 min-w-0" />
 
-        {/* right cluster: Manage + account. Seat/budget lives inside the chip. */}
-        <div className="relative flex items-center gap-3 shrink-0 pl-4 pr-3 py-1.5">
-          <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid rgba(61,123,255,0.6)", borderTop: "2px solid rgba(61,123,255,0.6)" }} />
-          <span className="absolute right-0 bottom-0" style={{ width: 9, height: 9, borderRight: "2px solid rgba(61,123,255,0.6)", borderBottom: "2px solid rgba(61,123,255,0.6)" }} />
-          {chrome?.onReport && (
-            <button onClick={chrome.onReport}
-              style={shellBtn("ghost", { padding: "8px 14px", fontSize: 12.5, background: "rgba(61,220,132,0.08)", borderColor: "rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)" })}>▦ Report</button>
-          )}
+        {/* right cluster — one flat row, unified pill sizing, no corner brackets */}
+        <div className="flex items-center gap-2.5 shrink-0">
           {draftIn && (
             <div className="hidden sm:flex items-center gap-2" title={new Date(chrome.draftAt).toLocaleString()}
-              style={{ padding: "7px 12px", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", background: "rgba(245,196,83,0.07)", border: "1px solid rgba(245,196,83,0.4)" }}>
+              style={{ height: 36, padding: "0 13px", borderRadius: 8, background: "rgba(245,196,83,0.09)", border: "1px solid rgba(245,196,83,0.4)" }}>
               <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
-              <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "#f5c453" }}>Draft in</span>
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, fontWeight: 700, color: "#ffe9b0" }}>{draftIn}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(245,196,83,0.8)" }}>Draft</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, fontWeight: 700, letterSpacing: "0.02em", color: "#ffe4a0" }}>{draftIn}</span>
             </div>
+          )}
+          {chrome?.onReport && (
+            <button onClick={chrome.onReport}
+              style={{ height: 36, padding: "0 14px", borderRadius: 8, display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>▦ Report</button>
           )}
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
           {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} seat={chipSeat} />}
           {!chrome && (
             <button data-snd="off" data-nohover="1" onClick={() => setSoundOn((v) => !v)} aria-label={soundOn ? "Mute sound" : "Unmute sound"}
-              className="grid place-items-center transition-all hover:scale-110" style={{ width: 38, height: 38, clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
+              className="grid place-items-center transition-all hover:scale-110" style={{ width: 36, height: 36, borderRadius: 8, background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
               {soundOn ? "🔊" : "🔇"}
             </button>
           )}
@@ -4974,7 +4967,7 @@ function HostMenu({ children }) {
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
       <button onClick={() => setOpen(o => !o)} aria-label="Host controls"
-        style={shellBtn("ghost", { padding: "8px 14px", fontSize: 12.5, background: "rgba(61,123,255,0.1)", borderColor: "rgba(61,123,255,0.5)", color: "#aec6ff", textShadow: "0 0 10px rgba(61,123,255,0.45)", display: "inline-flex", alignItems: "center", gap: 7 })}>⚙ Manage<span style={{ fontSize: 9, color: "rgba(174,198,255,0.65)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease", display: "inline-block" }}>▼</span></button>
+        style={{ height: 36, padding: "0 14px", borderRadius: 8, display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>⚙ Manage<span style={{ fontSize: 9, color: "rgba(174,198,255,0.65)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease", display: "inline-block" }}>▼</span></button>
       {open && <>
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 230, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
@@ -4990,10 +4983,11 @@ function AccountChip({ account, onSignOut, onProfile, seat }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
-      <button onClick={() => setOpen(o => !o)} aria-label="Account menu" style={shellBtn("ghost", { display: "flex", alignItems: "center", gap: 8, letterSpacing: "0.1em", fontSize: 13 })}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: seat?.color || "#3ddc84", boxShadow: `0 0 8px ${seat?.color || "rgba(61,220,132,0.8)"}` }} />
-        <span style={{ textTransform: "uppercase" }}>{account.name}</span>
-        <span style={{ color: "rgba(200,215,255,0.5)", fontSize: 11 }}>▾</span>
+      <button onClick={() => setOpen(o => !o)} aria-label="Account menu"
+        style={{ height: 36, padding: "0 13px", borderRadius: 8, display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(120,150,220,0.3)", color: "#dce7ff", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: seat?.color || "#3ddc84", boxShadow: `0 0 8px ${seat?.color || "rgba(61,220,132,0.8)"}` }} />
+        <span>{account.name}</span>
+        <span style={{ color: "rgba(200,215,255,0.45)", fontSize: 9 }}>▼</span>
       </button>
       {open && <>
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
