@@ -489,8 +489,172 @@ function TTeamChip({ team, onClick, active, sub }) {
   );
 }
 
+// ── Match scheduling — green time chip everyone sees; hosts get the picker ──
+function MatchSchedule({ match, locator, isAdmin, onSetTime }) {
+  const iso = match.scheduledAt || null;
+  const toLocalInput = (v) => {
+    if (!v) return "";
+    const d = new Date(v); if (isNaN(d)) return "";
+    const p = (x) => String(x).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const pretty = iso ? (() => {
+    const d = new Date(iso); if (isNaN(d)) return null;
+    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }).toUpperCase()
+      + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  })() : null;
+  if (!pretty && !isAdmin) return null;
+  return (
+    <div className="flex items-center justify-center gap-2 flex-wrap">
+      {pretty && (
+        <span className="inline-flex items-center gap-2" style={{ padding: "6px 13px", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.4)", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>
+          <span style={{ color: "#3ddc84", fontSize: 12 }}>◷</span>
+          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9af5c2" }}>{pretty}</span>
+        </span>
+      )}
+      {isAdmin && onSetTime && (
+        <input type="datetime-local" value={toLocalInput(iso)}
+          onChange={(e) => onSetTime(locator, e.target.value ? new Date(e.target.value).toISOString() : null)}
+          className="outline-none" style={{ padding: "6px 10px", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.28)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, colorScheme: "dark" }} />
+      )}
+    </div>
+  );
+}
+
+// ── Final prediction — one vote per person, publicly attributed. Expand to
+//    see who backed which side. Locks once the match is played. ──
+function MatchPrediction({ match, locator, a, b, onVote }) {
+  const [open, setOpen] = useState(false);
+  const votes = match.votes && typeof match.votes === "object" ? match.votes : {};
+  const list = Object.entries(votes);
+  const aV = list.filter(([, v]) => v.side === "a");
+  const bV = list.filter(([, v]) => v.side === "b");
+  const total = list.length;
+  const uid = window.__VOLT?.userId;
+  const mine = uid ? votes[uid]?.side : null;
+  const canVote = !!(onVote && uid && !match.done && a && b);
+  if (!a || !b) return null;
+  if (match.done && total === 0) return null;
+  const aPct = total ? (aV.length / total) * 100 : 50;
+  const hueA = a.hue, hueB = b.hue;
+  const side = (label, arr, hue, align) => (
+    <div style={{ flex: 1, minWidth: 0, padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: `1px solid ${hue}33`, clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: hue, textAlign: align }}>{label} · {arr.length}</div>
+      <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.6)", marginTop: 5, lineHeight: 1.5, textAlign: align }}>
+        {arr.length ? arr.map(([, v]) => v.name).join(", ") : "—"}
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ borderTop: "1px dashed rgba(120,150,220,0.18)", paddingTop: 9, marginTop: 2 }}>
+      <div className="flex items-center justify-between gap-2">
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(160,185,235,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>
+          Final prediction{mine ? <span style={{ color: "#7da6ff" }}> · you picked {mine === "a" ? a.name : b.name}</span> : null}
+        </span>
+        <button onClick={() => setOpen(o => !o)} disabled={!total}
+          style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: total ? "rgba(200,215,255,0.55)" : "rgba(200,215,255,0.25)", background: "none", border: "none", cursor: total ? "pointer" : "default", fontFamily: "'Rajdhani',sans-serif" }}>
+          {total} vote{total === 1 ? "" : "s"} {total ? (open ? "▲" : "▼") : ""}
+        </button>
+      </div>
+      {/* split bar */}
+      <div className="flex" style={{ height: 7, marginTop: 7, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+        <div style={{ width: `${total ? aPct : 50}%`, background: hueA, opacity: total ? 1 : 0.25, transition: "width .25s ease" }} />
+        <div style={{ flex: 1, background: hueB, opacity: total ? 1 : 0.25 }} />
+      </div>
+      {open && total > 0 && (
+        <div className="flex gap-2 mt-2.5 flex-wrap">
+          {side(a.name, aV, hueA, "left")}
+          {side(b.name, bV, hueB, "right")}
+        </div>
+      )}
+      {canVote && (
+        <div className="flex items-center justify-center gap-2 mt-2.5">
+          {[["a", a, hueA], ["b", b, hueB]].map(([sd, tm, hue]) => (
+            <button key={sd} onClick={() => onVote(locator, sd)}
+              style={{ flex: 1, maxWidth: 200, padding: "7px 12px", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Rajdhani',sans-serif", cursor: "pointer",
+                background: mine === sd ? `${hue}26` : "rgba(255,255,255,0.03)",
+                border: `1px solid ${mine === sd ? hue : "rgba(120,150,220,0.22)"}`,
+                color: mine === sd ? hue : "rgba(200,215,255,0.6)",
+                clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
+              {mine === sd ? "✓ " : ""}{tm.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Format switcher — swap the weekend's bracket format in place. Played
+//    fixtures for the same team pairing are carried over (same match id), so
+//    reported stats stay linked and every leaderboard keeps reading the same
+//    match_results rows regardless of format. ──
+function FormatSwitcher({ t, actions }) {
+  const [open, setOpen] = useState(false);
+  const [fmt, setFmt] = useState(t.format === "league" ? "roundrobin" : t.format);
+  const [bo, setBo] = useState(t.bo === 3 ? "bo3" : "bo1");
+  const [groups, setGroups] = useState(t.groups?.length || 2);
+  const OPTS = [
+    { id: "league", name: "League", desc: "Auto round-robin — the standard weekend." },
+    { id: "group", name: "Group Stage", desc: "Groups, then a final." },
+    { id: "single", name: "Single Elim", desc: "Straight knockout bracket." },
+    { id: "roundrobin", name: "Round Robin", desc: "One table, everyone once." },
+  ];
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="text-xs uppercase tracking-widest px-3 py-1.5"
+        style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(61,123,255,0.35)", background: "rgba(61,123,255,0.06)" }}>⇄ Change format</button>
+      {open && (
+        <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 130, background: "rgba(4,6,12,0.85)", display: "grid", placeItems: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", padding: "24px 26px", fontFamily: "'Rajdhani',sans-serif" }}>
+            <div className="flex items-center justify-between gap-3">
+              <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Change format</span>
+              <button onClick={() => setOpen(false)} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
+            </div>
+            <p style={{ fontSize: 13, color: "rgba(200,215,255,0.6)", margin: "10px 0 16px", lineHeight: 1.5 }}>
+              Matches already played are kept — if the same two teams meet in the new format, their score, time and votes carry over. Player points are never affected.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-2 mb-4">
+              {OPTS.map((o) => (
+                <button key={o.id} onClick={() => setFmt(o.id)} style={{ textAlign: "left", padding: "11px 13px", cursor: "pointer",
+                  background: fmt === o.id ? "rgba(61,123,255,0.14)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${fmt === o.id ? "#3d7bff" : "rgba(120,150,220,0.2)"}`,
+                  clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: fmt === o.id ? "#ecf3ff" : "rgba(200,215,255,0.75)" }}>{o.name}</div>
+                  <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 2 }}>{o.desc}</div>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap mb-5">
+              <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.5)", fontWeight: 700 }}>Match type</span>
+              {["bo1", "bo3"].map((b) => (
+                <button key={b} onClick={() => setBo(b)} style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", cursor: "pointer",
+                  background: bo === b ? "rgba(61,123,255,0.16)" : "transparent", border: `1px solid ${bo === b ? "#3d7bff" : "rgba(120,150,220,0.25)"}`, color: bo === b ? "#ecf3ff" : "rgba(200,215,255,0.55)" }}>{b.toUpperCase()}</button>
+              ))}
+              {fmt === "group" && (
+                <>
+                  <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.5)", fontWeight: 700, marginLeft: 6 }}>Groups</span>
+                  <input type="number" min="2" max="8" value={groups} onChange={(e) => setGroups(Number(e.target.value) || 2)}
+                    style={{ width: 60, padding: "6px 8px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} />
+                </>
+              )}
+            </div>
+            <button onClick={() => { actions.tSwitchFormat(fmt, bo, groups); setOpen(false); }}
+              style={{ width: "100%", padding: "13px", fontSize: 13, fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", cursor: "pointer",
+                background: "rgba(61,123,255,0.16)", border: "1px solid #3d7bff", color: "#ecf3ff",
+                clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+              Switch to {OPTS.find((o) => o.id === fmt)?.name} →
+            </button>
+            <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 10, textAlign: "center" }}>You'll re-seed the teams, then lock it in.</p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // editable score row for a single match
-function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
+function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
   const a = teamOf(match.teamA), b = teamOf(match.teamB);
   const bo = match.bo || 1;
   // League mode: fixtures hand off to the player-stats report, pre-filled.
@@ -514,6 +678,8 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: b ? b.hue : "rgba(120,150,220,0.4)" }} />
         </div>
       </div>
+      {!bye && <MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={onSetTime} />}
+      {!bye && <MatchPrediction match={match} locator={locator} a={a} b={b} onVote={onVote} />}
       {!bye && (
         <div className="flex items-center justify-center gap-2.5 flex-wrap">
           {Array.from({ length: mapsNeeded }).map((_, mi) => {
@@ -740,7 +906,7 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
 }
 
 // one bracket match — two stacked team rows + a score box on the right (reference style)
-function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
+function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
   const a = teamOf(match.teamA), b = teamOf(match.teamB);
   const bo = match.bo || 1;
   const bye = match.teamB == null && match.teamA != null;
@@ -783,6 +949,17 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
       <div style={{ height: 1, background: "rgba(120,150,220,0.16)" }} />
       {row(b, winB, winA || bye, "b")}
 
+      {!bye && (match.scheduledAt || isAdmin) && (
+        <div className="px-2 py-2" style={{ borderTop: "1px solid rgba(120,150,220,0.16)" }}>
+          <MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={onSetTime} />
+        </div>
+      )}
+      {!bye && a && b && (
+        <div className="px-3 pb-2" style={{ borderTop: "1px solid rgba(120,150,220,0.16)" }}>
+          <MatchPrediction match={match} locator={locator} a={a} b={b} onVote={onVote} />
+        </div>
+      )}
+
       {/* score-entry strip (admin only, not for byes) */}
       {isAdmin && !bye && a && b && (
         <div className="flex items-center justify-center gap-2 px-2 py-2 flex-wrap" style={{ borderTop: "1px solid rgba(120,150,220,0.16)", background: "rgba(61,123,255,0.04)" }}>
@@ -811,7 +988,7 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo }) {
 }
 
 // single-elim bracket display — columns of matches joined by elbow connector lines
-function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo }) {
+function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
   const roundName = (ri, total) => {
     const fromEnd = total - 1 - ri;
     if (fromEnd === 0) return "Final";
@@ -831,7 +1008,7 @@ function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo }) {
               <p className="uppercase text-sm font-bold tracking-widest text-center mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>{roundName(ri, rounds.length)}</p>
               {round.map((m, idx) => (
                 <div key={m.id} className="flex flex-col justify-center flex-1" style={{ position: "relative" }}>
-                  <TBracketMatch match={m} locator={{ kind: "elim", round: ri, idx }} teamOf={teamOf} isAdmin={isAdmin} onSetMap={onSetMap} onSetBo={onSetBo} />
+                  <TBracketMatch match={m} locator={{ kind: "elim", round: ri, idx }} teamOf={teamOf} isAdmin={isAdmin} onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} />
                 </div>
               ))}
             </div>
@@ -1082,7 +1259,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
   }
 
   // ── LIVE STATE: locked, scores being entered ──
-  const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo };
+  const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo, onSetTime: actions.tSetTime, onVote: actions.tVote };
   let champion = null;
   if (t.format === "single" && t.rounds?.length) { const fm = t.rounds[t.rounds.length - 1][0]; if (fm?.done) champion = teamOf(fm.winner); }
   if (t.format === "final" || (t.format === "group" && t.final?.done)) champion = teamOf(t.final.winner);
@@ -1092,6 +1269,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
       {header("Live Competition", fmtName.split(" ")[0], fmtName.split(" ").slice(1).join(" ") || "")}
       <div className="flex items-center justify-center gap-3 mb-7 flex-wrap">
         <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo} default</span>
+        {isAdmin && actions.tSwitchFormat && <FormatSwitcher t={t} actions={actions} />}
         {isAdmin && <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "transparent" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>}
       </div>
 
@@ -1142,6 +1320,44 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           <TPanel>
             <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Fixtures</p>
             <TMatchdays t={t} teamOf={teamOf} isAdmin={isAdmin} A={A} />
+          </TPanel>
+
+          {/* ── THE SUNDAY FINAL — top two from the table settle the weekend ── */}
+          <TPanel hue="#ffd166">
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <p className="uppercase text-lg font-bold tracking-widest" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Sunday Final ★</p>
+              {isAdmin && t.finalLock && !t.final?.done && actions.tResetFinal && (
+                <button onClick={actions.tResetFinal} className="text-[11px] uppercase tracking-widest px-3 py-1.5"
+                  style={{ color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(120,150,220,0.3)", background: "transparent" }}>↺ Use table seeding</button>
+              )}
+            </div>
+            {t.final ? (
+              <div className="max-w-md mx-auto">
+                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+                {t.finalLock && !t.final.done && (
+                  <p className="text-center text-[11px] mt-2" style={{ color: "rgba(255,209,102,0.7)" }}>Teams set manually — the table won't re-seed this.</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
+                {(t.matches || []).length === 0
+                  ? "Lock the fixtures first."
+                  : "Report every round and the top two seed automatically."}
+              </p>
+            )}
+            {/* host override — pick either side by hand */}
+            {isAdmin && !t.final?.done && actions.tSetFinalTeam && (
+              <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
+                {["a", "b"].map((side) => (
+                  <select key={side} value={(side === "a" ? t.final?.teamA : t.final?.teamB) || ""}
+                    onChange={(e) => actions.tSetFinalTeam(side, e.target.value || null)}
+                    style={{ padding: "7px 10px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(255,209,102,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 600 }}>
+                    <option value="">{side === "a" ? "— Team A —" : "— Team B —"}</option>
+                    {t.teamIds.map((id) => { const tm = teamOf(id); return tm ? <option key={id} value={id}>{tm.name}</option> : null; })}
+                  </select>
+                ))}
+              </div>
+            )}
           </TPanel>
         </div>
       )}
@@ -3457,6 +3673,55 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   }, true);
 
   const tClear = () => mutate((s) => { s.tournament = null; if (!Array.isArray(s.log)) s.log = []; s.log.unshift("Tournament cleared"); s.log = s.log.slice(0, 8); return s; }, true);
+
+  // Every match currently in the tournament, flattened — used to carry results
+  // across a format switch.
+  const flattenMatches = (t) => {
+    if (!t) return [];
+    const out = [];
+    if (t.format === "group") {
+      Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach((m) => out.push(m)));
+      if (t.final) out.push(t.final);
+    } else if (t.format === "single") {
+      (t.rounds || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
+    } else {
+      (t.matches || []).forEach((m) => out.push(m));
+    }
+    return out.filter(Boolean);
+  };
+  const pairKey = (x, y) => [x, y].filter(Boolean).sort().join("~");
+
+  // Switch the weekend's format, preserving played fixtures where the same two
+  // teams meet again. Results keep feeding the same leaderboards either way.
+  const tSwitchFormat = (format, matchType, numGroups) => mutate((s) => {
+    const prev = s.tournament;
+    const carry = {};
+    flattenMatches(prev).forEach((m) => {
+      if (!m.teamA || !m.teamB) return;
+      const played = m.done || (m.maps || []).some((x) => x && (x.a != null || x.b != null));
+      if (played || m.scheduledAt || (m.votes && Object.keys(m.votes).length)) carry[pairKey(m.teamA, m.teamB)] = m;
+    });
+    s.__carry = carry;              // consumed by tLock below
+    const ids = s.teams.map((t) => t.id);
+    const boNum = matchType === "bo3" ? 3 : 1;
+    const t = { format, bo: boNum, overrides: prev?.overrides || {}, createdAt: Date.now() };
+    if (format === "group") {
+      const g = Math.max(2, Math.min(numGroups || 2, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
+      t.matches = {}; t.locked = false; t.final = null;
+    } else if (format === "roundrobin" || format === "league") {
+      t.teamIds = []; t.matches = []; t.locked = false;
+    } else if (format === "single") {
+      const size = Math.max(nextPow2(ids.length || 2), 2);
+      t.slots = Array.from({ length: size }, () => null);
+      t.rounds = []; t.locked = false;
+    }
+    s.tournament = t;
+    if (!Array.isArray(s.log)) s.log = [];
+    s.log.unshift(`Format switched — ${format === "group" ? "Group Stage" : format === "single" ? "Single Elimination" : "League"} (${matchType.toUpperCase()})`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
   const armTClear = () => { if (!tClearArmed) { setTClearArmed(true); setTimeout(() => setTClearArmed(false), 4000); return; } setTClearArmed(false); tClear(); };
 
   // assign / remove a team to a group (group format) or the pool list (roundrobin) or a slot (single)
@@ -3503,6 +3768,27 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     } else if (t.format === "single") {
       t.rounds = buildSingleElim(t.slots, t.bo);
     }
+    // Restore anything already played/scheduled for the same team pairing so a
+    // format switch doesn't orphan reported stats (fxLabel depends on match id).
+    if (s.__carry && Object.keys(s.__carry).length) {
+      const key = (x, y) => [x, y].filter(Boolean).sort().join("~");
+      const restore = (m) => {
+        if (!m || !m.teamA || !m.teamB) return;
+        const old = s.__carry[key(m.teamA, m.teamB)];
+        if (!old) return;
+        m.id = old.id;                       // keeps fxLabel stable → stats stay linked
+        m.maps = old.maps || [];
+        m.bo = old.bo || m.bo;
+        m.done = !!old.done;
+        m.winner = old.winner ?? null;
+        if (old.scheduledAt) m.scheduledAt = old.scheduledAt;
+        if (old.votes) m.votes = old.votes;
+      };
+      if (t.format === "group") { Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach(restore)); }
+      else if (t.format === "single") { (t.rounds || []).forEach((r) => (r || []).forEach(restore)); propagateElim(t); }
+      else { (t.matches || []).forEach(restore); }
+      delete s.__carry;
+    }
     t.locked = true;
     s.log.unshift("Tournament bracket locked — matches generated"); s.log = s.log.slice(0, 8);
     return s;
@@ -3518,6 +3804,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     resolveMatch(m);
     if (t.format === "single") propagateElim(t);
     if (t.format === "group") syncFinal(s, t);
+    syncLeagueFinal(s, t);
     return s;
   }, true, true);
 
@@ -3530,6 +3817,48 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     return s;
   }, true, true);
 
+  // Schedule a match (host). Stored as an ISO string on the match itself.
+  const tSetTime = (locator, iso) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    m.scheduledAt = iso || null;
+    return s;
+  }, true, true);
+
+  // Final prediction — one vote per user per match, publicly attributed.
+  // votes: { [userId]: { side: "a"|"b", name } }
+  const tVote = (locator, side) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    if (m.done) return null;                       // locked once played
+    const uid = window.__VOLT?.userId; if (!uid) return null;
+    if (!m.votes || typeof m.votes !== "object") m.votes = {};
+    const name = window.__VOLT?.userName || "Player";
+    if (m.votes[uid] && m.votes[uid].side === side) delete m.votes[uid];  // tap again = undo
+    else m.votes[uid] = { side, name };
+    return s;
+  }, true, true);
+
+  // Host control over the Sunday final: set either side manually (locks
+  // auto-seeding), or clear the lock to let the table decide again.
+  const tSetFinalTeam = (side, teamId) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (!t.final) t.final = { id: "final", teamA: null, teamB: null, bo: t.bo, maps: [], done: false, winner: null };
+    if (t.final.done) return null;
+    t.final[side === "a" ? "teamA" : "teamB"] = teamId || null;
+    t.finalLock = true;
+    return s;
+  }, true);
+
+  const tResetFinal = () => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (t.final?.done) return null;
+    t.finalLock = false;
+    t.final = null;
+    syncLeagueFinal(s, t);
+    return s;
+  }, true);
+
   const tOverride = (teamId, patch) => mutate((s) => {
     const t = s.tournament; if (!t) return null;
     if (!t.overrides) t.overrides = {};
@@ -3539,6 +3868,23 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   }, true, true);
 
   // build the group-stage final from current group winners (top of each group)
+  // League/round-robin decider — "the Sunday final". Auto-seeds the top two
+  // once every round-robin match is reported; leaves it alone if the host has
+  // manually set the teams (t.finalLock) or once it's been played.
+  function syncLeagueFinal(s, t) {
+    if (!t || (t.format !== "league" && t.format !== "roundrobin")) return;
+    if (t.final?.done) return;                 // played — never touch
+    if (t.finalLock) return;                   // host chose the teams
+    const ms = t.matches || [];
+    const allDone = ms.length > 0 && ms.every((m) => m.done);
+    if (!allDone) { if (t.final && !t.final.done) t.final = null; return; }
+    const rows = computeStandings(t.teamIds, ms, t.overrides);
+    if (rows.length < 2) return;
+    const [a, b] = [rows[0].teamId, rows[1].teamId];
+    if (!t.final) t.final = { id: "final", teamA: a, teamB: b, bo: t.bo, maps: [], done: false, winner: null };
+    else { t.final.teamA = a; t.final.teamB = b; }
+  }
+
   function syncFinal(s, t) {
     const winners = t.groups.map((g) => {
       const rows = computeStandings(g.teamIds, t.matches[g.id] || [], t.overrides);
@@ -4559,7 +4905,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       state={state}
       isAdmin={isAdmin}
       teamOf={teamOf}
-      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tOverride }}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal }}
     />
   );
 
@@ -4638,6 +4984,7 @@ function VoltGate() {
       setProfile(u); setCommunity(u.communities);
       window.__VOLT.communityId = u.community_id;
       window.__VOLT.communityName = u.communities?.name || null;
+      window.__VOLT.userName = u.display_name || null;   // used for vote attribution
       // Dive straight into a LIVE weekend (draft/matches) — login shouldn't
       // land on a list when there's a weekend to be inside. Registration and
       // "all settled" fall through to the hub (that's where the play toggle is).
@@ -6228,14 +6575,27 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   async function settleTrophiesAndRecap() {
     try {
       const s = await readState();
-      let team = null, championIds = [], recap = {}, kind = "weekend";
+      let team = null, championIds = [], recap = {}, kind = "weekend", decidedByFinal = false;
       if (s && s.tournament && s.teams) {
         const t = s.tournament;
         // A single-elim bracket crowns a bracket champion; league-play crowns
         // the weekend (top of the table). Both count as champions for trophies.
         kind = t.format === "single" ? "bracket" : "weekend";
+        // Who actually won the weekend:
+        //  1. the Sunday final / grand final, if it was played  → the real decider
+        //  2. the last bracket match, for single elim
+        //  3. otherwise top of the table (weekend never reached a final)
+        let champTeamId = null;
+        if (t.final?.done && t.final.winner) { champTeamId = t.final.winner; decidedByFinal = true; }
+        else if (t.format === "single" && t.rounds?.length) {
+          const fm = t.rounds[t.rounds.length - 1]?.[0];
+          if (fm?.done && fm.winner) { champTeamId = fm.winner; decidedByFinal = true; }
+        }
+        if (champTeamId) kind = t.format === "single" ? "bracket" : "weekend";
         const standings = computeStandings(t.teamIds || s.teams.map(x => x.id), t.matches || [], t.overrides);
-        const champ = standings.find(r => r.played > 0) ? standings[0] : null;
+        const champ = champTeamId
+          ? { teamId: champTeamId }
+          : (standings.find(r => r.played > 0) ? standings[0] : null);
         if (champ) {
           const ct = s.teams.find(x => x.id === champ.teamId);
           team = ct?.name || null;
@@ -6256,7 +6616,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
         const kills = {};
         rows.forEach(r => { const nm = r.stat_payload?.name || "Player"; kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0); });
         const topFrag = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
-        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.pts + " pts" : null, topFrag: topFrag ? topFrag[0] : null };
+        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.pts + " pts" : null, topFrag: topFrag ? topFrag[0] : null, decidedBy: decidedByFinal ? "final" : "table" };
       } catch (e) { console.error("recap stats", e); }
       // Fire the security-definer RPC: streak +1 for champions, reset for the rest.
       await __sb.rpc("volt_settle_trophies", { p_event: ev.id, p_team: team, p_champions: championIds, p_recap: recap, p_kind: kind });
