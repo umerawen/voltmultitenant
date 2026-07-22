@@ -1262,7 +1262,8 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
   const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo, onSetTime: actions.tSetTime, onVote: actions.tVote };
   let champion = null;
   if (t.format === "single" && t.rounds?.length) { const fm = t.rounds[t.rounds.length - 1][0]; if (fm?.done) champion = teamOf(fm.winner); }
-  if (t.format === "final" || (t.format === "group" && t.final?.done)) champion = teamOf(t.final.winner);
+  // Any format that ends in a decider (group final, or the league Sunday final)
+  if (!champion && t.final?.done && t.final.winner) champion = teamOf(t.final.winner);
 
   return (
     <div className="view-in page-wrap py-10">
