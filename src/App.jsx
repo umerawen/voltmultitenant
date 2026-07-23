@@ -5161,6 +5161,7 @@ function VoltGate() {
       window.__VOLT.communityId = u.community_id;
       window.__VOLT.communityName = u.communities?.name || null;
       window.__VOLT.userName = u.display_name || null;   // used for vote attribution
+      window.__VOLT.isHost = u.role === "host";          // host-only controls on the profile
       // Dive straight into a LIVE weekend (draft/matches) — login shouldn't
       // land on a list when there's a weekend to be inside. Registration and
       // "all settled" fall through to the hub (that's where the play toggle is).
@@ -5260,32 +5261,11 @@ function VoltGate() {
       {/* ── Animated landing backdrop: dimmed art, real forked lightning,
              drifting particle field, and a perspective circuit grid. ── */}
       <style>{`
-        @keyframes voltDrift { 0% { transform: scale(1.06); } 50% { transform: scale(1.11) translate3d(-1.2%, -0.8%, 0); } 100% { transform: scale(1.06); } }
         @keyframes voltPulseA { 0%,100% { opacity: .16; transform: scale(1); } 50% { opacity: .30; transform: translate3d(2%, -2%, 0) scale(1.1); } }
-        /* strike: near-instant rise, double re-strike, fast decay — like real lightning */
-        @keyframes voltStrike {
-          0%, 84% { opacity: 0; }
-          84.4%   { opacity: 1; }
-          85.2%   { opacity: .25; }
-          85.8%   { opacity: .95; }
-          86.4%   { opacity: .12; }
-          87%     { opacity: .7; }
-          89%     { opacity: 0; }
-          100%    { opacity: 0; }
-        }
-        /* the flash the bolt throws onto the scene */
-        @keyframes voltFlash {
-          0%, 84% { opacity: 0; }
-          84.6%   { opacity: .5; }
-          86%     { opacity: .12; }
-          87%     { opacity: .32; }
-          89.5%   { opacity: 0; }
-          100%    { opacity: 0; }
-        }
         @keyframes voltGridPulse { 0% { transform: translateY(0); opacity: 0; } 12% { opacity: .55; } 100% { transform: translateY(-220px); opacity: 0; } }
         @keyframes voltMote { 0% { transform: translate3d(0,0,0); opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { transform: translate3d(var(--dx), var(--dy), 0); opacity: 0; } }
         @media (prefers-reduced-motion: reduce) {
-          .volt-bg-img, .volt-bg-a, .volt-bolt, .volt-flash, .volt-mote, .volt-gridline { animation: none !important; opacity: 0; }
+          .volt-bg-img, .volt-bg-a, .volt-mote, .volt-gridline { animation: none !important; opacity: 0; }
           .volt-bg-img { opacity: 1 !important; }
         }
       `}</style>
@@ -5293,8 +5273,7 @@ function VoltGate() {
         {/* the art — dimmed so the UI reads clearly on top */}
         <img src={IMG_GATE_BG} alt="" className="volt-bg-img"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%",
-            opacity: 0.38, filter: "brightness(0.62) saturate(1.08)",
-            animation: "voltDrift 34s ease-in-out infinite", willChange: "transform" }} />
+            opacity: 0.38, filter: "brightness(0.62) saturate(1.08)" }} />
 
         {/* circuit grid — perspective floor with pulses running up its lines */}
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "42%", overflow: "hidden",
@@ -5309,49 +5288,6 @@ function VoltGate() {
             ))}
           </div>
         </div>
-
-        {/* lightning — each bolt is a jagged trunk + forks, drawn as three stacked
-            strokes (wide glow / mid / hot white core) so it reads as real plasma */}
-        <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid slice">
-          <defs>
-            <filter id="voltGlow" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur stdDeviation="5" result="b" />
-              <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-          </defs>
-          {[
-            { dur: 14, delay: 0,
-              trunk: "M180,-20 L206,58 L178,74 L214,150 L186,168 L232,252 L206,268 L246,360",
-              forks: ["M214,150 L258,182 L240,196 L276,238", "M232,252 L196,286 L214,300 L182,338"] },
-            { dur: 17, delay: 5.5,
-              trunk: "M812,-20 L784,64 L816,84 L778,166 L810,188 L764,276 L792,298 L750,392",
-              forks: ["M778,166 L734,196 L752,212 L716,248", "M764,276 L806,312 L788,326 L822,362"] },
-            { dur: 21, delay: 11,
-              trunk: "M498,-20 L522,52 L494,70 L528,138 L502,156 L534,232",
-              forks: ["M528,138 L570,168 L552,182 L588,216"] },
-          ].map((b, i) => (
-            <g key={i} className="volt-bolt" style={{ animation: `voltStrike ${b.dur}s linear infinite`, animationDelay: `${b.delay}s` }}>
-              <g filter="url(#voltGlow)">
-                {[b.trunk, ...b.forks].map((d, j) => (
-                  <path key={"g" + j} d={d} fill="none" stroke="rgba(70,150,255,0.55)" strokeWidth={j === 0 ? 7 : 4} strokeLinecap="round" strokeLinejoin="round" />
-                ))}
-              </g>
-              {[b.trunk, ...b.forks].map((d, j) => (
-                <path key={"m" + j} d={d} fill="none" stroke="rgba(150,205,255,0.9)" strokeWidth={j === 0 ? 2.6 : 1.5} strokeLinecap="round" strokeLinejoin="round" />
-              ))}
-              {[b.trunk, ...b.forks].map((d, j) => (
-                <path key={"c" + j} d={d} fill="none" stroke="rgba(245,251,255,0.95)" strokeWidth={j === 0 ? 1.1 : 0.6} strokeLinecap="round" strokeLinejoin="round" />
-              ))}
-            </g>
-          ))}
-        </svg>
-
-        {/* the flash each strike throws across the scene */}
-        {[{ dur: 14, delay: 0, x: "18%" }, { dur: 17, delay: 5.5, x: "80%" }, { dur: 21, delay: 11, x: "50%" }].map((f, i) => (
-          <div key={i} className="volt-flash" style={{ position: "absolute", left: f.x, top: "-10%", width: "60vw", height: "70vh",
-            transform: "translateX(-50%)", background: "radial-gradient(ellipse at 50% 0%, rgba(120,180,255,0.55), rgba(90,150,255,0) 62%)",
-            animation: `voltFlash ${f.dur}s linear infinite`, animationDelay: `${f.delay}s` }} />
-        ))}
 
         {/* particle drift — glowing motes rising slowly, "system online" */}
         {Array.from({ length: 26 }).map((_, i) => {
@@ -5561,8 +5497,8 @@ function AccountView({ auth, chrome }) {
     <div className="view-in" style={{ display: "grid", gap: 18, marginTop: 34 }}>
       {(me?.suspension_remaining || 0) > 0 && (
         <div style={{ padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", fontFamily: "'Rajdhani',sans-serif" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {me.suspension_remaining} weekend{me.suspension_remaining === 1 ? "" : "s"} remaining</div>
-          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Triggered by repeated no-shows. It counts down automatically as league weekends settle.</p>
+          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {me.suspension_remaining} tournament{me.suspension_remaining === 1 ? "" : "s"} remaining</div>
+          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Triggered by repeated no-shows. It counts down automatically as tournaments settle.</p>
         </div>
       )}
 
@@ -5686,6 +5622,9 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
     ? new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" }) + " " + new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
     : null;
 
+  // Profile saved → show the commitment terms, then enter them.
+  function afterSave() { setPhase("terms"); }
+
   async function applyNow() {
     setPhase("applying"); setNote("");
     try {
@@ -5735,9 +5674,15 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
         {phase === "edit" && <>
           <div style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Your scouting profile</div>
           <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginBottom: 14 }}>Rank and role are required. Save to enter the weekend.</p>
-          <ScoutProfileCard userId={window.__VOLT.userId} onSaved={applyNow} />
+          <ScoutProfileCard userId={window.__VOLT.userId} onSaved={afterSave} />
           {note && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{note}</div>}
         </>}
+
+        {phase === "terms" && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 150 }}>
+            <RegisterTerms ev={ev} onAccept={applyNow} onClose={() => setPhase("edit")} />
+          </div>
+        )}
 
         {phase === "applying" && (
           <div style={{ textAlign: "center", padding: "30px 0" }}>
@@ -5751,6 +5696,63 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
 
 // The weekly ritual, one tap: OFF → PENDING (amber) → IN ✓ (green).
 // Flipping on IS the application (availability implied); veterans with 2+
+// ── Terms gate — shown every time a player enters a tournament. Availability
+//    is a per-tournament commitment, so this is deliberately not a one-time
+//    account-level accept. Ticking the box is the record.
+function RegisterTerms({ ev, onAccept, onClose }) {
+  const [ok, setOk] = useState(false);
+  const line = (children) => (
+    <li style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 13, lineHeight: 1.55, color: "rgba(210,222,255,0.78)" }}>
+      <span style={{ color: "#5b8dff", flex: "0 0 auto", marginTop: 1 }}>▪</span><span>{children}</span>
+    </li>
+  );
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(4,6,12,0.86)", display: "grid", placeItems: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", padding: "26px 28px 24px",
+        background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)",
+        clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+        <div className="flex items-center justify-between gap-3">
+          <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Before you register</span>
+          <button onClick={onClose} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
+        </div>
+
+        <h3 style={{ fontSize: 21, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.15, margin: "14px 0 4px" }}>
+          You're committing to <span style={{ color: "#f5c453" }}>Sat &amp; Sun, 7PM–2AM</span>
+        </h3>
+        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(200,215,255,0.7)", margin: "0 0 16px" }}>
+          Matches are scheduled anywhere inside that window and you won't know your exact times until the bracket is set. You need to be <b style={{ color: "#ecf3ff" }}>reachable for all of it</b> — if you can't be, don't register for this tournament.
+        </p>
+
+        <div style={{ padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(9), marginBottom: 16 }}>
+          <ul style={{ display: "grid", gap: 9, margin: 0, padding: 0, listStyle: "none" }}>
+            {line(<>Captains spend real budget drafting you and build a roster around you. If you don't show, <b style={{ color: "#ecf3ff" }}>your team plays short</b>.</>)}
+            {line(<>Pulling out <b style={{ color: "#9af5c2" }}>before the draft</b> costs you nothing — flip the toggle off, no strike.</>)}
+            {line(<>Going unreachable <b style={{ color: "#ff8f9a" }}>after you've been drafted</b> is a strike.</>)}
+            {line(<><b style={{ color: "#ff8f9a" }}>Two strikes = suspended for the next 2 tournaments.</b></>)}
+            {line(<>The draft is binding — you don't pick your team or your captain.</>)}
+          </ul>
+        </div>
+
+        <label style={{ display: "flex", gap: 11, alignItems: "flex-start", cursor: "pointer", padding: "12px 14px",
+          background: ok ? "rgba(61,220,132,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${ok ? "rgba(61,220,132,0.5)" : "rgba(120,150,220,0.25)"}`,
+          clipPath: SHELL_NOTCH(8), transition: "background .15s, border-color .15s" }}>
+          <input type="checkbox" checked={ok} onChange={(e) => setOk(e.target.checked)}
+            style={{ width: 17, height: 17, accentColor: "#3ddc84", marginTop: 1, flex: "0 0 auto", cursor: "pointer" }} />
+          <span style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: ok ? "#ecf3ff" : "rgba(200,215,255,0.75)" }}>
+            I'm available and reachable for the full window, and I understand the strike policy.
+          </span>
+        </label>
+
+        <button disabled={!ok} onClick={onAccept}
+          style={{ width: "100%", marginTop: 14, padding: "13px", fontSize: 13, fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase",
+            cursor: ok ? "pointer" : "not-allowed", opacity: ok ? 1 : 0.4,
+            background: "rgba(61,220,132,0.16)", border: "1px solid #3ddc84", color: "#9af5c2",
+            clipPath: SHELL_NOTCH(12) }}>Enter this tournament →</button>
+      </div>
+    </div>
+  );
+}
+
 // played weekends and a clean record are auto-approved by the volt_apply RPC.
 // Flipping off while registration runs is a clean, strike-free withdrawal.
 function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, onChanged, compact }) {
@@ -5758,6 +5760,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
   const [wantCap, setWantCap] = useState(false); // captain intent before the row exists
   const [note, setNote] = useState("");
   const [onboard, setOnboard] = useState(false); // first-timer welcome + profile setup
+  const [terms, setTerms] = useState(false);      // availability + strike policy gate
   const status = mine ? (mine.status || "approved") : null;
   const on = status === "pending" || status === "approved";
   const capOn = mine ? !!mine.wants_captain : wantCap;
@@ -5772,10 +5775,8 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
     setNote("");
     if (!on) {
       if (!profileComplete) { setOnboard(true); return; } // first-timer → guided setup + auto-continue
-      setBusy(true);
-      try { const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: wantCap }); if (error) throw error; onChanged && await onChanged(); }
-      catch (e) { setNote(e.message || "Could not apply."); }
-      setBusy(false);
+      setTerms(true);                                     // must accept the commitment each tournament
+      return;
     } else {
       if (status === "approved" && !window.confirm(`Drop out of ${weekendName(ev)}? Your spot opens up — captains won't be able to draft you.`)) return;
       setBusy(true);
@@ -5784,6 +5785,15 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
       setBusy(false);
     }
   }
+  // Runs once the player has ticked the availability/strike box.
+  async function doApply() {
+    setTerms(false);
+    setBusy(true);
+    try { const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: wantCap }); if (error) throw error; onChanged && await onChanged(); }
+    catch (e) { setNote(e.message || "Could not apply."); }
+    setBusy(false);
+  }
+
   async function flipCap() {
     if (busy || rejected) return;
     const v = !capOn;
@@ -5803,7 +5813,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
         <ToggleSwitch on={on} color={color} disabled={busy || susp > 0 || rejected} onClick={flipPlay} />
       </div>
       <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "rgba(200,215,255,0.55)", marginTop: -4 }}>
-        {susp > 0 ? <span style={{ color: "#ff8f9a", fontWeight: 700 }}>Suspended — {susp} weekend{susp === 1 ? "" : "s"} remaining. You can't enter yet.</span>
+        {susp > 0 ? <span style={{ color: "#ff8f9a", fontWeight: 700 }}>Suspended — {susp} tournament{susp === 1 ? "" : "s"} remaining. You can't enter yet.</span>
           : rejected ? <span style={{ color: "#ff8f9a" }}>Not approved this weekend — talk to the Commissioner.</span>
           : status === "approved" ? <span style={{ color: "#9af5c2" }}>You're in ✓{draftLine ? ` — draft ${draftLine}` : ""} · flip off to drop out</span>
           : status === "pending" ? <span style={{ color: "#f5c453" }}>Application pending — the Commissioner reviews it · flip off to withdraw</span>
@@ -5821,6 +5831,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
       )}
       {note && <div style={{ fontSize: 11.5, color: "#f5c453" }}>{note}</div>}
       {onboard && <FirstTimeOnboard ev={ev} wantCap={wantCap} onClose={() => setOnboard(false)} onApplied={onChanged} />}
+      {terms && <RegisterTerms ev={ev} onAccept={doApply} onClose={() => setTerms(false)} />}
     </div>
   );
 }
@@ -5893,20 +5904,22 @@ function PlayerProfile({ userId, onBack, footer }) {
     (async () => {
       try {
         const cid = window.__VOLT.communityId;
-        const [{ data: u }, { data: p }, { data: mrs }, { data: evs }] = await Promise.all([
-          __sb.from("users").select("display_name, trophy_streak, best_streak, weekends_won, brackets_won").eq("id", userId).maybeSingle(),
+        const [{ data: u }, { data: p }, { data: mrs }, { data: evs }, { data: strikes }] = await Promise.all([
+          __sb.from("users").select("display_name, trophy_streak, best_streak, weekends_won, brackets_won, suspension_remaining").eq("id", userId).maybeSingle(),
           __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle(),
           __sb.from("match_results").select("event_id, points_computed, team_won, stat_payload, created_at").eq("community_id", cid).eq("user_id", userId).order("created_at", { ascending: true }),
-          __sb.from("events").select("id, weekend_label, created_at, recap").eq("community_id", cid),
+          __sb.from("events").select("id, weekend_label, starts_on, created_at, recap").eq("community_id", cid),
+          __sb.from("registrations").select("id, event_id, no_show").eq("community_id", cid).eq("user_id", userId).eq("no_show", true),
         ]);
-        setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [] });
-      } catch (e) { console.error(e); setD({ u: {}, p: {}, mrs: [], evs: [] }); }
+        setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [], strikes: strikes || [] });
+      } catch (e) { console.error(e); setD({ u: {}, p: {}, mrs: [], evs: [], strikes: [] }); }
     })();
   }, [userId]);
 
   if (!d) return <div style={{ maxWidth: 980, margin: "0 auto", padding: "60px 22px" }}><p className="vg-loading">// Pulling the file…</p></div>;
 
-  const { u, p, mrs, evs } = d;
+  const { u, p, mrs, evs, strikes = [] } = d;
+  const isHostViewer = window.__VOLT?.isHost;
   const rank = p.rank || "Iron";
   const r = RANKS[rank] || RANKS.Iron;
   const hue = r.c;
@@ -6045,6 +6058,57 @@ function PlayerProfile({ userId, onBack, footer }) {
         </div>
       </>}
       {mrs.length === 0 && <p style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", marginTop: 28 }}>No matches played yet — the record starts the first weekend they take the server.</p>}
+
+      {/* ── Attendance & strikes. Hosts can discount a strike (keeps the record,
+             stops it counting) — the escape valve for genuine emergencies. ── */}
+      {(isHostViewer || strikes.length > 0) && (
+        <>
+          {sec("Attendance")}
+          <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${strikes.length >= 2 ? "rgba(255,70,85,0.35)" : "rgba(120,150,220,0.18)"}`, clipPath: SHELL_NOTCH(9) }}>
+            <div className="flex items-center justify-between gap-3 flex-wrap" style={{ marginBottom: strikes.length ? 12 : 0 }}>
+              <span style={{ fontSize: 13.5, fontWeight: 700, color: strikes.length ? "#f5c453" : "#9af5c2" }}>
+                {strikes.length === 0 ? "✓ Clean record — no strikes" : `⚠ ${strikes.length} strike${strikes.length === 1 ? "" : "s"}`}
+              </span>
+              {(u.suspension_remaining || 0) > 0 && (
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#ff8f9a", border: "1px solid rgba(255,70,85,0.45)", padding: "4px 10px", clipPath: SHELL_NOTCH(5) }}>
+                  Suspended · {u.suspension_remaining} tournament{u.suspension_remaining === 1 ? "" : "s"} left
+                </span>
+              )}
+            </div>
+            {strikes.length > 0 && (
+              <div style={{ display: "grid", gap: 7 }}>
+                {strikes.map((s) => {
+                  const ev = evs.find((e) => e.id === s.event_id);
+                  return (
+                    <div key={s.id} className="flex items-center justify-between gap-3 flex-wrap"
+                      style={{ padding: "9px 12px", background: "rgba(255,70,85,0.05)", border: "1px solid rgba(255,70,85,0.2)" }}>
+                      <span style={{ fontSize: 12.5, color: "rgba(220,231,255,0.8)" }}>
+                        No-show · <b style={{ color: "#ecf3ff" }}>{ev ? weekendName(ev) : "a past tournament"}</b>
+                      </span>
+                      {isHostViewer && (
+                        <button onClick={async () => {
+                            if (!window.confirm("Discount this strike? It stops counting toward a suspension and lifts any active ban.")) return;
+                            try { await __sb.from("registrations").update({ no_show: false }).eq("id", s.id); setD(null); }
+                            catch (e) { console.error(e); }
+                          }}
+                          style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", padding: "5px 11px", cursor: "pointer",
+                            background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.4)", color: "#9af5c2", clipPath: SHELL_NOTCH(5) }}>
+                          ↺ Discount
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                {isHostViewer && (
+                  <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 2 }}>
+                    Two strikes suspends a player for the next 2 tournaments. Discounting one lifts an active suspension.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
       {footer}
     </div>
   );
@@ -7262,7 +7326,7 @@ function MatchReport({ ev, onDone, prefill }) {
                 <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: 13, flex: 1, minWidth: 110, color: r.noShow ? "#ff8f9a" : "#ecf3ff" }}>{r.name}</span>
                 {played && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2", fontWeight: 700 }}>played ✓</span>}
                 {!played && !r.noShow && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)" }}>no matches yet</span>}
-                {r.noShows > 0 && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 3 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} strike{r.noShows === 1 ? "" : "s"}</span>}
+                {r.noShows > 0 && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 2 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} strike{r.noShows === 1 ? "" : "s"}</span>}
                 <button disabled={busy} onClick={async () => { setBusy(true); try { await __sb.from("registrations").update({ no_show: !r.noShow }).eq("id", r.regId); await load(); } catch (e) { console.error(e); } setBusy(false); }}
                   style={shellBtn(r.noShow ? "ghost" : "danger", { padding: "5px 11px", fontSize: 10 })}>
                   {r.noShow ? "Unmark" : "No-show"}</button>
@@ -7431,7 +7495,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           {/* suspended players sit out — the DB blocks the insert anyway */}
           {regOpen && !reg && susp > 0 && (
             <div style={{ marginTop: 14, padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: SHELL_NOTCH(8) }}>
-              <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {susp} weekend{susp === 1 ? "" : "s"} remaining</div>
+              <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {susp} tournament{susp === 1 ? "" : "s"} remaining</div>
               <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Repeated no-shows triggered an automatic suspension. It counts down as league weekends settle. Talk to the Commissioner if you think this is a mistake.</p>
             </div>
           )}
@@ -7501,7 +7565,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
                       {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
                       {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
                       <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
-                      {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 3 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+                      {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 2 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
                       <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "approved"); }} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
                       <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "rejected"); }} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
                     </div>
@@ -7541,7 +7605,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
                       {r.userId === window.__VOLT.userId && <span style={{ color: "rgba(200,215,255,0.4)", fontWeight: 500, marginLeft: 6, fontSize: 11 }}>(you)</span>}
                     </span>
                     {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
-                    {isHost && r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 3 ? "#ff4655" : "#f5c453", fontWeight: 700 }}>⚠ {r.noShows}</span>}
+                    {isHost && r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700 }}>⚠ {r.noShows}</span>}
                     {r.isCaptain && <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Captain</span>}
                     {!r.isCaptain && r.volunteered && <span title="Available to captain" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>available</span>}
                     {isHost && (
