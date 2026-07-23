@@ -2658,7 +2658,7 @@ function AgentArt({ side, src, hue, width = 520, top = -40, imgScale = 1, edgeOf
 }
 
 /* ════════════════ MAP VETO (Commissioner pick/ban tool — local, not synced) ══════ */
-const ALL_MAPS = ["Ascent", "Bind", "Breeze", "Corrode", "Fracture", "Haven", "Icebox", "Lotus", "Pearl", "Split", "Sunset", "Abyss"];
+const ALL_MAPS = ["Ascent", "Bind", "Breeze", "Corrode", "Fracture", "Haven", "Icebox", "Lotus", "Pearl", "Split", "Summit", "Sunset", "Abyss"];
 // Map splash thumbnails. Paste a URL or base64 data URI per map; blanks render a styled placeholder.
 const MAP_IMG = {
   Ascent: "data:image/jpeg;base64,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",
@@ -2678,7 +2678,7 @@ const MAP_IMG = {
 const MAP_TINT = {
   Ascent: "#6b8cff", Bind: "#d9a441", Breeze: "#4fc4d6", Corrode: "#b56ad9",
   Fracture: "#7a8a55", Haven: "#c4773f", Icebox: "#73b4e6", Lotus: "#5fae7a",
-  Pearl: "#4f8fd9", Split: "#8a93a8", Sunset: "#e08a5a", Abyss: "#5566aa",
+  Pearl: "#4f8fd9", Split: "#8a93a8", Summit: "#8fb9c9", Sunset: "#e08a5a", Abyss: "#5566aa",
 };
 
 // One card. `state` = "active" | "off" (setup, toggled out) | "banned" | "decider" | "live".
@@ -2896,6 +2896,7 @@ function MapVeto({ teams }) {
   const [coinTeam, setCoinTeam] = useState(null);              // teamId assigned the coin result
   const [turn, setTurn] = useState(null);                      // teamId whose ban turn it is
   const [setup, setSetup] = useState(true);                    // setup vs running
+  const [showRules, setShowRules] = useState(false);           // veto rules explainer
 
   const resolve = (id) => teams.find((t) => t.id === id) || null;
   const A = resolve(teamA), B = resolve(teamB);
@@ -2930,7 +2931,7 @@ function MapVeto({ teams }) {
     if (left.length === 1) {
       // last map standing becomes the decider; the OTHER team (not whoever just banned) picks side
       setDecider(left[0]);
-      setSidePick({ teamId: other(turn), side: null });
+      setSidePick({ teamId: other(turn), side: null });   // sensible default; host can switch
       setTurn(null);
     } else {
       setTurn(other(turn)); // alternate
@@ -2967,7 +2968,48 @@ function MapVeto({ teams }) {
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
       </div>
       <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
-      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>Flip the coin, assign who bans first, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
+        <p className="text-sm" style={{ color: "rgba(200,215,255,0.5)", margin: 0 }}>Flip the coin, assign who bans first, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
+        <button onClick={() => setShowRules(true)} title="How the veto works"
+          className="uppercase shrink-0" style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(61,123,255,0.4)", background: "rgba(61,123,255,0.08)", padding: "5px 11px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
+          ◈ Veto rules
+        </button>
+      </div>
+
+      {showRules && (
+        <VoltOverlay onClose={() => setShowRules(false)} zIndex={150}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", padding: "24px 26px 22px",
+            background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)",
+            clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+            <div className="flex items-center justify-between gap-3">
+              <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// How the veto works</span>
+              <button onClick={() => setShowRules(false)} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
+            </div>
+
+            {[
+              ["1 · Coin toss", <>Both captains call it. The winner gets <b style={{ color: "#ecf3ff" }}>one choice</b> — and the loser automatically gets the other.</>],
+              ["2 · The choice", <>
+                <b style={{ color: "#f5c453" }}>Map pick</b> — you ban <b style={{ color: "#ecf3ff" }}>second</b>, and you choose the map that gets played from the final two.<br />
+                <b style={{ color: "#f5c453" }}>Side pick</b> — you choose <b style={{ color: "#ecf3ff" }}>Attack or Defence</b> on whatever map ends up being played.
+              </>],
+              ["3 · Banning", <>Teams take turns removing maps, one at a time, until the decider is settled. Whoever bans first removes one more map than their opponent — that's the cost of going first.</>],
+              ["4 · The decider", <>The map that survives is played. The team holding <b style={{ color: "#f5c453" }}>side pick</b> then calls Attack or Defence; the other team takes the opposite side.</>],
+            ].map(([title, body], i) => (
+              <div key={i} style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#7da6ff", marginBottom: 5 }}>{title}</div>
+                <p style={{ fontSize: 14, lineHeight: 1.65, color: "rgba(214,226,255,0.82)", margin: 0 }}>{body}</p>
+              </div>
+            ))}
+
+            <div style={{ marginTop: 18, padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(9) }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 7 }}>In short</div>
+              <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(200,215,255,0.7)", margin: 0 }}>
+                One team decides <b style={{ color: "#ecf3ff" }}>where</b> you play, the other decides <b style={{ color: "#ecf3ff" }}>which side</b> you start on. The toss just decides who gets which.
+              </p>
+            </div>
+          </div>
+        </VoltOverlay>
+      )}
 
       {/* ─── SETUP ─── */}
       {setup && (
@@ -3077,6 +3119,12 @@ function MapVeto({ teams }) {
               <HudLabel dot="#3ddc84">Side Selection</HudLabel>
               <p className="text-sm mb-3" style={{ color: "rgba(200,215,255,0.6)" }}>
                 Decider is <span className="font-bold" style={{ color: "#9af5c2" }}>{decider}</span>. <span className="font-bold uppercase" style={{ color: hueOf(sidePick.teamId), fontFamily: "'Rajdhani',sans-serif" }}>{nameOf(sidePick.teamId)}</span> picks side:
+                {!sidePick.side && (
+                  <button onClick={() => setSidePick({ teamId: other(sidePick.teamId), side: null })}
+                    className="ml-2 uppercase" style={{ fontSize: 10.5, letterSpacing: "0.12em", fontWeight: 700, color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.3)", padding: "3px 8px", background: "transparent", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>
+                    ⇄ Switch team
+                  </button>
+                )}
               </p>
               <div className="flex gap-3">
                 {["ATTACK", "DEFENSE"].map((s) => {
@@ -3549,10 +3597,25 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       // Guard the draw: if WE have a live spin (or a block the remote lacks) that
       // the incoming state would erase, keep ours until our write propagates.
       const local = stateRef.current;
+      // A debounced write is still pending — our local state is ahead of the
+      // server, so anything the poll returns is stale by definition.
+      if (writeTimerRef.current) return;
       if (local) {
         const localSpinLive = local.spin && Date.now() < local.spin.startTs + local.spin.duration + 2000;
         if (localSpinLive && (!s.spin || s.spin.startTs !== local.spin.startTs)) return;
         if (local.block && !s.block && (!s.spin || (local.spin && s.spin?.startTs !== local.spin.startTs))) return;
+        // Never let a remote read delete a tournament we're mid-setup on, or
+        // roll back group/seed assignments we've already made locally.
+        if (local.tournament && !s.tournament) return;
+        if (local.tournament && s.tournament && !local.tournament.locked) {
+          const count = (t) => {
+            if (!t) return 0;
+            if (t.format === "group") return (t.groups || []).reduce((n, g) => n + (g.teamIds || []).length, 0);
+            if (t.format === "single") return (t.slots || []).filter(Boolean).length;
+            return (t.teamIds || []).length;
+          };
+          if (count(local.tournament) > count(s.tournament)) return;
+        }
       }
       if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
     }, POLL_MS);
@@ -4370,6 +4433,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <button onClick={chrome.onReport}
               style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>▦ Report</button>
           )}
+          {chrome && HAS_SUPABASE && <NotifBell />}
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
           {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} seat={chipSeat} />}
           {!chrome && (
@@ -5992,8 +6056,14 @@ function NotifBell() {
   };
   return (
     <div style={{ position: "relative", marginRight: 10 }}>
+      {unread > 0 && (
+        <span style={{ position: "absolute", top: -5, right: -5, zIndex: 2, minWidth: 17, height: 17, padding: "0 4px",
+          display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10, fontWeight: 700,
+          borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace", pointerEvents: "none",
+          boxShadow: "0 0 0 2px #0a0d18" }}>{unread}</span>
+      )}
       <button onClick={openPanel} title="Notifications" style={shellBtn("ghost", { padding: "7px 12px", fontSize: 13, position: "relative" })}>
-        ◈{unread > 0 && <span style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, padding: "0 4px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10, fontWeight: 700, clipPath: SHELL_NOTCH(4), fontFamily: "'IBM Plex Mono',monospace" }}>{unread}</span>}
+        ◈
       </button>
       {open && (
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 320, maxHeight: 400, overflowY: "auto", zIndex: 130, background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(10), padding: "12px 14px", boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
@@ -6888,7 +6958,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   const phase = ev?.phase || "drafting";
   // During registration a player lands on the Lobby (app) — the "I'm playing"
   // toggle is there. Hosts still default to the gate to review applications.
-  const [regView, setRegView] = useState(isHost ? "gate" : "app");
+  const [regView, setRegView] = useState(initialView ? "app" : (isHost ? "gate" : "app"));
   const [matchView, setMatchView] = useState(false); // host match-report form
   const [reportPrefill, setReportPrefill] = useState(null); // fixture → report handoff
   // My registration status for this weekend — powers the Lobby's "I'm playing"
@@ -6944,7 +7014,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
     return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
   }, []);
-  useEffect(() => { setRegView(isHost ? "gate" : "app"); setMatchView(false); }, [phase]);
+  useEffect(() => { setRegView(initialView ? "app" : (isHost ? "gate" : "app")); setMatchView(false); }, [phase]);
 
   // Poll the weekend's phase so players follow the host's transitions live.
   useEffect(() => {
