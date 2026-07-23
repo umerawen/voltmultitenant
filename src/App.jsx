@@ -2420,7 +2420,10 @@ function PlayerPicker({ value, players, onChange }) {
 
 function WarRoomGate_REMOVED() { return null; }
 
-function WarRoom({ teamId, teamHue, players }) {
+function WarRoom({ teamId, teamHue, players: allPlayers }) {
+  // Captains lead teams — they never enter the auction pool, so they can't be
+  // planned as picks. Mirrors the draw's `!p.isCaptain` exclusion.
+  const players = (allPlayers || []).filter((p) => !p.isCaptain);
   const [plans, setPlans] = useState(() => Array.from({ length: WR_PLANS }, () => emptyLineup()));
   const [active, setActive] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -2433,16 +2436,21 @@ function WarRoom({ teamId, teamHue, players }) {
     (async () => {
       const data = await readWarRoom(teamId);
       if (alive) {
+        const draftable = new Set(players.map((p) => p.id));
         if (data?.plans?.length) setPlans(data.plans.map((pl) => {
           const norm = emptyLineup();
-          (pl || []).slice(0, WR_SLOTS).forEach((s, i) => { norm[i] = { playerId: s?.playerId || "", target: s?.target ?? "" }; });
+          (pl || []).slice(0, WR_SLOTS).forEach((s, i) => {
+            const pid = s?.playerId || "";
+            // Clear picks that aren't draftable any more (promoted to captain).
+            norm[i] = { playerId: pid && draftable.has(pid) ? pid : "", target: s?.target ?? "" };
+          });
           return norm;
         }).concat(Array.from({ length: Math.max(0, WR_PLANS - data.plans.length) }, () => emptyLineup())).slice(0, WR_PLANS));
         setLoaded(true);
       }
     })();
     return () => { alive = false; };
-  }, [teamId]);
+  }, [teamId, allPlayers]);
 
   const lineup = plans[active];
   const setSlot = (i, patch) => {
@@ -3475,11 +3483,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   useEffect(() => {
     if (identity || !state || !auth) return;
     if (auth.role === "host") { setIdentity("admin"); return; }
-    // Browsing during registration: no seats exist to claim yet — go straight
-    // in as spectator (skips the seat-claim gate entirely).
-    if (browse) { setIdentity("spectator"); return; }
+    // A captain keeps their seat in every phase — including registration, where
+    // the board may already have teams assigned. Check this before any fallback.
     const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
     if (mine) { setIdentity(mine.id); return; }
+    // Browsing during registration with no seat of your own: spectate.
+    if (browse) { setIdentity("spectator"); return; }
     // League users never self-claim seats — the Commissioner assigns captains.
     // Anyone logged in without an owned seat watches as spectator, even on a
     // sample/unbuilt board. The seat gate remains only for legacy/preview mode.
@@ -5071,7 +5080,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: "#3d7bff" }}>Room</span></h2>
       <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As Commissioner you can't view captains' saved lineups — they're visible only to the captain who made them.</p>
     </div>
-  ) : isSpectator ? (
+  ) : (isSpectator && !chrome?.isCaptainElect) ? (
     <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
       <div className="flex items-center gap-2 mb-2">
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
@@ -5082,7 +5091,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As a spectating Player you don't have a roster to plan — take a captain's seat to use it.</p>
     </div>
   ) : (
-    <WarRoom teamId={myTeam.id} teamHue={myTeam.hue} players={state.players} />
+    <WarRoom teamId={myTeam?.id || ("pre:" + (auth?.userId || "me"))} teamHue={myTeam?.hue || "#3d7bff"} players={state.players} />
   );
 
   const BracketView = (
@@ -7172,6 +7181,10 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       onBack: inReg ? () => setRegView("gate") : onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
       draftAt: ev?.draft_at || null,
+      // Confirmed captain for this weekend, from the registration record. The
+      // auction board doesn't exist until the draft starts, so during
+      // registration this is the only source of captaincy.
+      isCaptainElect: !!(myReg?.is_captain && (myReg?.status || "approved") === "approved"),
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
       account, onSignOut, hostControls,
       // The Lobby shows this when registration is open — flipping it IS applying.
