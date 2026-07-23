@@ -181,8 +181,8 @@ function weekendName(ev) {
   const sat = new Date(raw + "T00:00:00");
   if (isNaN(sat)) return ev.weekend_label || "Weekend";
   const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
-  const mon = sat.toLocaleDateString({ month: "short" });
-  const monS = sun.toLocaleDateString({ month: "short" });
+  const mon = sat.toLocaleDateString(undefined, { month: "short" });
+  const monS = sun.toLocaleDateString(undefined, { month: "short" });
   const label = mon === monS
     ? `${mon} ${sat.getDate()}\u2013${sun.getDate()}`
     : `${mon} ${sat.getDate()} \u2013 ${monS} ${sun.getDate()}`;
@@ -499,6 +499,7 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
   const [desk, setDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
   const [view, setView] = useState(() => (value ? new Date(value) : new Date()));
   const boxRef = useRef(null);
+  const [anchor, setAnchor] = useState(null); // viewport rect of the trigger
   useEffect(() => {
     if (!window.matchMedia) return;
     const mq = window.matchMedia("(min-width: 768px)");
@@ -509,9 +510,21 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
   useEffect(() => { if (value) setView(new Date(value)); }, [value]);
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onDoc = (e) => {
+      if (boxRef.current && boxRef.current.contains(e.target)) return;
+      if (e.target.closest && e.target.closest("[data-volt-dtpanel]")) return; // clicks inside the portalled panel
+      setOpen(false);
+    };
+    const place = () => { const r = boxRef.current?.getBoundingClientRect(); if (r) setAnchor({ top: r.bottom, left: r.left, right: r.right }); };
+    place();
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
   }, [open]);
 
   const pad = (x) => String(x).padStart(2, "0");
@@ -528,7 +541,7 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
 
   const cur = value ? new Date(value) : null;
   const label = cur
-    ? cur.toLocaleDateString({ month: "short", day: "numeric" }) + " · " + cur.toLocaleTimeString({ hour: "numeric", minute: "2-digit" })
+    ? cur.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + cur.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
     : placeholder;
 
   // calendar grid for the viewed month
@@ -576,8 +589,11 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
         {cur && <span onClick={(e) => { e.stopPropagation(); commit(null); }} title="Clear" style={{ color: "rgba(255,120,135,0.7)", fontSize: 13, marginLeft: 2 }}>✕</span>}
       </button>
 
-      {open && (
-        <div style={{ position: "absolute", zIndex: 140, top: "calc(100% + 7px)", left: 0, display: "flex", gap: 0,
+      {open && anchor && createPortal((
+        <div data-volt-dtpanel="1" style={{ position: "fixed", zIndex: 200,
+          top: Math.min(anchor.top + 7, Math.max(8, (typeof window !== "undefined" ? window.innerHeight : 800) - 320)),
+          left: Math.max(8, Math.min(anchor.left, (typeof window !== "undefined" ? window.innerWidth : 1200) - 420)),
+          display: "flex", gap: 0,
           background: "linear-gradient(160deg, rgba(20,26,42,0.99), rgba(10,13,22,0.99))", border: "1px solid rgba(61,123,255,0.45)",
           clipPath: SHELL_NOTCH(12), boxShadow: "0 20px 50px rgba(0,0,0,0.65)", fontFamily: "'Rajdhani',sans-serif" }}>
           {/* calendar */}
@@ -585,7 +601,7 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
             <div className="flex items-center justify-between mb-2.5">
               <button onClick={() => setView(new Date(y, mo - 1, 1))} style={{ background: "none", border: "1px solid rgba(120,150,220,0.25)", color: "#7da6ff", cursor: "pointer", padding: "2px 8px", fontSize: 12 }}>‹</button>
               <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#ecf3ff" }}>
-                {view.toLocaleDateString({ month: "long", year: "numeric" })}
+                {view.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
               </span>
               <button onClick={() => setView(new Date(y, mo + 1, 1))} style={{ background: "none", border: "1px solid rgba(120,150,220,0.25)", color: "#7da6ff", cursor: "pointer", padding: "2px 8px", fontSize: 12 }}>›</button>
             </div>
@@ -626,7 +642,7 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }
@@ -642,8 +658,8 @@ function MatchSchedule({ match, locator, isAdmin, onSetTime }) {
   };
   const pretty = iso ? (() => {
     const d = new Date(iso); if (isNaN(d)) return null;
-    return d.toLocaleDateString({ weekday: "short", month: "short", day: "numeric" }).toUpperCase()
-      + ", " + d.toLocaleTimeString({ hour: "numeric", minute: "2-digit" });
+    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }).toUpperCase()
+      + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   })() : null;
   if (!pretty && !isAdmin) return null;
   return (
@@ -5619,7 +5635,7 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
   const [phase, setPhase] = useState("intro"); // intro → edit → applying
   const [note, setNote] = useState("");
   const draftLine = ev?.draft_at
-    ? new Date(ev.draft_at).toLocaleDateString({ weekday: "short" }) + " " + new Date(ev.draft_at).toLocaleTimeString({ hour: "numeric", minute: "2-digit" })
+    ? new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" }) + " " + new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
     : null;
 
   // Profile saved → show the commitment terms, then enter them.
@@ -5767,7 +5783,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
   const rejected = status === "rejected";
   const color = status === "approved" ? "#3ddc84" : status === "pending" ? "#f5c453" : "#3ddc84";
   const draftLine = ev?.draft_at
-    ? new Date(ev.draft_at).toLocaleDateString({ weekday: "short" }) + " " + new Date(ev.draft_at).toLocaleTimeString({ hour: "numeric", minute: "2-digit" })
+    ? new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" }) + " " + new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
     : null;
 
   async function flipPlay() {
@@ -6393,7 +6409,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
   const fmtDraftAt = (d) => {
     if (!d) return null;
     const dt = new Date(d);
-    return dt.toLocaleDateString({ weekday: "short", month: "short", day: "numeric" }) + " · " + dt.toLocaleTimeString({ hour: "numeric", minute: "2-digit" });
+    return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " · " + dt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   };
 
   async function createWeekend() {
@@ -7467,7 +7483,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
         <h1 style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
         <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 14 }}>{regOpen ? "Claim your spot in this weekend's draft pool." : "Registration is closed — the draft opens soon."}</p>
         <p style={{ color: "rgba(200,215,255,0.4)", margin: "8px auto 0", fontSize: 12.5, maxWidth: 520 }}>
-          {ev?.draft_at && <span style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace" }}>Draft: {new Date(ev.draft_at).toLocaleDateString({ weekday: "short", month: "short", day: "numeric" })} · {new Date(ev.draft_at).toLocaleTimeString({ hour: "numeric", minute: "2-digit" })} — </span>}
+          {ev?.draft_at && <span style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace" }}>Draft: {new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · {new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} — </span>}
           Teams form from whoever registers (roughly one per 5 players). Not drafted? You can still be subbed into matches — every match you play banks season points.</p>
       </div>
 
@@ -7517,7 +7533,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
             )}
             <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 14, cursor: "pointer", color: avail ? "#9af5c2" : "rgba(200,215,255,0.65)", fontSize: 13.5, lineHeight: 1.4 }}>
               <input type="checkbox" checked={avail} onChange={e => setAvail(e.target.checked)} style={{ accentColor: "#3ddc84", marginTop: 2, width: 16, height: 16 }} />
-              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>② I confirm I'm available this weekend</b> — {ev?.draft_at ? `draft on ${new Date(ev.draft_at).toLocaleDateString({ weekday: "short" })} ${new Date(ev.draft_at).toLocaleTimeString({ hour: "numeric", minute: "2-digit" })} and` : "the draft and"} up to 4 matches. No-shows hurt your team.</span>
+              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>② I confirm I'm available this weekend</b> — {ev?.draft_at ? `draft on ${new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" })} ${new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} and` : "the draft and"} up to 4 matches. No-shows hurt your team.</span>
             </label>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 12, cursor: "pointer", color: wantCap ? "#7da6ff" : "rgba(200,215,255,0.55)", fontSize: 13, lineHeight: 1.4 }}>
               <input type="checkbox" checked={wantCap} onChange={e => setWantCap(e.target.checked)} style={{ accentColor: "#3d7bff", marginTop: 2, width: 16, height: 16 }} />
