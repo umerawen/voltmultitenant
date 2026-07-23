@@ -761,7 +761,7 @@ function FormatSwitcher({ t, actions }) {
       <button onClick={() => setOpen(true)} className="text-xs uppercase tracking-widest px-3 py-1.5"
         style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(61,123,255,0.35)", background: "rgba(61,123,255,0.06)" }}>⇄ Change format</button>
       {open && (
-        <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 130, background: "rgba(4,6,12,0.85)", display: "grid", placeItems: "center", padding: 20 }}>
+        <VoltOverlay onClose={() => setOpen(false)} zIndex={130} dim="rgba(4,6,12,0.85)">
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", padding: "24px 26px", fontFamily: "'Rajdhani',sans-serif" }}>
             <div className="flex items-center justify-between gap-3">
               <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Change format</span>
@@ -803,7 +803,7 @@ function FormatSwitcher({ t, actions }) {
             </button>
             <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 10, textAlign: "center" }}>You'll re-seed the teams, then lock it in.</p>
           </div>
-        </div>
+        </VoltOverlay>
       )}
     </>
   );
@@ -5661,7 +5661,7 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
   );
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 130, background: "rgba(4,6,12,0.85)", display: "grid", placeItems: "center", padding: 20 }}>
+    <VoltOverlay onClose={onClose} zIndex={130} dim="rgba(4,6,12,0.85)">
       <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto", background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)", clipPath: SHELL_NOTCH(16), padding: "26px 26px 24px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Welcome to the league</div>
@@ -5695,9 +5695,7 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
         </>}
 
         {phase === "terms" && (
-          <div style={{ position: "fixed", inset: 0, zIndex: 150 }}>
-            <RegisterTerms ev={ev} onAccept={applyNow} onClose={() => setPhase("edit")} />
-          </div>
+          <RegisterTerms ev={ev} onAccept={applyNow} onClose={() => setPhase("edit")} />
         )}
 
         {phase === "applying" && (
@@ -5706,12 +5704,117 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
           </div>
         )}
       </div>
-    </div>
+    </VoltOverlay>
   );
 }
 
 // The weekly ritual, one tap: OFF → PENDING (amber) → IN ✓ (green).
 // Flipping on IS the application (availability implied); veterans with 2+
+// ── Modal shell — portals to <body> so a parent's clip-path (our notched
+//    cards) can never clip it. Every full-screen overlay should use this.
+function VoltOverlay({ onClose, zIndex = 140, children, dim = "rgba(4,6,12,0.86)" }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && onClose) onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex, background: dim, display: "grid", placeItems: "center", padding: 20 }}>
+      {children}
+    </div>,
+    document.body
+  );
+}
+
+// ── Weekend setup — create or edit a weekend's date + optional nickname.
+//    Hosts often plan a weekend or two ahead, so the date is fully theirs to
+//    pick rather than always defaulting to the coming Saturday.
+function WeekendSetup({ mode, ev, onSave, onClose }) {
+  const pad = (x) => String(x).padStart(2, "0");
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const isoFromYmd = (s) => (s ? new Date(s + "T12:00:00").toISOString() : null);
+  const initial = ev?.starts_on || comingSaturday();
+  const [iso, setIso] = useState(isoFromYmd(initial));
+  const [nick, setNick] = useState(
+    ev?.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const d = iso ? new Date(iso) : null;
+  const notSaturday = d && d.getDay() !== 6;
+  const label = d ? weekendName({ starts_on: ymd(d), weekend_label: nick.trim() || null }) : "—";
+
+  // Quick jumps — this Saturday, and the next three after it.
+  const quick = Array.from({ length: 4 }, (_, i) => {
+    const base = new Date(comingSaturday() + "T12:00:00");
+    base.setDate(base.getDate() + i * 7);
+    return base;
+  });
+
+  async function save() {
+    if (!d) { setErr("Pick a date first."); return; }
+    setBusy(true); setErr("");
+    try { await onSave({ starts_on: ymd(d), weekend_label: nick.trim() || null }); onClose(); }
+    catch (e) { setErr(e.message || "Could not save."); setBusy(false); }
+  }
+
+  return (
+    <VoltOverlay onClose={onClose} zIndex={150}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 470, padding: "24px 26px 22px",
+        background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)",
+        clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+        <div className="flex items-center justify-between gap-3">
+          <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>
+            // {mode === "create" ? "New weekend" : "Edit weekend"}
+          </span>
+          <button onClick={onClose} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
+        </div>
+
+        <div style={{ fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", margin: "14px 0 3px" }}>{label}</div>
+        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", margin: "0 0 16px" }}>Weekends run Saturday–Sunday. Pick the Saturday.</p>
+
+        {/* quick jumps */}
+        <div className="flex gap-2 flex-wrap" style={{ marginBottom: 14 }}>
+          {quick.map((q, i) => {
+            const active = d && ymd(d) === ymd(q);
+            return (
+              <button key={i} onClick={() => setIso(isoFromYmd(ymd(q)))}
+                style={{ padding: "7px 12px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer",
+                  background: active ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${active ? "#3d7bff" : "rgba(120,150,220,0.22)"}`,
+                  color: active ? "#ecf3ff" : "rgba(200,215,255,0.65)", clipPath: SHELL_NOTCH(6) }}>
+                {i === 0 ? "This Sat" : `+${i} week${i > 1 ? "s" : ""}`}
+                <span style={{ display: "block", fontSize: 10, opacity: 0.7, letterSpacing: 0 }}>{q.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ marginBottom: 6, fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Or pick any date</div>
+        <VoltDateTime value={iso} onChange={setIso} placeholder="Choose a date" />
+        {notSaturday && (
+          <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 8 }}>
+            Heads up — that's a {d.toLocaleDateString(undefined, { weekday: "long" })}, not a Saturday. It'll still work.
+          </div>
+        )}
+
+        <div style={{ margin: "16px 0 6px", fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Nickname (optional)</div>
+        <input value={nick} onChange={(e) => setNick(e.target.value)} maxLength={28} placeholder="e.g. Playoffs"
+          style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, fontWeight: 600 }} />
+
+        {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{err}</div>}
+
+        <button disabled={busy || !d} onClick={save}
+          style={{ width: "100%", marginTop: 16, padding: "12px", fontSize: 13, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase",
+            cursor: busy || !d ? "not-allowed" : "pointer", opacity: busy || !d ? 0.5 : 1,
+            background: "rgba(61,123,255,0.18)", border: "1px solid #3d7bff", color: "#ecf3ff", clipPath: SHELL_NOTCH(12) }}>
+          {busy ? "…" : mode === "create" ? "Open registration →" : "Save changes"}
+        </button>
+      </div>
+    </VoltOverlay>
+  );
+}
+
 // ── Terms gate — shown every time a player enters a tournament. Availability
 //    is a per-tournament commitment, so this is deliberately not a one-time
 //    account-level accept. Ticking the box is the record.
@@ -5723,7 +5826,7 @@ function RegisterTerms({ ev, onAccept, onClose }) {
     </li>
   );
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(4,6,12,0.86)", display: "grid", placeItems: "center", padding: 20 }}>
+    <VoltOverlay onClose={onClose} zIndex={140}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", padding: "26px 28px 24px",
         background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)",
         clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
@@ -5765,7 +5868,7 @@ function RegisterTerms({ ev, onAccept, onClose }) {
             background: "rgba(61,220,132,0.16)", border: "1px solid #3ddc84", color: "#9af5c2",
             clipPath: SHELL_NOTCH(12) }}>Enter this tournament →</button>
       </div>
-    </div>
+    </VoltOverlay>
   );
 }
 
@@ -6212,6 +6315,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
   const [showProfile, setShowProfile] = useState(false);
   const [editTime, setEditTime] = useState(false);
   const [draftAtDraft, setDraftAtDraft] = useState(null); // controlled value for the draft-time picker
+  const [setupWeekend, setSetupWeekend] = useState(null); // { mode:"create"|"edit", ev }
   const [myRegs, setMyRegs] = useState({});   // eventId → my registration row (open weekends)
   const [pendingByEvent, setPendingByEvent] = useState({}); // host: eventId → # awaiting review
   const [myProf, setMyProf] = useState(null); // rank/role — gates the play toggle
@@ -6372,22 +6476,11 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
   useEffect(() => { const t = setInterval(refreshEvents, 8000); return () => clearInterval(t); }, []);
 
   // ── Host weekend management ──
-  async function renameWeekend(ev) {
-    // Primary edit is the date (the Saturday). Nickname is optional/secondary.
-    const cur = ev.starts_on || comingSaturday();
-    const d = window.prompt("Weekend date (the Saturday, YYYY-MM-DD):", cur);
-    if (d === null) return;
-    const date = (d || "").trim();
-    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) { setErr("Use the format YYYY-MM-DD, e.g. 2026-07-25."); return; }
-    const nick = window.prompt("Optional nickname (blank for none):", (ev.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim())) ? ev.weekend_label : "");
-    try {
-      const patch = {};
-      if (date) patch.starts_on = date;
-      if (nick !== null) patch.weekend_label = nick.trim() || null;
-      if (!Object.keys(patch).length) return;
-      const { error } = await __sb.from("events").update(patch).eq("id", ev.id); if (error) throw error;
-      await refreshEvents();
-    } catch (e) { setErr(e.message || "Update failed."); }
+  async function saveWeekend(ev, patch) {
+    setErr("");
+    const { error } = await __sb.from("events").update(patch).eq("id", ev.id);
+    if (error) { setErr(error.message || "Update failed."); throw error; }
+    await refreshEvents();
   }
   async function deleteWeekend(ev) {
     if (!window.confirm(`Delete ${weekendName(ev)}? This removes the weekend and its registrations. Reported match points are kept.`)) return;
@@ -6412,13 +6505,13 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
     return dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " · " + dt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   };
 
-  async function createWeekend() {
+  async function createWeekend(patch) {
     setErr(""); setBusy(true);
     try {
-      const sat = comingSaturday();
       const { data: created, error } = await __sb.from("events").insert({
         community_id: window.__VOLT.communityId,
-        starts_on: sat,
+        starts_on: patch?.starts_on || comingSaturday(),
+        weekend_label: patch?.weekend_label ?? null,
         phase: "registration_open",
       }).select().maybeSingle();
       if (error) throw error;
@@ -6430,7 +6523,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
           kind: "weekend_open", title: `${nm} — registration open`, body: "Flip \"I'm playing\" on your dashboard to enter the pool." })));
       } catch (e) { console.error(e); }
       await load();
-    } catch (e) { setErr(e.message || "Could not create weekend."); }
+    } catch (e) { setErr(e.message || "Could not create weekend."); setBusy(false); throw e; }
     setBusy(false);
   }
 
@@ -6451,8 +6544,18 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
         {HAS_SUPABASE && <NotifBell />}
         {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? () => setShowProfile(true) : null} />}
       </div>
+      {setupWeekend && (
+        <WeekendSetup
+          mode={setupWeekend.mode}
+          ev={setupWeekend.ev}
+          onSave={async (patch) => {
+            if (setupWeekend.mode === "create") await createWeekend(patch);
+            else await saveWeekend(setupWeekend.ev, patch);
+          }}
+          onClose={() => setSetupWeekend(null)} />
+      )}
       {showProfile && (
-        <div onClick={() => setShowProfile(false)} style={{ position: "fixed", inset: 0, zIndex: 120, background: "rgba(4,6,12,0.8)", display: "grid", placeItems: "center", padding: 20 }}>
+        <VoltOverlay onClose={() => setShowProfile(false)} zIndex={120} dim="rgba(4,6,12,0.8)">
           <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(16), padding: "22px 24px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
               <span style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// My scouting profile</span>
@@ -6461,7 +6564,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
             <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "0 0 6px" }}>Captains study this before bidding — keep it current between weekends.</p>
             <ScoutProfileCard userId={window.__VOLT.userId} onSaved={loadMyMeta} />
           </div>
-        </div>
+        </VoltOverlay>
       )}
       <div style={{ maxWidth: hideHeader ? 1000 : 840, margin: "0 auto", padding: hideHeader ? "16px 20px 0" : "34px 20px 0" }}>
         {!hideHeader && <div style={{ textAlign: "center", marginBottom: 26 }}>
@@ -6513,7 +6616,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
       </span>
       <span style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: PHASE_COLOR[ev.phase] || "#5b8dff", fontWeight: 600 }}>{PHASE_LABEL[ev.phase] || ev.phase}</span>
       {isHost && <>
-        <button onClick={() => renameWeekend(ev)} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
+        <button onClick={() => setSetupWeekend({ mode: "edit", ev })} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
         <button onClick={() => deleteWeekend(ev)} title="Delete weekend" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
       </>}
       <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>{dim ? "View" : "Enter"} →</button>
@@ -6535,7 +6638,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
                 <div>
                   <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{weekendName(current)}
                     {isHost && <>
-                      <button onClick={() => renameWeekend(current)} title="Edit date / nickname" style={shellBtn("ghost", { padding: "3px 8px", fontSize: 10, marginLeft: 10, verticalAlign: "middle" })}>✎</button>
+                      <button onClick={() => setSetupWeekend({ mode: "edit", ev: current })} title="Edit date / nickname" style={shellBtn("ghost", { padding: "3px 8px", fontSize: 10, marginLeft: 10, verticalAlign: "middle" })}>✎</button>
                       <button onClick={() => deleteWeekend(current)} title="Delete weekend" style={shellBtn("danger", { padding: "3px 8px", fontSize: 10, marginLeft: 6, verticalAlign: "middle" })}>✕</button>
                     </>}
                   </div>
@@ -6640,7 +6743,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
                     <span style={{ flex: 1 }} />
                     {rc && <button onClick={() => setExpandPast(openIt ? null : ev.id)} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 10.5 })}>{openIt ? "Hide" : "Recap"}</button>}
                     {isHost && <>
-                      <button onClick={() => renameWeekend(ev)} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
+                      <button onClick={() => setSetupWeekend({ mode: "edit", ev })} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
                       <button onClick={() => deleteWeekend(ev)} title="Delete weekend" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
                     </>}
                     <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>View →</button>
@@ -6679,7 +6782,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
       </div>
     )}
     {isHost && <div style={{ textAlign: "center" }}>
-      <button disabled={busy} onClick={createWeekend} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next weekend" : "+ Create weekend"}</button>
+      <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next weekend" : "+ Create weekend"}</button>
     </div>}
     {board && <div style={{ marginTop: 34 }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
