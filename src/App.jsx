@@ -227,7 +227,7 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
     players: poolDefs,
     block: null,
     spin: null,
-    draftAt: Date.now() + 1000 * 60 * 60 * 2, // draft opens 2h after first boot
+    draftAt: null, // auction start comes from the weekend (events.draft_at)
     commishCode: null, // set by the first Commissioner; required thereafter
     teamCodes: {}, // { teamId: passcode } gating each captain's War Room; set once by that captain
     bidHistory: [],   // [{teamId, amount, ts}] for active block
@@ -3416,7 +3416,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   }, []);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState(false);
-  const [scouted, setScouted] = useState(null); // player id for modal
+  const [scouted, setScouted] = useState(null);
+  const [profileUser, setProfileUser] = useState(null); // player profile shown inside the weekend
+  const [profileFrom, setProfileFrom] = useState(null); // view to return to // player id for modal
   const [editingPlayer, setEditingPlayer] = useState(null); // player object being edited by admin
   useEffect(() => { if (editingPlayer) { const t = setTimeout(() => document.getElementById("wr-admin-form")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); return () => clearTimeout(t); } }, [editingPlayer]);
   const [filterRank, setFilterRank] = useState("All");
@@ -3485,7 +3487,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   }, [state, auth, identity, browse]);
 
   // draft time lives in shared state so the countdown matches for everyone
-  const cd = useCountdown(state?.draftAt ?? Date.now() + 7200000);
+  // The auction start, from the board or the weekend itself. No invented
+  // fallback — if nothing is scheduled we say so rather than fake a countdown.
+  const draftTarget = chrome?.draftAt ? new Date(chrome.draftAt).getTime() : (state?.draftAt ?? null);
+  const cd = useCountdown(draftTarget ?? 0);
+  const hasDraftTime = Number.isFinite(draftTarget) && draftTarget > 0;
 
   useEffect(() => {
     let alive = true;
@@ -3762,14 +3768,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const v = Math.max(0, Number(value) || 0);
     s.log.unshift(`Commish set ${t.name} budget → ${fmt(v)} (was ${fmt(t.budget)})`); s.log = s.log.slice(0, 8);
     t.budget = v;
-    return s;
-  }, true, true);
-
-  const setDraftTime = (ms) => mutate((s) => {
-    const v = Number(ms);
-    if (!Number.isFinite(v)) return null;
-    s.draftAt = v;
-    s.log.unshift(`Commish set auction start → ${new Date(v).toLocaleString()}`); s.log = s.log.slice(0, 8);
     return s;
   }, true, true);
 
@@ -4219,7 +4217,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const teamOf = (id) => state.teams.find((t) => t.id === id);
 
   // Current view name for the bar (rail may be collapsed to glyphs).
-  const viewLabel = view === "account" ? "My Account" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
+  const viewLabel = view === "account" ? "My Account" : view === "profile" ? "Player File" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
   const draftMs = chrome?.draftAt ? new Date(chrome.draftAt).getTime() - nowTick : -1;
   const draftIn = draftMs > 0 ? (() => {
     const m = Math.floor(draftMs / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
@@ -4639,12 +4637,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                   <div className="flex items-center gap-2 mb-2">
                     <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em" }}>Auction Phase</span>
                     <span className="flex items-center gap-1 ml-auto">
-                      <span className="cd-pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: cd.live ? "#3ddc84" : "#3d7bff", color: cd.live ? "#3ddc84" : "#3d7bff" }} />
-                      <span className="uppercase" style={{ fontSize: 9, letterSpacing: "0.18em", color: cd.live ? "#3ddc84" : "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{cd.live ? "Live" : "Starts in"}</span>
+                      <span className="cd-pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: !hasDraftTime ? "rgba(200,215,255,0.35)" : cd.live ? "#3ddc84" : "#3d7bff", color: !hasDraftTime ? "rgba(200,215,255,0.35)" : cd.live ? "#3ddc84" : "#3d7bff" }} />
+                      <span className="uppercase" style={{ fontSize: 9, letterSpacing: "0.18em", color: !hasDraftTime ? "rgba(200,215,255,0.45)" : cd.live ? "#3ddc84" : "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{!hasDraftTime ? "Not scheduled" : cd.live ? "Live" : "Starts in"}</span>
                     </span>
                   </div>
 
-                  {cd.live ? (
+                  {!hasDraftTime ? (
+                    <div style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", lineHeight: 1.5, color: "rgba(200,215,255,0.5)" }}>
+                      No auction time set yet.{isAdmin ? " Set one in Manage." : " Your commissioner will announce it."}
+                    </div>
+                  ) : cd.live ? (
                     <div className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "1.9rem", lineHeight: 1, letterSpacing: "0.04em", color: "#3ddc84", textShadow: "0 0 18px rgba(61,220,132,0.45)" }}>
                       Underway
                     </div>
@@ -4666,15 +4668,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                           )}
                         </span>
                       ))}
-                    </div>
-                  )}
-                  {isAdmin && (
-                    <div className="mt-3 pt-3" style={{ borderTop: "1px solid rgba(61,123,255,0.16)" }}>
-                      <p className="uppercase text-[10px] mb-1.5" style={{ color: "rgba(220,230,255,0.45)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.14em" }}>Set auction start (Commissioner)</p>
-                      <VoltDateTime
-                        value={state?.draftAt ? new Date(state.draftAt).toISOString() : null}
-                        onChange={(iso) => { const ms = iso ? new Date(iso).getTime() : NaN; if (Number.isFinite(ms)) setDraftTime(ms); }}
-                        placeholder="Set auction start" />
                     </div>
                   )}
                 </div>
@@ -5114,12 +5107,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     <Leaderboard isAdmin={isAdmin} />
   );
 
-  const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView, account: <AccountView auth={auth} chrome={chrome} /> };
+  const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView,
+    account: <AccountView auth={auth} chrome={chrome} />,
+    profile: <PlayerProfile userId={profileUser} onBack={() => { setProfileUser(null); setView(profileFrom || "scout"); }} /> };
   const scoutedPlayer = scouted ? state.players.find((p) => p.id === scouted) : null;
 
   return shell(
     <>
-      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onViewProfile={chrome?.onViewProfile ? (uid) => { setScouted(null); chrome.onViewProfile(uid); } : null} />}
+      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onViewProfile={(uid) => { setScouted(null); setProfileFrom(view); setProfileUser(uid); setView("profile"); }} />}
       {Rail}
       {TopNav}
       {views[view]}
@@ -5374,7 +5369,6 @@ function VoltGate() {
       isHost={profile?.role === "host"}
       account={account} onSignOut={signOut}
       initialView={targetView}
-      onViewProfile={(uid) => { window.__VOLT.weekendId = null; setActiveEvent(null); setTargetView(null); setPendingProfile(uid); setPhase("schedule"); }}
       onBack={() => { window.__VOLT.weekendId = null; setActiveEvent(null); setTargetView(null); setPhase("schedule"); }} />;
   }
 
@@ -5680,9 +5674,9 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
           <p style={{ fontSize: 13.5, lineHeight: 1.55, color: "rgba(200,215,255,0.7)", marginTop: 10 }}>
             This is a <b style={{ color: "#7da6ff" }}>one-time setup</b>. Captains study it at the auction to decide who to draft, and it powers your player card and radar. You won't fill this in again — it carries across every weekend, and your match stats stack onto it automatically as you play.
           </p>
-          <div style={{ display: "grid", gap: 8, margin: "16px 0", padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(8) }}>
-            <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.75)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> rank + role. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
-            <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.75)" }}><b style={{ color: "#ecf3ff" }}>Then you're entered</b> — available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches this weekend.</div>
+          <div style={{ display: "grid", gap: 12, margin: "18px 0", padding: "16px 18px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(8) }}>
+            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> rank + role. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Then you're entered</b> — available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches this weekend.</div>
           </div>
           <button onClick={() => setPhase("edit")} style={shellBtn("primary", { width: "100%", padding: "13px", letterSpacing: "0.14em" })}>Set up my profile →</button>
         </>}
@@ -5821,8 +5815,8 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
 function RegisterTerms({ ev, onAccept, onClose }) {
   const [ok, setOk] = useState(false);
   const line = (children) => (
-    <li style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 13, lineHeight: 1.55, color: "rgba(210,222,255,0.78)" }}>
-      <span style={{ color: "#5b8dff", flex: "0 0 auto", marginTop: 1 }}>▪</span><span>{children}</span>
+    <li style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 14.5, lineHeight: 1.68, color: "rgba(214,226,255,0.85)" }}>
+      <span style={{ color: "#5b8dff", flex: "0 0 auto", marginTop: 2 }}>▪</span><span>{children}</span>
     </li>
   );
   return (
@@ -5835,35 +5829,35 @@ function RegisterTerms({ ev, onAccept, onClose }) {
           <button onClick={onClose} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
         </div>
 
-        <h3 style={{ fontSize: 21, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.15, margin: "14px 0 4px" }}>
+        <h3 style={{ fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.2, margin: "18px 0 8px" }}>
           You're committing to <span style={{ color: "#f5c453" }}>Sat &amp; Sun, 7PM–2AM PKT</span>
         </h3>
-        <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(200,215,255,0.7)", margin: "0 0 16px" }}>
+        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "rgba(205,219,255,0.75)", margin: "0 0 20px" }}>
           Matches are scheduled anywhere inside that window and you won't know your exact times until the bracket is set. You need to be <b style={{ color: "#ecf3ff" }}>reachable for all of it</b> — if you can't be, don't register for this tournament.
         </p>
 
-        <div style={{ padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(9), marginBottom: 16 }}>
-          <ul style={{ display: "grid", gap: 9, margin: 0, padding: 0, listStyle: "none" }}>
+        <div style={{ padding: "18px 20px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(9), marginBottom: 20 }}>
+          <ul style={{ display: "grid", gap: 14, margin: 0, padding: 0, listStyle: "none" }}>
             {line(<>Captains spend real budget drafting you and build a roster around you. If you don't show, <b style={{ color: "#ecf3ff" }}>your team plays short</b>.</>)}
             {line(<>Pulling out <b style={{ color: "#9af5c2" }}>before the draft</b> costs you nothing — flip the toggle off, no strike.</>)}
             {line(<>Going unreachable <b style={{ color: "#ff8f9a" }}>after you've been drafted</b> is a strike.</>)}
             {line(<><b style={{ color: "#ff8f9a" }}>Two strikes = suspended for the next 2 tournaments.</b></>)}
-            {line(<>The draft is binding — you don't pick your team or your captain.</>)}
+            {line(<>The draft is binding — you don't pick your team or your captain, and <b style={{ color: "#ecf3ff" }}>once the teams are drafted they can't be changed</b>.</>)}
           </ul>
         </div>
 
-        <label style={{ display: "flex", gap: 11, alignItems: "flex-start", cursor: "pointer", padding: "12px 14px",
+        <label style={{ display: "flex", gap: 13, alignItems: "flex-start", cursor: "pointer", padding: "15px 17px",
           background: ok ? "rgba(61,220,132,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${ok ? "rgba(61,220,132,0.5)" : "rgba(120,150,220,0.25)"}`,
           clipPath: SHELL_NOTCH(8), transition: "background .15s, border-color .15s" }}>
           <input type="checkbox" checked={ok} onChange={(e) => setOk(e.target.checked)}
-            style={{ width: 17, height: 17, accentColor: "#3ddc84", marginTop: 1, flex: "0 0 auto", cursor: "pointer" }} />
-          <span style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: ok ? "#ecf3ff" : "rgba(200,215,255,0.75)" }}>
+            style={{ width: 19, height: 19, accentColor: "#3ddc84", marginTop: 1, flex: "0 0 auto", cursor: "pointer" }} />
+          <span style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.55, color: ok ? "#ecf3ff" : "rgba(200,215,255,0.75)" }}>
             I'm available and reachable for the full window, and I understand the strike policy.
           </span>
         </label>
 
         <button disabled={!ok} onClick={onAccept}
-          style={{ width: "100%", marginTop: 14, padding: "13px", fontSize: 13, fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase",
+          style={{ width: "100%", marginTop: 18, padding: "15px", fontSize: 14, fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase",
             cursor: ok ? "pointer" : "not-allowed", opacity: ok ? 1 : 0.4,
             background: "rgba(61,220,132,0.16)", border: "1px solid #3ddc84", color: "#9af5c2",
             clipPath: SHELL_NOTCH(12) }}>Enter this tournament →</button>
@@ -6674,12 +6668,13 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
                         ? <span style={{ fontSize: 14, color: "#f5c453", fontWeight: 700 }}>{live.pending} application{live.pending === 1 ? "" : "s"} awaiting your review</span>
                         : <span style={{ fontSize: 13, color: "rgba(200,215,255,0.55)" }}>No applications waiting. Approvals show up here.</span>}
                       <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "primary", { padding: "11px 18px", fontSize: 12.5 })}>Review applications →</button>
+                      <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "9px 16px", fontSize: 11.5 })}>⊞ Enter the weekend →</button>
                     </div>
                   : current.phase === "registration_open" && HAS_SUPABASE
                   ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "14px 16px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
                       <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
                         onEditProfile={() => setShowProfile(true)} onChanged={load} />
-                      <button onClick={() => onEnter(current)} style={shellBtn("ghost", { padding: "8px 14px", fontSize: 11.5, alignSelf: "flex-start" })}>⊞ Open the weekend →</button>
+                      <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "8px 14px", fontSize: 11.5, alignSelf: "flex-start" })}>⊞ Enter the weekend →</button>
                     </div>
                   : <button onClick={() => onEnter(current)} style={shellBtn("primary", { padding: "13px 26px", fontSize: 13.5 })}>{heroCTA}</button>}
               </div>
@@ -6878,7 +6873,7 @@ function matchPoints({ won, acs, kills, assists }) {
 /* ════════════════════════════════════════════════════════════════════
    WEEKEND APP — phase router. Registration → Draft → Matches, per weekend.
    ════════════════════════════════════════════════════════════════════ */
-function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialView, onViewProfile }) {
+function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialView }) {
   const [ev, setEv] = useState(event);
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
@@ -7175,7 +7170,6 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       backLabel: inReg ? "Registration" : "Schedule",
       portalLabel: inReg ? "Registration" : "League hub",
       onBack: inReg ? () => setRegView("gate") : onBack,
-      onViewProfile,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
       draftAt: ev?.draft_at || null,
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
