@@ -7200,10 +7200,12 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   }
 
   const bar = (
-    <div className="vg-shell" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(8,11,19,0.96))", borderBottom: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 10px 30px rgba(0,0,0,0.35)", fontFamily: "'Rajdhani',sans-serif", position: "sticky", top: 0, zIndex: 60 }}>
+    <div className="vg-shell" style={{ position: "sticky", top: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(8,11,19,0.96))", borderBottom: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 10px 30px rgba(0,0,0,0.35)", fontFamily: "'Rajdhani',sans-serif" }}>
       <ShellStyles />
       <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 14px" })}>‹ Schedule</button>
-      <div style={{ fontSize: 13, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, textShadow: "0 0 14px rgba(61,123,255,0.65)" }}>// {weekendName(ev)} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
+      {/* Absolutely centred so uneven left/right clusters can't push it off-axis.
+          Hidden on narrow screens where the side controls would overlap it. */}
+      <div className="hidden lg:block" style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", whiteSpace: "nowrap", pointerEvents: "none", fontSize: 13, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, textShadow: "0 0 14px rgba(61,123,255,0.65)" }}>// {weekendName(ev)} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {(phase === "registration_open" || phase === "registration_closed") && regView === "app" &&
           <button onClick={() => setRegView("gate")} style={shellBtn("accent", { padding: "8px 12px" })}>‹ Registration</button>}
