@@ -801,6 +801,9 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTi
   const statsLabel = fxLabel(a, b, match);
   const statsRecorded = statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel);
   const canReport = !!(a && b && window.__VOLT?.openReport);
+  // A score has been entered (or the match closed) but player stats aren't in
+  // yet — the state that previously had no signal at all.
+  const scoreIn = !!(match.done || (match.maps || []).some(m => m && (m.a != null || m.b != null)));
   const mapsNeeded = bo === 3 ? 3 : 1;
   const winA = match.done && match.winner === match.teamA;
   const winB = match.done && match.winner === match.teamB;
@@ -847,17 +850,22 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTi
       )}
       {(canReport || statsRecorded) && !bye && (
         <div className="flex items-center justify-center gap-2 flex-wrap" style={{ marginTop: 2 }}>
-          {statsRecorded && (
-            <span className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 10, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.35)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>✓ stats recorded</span>
-          )}
+          {statsRecorded ? (
+            <span className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 10, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.35)", background: "rgba(61,220,132,0.06)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>✓ Stats recorded</span>
+          ) : scoreIn ? (
+            <span title="Score is in — player stats still needed for season points" className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 10, color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", background: "rgba(245,196,83,0.07)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>⚠ Stats pending</span>
+          ) : null}
           {canReport && (
             <button onClick={() => window.__VOLT.openReport({
                 teamAName: a.name, teamBName: b.name, label: statsLabel,
                 winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null,
               })}
               className="uppercase tracking-widest px-3 py-1 transition-all hover:scale-[1.03]"
-              style={{ fontSize: 10.5, color: statsRecorded ? "rgba(200,215,255,0.55)" : "#9af5c2", border: `1px solid ${statsRecorded ? "rgba(120,150,220,0.25)" : "rgba(61,220,132,0.45)"}`, background: statsRecorded ? "transparent" : "rgba(61,220,132,0.06)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
-              ▦ {statsRecorded ? "Edit stats" : "Player stats"}</button>
+              style={{ fontSize: 10.5, color: statsRecorded ? "rgba(200,215,255,0.55)" : scoreIn ? "#ffe4a0" : "#9af5c2",
+                border: `1px solid ${statsRecorded ? "rgba(120,150,220,0.25)" : scoreIn ? "rgba(245,196,83,0.5)" : "rgba(61,220,132,0.45)"}`,
+                background: statsRecorded ? "transparent" : scoreIn ? "rgba(245,196,83,0.1)" : "rgba(61,220,132,0.06)",
+                fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
+              ▦ {statsRecorded ? "Edit stats" : scoreIn ? "Add player stats" : "Player stats"}</button>
           )}
         </div>
       )}
@@ -1050,6 +1058,10 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onS
   const a = teamOf(match.teamA), b = teamOf(match.teamB);
   const bo = match.bo || 1;
   const bye = match.teamB == null && match.teamA != null;
+  const statsLabel = fxLabel(a, b, match);
+  const statsRecorded = statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel);
+  const canReport = !!(a && b && window.__VOLT?.openReport);
+  const scoreIn = !!(match.done || (match.maps || []).some(m => m && (m.a != null || m.b != null)));
   const winA = match.done && match.winner === match.teamA;
   const winB = match.done && match.winner === match.teamB;
 
@@ -1097,6 +1109,24 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onS
       {!bye && a && b && (
         <div className="px-3 pb-2" style={{ borderTop: "1px solid rgba(120,150,220,0.16)" }}>
           <MatchPrediction match={match} locator={locator} a={a} b={b} onVote={onVote} />
+        </div>
+      )}
+      {!bye && (canReport || statsRecorded) && (
+        <div className="flex items-center justify-center gap-2 flex-wrap px-3 pb-2.5" style={{ borderTop: "1px solid rgba(120,150,220,0.16)", paddingTop: 8 }}>
+          {statsRecorded ? (
+            <span className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 9.5, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.35)", background: "rgba(61,220,132,0.06)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em" }}>✓ Stats recorded</span>
+          ) : scoreIn ? (
+            <span title="Score is in — player stats still needed for season points" className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 9.5, color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", background: "rgba(245,196,83,0.07)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em" }}>⚠ Stats pending</span>
+          ) : null}
+          {canReport && (
+            <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: statsLabel, winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null })}
+              className="uppercase tracking-widest px-2.5 py-1 transition-all hover:scale-[1.03]"
+              style={{ fontSize: 10, color: statsRecorded ? "rgba(200,215,255,0.55)" : scoreIn ? "#ffe4a0" : "#9af5c2",
+                border: `1px solid ${statsRecorded ? "rgba(120,150,220,0.25)" : scoreIn ? "rgba(245,196,83,0.5)" : "rgba(61,220,132,0.45)"}`,
+                background: statsRecorded ? "transparent" : scoreIn ? "rgba(245,196,83,0.1)" : "rgba(61,220,132,0.06)",
+                fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+              ▦ {statsRecorded ? "Edit" : "Player stats"}</button>
+          )}
         </div>
       )}
 
