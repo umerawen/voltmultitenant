@@ -3475,7 +3475,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const [scouted, setScouted] = useState(null);
   const [profileUser, setProfileUser] = useState(null); // player profile shown inside the weekend
   const [profileFrom, setProfileFrom] = useState(null); // view to return to
-  const [reportFrom, setReportFrom] = useState(null);   // view to return to after reporting // player id for modal
+  const [reportFrom, setReportFrom] = useState(null);   // view to return to after reporting
+  // Reporting is a view — follow chrome.reportNode in and out of it. Must live
+  // with the other hooks, above any early return, or the hook count changes
+  // between renders and React blanks the screen.
+  useEffect(() => {
+    if (chrome?.reportNode) setView(v => (v === "report" ? v : (setReportFrom(v), "report")));
+    else setView(v => (v === "report" ? (reportFrom || "bracket") : v));
+  }, [chrome?.reportNode]); // player id for modal
   const [editingPlayer, setEditingPlayer] = useState(null); // player object being edited by admin
   useEffect(() => { if (editingPlayer) { const t = setTimeout(() => document.getElementById("wr-admin-form")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); return () => clearTimeout(t); } }, [editingPlayer]);
   const [filterRank, setFilterRank] = useState("All");
@@ -4290,12 +4297,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const teamOf = (id) => state.teams.find((t) => t.id === id);
 
   // Current view name for the bar (rail may be collapsed to glyphs).
-  // Reporting is a view now — follow chrome.reportNode in and out of it.
-  useEffect(() => {
-    if (chrome?.reportNode && view !== "report") { setReportFrom(view); setView("report"); }
-    else if (!chrome?.reportNode && view === "report") { setView(reportFrom || "bracket"); setReportFrom(null); }
-  }, [chrome?.reportNode]);
-
   const viewLabel = view === "account" ? "My Account" : view === "profile" ? "Player File" : view === "report" ? "Report Match" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
   const draftMs = chrome?.draftAt ? new Date(chrome.draftAt).getTime() - nowTick : -1;
   const draftIn = draftMs > 0 ? (() => {
