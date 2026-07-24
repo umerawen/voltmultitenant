@@ -4351,7 +4351,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   const shell = (children) => (
-    <div className="min-h-screen volt-shell-box" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk && identity ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)", containerType: "inline-size" }}>
+    <div className="min-h-screen volt-shell-box" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)", containerType: "inline-size" }}>
       {fonts}
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
       <div className="relative min-h-screen">
