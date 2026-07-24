@@ -4285,7 +4285,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       }
       /* Hero copy keeps real breathing room on every screen, and can never
          exceed its own column no matter how the rail is set. */
-      .volt-hero-copy { padding-right: clamp(16px, 4%, 56px); box-sizing: border-box; max-width: 100%; }
+      .volt-hero-copy { padding-right: clamp(16px, 4%, 56px); box-sizing: border-box; }
       .volt-hero-title { overflow-wrap: break-word; hyphens: none; max-width: 100%; }
       /* Container queries: the hero measures the space LEFT OF the rail, so
          expanding the rail shrinks the headline instead of pushing it off. */
@@ -4681,7 +4681,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   /* ════════ VIEW: LOBBY ════════ */
   const LobbyView = (
     <div className="view-in">
-      <div className="relative overflow-hidden volt-hero-bleed" style={{ aspectRatio: "1920 / 1086", maxHeight: "84vh", minHeight: 520, background: "#05070e" }}>
+      <div className="relative overflow-hidden volt-hero-bleed" style={{ height: "clamp(520px, 78vh, 900px)", background: "#05070e" }}>
         {/* Figma hero art (Neon + watermark baked in) */}
         <img src={IMG_HERO} alt="" className="absolute inset-0 w-full h-full" style={{ objectFit: "cover", objectPosition: "right 30%" }} />
         {/* left-side legibility scrim so live text stays crisp over the art */}
@@ -4702,7 +4702,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             {/* live text + buttons — centered in the upper band, clear of the baked-in
                 top rail (~12%) above and the status panel / bottom rail below */}
             <div className="absolute flex flex-col justify-center items-start text-left volt-hero-copy"
-              style={{ left: 0, right: "auto", top: "17%", bottom: "16%", width: "min(820px, 64%)", maxWidth: "100%" }}>
+              style={{ left: "clamp(20px, 5%, 72px)", right: "auto", top: "17%", bottom: "16%", width: "min(820px, 64%)", maxWidth: "calc(100% - clamp(40px, 10%, 144px))" }}>
               <h1 className="font-bold uppercase volt-hero-title" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,7.5vw,9.4rem)", lineHeight: 0.82, letterSpacing: "0.04em", textShadow: "0 0 50px rgba(61,123,255,0.25)", overflowWrap: "break-word" }}>
                 <span className="shine-text shine-white" style={{ animationDelay: "0s" }}>Initiation</span><br />
                 <span className="shine-text shine-blue" style={{ animationDelay: "0s" }}>Protocol</span><br />
