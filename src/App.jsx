@@ -4265,6 +4265,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       /* one shared horizontal inset for all aligned sections (nav, hero text, cards, ticker) */
       .page-wrap { max-width: 1760px; margin-left: auto; margin-right: auto; padding-left: 5vw; padding-right: 5vw; }
       @media (min-width: 1400px) { .page-wrap { padding-left: 88px; padding-right: 88px; } }
+      /* Hero bleeds to the edges of the CONTENT area (inside the rail), not the
+         viewport — a 100vw escape would slide it under the fixed rail. */
+      .volt-hero-bleed { width: auto; margin-left: -5vw; margin-right: -5vw; }
+      @media (min-width: 1400px) { .volt-hero-bleed { margin-left: -88px; margin-right: -88px; } }
+      @media (max-width: 900px) { .volt-hero-bleed { margin-left: -18px; margin-right: -18px; } }
       /* Tighter gutters on small screens so content isn't squeezed by 5vw padding. */
       @media (max-width: 900px) { .page-wrap { padding-left: 18px; padding-right: 18px; } }
       /* The hero lives right of the rail, so its copy column needs more of the
@@ -4676,7 +4681,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   /* ════════ VIEW: LOBBY ════════ */
   const LobbyView = (
     <div className="view-in">
-      <div className="relative overflow-hidden" style={{ width: "100vw", marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)", aspectRatio: "1920 / 1086", maxHeight: "84vh", minHeight: 520, background: "#05070e" }}>
+      <div className="relative overflow-hidden volt-hero-bleed" style={{ aspectRatio: "1920 / 1086", maxHeight: "84vh", minHeight: 520, background: "#05070e" }}>
         {/* Figma hero art (Neon + watermark baked in) */}
         <img src={IMG_HERO} alt="" className="absolute inset-0 w-full h-full" style={{ objectFit: "cover", objectPosition: "right 30%" }} />
         {/* left-side legibility scrim so live text stays crisp over the art */}
