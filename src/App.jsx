@@ -42,9 +42,17 @@ if (typeof window !== "undefined") {
       try {
         const row = { community_id: cid, k: key, val: value, shared: !!shared, user_id: shared ? null : window.__VOLT.userId, updated_at: new Date().toISOString() };
         const { error } = await __sb.from("community_kv").upsert(row, { onConflict: "community_id,k,shared,user_id" });
-        if (error) { console.error("storage.set failed:", error.message); return memSet(key, value, shared); }
+        if (error) {
+          console.error("storage.set failed:", error.message, { key, shared });
+          memSet(key, value, shared);              // keep the value locally…
+          throw new Error(error.message || "Save failed"); // …but never claim success
+        }
         return { key, value, shared: !!shared };
-      } catch (e) { console.error("storage.set", e); return memSet(key, value, shared); }
+      } catch (e) {
+        console.error("storage.set", e);
+        memSet(key, value, shared);
+        throw e;                                   // let callers know it didn't persist
+      }
     },
     async delete(key, shared) {
       const cid = window.__VOLT.communityId;
@@ -246,7 +254,10 @@ async function readState() {
 }
 async function writeState(s) {
   if (!s.stamp) s.stamp = Date.now();
-  try { await window.storage.set(boardKey(), JSON.stringify(s), true); } catch (e) { console.error(e); }
+  // Deliberately NOT swallowing errors: a silent failure here is what made
+  // edits appear to "revert" — the UI kept the optimistic value while the
+  // server never received it, then the next poll painted the old state back.
+  await window.storage.set(boardKey(), JSON.stringify(s), true);
   return s;
 }
 
@@ -3488,6 +3499,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     window.addEventListener("beforeunload", onLeave);
     return () => { cancelled = true; clearInterval(iv); onLeave(); window.removeEventListener("beforeunload", onLeave); };
   }, []);
+  const [saveErr, setSaveErr] = useState(null); // surfaced when a board write fails
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState(false);
   const [scouted, setScouted] = useState(null);
@@ -3717,16 +3729,24 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       next.stamp = Date.now();                // stamp now so the poll guard is exact
       localStampRef.current = next.stamp;
       setState(next);
+      const persist = (st) => writeState(st)
+        .then((w) => { if (w) localStampRef.current = Math.max(localStampRef.current, w.stamp); setSaveErr(null); })
+        .catch((e) => {
+          // The write never reached the server. Say so — otherwise the next
+          // poll silently paints the old state back and it looks like a ghost.
+          console.error("board write failed:", e);
+          setSaveErr(e?.message || "Couldn't save — check your connection.");
+        });
       if (debounce) {
         // coalesce bursts of rapid edits into one network write shortly after the last one
         if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
         writeTimerRef.current = setTimeout(() => {
           writeTimerRef.current = null;
           const latest = stateRef.current;
-          if (latest) writeState(latest).then((w) => { if (w) localStampRef.current = Math.max(localStampRef.current, w.stamp); });
+          if (latest) persist(latest);
         }, 280);
       } else {
-        writeState(next).then((w) => { if (w) localStampRef.current = Math.max(localStampRef.current, w.stamp); });
+        persist(next);
       }
       return;
     }
@@ -4245,6 +4265,31 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       /* one shared horizontal inset for all aligned sections (nav, hero text, cards, ticker) */
       .page-wrap { max-width: 1760px; margin-left: auto; margin-right: auto; padding-left: 5vw; padding-right: 5vw; }
       @media (min-width: 1400px) { .page-wrap { padding-left: 88px; padding-right: 88px; } }
+      /* Tighter gutters on small screens so content isn't squeezed by 5vw padding. */
+      @media (max-width: 900px) { .page-wrap { padding-left: 18px; padding-right: 18px; } }
+      /* The hero lives right of the rail, so its copy column needs more of the
+         remaining width as the screen shrinks — and the title must come down
+         with it or it overflows. */
+      @media (max-width: 1680px) {
+        .volt-hero-copy { width: min(760px, 78%) !important; }
+        .volt-hero-title { font-size: clamp(2.2rem, 5.6vw, 5.6rem) !important; }
+      }
+      @media (max-width: 1280px) {
+        .volt-hero-copy { width: min(700px, 80%) !important; }
+        .volt-hero-title { font-size: clamp(2.2rem, 5.2vw, 4.4rem) !important; }
+      }
+      @media (max-width: 1024px) {
+        .volt-hero-copy { width: 88% !important; }
+        .volt-hero-title { font-size: clamp(2rem, 6vw, 3.8rem) !important; }
+      }
+      @media (max-width: 768px) {
+        .volt-hero-copy { width: 100% !important; top: 14% !important; bottom: 12% !important; }
+        .volt-hero-title { font-size: clamp(1.9rem, 9vw, 3rem) !important; }
+      }
+      /* The 10% global scale-up is generous on laptops — ease it off so layouts
+         that fit at 100% don't overflow. */
+      @media (max-width: 1440px) { html { zoom: 1.04; } }
+      @media (max-width: 1180px) { html { zoom: 1; } }
       .grid-bg { background-image: linear-gradient(rgba(157,107,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(157,107,255,0.06) 1px, transparent 1px); background-size: 44px 44px; }
       .sale-flash { animation: saleflash 1.3s ease-out; }
       @keyframes saleflash { 0% { background: rgba(255,70,85,0.55); } 100% { background: rgba(255,70,85,0); } }
@@ -4629,9 +4674,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
             {/* live text + buttons — centered in the upper band, clear of the baked-in
                 top rail (~12%) above and the status panel / bottom rail below */}
-            <div className="absolute flex flex-col justify-center items-start text-left"
-              style={{ left: 0, right: "auto", top: "17%", bottom: "16%", width: "min(820px, 64%)" }}>
-              <h1 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(3.5rem,10.5vw,9.4rem)", lineHeight: 0.8, letterSpacing: "0.04em", textShadow: "0 0 50px rgba(61,123,255,0.25)" }}>
+            <div className="absolute flex flex-col justify-center items-start text-left volt-hero-copy"
+              style={{ left: 0, right: "auto", top: "17%", bottom: "16%", width: "min(820px, 64%)", maxWidth: "100%" }}>
+              <h1 className="font-bold uppercase volt-hero-title" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,7.5vw,9.4rem)", lineHeight: 0.82, letterSpacing: "0.04em", textShadow: "0 0 50px rgba(61,123,255,0.25)", overflowWrap: "break-word" }}>
                 <span className="shine-text shine-white" style={{ animationDelay: "0s" }}>Initiation</span><br />
                 <span className="shine-text shine-blue" style={{ animationDelay: "0s" }}>Protocol</span><br />
                 <span className="shine-text shine-white" style={{ animationDelay: "0s" }}>// Draft</span>
@@ -5215,6 +5260,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   return shell(
     <>
       {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onViewProfile={(uid) => { setScouted(null); setProfileFrom(view); setProfileUser(uid); setView("profile"); }} />}
+      {saveErr && (
+        <div style={{ position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 210, maxWidth: "92vw",
+          display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", fontFamily: "'Rajdhani',sans-serif",
+          background: "rgba(40,10,16,0.97)", border: "1px solid rgba(255,70,85,0.6)", clipPath: SHELL_NOTCH(10), boxShadow: "0 14px 40px rgba(0,0,0,0.5)" }}>
+          <span style={{ color: "#ff8f9a", fontSize: 13, fontWeight: 700 }}>⚠ Not saved</span>
+          <span style={{ color: "rgba(230,220,225,0.8)", fontSize: 12.5 }}>{saveErr}</span>
+          <button onClick={() => window.location.reload()} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>Reload</button>
+          <button onClick={() => setSaveErr(null)} style={{ background: "none", border: "none", color: "rgba(200,215,255,0.5)", cursor: "pointer", fontSize: 14 }}>✕</button>
+        </div>
+      )}
       {Rail}
       {TopNav}
       {views[view]}
@@ -5545,6 +5600,9 @@ function shellBtn(kind, extra) {
 function ShellStyles() {
   return <style>{`
     html { zoom: 1.1; }
+    @media (max-width: 1440px) { html { zoom: 1.04; } }
+    @media (max-width: 1180px) { html { zoom: 1; } }
+    @media (max-width: 900px) { .page-wrap { padding-left: 18px; padding-right: 18px; } }
     .vg-shell select { -webkit-appearance: none; -moz-appearance: none; appearance: none;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%235b8dff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
       background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px !important;
