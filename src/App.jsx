@@ -1313,10 +1313,28 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             </TPanel>
           )}
 
-          <button onClick={() => actions.tCreate(draftFormat, draftBo, draftGroups)} className="gate-cta py-3.5 font-bold uppercase tracking-[0.2em]"
-            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(61,123,255,0.18)", border: "1px solid #3d7bff", color: "#eaf1ff" }}>
-            Create Tournament →
-          </button>
+          {(() => {
+            const nTeams = state.teams.length;
+            const need = draftFormat === "group" ? draftGroups * 2 : 2;
+            const short = nTeams < need;
+            return (
+              <>
+                <button disabled={short} onClick={() => actions.tCreate(draftFormat, draftBo, draftGroups)} className="gate-cta py-3.5 font-bold uppercase tracking-[0.2em]"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: short ? "rgba(120,150,220,0.08)" : "rgba(61,123,255,0.18)", border: `1px solid ${short ? "rgba(120,150,220,0.3)" : "#3d7bff"}`, color: short ? "rgba(200,215,255,0.4)" : "#eaf1ff", cursor: short ? "not-allowed" : "pointer" }}>
+                  Create Tournament →
+                </button>
+                {short && (
+                  <p className="text-center text-[12px] mt-2" style={{ color: "#f5c453", fontFamily: "'Rajdhani',sans-serif" }}>
+                    {nTeams === 0
+                      ? "No teams yet — run the auction (or add teams in the Locker Room) first."
+                      : draftFormat === "group"
+                        ? `${nTeams} team${nTeams === 1 ? "" : "s"} on the board — ${draftGroups} groups needs at least ${need}. Add teams or pick fewer groups.`
+                        : `${nTeams} team${nTeams === 1 ? "" : "s"} on the board — you need at least 2.`}
+                  </p>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
     );
@@ -3745,7 +3763,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     }
     s.players = s.players.filter((x) => x.id !== pid);
     return s;
-  });
+  }, true, true);
   const spinNominate = () => mutate((s) => {
     if (s.block || (s.spin && Date.now() < s.spin.startTs + SPIN_MS + REVEAL_MS)) return null;
     const poolIds = s.players.filter((p) => p.status === "pool" && !p.isCaptain).map((p) => p.id);
@@ -3798,7 +3816,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     if (nm) t.name = nm.toUpperCase();
     if (cap) t.captain = cap;
     return s;
-  });
+  }, true, true);
   const addTeam = () => mutate((s) => {
     if (s.teams.length >= MAX_TEAMS) return null;
     const used = new Set(s.teams.map((t) => t.hue));
@@ -3807,7 +3825,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     s.teams.push({ id: "t" + uid(), name: "TEAM " + n, captain: "Captain " + n, hue, budget: 10000, roster: [] });
     s.log.unshift(`New team added — ${s.teams.length} teams in the draft`); s.log = s.log.slice(0, 8);
     return s;
-  });
+  }, true, true);
   const removeTeam = (teamId) => mutate((s) => {
     if (s.teams.length <= MIN_TEAMS) return null;
     if (s.block?.leaderId === teamId) return null; // can't remove the team holding the live bid
@@ -3818,7 +3836,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     if (s.teamCodes) delete s.teamCodes[teamId];
     s.log.unshift(`${t.name} removed — ${t.roster.length ? "drafted players returned to pool" : "had no draftees"}`); s.log = s.log.slice(0, 8);
     return s;
-  });
+  }, true, true);
 
   /* ── manual roster edits (Commissioner only) — add deducts the price, remove refunds it, so budget stays correct ── */
   const adminAddToRoster = (teamId, playerId, price) => mutate((s) => {
@@ -7074,8 +7092,13 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
 
       const { captains, pool } = await fetchWeekendRoster();
       const stamp = (st) => { if (ev?.draft_at) st.draftAt = new Date(ev.draft_at).getTime(); return st; };
+      // Carry over any team names the captains already set, so rebuilding the
+      // board from registrations doesn't reset them to the default seeds.
+      const priorName = {};
+      (existing?.teams || []).forEach(t => { if (t.captainUserId && t.name) priorName[t.captainUserId] = t.name; });
+      const withNames = captains.map(c => (priorName[c.userId] ? { ...c, teamName: priorName[c.userId] } : c));
       if (captains.length >= 2) {
-        await writeState(stamp(freshState(captains, pool)));
+        await writeState(stamp(freshState(withNames, pool)));
       } else if (!existing) {
         // No captains registered and no board yet → seed so the app still renders.
         await writeState(stamp(freshState(null)));
@@ -7203,7 +7226,12 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     setBusy(true);
     try {
       const { captains, pool } = await fetchWeekendRoster();
-      await writeState(freshState(captains.length >= 2 ? captains : null, pool));
+      // Keep custom team names through an explicit rebuild too.
+      const prior = await readState();
+      const priorName = {};
+      (prior?.teams || []).forEach(t => { if (t.captainUserId && t.name) priorName[t.captainUserId] = t.name; });
+      const withNames = captains.map(c => (priorName[c.userId] ? { ...c, teamName: priorName[c.userId] } : c));
+      await writeState(freshState(captains.length >= 2 ? withNames : null, pool));
       window.location.reload();
     } catch (e) { console.error(e); setBusy(false); }
   }
