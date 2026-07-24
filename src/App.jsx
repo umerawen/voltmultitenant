@@ -166,7 +166,8 @@ function computeSeasonPoints(s) {
   const ensure = (id) => { if (id && !acc[id]) acc[id] = { teamId: id, won: 0, lost: 0, pts: 0 }; };
   const allMatches = [];
   if (t.groups) Object.values(t.groups).forEach(g => (g.matches || []).forEach(m => allMatches.push(m)));
-  if (t.matches) t.matches.forEach(m => allMatches.push(m));
+  if (Array.isArray(t.matches)) t.matches.forEach(m => allMatches.push(m));
+  else if (t.matches && typeof t.matches === "object") Object.values(t.matches).forEach(a => Array.isArray(a) && a.forEach(m => allMatches.push(m)));
   if (t.rounds) t.rounds.forEach(r => (r || []).forEach(m => allMatches.push(m)));
   for (const m of allMatches) {
     if (!m || !m.done || m.teamA == null || m.teamB == null) continue;
@@ -5460,7 +5461,21 @@ function VoltGate() {
       if (!c) throw new Error("No league found with that code. Check with your host.");
       const user = await ensureAuthedUser();
       window.__VOLT.userId = user.id;
-      await __sb.from("users").upsert({ id: user.id, community_id: c.id, role: "player", display_name: displayName || email.split("@")[0] });
+      // Does this account already belong to a league?
+      const { data: existing } = await __sb.from("users").select("community_id, role, display_name").eq("id", user.id).maybeSingle();
+      if (existing && existing.community_id && existing.community_id !== c.id) {
+        if (existing.role === "host") {
+          throw new Error("This account hosts another league. Hosts can't move — create a separate account to join as a player.");
+        }
+        if (!window.confirm(`This account is already in another league. Joining "${c.name}" will move you out of it. Continue?`)) {
+          setBusy(false); return;
+        }
+      }
+      await __sb.from("users").upsert({
+        id: user.id, community_id: c.id,
+        role: existing?.role === "host" ? "host" : "player",   // never silently demote
+        display_name: displayName || existing?.display_name || email.split("@")[0],
+      });
       window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
       setProfile({ id: user.id, role: "player", display_name: displayName || email.split("@")[0], community_id: c.id });
       setPhase("schedule");
