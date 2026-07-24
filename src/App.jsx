@@ -4278,6 +4278,28 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         .volt-hero-copy { width: min(700px, 80%) !important; }
         .volt-hero-title { font-size: clamp(2.2rem, 5.2vw, 4.4rem) !important; }
       }
+      /* Hero copy keeps real breathing room on every screen, and can never
+         exceed its own column no matter how the rail is set. */
+      .volt-hero-copy { padding-right: clamp(16px, 4%, 56px); box-sizing: border-box; max-width: 100%; }
+      .volt-hero-title { overflow-wrap: break-word; hyphens: none; max-width: 100%; }
+      /* Container queries: the hero measures the space LEFT OF the rail, so
+         expanding the rail shrinks the headline instead of pushing it off. */
+      @supports (container-type: inline-size) {
+        .volt-hero-title { font-size: clamp(2rem, 7cqw, 8rem) !important; }
+        .volt-hero-copy  { width: min(820px, 62cqw) !important; }
+        @container (max-width: 1500px) {
+          .volt-hero-title { font-size: clamp(2rem, 6.2cqw, 5.2rem) !important; }
+          .volt-hero-copy  { width: min(700px, 72cqw) !important; }
+        }
+        @container (max-width: 1150px) {
+          .volt-hero-title { font-size: clamp(1.9rem, 6cqw, 4rem) !important; }
+          .volt-hero-copy  { width: 82cqw !important; }
+        }
+        @container (max-width: 860px) {
+          .volt-hero-title { font-size: clamp(1.8rem, 7.5cqw, 3.2rem) !important; }
+          .volt-hero-copy  { width: 92cqw !important; }
+        }
+      }
       @media (max-width: 1024px) {
         .volt-hero-copy { width: 88% !important; }
         .volt-hero-title { font-size: clamp(2rem, 6vw, 3.8rem) !important; }
@@ -4329,7 +4351,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   const shell = (children) => (
-    <div className="min-h-screen" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk && identity ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
+    <div className="min-h-screen volt-shell-box" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk && identity ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)", containerType: "inline-size" }}>
       {fonts}
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
       <div className="relative min-h-screen">
