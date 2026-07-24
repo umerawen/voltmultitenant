@@ -3474,7 +3474,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const [flash, setFlash] = useState(false);
   const [scouted, setScouted] = useState(null);
   const [profileUser, setProfileUser] = useState(null); // player profile shown inside the weekend
-  const [profileFrom, setProfileFrom] = useState(null); // view to return to // player id for modal
+  const [profileFrom, setProfileFrom] = useState(null); // view to return to
+  const [reportFrom, setReportFrom] = useState(null);   // view to return to after reporting // player id for modal
   const [editingPlayer, setEditingPlayer] = useState(null); // player object being edited by admin
   useEffect(() => { if (editingPlayer) { const t = setTimeout(() => document.getElementById("wr-admin-form")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); return () => clearTimeout(t); } }, [editingPlayer]);
   const [filterRank, setFilterRank] = useState("All");
@@ -4289,7 +4290,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const teamOf = (id) => state.teams.find((t) => t.id === id);
 
   // Current view name for the bar (rail may be collapsed to glyphs).
-  const viewLabel = view === "account" ? "My Account" : view === "profile" ? "Player File" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
+  // Reporting is a view now — follow chrome.reportNode in and out of it.
+  useEffect(() => {
+    if (chrome?.reportNode && view !== "report") { setReportFrom(view); setView("report"); }
+    else if (!chrome?.reportNode && view === "report") { setView(reportFrom || "bracket"); setReportFrom(null); }
+  }, [chrome?.reportNode]);
+
+  const viewLabel = view === "account" ? "My Account" : view === "profile" ? "Player File" : view === "report" ? "Report Match" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
   const draftMs = chrome?.draftAt ? new Date(chrome.draftAt).getTime() - nowTick : -1;
   const draftIn = draftMs > 0 ? (() => {
     const m = Math.floor(draftMs / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
@@ -5182,7 +5189,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
   const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView,
     account: <AccountView auth={auth} chrome={chrome} />,
-    profile: <PlayerProfile userId={profileUser} onBack={() => { setProfileUser(null); setView(profileFrom || "scout"); }} /> };
+    profile: <PlayerProfile userId={profileUser} onBack={() => { setProfileUser(null); setView(profileFrom || "scout"); }} />,
+    report: chrome?.reportNode || null };
   const scoutedPlayer = scouted ? state.players.find((p) => p.id === scouted) : null;
 
   return shell(
@@ -7238,7 +7246,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   const showReport = matchView && isHost;
 
   // Merged mode: DraftApp owns the one nav bar; league chrome rides inside it.
-  if (!showGate && !showReport) {
+  if (!showGate) {
     const PHASE_TAG = { registration_open: "Registration", registration_closed: "Reg closed", drafting: "Draft", matches_live: "Matches", settled: "Settled" };
     const PHASE_TAG_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#5b8dff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.5)" };
     const hostControls = isHost ? <>
@@ -7258,6 +7266,10 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       // registration this is the only source of captaincy.
       isCaptainElect: !!(myReg?.is_captain && (myReg?.status || "approved") === "approved"),
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
+      // Rendered as a normal view inside the weekend shell (rail + nav intact).
+      reportNode: (isHost && matchView)
+        ? <MatchReport ev={ev} prefill={reportPrefill} onDone={() => { setMatchView(false); setReportPrefill(null); refreshReported(); }} />
+        : null,
       account, onSignOut, hostControls,
       // The Lobby shows this when registration is open — flipping it IS applying.
       regToggle: (phase === "registration_open" && HAS_SUPABASE && auth?.userId && !isHost)
@@ -7268,11 +7280,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     return <DraftApp auth={auth} browse={inReg} chrome={chrome} initialView={initialView} />;
   }
 
-  const inner = showReport
-    ? <MatchReport ev={ev} prefill={reportPrefill} onDone={() => { setMatchView(false); setReportPrefill(null); refreshReported(); }} />
-    : <WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} />;
-
-  return <div>{bar}{inner}</div>;
+  return <div>{bar}<WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} /></div>;
 }
 
 // Scouting profile — the stats captains study before bidding. Saved once per
@@ -7365,6 +7373,7 @@ function MatchReport({ ev, onDone, prefill }) {
   const [saved, setSaved] = useState([]);     // reported matches for this weekend
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [editing, setEditing] = useState(null); // match_label being edited (null = new match)
 
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
   const fieldS = { padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, boxSizing: "border-box", width: 64 };
@@ -7396,6 +7405,47 @@ function MatchReport({ ev, onDone, prefill }) {
   useEffect(() => { load(); }, [ev?.id]);
 
   const teamOf = (id) => (teams || []).find(t => t.id === id);
+
+  // Pull a reported match back into the form so its stats can be corrected.
+  function editMatch(ml, rows) {
+    const board = teams || [];
+    const nameOfRow = (r) => r.stat_payload?.team;
+    const idOfRow = (r) => r.stat_payload?.teamId;
+    // Winning side first, so team A/B and the winner toggle line up.
+    const sides = [...new Set(rows.map(r => idOfRow(r) || nameOfRow(r)))].filter(Boolean);
+    const findTeam = (key) => board.find(t => t.id === key) || board.find(t => t.name === key);
+    const t1 = findTeam(sides[0]), t2 = findTeam(sides[1]);
+    if (t1) setTA(t1.id);
+    if (t2) setTB(t2.id);
+    const wonKey = rows.find(r => r.team_won);
+    const wonId = wonKey ? (idOfRow(wonKey) || nameOfRow(wonKey)) : null;
+    setWinner(wonId && t2 && (t2.id === wonId || t2.name === wonId) ? "B" : "A");
+    setLabel(ml);
+    // Restore the stat lines.
+    const ls = {};
+    rows.forEach(r => {
+      const sp = r.stat_payload || {};
+      ls[r.user_id] = { k: String(sp.k ?? ""), a: String(sp.a ?? ""), acs: String(sp.acs ?? "") };
+    });
+    setLines(ls);
+    // Anyone in the saved match who isn't on the current roster is a sub.
+    const onBoard = new Set([...(t1?.players || []), ...(t2?.players || [])].map(p => p.id));
+    const exA = [], exB = [];
+    rows.forEach(r => {
+      if (onBoard.has(r.user_id)) return;
+      const key = idOfRow(r) || nameOfRow(r);
+      const who = { id: r.user_id, name: r.stat_payload?.name || "Player" };
+      if (t2 && (t2.id === key || t2.name === key)) exB.push(who); else exA.push(who);
+    });
+    setExtras({ A: exA, B: exB });
+    setEditing(ml);
+    setErr("");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+  }
+
+  function cancelEdit() {
+    setEditing(null); setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setErr("");
+  }
   const line = (uid) => lines[uid] || { k: "", a: "", acs: "" };
   const setLine = (uid, k, v) => setLines(ls => ({ ...ls, [uid]: { ...line(uid), [k]: v.replace(/[^0-9]/g, "") } }));
   const ptsFor = (uid, won) => matchPoints({ won, acs: line(uid).acs, kills: line(uid).k, assists: line(uid).a });
@@ -7414,15 +7464,24 @@ function MatchReport({ ev, onDone, prefill }) {
           rows.push({
             event_id: ev.id, community_id: window.__VOLT.communityId, user_id: p.id,
             match_label: ml, team_won: won,
-            stat_payload: { name: p.name, team: team.name, k: +l.k || 0, a: +l.a || 0, acs: +l.acs || 0 },
+            // teamId is the board's stable slot id — it survives a captain
+            // renaming the team. `team` is the name as it stood when reported,
+            // kept so historical results read correctly.
+            stat_payload: { name: p.name, team: team.name, teamId: team.id || null, k: +l.k || 0, a: +l.a || 0, acs: +l.acs || 0 },
             points_computed: ptsFor(p.id, won),
           });
         });
       });
       if (!rows.length) throw new Error("No registered players on these rosters.");
+      // Editing: clear the previous rows for this match first, so corrections
+      // replace the record rather than stacking a second copy of the points.
+      if (editing) {
+        const { error: delErr } = await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", editing);
+        if (delErr) throw delErr;
+      }
       const { error } = await __sb.from("match_results").insert(rows);
       if (error) throw error;
-      setLines({}); setLabel(""); setExtras({ A: [], B: [] }); await load();
+      setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); await load();
     } catch (e) { setErr(e.message || "Could not save the match."); }
     setBusy(false);
   }
@@ -7484,14 +7543,58 @@ function MatchReport({ ev, onDone, prefill }) {
       <div style={panel}>
         <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
         {secLabel("Match")}
-        <input placeholder="Match label (optional — e.g. Grand Final · Map 2)" value={label} onChange={e => setLabel(e.target.value)}
-          style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box", marginBottom: 16 }} />
+        {editing && (
+          <div className="flex items-center justify-between gap-3 flex-wrap" style={{ padding: "10px 14px", marginBottom: 14, background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.45)", clipPath: SHELL_NOTCH(8) }}>
+            <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 700 }}>
+              ✎ Editing <b style={{ color: "#ffe4a0" }}>{editing}</b> — saving replaces the existing stats and points.
+            </span>
+            <button onClick={cancelEdit} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>Cancel edit</button>
+          </div>
+        )}
+
+        {/* Matchup banner — who is playing, and who won, at a glance. */}
+        {(() => {
+          const A = teamOf(tA), B = teamOf(tB);
+          const side = (t, who) => {
+            const won = winner === who;
+            const hue = t?.hue || (who === "A" ? "#ff4655" : "#00e5ff");
+            return (
+              <div style={{ flex: 1, minWidth: 0, textAlign: who === "A" ? "right" : "left", opacity: t ? 1 : 0.4 }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700, marginBottom: 4 }}>{who === "A" ? "Team A" : "Team B"}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.15, color: won ? "#ecf3ff" : "rgba(220,231,255,0.72)", textShadow: won ? `0 0 18px ${hue}66` : "none", overflowWrap: "anywhere" }}>
+                  {t?.name || "—"}
+                </div>
+                {won && <div style={{ fontSize: 10.5, letterSpacing: "0.18em", textTransform: "uppercase", color: "#3ddc84", fontWeight: 700, marginTop: 5 }}>✓ Winner</div>}
+              </div>
+            );
+          };
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 18px", marginBottom: 14,
+              background: "linear-gradient(160deg, rgba(10,16,30,0.7), rgba(8,11,19,0.6))",
+              border: `1px solid ${A && B && A.id !== B.id ? "rgba(61,123,255,0.3)" : "rgba(245,196,83,0.4)"}`, clipPath: SHELL_NOTCH(10) }}>
+              {side(A, "A")}
+              <div style={{ flex: "0 0 auto", textAlign: "center" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>VS</div>
+              </div>
+              {side(B, "B")}
+            </div>
+          );
+        })()}
+
+        <div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 5 }}>Which match is this?</div>
+        <input placeholder="e.g. Round 2 · Grand Final · Map 2 (optional)" value={label} onChange={e => setLabel(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box" }} />
+        <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", margin: "6px 0 16px" }}>
+          {label.trim()
+            ? <>Saves as <b style={{ color: "#7da6ff" }}>{label.trim()}</b></>
+            : <>Leave blank and it saves as <b style={{ color: "#7da6ff" }}>{teamOf(tA)?.name || "Team A"} vs {teamOf(tB)?.name || "Team B"}</b>. Add a label if these teams meet more than once.</>}
+        </p>
         <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
           {rosterBlock(tA, "A")}
           {rosterBlock(tB, "B")}
         </div>
         <div style={{ display: "flex", gap: 10, marginTop: 18, alignItems: "center" }}>
-          <button disabled={busy} onClick={save} style={shellBtn("primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : "Save match →"}</button>
+          <button disabled={busy} onClick={save} style={shellBtn(editing ? "accent" : "primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : editing ? "✎ Update match →" : "Save match →"}</button>
           <button onClick={onDone} style={shellBtn("ghost", { padding: "11px 18px", fontSize: 13 })}>Done</button>
           {err && <span style={{ color: "#ff8a94", fontSize: 13 }}>{err}</span>}
         </div>
@@ -7504,6 +7607,7 @@ function MatchReport({ ev, onDone, prefill }) {
             <div key={ml} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
               <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{ml}</span>
               <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>{rows.length} players · {rows.reduce((s, r) => s + Number(r.points_computed || 0), 0)} pts</span>
+              <button onClick={() => editMatch(ml, rows)} style={shellBtn(editing === ml ? "accent" : "ghost", { padding: "5px 10px", fontSize: 10 })}>{editing === ml ? "Editing…" : "✎ Edit stats"}</button>
               <button onClick={() => removeMatch(ml)} style={shellBtn("danger", { padding: "5px 10px", fontSize: 10 })}>Delete</button>
             </div>
           ))}
@@ -7511,11 +7615,11 @@ function MatchReport({ ev, onDone, prefill }) {
       </div>}
 
       {/* ── Attendance — flag players who confirmed availability but ghosted.
-             3rd strike auto-suspends them for the next 3 weekends (DB trigger).
+             2nd strike auto-suspends them for the next 2 tournaments (DB trigger).
              Unmarking a mistake lifts an active suspension. ── */}
       {allRegs.length > 0 && <div style={{ ...panel, marginTop: 16, borderColor: "rgba(255,70,85,0.3)" }}>
         {secLabel(`Attendance · ${allRegs.filter(r => r.noShow).length} no-show${allRegs.filter(r => r.noShow).length === 1 ? "" : "s"} this weekend`)}
-        <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: "0 0 10px" }}>Mark players who confirmed availability but didn't show. Every 3rd strike auto-suspends for the next 3 weekends; unmark to forgive (this also lifts an active suspension).</p>
+        <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: "0 0 10px" }}>Mark players who confirmed availability but didn't show. Two strikes auto-suspends for the next 2 tournaments; unmark to forgive (this also lifts an active suspension).</p>
         <div style={{ display: "grid", gap: 5 }}>
           {allRegs.map(r => {
             const played = saved.some(([, rows]) => rows.some(x => x.user_id === r.userId));
