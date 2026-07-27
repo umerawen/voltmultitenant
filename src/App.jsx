@@ -4629,6 +4629,21 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <button onClick={chrome.onReport}
               style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>▦ Report</button>
           )}
+          {chrome?.onApprovals && (
+            <button onClick={chrome.onApprovals}
+              title={chrome.pendingCount > 0 ? `${chrome.pendingCount} application${chrome.pendingCount === 1 ? "" : "s"} awaiting review` : "Review applications"}
+              style={{ height: 36, padding: "0 14px", clipPath: SHELL_NOTCH(9), position: "relative", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+                background: chrome.pendingCount > 0 ? "rgba(245,196,83,0.12)" : "rgba(61,123,255,0.09)",
+                border: `1px solid ${chrome.pendingCount > 0 ? "rgba(245,196,83,0.5)" : "rgba(61,123,255,0.35)"}`,
+                color: chrome.pendingCount > 0 ? "#ffe4a0" : "rgba(160,185,235,0.85)",
+                textShadow: chrome.pendingCount > 0 ? "0 0 10px rgba(245,196,83,0.4)" : "none" }}>
+              {chrome.pendingCount > 0 && <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />}
+              <span>Approvals</span>
+              {chrome.pendingCount > 0 && (
+                <span style={{ minWidth: 18, height: 18, padding: "0 5px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10.5, fontWeight: 700, borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace" }}>{chrome.pendingCount}</span>
+              )}
+            </button>
+          )}
           {chrome && HAS_SUPABASE && <NotifBell />}
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
           {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} seat={chipSeat} />}
@@ -6252,8 +6267,8 @@ async function voltNotify(rows) {
   catch (e) { console.error("notify", e); }
 }
 
-const NOTIF_GLYPH = { approved: "✓", rejected: "✕", captain: "★", settled: "🏆", weekend_open: "▸", suspension: "⚠" };
-const NOTIF_COLOR = { approved: "#3ddc84", rejected: "#ff4655", captain: "#f5c453", settled: "#f5c453", weekend_open: "#3ddc84", suspension: "#ff4655" };
+const NOTIF_GLYPH = { approved: "✓", rejected: "✕", captain: "★", settled: "🏆", weekend_open: "▸", suspension: "⚠", new_application: "◈" };
+const NOTIF_COLOR = { approved: "#3ddc84", rejected: "#ff4655", captain: "#f5c453", settled: "#f5c453", weekend_open: "#3ddc84", suspension: "#ff4655", new_application: "#f5c453" };
 
 function NotifBell() {
   const [rows, setRows] = useState([]);
@@ -7207,6 +7222,23 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     } catch (e) { console.error(e); }
   }
   useEffect(() => { if (phase === "registration_open" || phase === "registration_closed") loadMyReg(); }, [phase, ev?.id]);
+  // Host-only: how many applications are waiting for review this weekend.
+  // Powers the header Approvals pill + its live count. Cheap: probes ids only,
+  // and pauses on hidden tabs via visInterval (egress-friendly).
+  const [pendingCount, setPendingCount] = useState(0);
+  async function loadPending() {
+    if (!HAS_SUPABASE || !isHost || !ev?.id) return;
+    try {
+      const { data } = await __sb.from("registrations").select("id").eq("event_id", ev.id).eq("status", "pending");
+      setPendingCount((data || []).length);
+    } catch (e) { console.error(e); }
+  }
+  useEffect(() => {
+    if (!isHost || phase !== "registration_open") { setPendingCount(0); return; }
+    loadPending();
+    const stop = visInterval(loadPending, 15000);
+    return () => stop();
+  }, [isHost, phase, ev?.id]);
   // Which fixtures already have player stats banked (by match_label) — lets
   // the fixtures screen show "✓ recorded" and keeps the two systems in sync.
   async function refreshReported() {
@@ -7494,6 +7526,10 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       // registration this is the only source of captaincy.
       isCaptainElect: !!(myReg?.is_captain && (myReg?.status || "approved") === "approved"),
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
+      // Host jump-to-approvals: the queue lives on the registration gate, so
+      // this drops the host straight there from inside the weekend app.
+      onApprovals: (isHost && phase === "registration_open") ? () => setRegView("gate") : null,
+      pendingCount: (isHost && phase === "registration_open") ? pendingCount : 0,
       // Rendered as a normal view inside the weekend shell (rail + nav intact).
       reportNode: (isHost && matchView)
         ? <MatchReport ev={ev} prefill={reportPrefill} onDone={() => { setMatchView(false); setReportPrefill(null); refreshReported(); }} />
