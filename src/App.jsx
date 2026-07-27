@@ -4755,25 +4755,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             </span>
           </button>
         )}
-        {/* portal — back out to Registration (or the league hub). One button for
-            both roles: for a host with applications waiting it carries the count,
-            which is why there's no separate Approvals control. */}
-        {chrome?.onBack && (
-          <button onClick={chrome.onBack}
-            title={pendingReview > 0 ? `${pendingReview} application${pendingReview === 1 ? "" : "s"} awaiting review` : (chrome.portalLabel || "League hub")}
-            style={{ height: 36, padding: "0 13px", marginRight: 10, clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, flex: "0 0 auto", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
-              background: pendingReview > 0 ? "rgba(245,196,83,0.12)" : "rgba(61,123,255,0.09)",
-              border: `1px solid ${pendingReview > 0 ? "rgba(245,196,83,0.5)" : "rgba(61,123,255,0.35)"}`,
-              color: pendingReview > 0 ? "#ffe4a0" : "#9dc0ff" }}>
-            {pendingReview > 0
-              ? <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
-              : <span style={{ fontSize: 14, lineHeight: 1 }}>⊞</span>}
-            <span className="hidden sm:inline" style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{chrome.portalLabel || "League hub"}</span>
-            {pendingReview > 0 && (
-              <span style={{ minWidth: 18, height: 18, padding: "0 5px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10.5, fontWeight: 700, borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace" }}>{pendingReview}</span>
-            )}
-          </button>
-        )}
         {/* context — weekend · phase · view, one consistent breadcrumb line */}
         <div className="flex items-center gap-3 min-w-0 shrink">
           {/* weekend date — the anchor, in its own notched HUD frame */}
@@ -4804,6 +4785,25 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           {chrome?.onReport && (
             <button onClick={chrome.onReport}
               style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>▦ Report</button>
+          )}
+          {/* portal — back out to Registration (or the league hub). One button for
+              both roles: for a host with applications waiting it carries the count,
+              which is why there's no separate Approvals control. */}
+          {chrome?.onBack && (
+            <button onClick={chrome.onBack}
+              title={pendingReview > 0 ? `${pendingReview} application${pendingReview === 1 ? "" : "s"} awaiting review` : (chrome.portalLabel || "League hub")}
+              style={{ height: 36, padding: "0 13px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, flex: "0 0 auto", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+                background: pendingReview > 0 ? "rgba(245,196,83,0.12)" : "rgba(61,123,255,0.09)",
+                border: `1px solid ${pendingReview > 0 ? "rgba(245,196,83,0.5)" : "rgba(61,123,255,0.35)"}`,
+                color: pendingReview > 0 ? "#ffe4a0" : "#9dc0ff" }}>
+              {pendingReview > 0
+                ? <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
+                : <span style={{ fontSize: 14, lineHeight: 1 }}>⊞</span>}
+              <span className="hidden sm:inline" style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{chrome.portalLabel || "League hub"}</span>
+              {pendingReview > 0 && (
+                <span style={{ minWidth: 18, height: 18, padding: "0 5px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10.5, fontWeight: 700, borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace" }}>{pendingReview}</span>
+              )}
+            </button>
           )}
           {chrome && HAS_SUPABASE && <NotifBell />}
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
@@ -8284,10 +8284,13 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           Teams form from whoever registers (roughly one per 5 players). Not drafted? You can still be subbed into matches — every match you play banks season points.</p>
       </div>
 
-      {reg === undefined ? <p className="vg-loading">// Syncing…</p> : <>
+      {reg === undefined ? <p className="vg-loading">// Syncing…</p> : (
+        // Host sees the queue and roster first — reviewing people is the job;
+        // their own application is secondary. Players see theirs first.
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* ── HOST: application review queue ── */}
         {isHost && (pendingQ.length > 0 || rejectedQ.length > 0) && (
-          <div style={{ ...panel, borderColor: "rgba(245,196,83,0.4)" }}>
+          <div style={{ ...panel, order: 1, borderColor: "rgba(245,196,83,0.4)" }}>
             {corner}
             {secLabel(`Applications · ${pendingQ.length} pending`)}
             {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
@@ -8326,7 +8329,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           </div>
         )}
 
-        <div style={{ ...panel, ...(isHost && (pendingQ.length > 0 || rejectedQ.length > 0) ? { marginTop: 16 } : null) }}>
+        <div style={{ ...panel, order: isHost ? 3 : 1 }}>
           {corner}
           {secLabel(isHost && !reg ? "Your registration (host)" : "Your application")}
           {/* status line */}
@@ -8402,7 +8405,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
         </div>
 
 
-        <div style={{ ...panel, marginTop: 16 }}>
+        <div style={{ ...panel, order: 2 }}>
           {corner}
           {secLabel(`Approved roster · ${roster.length}`)}
           {roster.length === 0
@@ -8447,11 +8450,12 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           {isHost && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "12px 0 0" }}>Captains you assign here become the teams when you open the draft. "Available" marks players who volunteered.</p>}
         </div>
 
-        <div style={{ textAlign: "center", marginTop: 24 }}>
+        <div style={{ textAlign: "center", order: 4, marginTop: 8 }}>
           <button onClick={onExplore} style={shellBtn("ghost", { padding: "12px 26px", fontSize: 13, color: "#7da6ff", borderColor: "rgba(61,123,255,0.4)" })}>⊞ Explore the league →</button>
           <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 12, marginTop: 8 }}>Browse the Scout Hub, players and rosters while registration runs.</p>
         </div>
-      </>}
+        </div>
+      )}
     </div>
   </div>;
 }
