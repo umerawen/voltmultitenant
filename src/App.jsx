@@ -82,6 +82,24 @@ if (typeof window !== "undefined") {
         throw e;                                   // let callers know it didn't persist
       }
     },
+    // Compare-and-swap on a shared row. `expected` is the updatedAt this client
+    // last saw; the write only lands if the row still carries it. On conflict it
+    // returns { ok:false, ... } plus whatever actually won, so the caller can
+    // re-apply its change on top rather than overwriting someone else's.
+    // expected == null means "write unconditionally" (first build, rebuild, reset).
+    async cas(key, expected, value) {
+      const cid = window.__VOLT.communityId;
+      if (!HAS_SUPABASE || !cid) { memSet(key, value, true); return { ok: true, updatedAt: new Date().toISOString(), value }; }
+      const { data, error } = await __sb.rpc("volt_kv_cas", { p_community: cid, p_key: key, p_expected: expected || null, p_val: value });
+      if (error) {
+        console.error("storage.cas failed:", error.message, { key });
+        memSet(key, value, true);
+        throw new Error(error.message || "Save failed");
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) throw new Error("Save failed — no response from server");
+      return { ok: !!row.ok, updatedAt: row.new_updated_at || null, value: row.cur_val ?? null };
+    },
     async delete(key, shared) {
       const cid = window.__VOLT.communityId;
       if (!HAS_SUPABASE || !cid) { const had = __mem.delete(memKey(key, shared)); return { key, deleted: had, shared: !!shared }; }
@@ -133,6 +151,9 @@ function boardKey() {
   return w ? `${STORE_KEY_BASE}::${w}` : STORE_KEY_BASE;
 }
 const POLL_MS = 2500;        // active-tab auction poll (was 1500 — every 300ms saved adds up across clients)
+const POLL_MS_HOT = 1200;    // a player is on the block: bids are contended, so sync hard. With
+                             // conditional GET an extra poll is a ~43-byte probe — the full board
+                             // only downloads when it actually changed, so this costs almost nothing.
 const POLL_MS_HIDDEN = 15000; // hidden tab: still sync, but rarely (conditional GET makes these near-free anyway)
 
 // True when the tab is visible (or when the API is unavailable, e.g. SSR).
@@ -142,9 +163,12 @@ function tabVisible() {
 // setInterval replacement that (a) skips the callback while the tab is hidden
 // unless `runHidden` is set, and (b) fires once immediately on re-show so the
 // UI catches up the moment the user comes back. Returns a cleanup function.
+// activeMs/hiddenMs may be a number or a function returning one, so a caller can
+// tighten its own cadence when it matters (a live auction) and relax otherwise.
 function visInterval(fn, activeMs, hiddenMs) {
   let timer = null;
-  const period = () => (tabVisible() ? activeMs : (hiddenMs || activeMs));
+  const ms = (v) => (typeof v === "function" ? v() : v);
+  const period = () => (tabVisible() ? ms(activeMs) : (ms(hiddenMs) || ms(activeMs)));
   const arm = () => { clearTimeout(timer); timer = setTimeout(tick, period()); };
   async function tick() { try { if (tabVisible() || hiddenMs) await fn(); } finally { arm(); } }
   const onVis = () => { if (tabVisible()) { fn(); } arm(); }; // catch up + re-cadence on show/hide
@@ -330,17 +354,45 @@ async function readState() {
     return parsed;
   } catch { const cached = __boardCache.get(key); return cached ? cached.parsed : null; }
 }
+// The updatedAt this client last saw for the board — the version token that
+// makes a write conditional. Null means we've never read it, so the write goes
+// through unconditionally.
+function boardVersion() {
+  const c = __boardCache.get(boardKey());
+  return c ? c.updatedAt : null;
+}
+// Unconditional write — for building, rebuilding and resetting the board, where
+// overwriting whatever is there IS the intent.
 async function writeState(s) {
   if (!s.stamp) s.stamp = Date.now();
+  const key = boardKey();
+  const json = JSON.stringify(s);
   // Deliberately NOT swallowing errors: a silent failure here is what made
   // edits appear to "revert" — the UI kept the optimistic value while the
   // server never received it, then the next poll painted the old state back.
-  await window.storage.set(boardKey(), JSON.stringify(s), true);
-  // Prime the cache so our own next poll doesn't re-download what we just wrote.
-  // We don't know the server's updated_at yet, so drop the cache entry; the next
-  // readState does one full fetch, then conditional GETs resume from there.
-  __boardCache.delete(boardKey());
+  const r = await window.storage.cas(key, null, json);
+  // Prime the cache with the server's own updated_at so our next poll neither
+  // re-downloads what we just wrote nor misses what someone else writes next.
+  if (r && r.updatedAt) __boardCache.set(key, { updatedAt: r.updatedAt, parsed: JSON.parse(json) });
+  else __boardCache.delete(key);
   return s;
+}
+// Conditional write — lands only if nobody else has written since we last read.
+// On conflict, returns the state that won so the caller can re-apply on top of
+// it. This is what stops two simultaneous bids from erasing each other.
+async function writeStateChecked(s, expected) {
+  if (!s.stamp) s.stamp = Date.now();
+  const key = boardKey();
+  const json = JSON.stringify(s);
+  const r = await window.storage.cas(key, expected, json);
+  if (r.ok) {
+    if (r.updatedAt) __boardCache.set(key, { updatedAt: r.updatedAt, parsed: JSON.parse(json) });
+    return { ok: true, state: s };
+  }
+  let current = null;
+  try { current = r.value ? JSON.parse(r.value) : null; } catch { current = null; }
+  if (current && r.updatedAt) __boardCache.set(key, { updatedAt: r.updatedAt, parsed: current });
+  return { ok: false, current };
 }
 
 /* ── private (per-captain) war-room storage: shared=false keeps it off the synced board ── */
@@ -3769,7 +3821,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         }
       }
       if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
-    }, POLL_MS, POLL_MS_HIDDEN);
+    }, () => {
+      // Bidding is the only moment where a stale price does real damage, so
+      // tighten the cadence while a player is on the block (or the wheel is
+      // spinning) and ease back off the rest of the time.
+      const s = stateRef.current;
+      if (!s) return POLL_MS;
+      if (s.block) return POLL_MS_HOT;
+      if (s.spin && Date.now() < s.spin.startTs + s.spin.duration + 2000) return POLL_MS_HOT;
+      return POLL_MS;
+    }, POLL_MS_HIDDEN);
     return () => { alive = false; stop(); };
   }, []);
 
@@ -3842,14 +3903,42 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       next.stamp = Date.now();                // stamp now so the poll guard is exact
       localStampRef.current = next.stamp;
       setState(next);
-      const persist = (st) => writeState(st)
-        .then((w) => { if (w) localStampRef.current = Math.max(localStampRef.current, w.stamp); setSaveErr(null); })
-        .catch((e) => {
+      const persist = async (st, attempt = 0) => {
+        try {
+          // Conditional on the version we last read. If someone wrote in the
+          // gap between our read and this write, the server rejects us and
+          // hands back the winner — we then re-run `fn` on THAT state instead
+          // of overwriting it. For a bid this means the second captain lands
+          // on top of the first ($2,200 over $2,100) rather than erasing them.
+          const r = await writeStateChecked(st, boardVersion());
+          if (r.ok) { localStampRef.current = Math.max(localStampRef.current, r.state.stamp); setSaveErr(null); return; }
+          if (!r.current || attempt >= 3) {
+            // Give up gracefully: adopt whatever is on the server rather than
+            // leaving the UI showing a value that never persisted.
+            if (r.current) { localStampRef.current = r.current.stamp; setState(r.current); }
+            setSaveErr("Someone else moved first — showing the latest board.");
+            return;
+          }
+          const merged = fn(structuredClone(r.current));
+          if (!merged) {
+            // Our change no longer applies to the new state (already outbid,
+            // player already sold, budget no longer covers it). Accept theirs.
+            localStampRef.current = r.current.stamp;
+            setState(r.current);
+            setSaveErr(null);
+            return;
+          }
+          merged.stamp = Date.now();
+          localStampRef.current = merged.stamp;
+          setState(merged);
+          return persist(merged, attempt + 1);
+        } catch (e) {
           // The write never reached the server. Say so — otherwise the next
           // poll silently paints the old state back and it looks like a ghost.
           console.error("board write failed:", e);
           setSaveErr(e?.message || "Couldn't save — check your connection.");
-        });
+        }
+      };
       if (debounce) {
         // coalesce bursts of rapid edits into one network write shortly after the last one
         if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
@@ -3865,9 +3954,23 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     }
     setBusy(true);
     try {
-      const latest = (await readState()) || freshState();
-      const next = fn(structuredClone(latest));
-      if (next) { next.stamp = Date.now(); localStampRef.current = next.stamp; await writeState(next); setState(next); }
+      // Same conditional write as the optimistic path: read, apply, and only
+      // commit if nobody wrote in between. On conflict we re-read and re-apply
+      // rather than clobbering, so a host edit can't erase a bid landing at
+      // the same moment (or the other way round).
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const latest = (await readState()) || freshState();
+        const expected = boardVersion();
+        const next = fn(structuredClone(latest));
+        if (!next) break;
+        next.stamp = Date.now();
+        const r = await writeStateChecked(next, expected);
+        if (r.ok) { localStampRef.current = next.stamp; setState(next); break; }
+        if (!r.current || attempt === 3) {
+          if (r.current) { localStampRef.current = r.current.stamp; setState(r.current); }
+          break;
+        }
+      }
     }
     finally { setBusy(false); }
   }, [busy]);
@@ -4525,6 +4628,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     return d.toLocaleDateString(undefined, { weekday: "short" }) + " " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   };
 
+  // Applications waiting on the host. Players are always sent 0, so the same
+  // Registration button serves both roles — it just grows a badge for the host.
+  const pendingReview = chrome?.pendingCount || 0;
+
   // Current view name for the bar (rail may be collapsed to glyphs).
   const viewLabel = view === "account" ? "My Account" : view === "profile" ? "Player File" : view === "report" ? "Report Match" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
   const draftMs = chrome?.draftAt ? new Date(chrome.draftAt).getTime() - nowTick : -1;
@@ -4648,14 +4755,23 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             </span>
           </button>
         )}
-        {/* portal — back out to Registration (or the league hub). Lives in the
-            top bar rather than the side rail so it stays reachable when the
-            rail is collapsed to glyphs or hidden entirely. */}
+        {/* portal — back out to Registration (or the league hub). One button for
+            both roles: for a host with applications waiting it carries the count,
+            which is why there's no separate Approvals control. */}
         {chrome?.onBack && (
-          <button onClick={chrome.onBack} title={chrome.portalLabel || "League hub"}
-            style={{ height: 36, padding: "0 13px", marginRight: 10, clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, flex: "0 0 auto", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,123,255,0.09)", border: "1px solid rgba(61,123,255,0.35)", color: "#9dc0ff" }}>
-            <span style={{ fontSize: 14, lineHeight: 1 }}>⊞</span>
+          <button onClick={chrome.onBack}
+            title={pendingReview > 0 ? `${pendingReview} application${pendingReview === 1 ? "" : "s"} awaiting review` : (chrome.portalLabel || "League hub")}
+            style={{ height: 36, padding: "0 13px", marginRight: 10, clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, flex: "0 0 auto", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+              background: pendingReview > 0 ? "rgba(245,196,83,0.12)" : "rgba(61,123,255,0.09)",
+              border: `1px solid ${pendingReview > 0 ? "rgba(245,196,83,0.5)" : "rgba(61,123,255,0.35)"}`,
+              color: pendingReview > 0 ? "#ffe4a0" : "#9dc0ff" }}>
+            {pendingReview > 0
+              ? <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
+              : <span style={{ fontSize: 14, lineHeight: 1 }}>⊞</span>}
             <span className="hidden sm:inline" style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{chrome.portalLabel || "League hub"}</span>
+            {pendingReview > 0 && (
+              <span style={{ minWidth: 18, height: 18, padding: "0 5px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10.5, fontWeight: 700, borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace" }}>{pendingReview}</span>
+            )}
           </button>
         )}
         {/* context — weekend · phase · view, one consistent breadcrumb line */}
@@ -4688,21 +4804,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           {chrome?.onReport && (
             <button onClick={chrome.onReport}
               style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>▦ Report</button>
-          )}
-          {chrome?.onApprovals && (
-            <button onClick={chrome.onApprovals}
-              title={chrome.pendingCount > 0 ? `${chrome.pendingCount} application${chrome.pendingCount === 1 ? "" : "s"} awaiting review` : "Review applications"}
-              style={{ height: 36, padding: "0 14px", clipPath: SHELL_NOTCH(9), position: "relative", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
-                background: chrome.pendingCount > 0 ? "rgba(245,196,83,0.12)" : "rgba(61,123,255,0.09)",
-                border: `1px solid ${chrome.pendingCount > 0 ? "rgba(245,196,83,0.5)" : "rgba(61,123,255,0.35)"}`,
-                color: chrome.pendingCount > 0 ? "#ffe4a0" : "rgba(160,185,235,0.85)",
-                textShadow: chrome.pendingCount > 0 ? "0 0 10px rgba(245,196,83,0.4)" : "none" }}>
-              {chrome.pendingCount > 0 && <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />}
-              <span>Approvals</span>
-              {chrome.pendingCount > 0 && (
-                <span style={{ minWidth: 18, height: 18, padding: "0 5px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10.5, fontWeight: 700, borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace" }}>{chrome.pendingCount}</span>
-              )}
-            </button>
           )}
           {chrome && HAS_SUPABASE && <NotifBell />}
           {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
@@ -7663,9 +7764,8 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       // registration this is the only source of captaincy.
       isCaptainElect: !!(myReg?.is_captain && (myReg?.status || "approved") === "approved"),
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
-      // Host jump-to-approvals: the queue lives on the registration gate, so
-      // this drops the host straight there from inside the weekend app.
-      onApprovals: (isHost && phase === "registration_open") ? () => setRegView("gate") : null,
+      // The top-bar Registration button already routes here via onBack during
+      // registration, so it carries the count instead of a separate control.
       pendingCount: (isHost && phase === "registration_open") ? pendingCount : 0,
       // Rendered as a normal view inside the weekend shell (rail + nav intact).
       reportNode: (isHost && matchView)
@@ -8185,7 +8285,48 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
       </div>
 
       {reg === undefined ? <p className="vg-loading">// Syncing…</p> : <>
-        <div style={panel}>
+        {/* ── HOST: application review queue ── */}
+        {isHost && (pendingQ.length > 0 || rejectedQ.length > 0) && (
+          <div style={{ ...panel, borderColor: "rgba(245,196,83,0.4)" }}>
+            {corner}
+            {secLabel(`Applications · ${pendingQ.length} pending`)}
+            {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
+            <div style={{ display: "grid", gap: 6 }}>
+              {pendingQ.map(r => {
+                const openIt = openApp === r.userId;
+                return (
+                  <div key={r.userId} style={{ background: "rgba(245,196,83,0.05)", border: `1px solid rgba(245,196,83,${openIt ? "0.45" : "0.25"})`, clipPath: SHELL_NOTCH(7) }}>
+                    <div onClick={() => setOpenApp(openIt ? null : r.userId)} role="button" title="View full profile"
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flexWrap: "wrap", cursor: "pointer" }}>
+                      <span style={{ color: "#f5c453", fontSize: 11, width: 12 }}>{openIt ? "▾" : "▸"}</span>
+                      <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
+                      {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
+                      {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
+                      <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
+                      {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 2 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "approved"); }} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "rejected"); }} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
+                    </div>
+                    {openIt && profileDetail(r, "rgba(245,196,83,0.15)")}
+                  </div>
+                );
+              })}
+            </div>
+            {rejectedQ.length > 0 && <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginBottom: 6 }}>// Rejected · {rejectedQ.length}</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {rejectedQ.map(r => (
+                  <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", opacity: 0.6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.1)", clipPath: SHELL_NOTCH(6) }}>
+                    <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: 12.5, flex: 1 }}>{r.name}</span>
+                    <button disabled={busy} onClick={() => hostDecide(r, "approved")} style={shellBtn("ghost", { padding: "4px 10px", fontSize: 10 })}>Approve anyway</button>
+                  </div>
+                ))}
+              </div>
+            </div>}
+          </div>
+        )}
+
+        <div style={{ ...panel, ...(isHost && (pendingQ.length > 0 || rejectedQ.length > 0) ? { marginTop: 16 } : null) }}>
           {corner}
           {secLabel(isHost && !reg ? "Your registration (host)" : "Your application")}
           {/* status line */}
@@ -8260,46 +8401,6 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
         </div>
 
-        {/* ── HOST: application review queue ── */}
-        {isHost && (pendingQ.length > 0 || rejectedQ.length > 0) && (
-          <div style={{ ...panel, marginTop: 16, borderColor: "rgba(245,196,83,0.4)" }}>
-            {corner}
-            {secLabel(`Applications · ${pendingQ.length} pending`)}
-            {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
-            <div style={{ display: "grid", gap: 6 }}>
-              {pendingQ.map(r => {
-                const openIt = openApp === r.userId;
-                return (
-                  <div key={r.userId} style={{ background: "rgba(245,196,83,0.05)", border: `1px solid rgba(245,196,83,${openIt ? "0.45" : "0.25"})`, clipPath: SHELL_NOTCH(7) }}>
-                    <div onClick={() => setOpenApp(openIt ? null : r.userId)} role="button" title="View full profile"
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flexWrap: "wrap", cursor: "pointer" }}>
-                      <span style={{ color: "#f5c453", fontSize: 11, width: 12 }}>{openIt ? "▾" : "▸"}</span>
-                      <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
-                      {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
-                      {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
-                      <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
-                      {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 2 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
-                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "approved"); }} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
-                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "rejected"); }} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
-                    </div>
-                    {openIt && profileDetail(r, "rgba(245,196,83,0.15)")}
-                  </div>
-                );
-              })}
-            </div>
-            {rejectedQ.length > 0 && <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginBottom: 6 }}>// Rejected · {rejectedQ.length}</div>
-              <div style={{ display: "grid", gap: 4 }}>
-                {rejectedQ.map(r => (
-                  <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", opacity: 0.6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.1)", clipPath: SHELL_NOTCH(6) }}>
-                    <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: 12.5, flex: 1 }}>{r.name}</span>
-                    <button disabled={busy} onClick={() => hostDecide(r, "approved")} style={shellBtn("ghost", { padding: "4px 10px", fontSize: 10 })}>Approve anyway</button>
-                  </div>
-                ))}
-              </div>
-            </div>}
-          </div>
-        )}
 
         <div style={{ ...panel, marginTop: 16 }}>
           {corner}
