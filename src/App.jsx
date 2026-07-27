@@ -30,11 +30,39 @@ if (typeof window !== "undefined") {
       const cid = window.__VOLT.communityId;
       if (!HAS_SUPABASE || !cid) return memGet(key, shared);
       try {
-        let q = __sb.from("community_kv").select("val").eq("community_id", cid).eq("k", key).eq("shared", !!shared);
+        let q = __sb.from("community_kv").select("val, updated_at").eq("community_id", cid).eq("k", key).eq("shared", !!shared);
         if (!shared) q = q.eq("user_id", window.__VOLT.userId);
         const { data } = await q.maybeSingle();
-        return data ? { key, value: data.val, shared: !!shared } : null;
+        return data ? { key, value: data.val, updatedAt: data.updated_at, shared: !!shared } : null;
       } catch (e) { console.error("storage.get", e); return memGet(key, shared); }
+    },
+    // Conditional GET — the single biggest egress saver. A poll first fetches
+    // ONLY the row's `updated_at` (a timestamp, a few bytes) instead of the whole
+    // `val` blob (which for the auction board is 100+ KB). The large column is
+    // downloaded ONLY when the row is newer than what the caller already holds.
+    // `sinceUpdatedAt` is the updatedAt the caller last saw (from a prior get).
+    // Returns:
+    //   { unchanged: true }                          → row not newer; nothing downloaded
+    //   { key, value, updatedAt, shared }            → row is newer; full value included
+    //   null                                         → row does not exist
+    async getIfChanged(key, shared, sinceUpdatedAt) {
+      const cid = window.__VOLT.communityId;
+      if (!HAS_SUPABASE || !cid) return memGet(key, shared); // memory path: no metering, just return value
+      try {
+        // 1) Cheap probe: timestamp only.
+        let probe = __sb.from("community_kv").select("updated_at").eq("community_id", cid).eq("k", key).eq("shared", !!shared);
+        if (!shared) probe = probe.eq("user_id", window.__VOLT.userId);
+        const { data: meta } = await probe.maybeSingle();
+        if (!meta) return null;
+        if (sinceUpdatedAt && meta.updated_at && meta.updated_at <= sinceUpdatedAt) {
+          return { unchanged: true, updatedAt: meta.updated_at };
+        }
+        // 2) It changed (or caller had nothing) → fetch the full value once.
+        let full = __sb.from("community_kv").select("val, updated_at").eq("community_id", cid).eq("k", key).eq("shared", !!shared);
+        if (!shared) full = full.eq("user_id", window.__VOLT.userId);
+        const { data } = await full.maybeSingle();
+        return data ? { key, value: data.val, updatedAt: data.updated_at, shared: !!shared } : null;
+      } catch (e) { console.error("storage.getIfChanged", e); return memGet(key, shared); }
     },
     async set(key, value, shared) {
       const cid = window.__VOLT.communityId;
@@ -104,7 +132,26 @@ function boardKey() {
   const w = (typeof window !== "undefined" && window.__VOLT && window.__VOLT.weekendId) || null;
   return w ? `${STORE_KEY_BASE}::${w}` : STORE_KEY_BASE;
 }
-const POLL_MS = 1500;
+const POLL_MS = 2500;        // active-tab auction poll (was 1500 — every 300ms saved adds up across clients)
+const POLL_MS_HIDDEN = 15000; // hidden tab: still sync, but rarely (conditional GET makes these near-free anyway)
+
+// True when the tab is visible (or when the API is unavailable, e.g. SSR).
+function tabVisible() {
+  return typeof document === "undefined" || document.visibilityState !== "hidden";
+}
+// setInterval replacement that (a) skips the callback while the tab is hidden
+// unless `runHidden` is set, and (b) fires once immediately on re-show so the
+// UI catches up the moment the user comes back. Returns a cleanup function.
+function visInterval(fn, activeMs, hiddenMs) {
+  let timer = null;
+  const period = () => (tabVisible() ? activeMs : (hiddenMs || activeMs));
+  const arm = () => { clearTimeout(timer); timer = setTimeout(tick, period()); };
+  async function tick() { try { if (tabVisible() || hiddenMs) await fn(); } finally { arm(); } }
+  const onVis = () => { if (tabVisible()) { fn(); } arm(); }; // catch up + re-cadence on show/hide
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVis);
+  arm();
+  return () => { clearTimeout(timer); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVis); };
+}
 
 // Hardcoded access codes (baked into the build — nobody sets these in-app).
 // Commissioner: 1218.  Captains: by seat order, seat 1 → "0001" ... seat 8 → "0008".
@@ -247,9 +294,23 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
   };
 }
 
+// Board-read cache, keyed by boardKey(), so polling can use a conditional GET:
+// when the row hasn't changed since we last read it, nothing is downloaded and
+// we hand back the parsed object we already have. This is what keeps a live
+// auction (8+ clients polling every ~2s) from re-downloading the whole board
+// blob on every tick — the dominant source of Supabase egress.
+const __boardCache = new Map(); // key -> { updatedAt, parsed }
 async function readState() {
-  try { const r = await window.storage.get(boardKey(), true); return r ? JSON.parse(r.value) : null; }
-  catch { return null; }
+  const key = boardKey();
+  try {
+    const cached = __boardCache.get(key);
+    const r = await window.storage.getIfChanged(key, true, cached ? cached.updatedAt : null);
+    if (!r) { __boardCache.delete(key); return null; }        // row gone
+    if (r.unchanged) return cached ? cached.parsed : null;    // nothing downloaded
+    const parsed = JSON.parse(r.value);
+    __boardCache.set(key, { updatedAt: r.updatedAt, parsed });
+    return parsed;
+  } catch { const cached = __boardCache.get(key); return cached ? cached.parsed : null; }
 }
 async function writeState(s) {
   if (!s.stamp) s.stamp = Date.now();
@@ -257,6 +318,10 @@ async function writeState(s) {
   // edits appear to "revert" — the UI kept the optimistic value while the
   // server never received it, then the next poll painted the old state back.
   await window.storage.set(boardKey(), JSON.stringify(s), true);
+  // Prime the cache so our own next poll doesn't re-download what we just wrote.
+  // We don't know the server's updated_at yet, so drop the cache entry; the next
+  // readState does one full fetch, then conditional GETs resume from there.
+  __boardCache.delete(boardKey());
   return s;
 }
 
@@ -2860,8 +2925,8 @@ function Leaderboard({ isAdmin }) {
       } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
     }
     load();
-    const t = setInterval(load, 15000);
-    return () => { alive = false; clearInterval(t); };
+    const stop = visInterval(load, 15000);
+    return () => { alive = false; stop(); };
   }, []);
 
   return (
@@ -3488,7 +3553,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     };
 
     tick();
-    const iv = setInterval(tick, BEAT_MS);
+    // Only heartbeat while the tab is visible. A hidden tab that stops stamping
+    // simply ages out of the presence map after FRESH_MS — which is the correct
+    // behavior anyway (a backgrounded viewer isn't really "watching"), and it
+    // stops idle tabs from churning a read+write every 5s.
+    const stopBeat = visInterval(tick, BEAT_MS);
     const onLeave = async () => {
       try {
         const r = await window.storage.get(KEY, true);
@@ -3496,7 +3565,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       } catch {}
     };
     window.addEventListener("beforeunload", onLeave);
-    return () => { cancelled = true; clearInterval(iv); onLeave(); window.removeEventListener("beforeunload", onLeave); };
+    return () => { cancelled = true; stopBeat(); onLeave(); window.removeEventListener("beforeunload", onLeave); };
   }, []);
   const [saveErr, setSaveErr] = useState(null); // surfaced when a board write fails
   const [busy, setBusy] = useState(false);
@@ -3621,8 +3690,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         } catch (e) { console.error("browse roster", e); if (alive && !stateRef.current) setState(freshState(null)); }
       };
       loadLive();
-      const t = setInterval(loadLive, 8000); // pick up new registrations live
-      return () => { alive = false; clearInterval(t); };
+      const stop = visInterval(loadLive, 8000); // pick up new registrations live
+      return () => { alive = false; stop(); };
     }
     const load = async () => {
       let s = await readState();
@@ -3644,7 +3713,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       if (alive) setState(s);
     };
     load();
-    const t = setInterval(async () => {
+    const stop = visInterval(async () => {
       const s = await readState();
       if (!alive || !s) return;
       // ignore remote state that isn't newer than what we have locally (prevents clobbering optimistic writes)
@@ -3673,8 +3742,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         }
       }
       if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
-    }, POLL_MS);
-    return () => { alive = false; clearInterval(t); };
+    }, POLL_MS, POLL_MS_HIDDEN);
+    return () => { alive = false; stop(); };
   }, []);
 
   useEffect(() => {
@@ -6195,7 +6264,7 @@ function NotifBell() {
       setRows(data || []);
     } catch (e) { console.error(e); }
   }
-  useEffect(() => { pull(); const t = setInterval(pull, 20000); return () => clearInterval(t); }, []);
+  useEffect(() => { pull(); const stop = visInterval(pull, 20000); return () => stop(); }, []);
   const unread = rows.filter(r => !r.read).length;
   async function openPanel() {
     const v = !open; setOpen(v);
@@ -6703,7 +6772,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
     } else setLive(null);
     loadMyRegs(data);
   }
-  useEffect(() => { const t = setInterval(refreshEvents, 8000); return () => clearInterval(t); }, []);
+  useEffect(() => { const stop = visInterval(refreshEvents, 8000); return () => stop(); }, []);
 
   // ── Host weekend management ──
   async function saveWeekend(ev, patch) {
@@ -7176,11 +7245,11 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   // Poll the weekend's phase so players follow the host's transitions live.
   useEffect(() => {
     if (!HAS_SUPABASE || !ev) return;
-    const t = setInterval(async () => {
+    const stop = visInterval(async () => {
       const { data } = await __sb.from("events").select("*").eq("id", ev.id).maybeSingle();
       if (data && data.phase !== ev.phase) setEv(data);
-    }, 4000);
-    return () => clearInterval(t);
+    }, 6000);
+    return () => stop();
   }, [ev?.id, ev?.phase]);
 
   const NEXT = { registration_open: "registration_closed", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
@@ -7848,7 +7917,7 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
       setMyStrikes((ns || []).length);
     } catch (e) { console.error(e); }
   }
-  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [ev?.id]);
+  useEffect(() => { load(); const stop = visInterval(load, 10000); return () => stop(); }, [ev?.id]);
 
   const profileComplete = !!(myProf?.rank && myProf?.role);
 
