@@ -255,12 +255,21 @@ function weekendName(ev) {
   if (!raw) return ev.weekend_label || "Weekend";
   const sat = new Date(raw + "T00:00:00");
   if (isNaN(sat)) return ev.weekend_label || "Weekend";
-  const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
+  // ends_on is optional — without it an event is the classic Sat–Sun weekend.
+  // With it, the event can run any length (a fortnight-long tournament, a
+  // single day) and the label spans whatever was actually set.
+  let sun = new Date(sat); sun.setDate(sat.getDate() + 1);
+  if (ev.ends_on) {
+    const e = new Date(ev.ends_on + "T00:00:00");
+    if (!isNaN(e) && e >= sat) sun = e;
+  }
   const mon = sat.toLocaleDateString(undefined, { month: "short" });
   const monS = sun.toLocaleDateString(undefined, { month: "short" });
-  const label = mon === monS
-    ? `${mon} ${sat.getDate()}\u2013${sun.getDate()}`
-    : `${mon} ${sat.getDate()} \u2013 ${monS} ${sun.getDate()}`;
+  const label = sat.getTime() === sun.getTime()
+    ? `${mon} ${sat.getDate()}`
+    : mon === monS
+      ? `${mon} ${sat.getDate()}\u2013${sun.getDate()}`
+      : `${mon} ${sat.getDate()} \u2013 ${monS} ${sun.getDate()}`;
   // Keep a nickname only if the host set one that isn't the old auto counter.
   const nick = ev.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : null;
   return nick ? `${label} \u00b7 ${nick}` : label;
@@ -6253,6 +6262,17 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
   const isoFromYmd = (s) => (s ? new Date(s + "T12:00:00").toISOString() : null);
   const initial = ev?.starts_on || comingSaturday();
   const [iso, setIso] = useState(isoFromYmd(initial));
+  // How long the event runs. spanDays is the preset (2 = Sat–Sun, 7 = a week,
+  // 14 = a fortnight); 0 means the host picked their own end date.
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const dayGap = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+  const initialSpan = (() => {
+    if (!ev?.ends_on || !ev?.starts_on) return 2;
+    const n = dayGap(ev.starts_on, ev.ends_on) + 1;
+    return [2, 7, 14].includes(n) ? n : 0;
+  })();
+  const [spanDays, setSpanDays] = useState(initialSpan);
+  const [customEnd, setCustomEnd] = useState(ev?.ends_on || null);
   const [nick, setNick] = useState(
     ev?.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : "");
   const [busy, setBusy] = useState(false);
@@ -6260,7 +6280,10 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
 
   const d = iso ? new Date(iso) : null;
   const notSaturday = d && d.getDay() !== 6;
-  const label = d ? weekendName({ starts_on: ymd(d), weekend_label: nick.trim() || null }) : "—";
+  // The end date the host has actually chosen, however they chose it.
+  const endYmd = !d ? null : (spanDays ? ymd(addDays(d, spanDays - 1)) : (customEnd || null));
+  const label = d ? weekendName({ starts_on: ymd(d), ends_on: endYmd, weekend_label: nick.trim() || null }) : "—";
+  const spanInvalid = !!(d && endYmd && dayGap(ymd(d), endYmd) < 0);
 
   // Quick jumps — this Saturday, and the next three after it.
   const quick = Array.from({ length: 4 }, (_, i) => {
@@ -6271,8 +6294,9 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
 
   async function save() {
     if (!d) { setErr("Pick a date first."); return; }
+    if (spanInvalid) { setErr("The end date is before the start date."); return; }
     setBusy(true); setErr("");
-    try { await onSave({ starts_on: ymd(d), weekend_label: nick.trim() || null }); onClose(); }
+    try { await onSave({ starts_on: ymd(d), ends_on: endYmd, weekend_label: nick.trim() || null }); onClose(); }
     catch (e) { setErr(e.message || "Could not save."); setBusy(false); }
   }
 
@@ -6289,7 +6313,7 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
         </div>
 
         <div style={{ fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", margin: "14px 0 3px" }}>{label}</div>
-        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", margin: "0 0 16px" }}>Weekends run Saturday–Sunday. Pick the Saturday.</p>
+        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", margin: "0 0 16px" }}>Pick the start date, then how long it runs. A weekend is the default — longer tournaments work too.</p>
 
         {/* quick jumps */}
         <div className="flex gap-2 flex-wrap" style={{ marginBottom: 14 }}>
@@ -6315,6 +6339,40 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
             Heads up — that's a {d.toLocaleDateString(undefined, { weekday: "long" })}, not a Saturday. It'll still work.
           </div>
         )}
+
+        <div style={{ margin: "16px 0 6px", fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>How long does it run</div>
+        <div className="flex gap-2 flex-wrap">
+          {[{ n: 2, t: "Weekend", s: "Sat–Sun" }, { n: 7, t: "1 week", s: "7 days" }, { n: 14, t: "2 weeks", s: "14 days" }, { n: 0, t: "Custom", s: "pick end" }].map((o) => {
+            const active = spanDays === o.n;
+            return (
+              <button key={o.n} onClick={() => {
+                setSpanDays(o.n);
+                // Seed the custom picker from the current end so switching to
+                // Custom doesn't dump the host on an empty field.
+                if (o.n === 0 && !customEnd && d) setCustomEnd(ymd(addDays(d, (spanDays || 2) - 1)));
+              }}
+                style={{ padding: "7px 12px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer",
+                  background: active ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${active ? "#3d7bff" : "rgba(120,150,220,0.22)"}`,
+                  color: active ? "#ecf3ff" : "rgba(200,215,255,0.65)", clipPath: SHELL_NOTCH(6) }}>
+                {o.t}
+                <span style={{ display: "block", fontSize: 10, opacity: 0.7, letterSpacing: 0 }}>{o.s}</span>
+              </button>
+            );
+          })}
+        </div>
+        {spanDays === 0 && (
+          <div style={{ marginTop: 10 }}>
+            <VoltDateTime value={customEnd ? isoFromYmd(customEnd) : null}
+              onChange={(v) => setCustomEnd(v ? ymd(new Date(v)) : null)} placeholder="Choose the end date" />
+          </div>
+        )}
+        {endYmd && !spanInvalid && (
+          <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", marginTop: 8 }}>
+            Runs {dayGap(ymd(d), endYmd) + 1} day{dayGap(ymd(d), endYmd) === 0 ? "" : "s"} — ends {new Date(endYmd + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}.
+          </div>
+        )}
+        {spanInvalid && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>The end date is before the start date.</div>}
 
         <div style={{ margin: "16px 0 6px", fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Nickname (optional)</div>
         <input value={nick} onChange={(e) => setNick(e.target.value)} maxLength={28} placeholder="e.g. Playoffs"
@@ -6551,7 +6609,7 @@ function PlayerProfile({ userId, onBack, footer }) {
           __sb.from("users").select("display_name, trophy_streak, best_streak, weekends_won, brackets_won, suspension_remaining").eq("id", userId).maybeSingle(),
           __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle(),
           __sb.from("match_results").select("event_id, points_computed, team_won, stat_payload, created_at").eq("community_id", cid).eq("user_id", userId).order("created_at", { ascending: true }),
-          __sb.from("events").select("id, weekend_label, starts_on, created_at, recap").eq("community_id", cid),
+          __sb.from("events").select("id, weekend_label, starts_on, ends_on, created_at, recap").eq("community_id", cid),
           __sb.from("registrations").select("id, event_id, no_show").eq("community_id", cid).eq("user_id", userId).eq("no_show", true),
         ]);
         setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [], strikes: strikes || [] });
@@ -7037,6 +7095,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
       const { data: created, error } = await __sb.from("events").insert({
         community_id: window.__VOLT.communityId,
         starts_on: patch?.starts_on || comingSaturday(),
+        ends_on: patch?.ends_on ?? null,
         weekend_label: patch?.weekend_label ?? null,
         phase: "registration_open",
       }).select().maybeSingle();
@@ -7294,7 +7353,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
       // loop needs a manual flip and it's easy to forget one on a busy night.
       const hrs = current.created_at ? (Date.now() - new Date(current.created_at).getTime()) / 3.6e6 : 0;
       const stale = { registration_open: hrs > 72, registration_closed: true, drafting: true, matches_live: true }[current.phase];
-      const advLabel = { registration_open: "Open the draft", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle the weekend" }[current.phase];
+      const advLabel = { registration_open: "Start draft phase", registration_closed: "Start draft phase", drafting: "Start matches", matches_live: "Settle the weekend" }[current.phase];
       return stale && advLabel ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 16, padding: "11px 16px", background: "rgba(245,196,83,0.06)", border: "1px solid rgba(245,196,83,0.35)", clipPath: SHELL_NOTCH(9), flexWrap: "wrap" }}>
           <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 600 }}>⚙ {weekendName(current)} is waiting on you — next step: <b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>{advLabel}</b></span>
@@ -7502,7 +7561,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   // are one action now. The enum value still exists in the DB (and the display
   // maps below still know it) so any legacy row renders, but nothing writes it.
   const NEXT = { registration_open: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
-  const NEXT_LABEL = { registration_open: "Open the draft", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
+  const NEXT_LABEL = { registration_open: "Start draft phase", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
   const PREV = { drafting: "registration_open", matches_live: "drafting" };
   const [arm, setArm] = useState(false); // two-tap confirm on phase advance
   useEffect(() => { if (!arm) return; const t = setTimeout(() => setArm(false), 4000); return () => clearTimeout(t); }, [arm]);
@@ -7715,6 +7774,8 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {(phase === "registration_open" || phase === "registration_closed") && regView === "app" &&
           <button onClick={() => setRegView("gate")} style={shellBtn("accent", { padding: "8px 12px" })}>‹ Registration</button>}
+        {(phase === "registration_open" || phase === "registration_closed") && regView === "gate" &&
+          <button onClick={() => setRegView("app")} style={shellBtn("primary", { padding: "8px 14px" })}>⊞<span className="hidden sm:inline"> Explore the league</span> →</button>}
         {isHost && (narrow
           ? <HostMenu>
               {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
@@ -7729,7 +7790,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
               {phase === "matches_live" &&
                 <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { padding: "8px 12px" })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
               {phase !== "settled" &&
-                <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { padding: "8px 16px" })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+                <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "ghost", { padding: "8px 16px" })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
             </>)}
         {account && <AccountChip account={account} onSignOut={onSignOut} />}
       </div>
@@ -7781,7 +7842,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     return <DraftApp auth={auth} browse={inReg} chrome={chrome} initialView={initialView} />;
   }
 
-  return <div>{bar}<WeekendRegistration ev={ev} auth={auth} phase={phase} onExplore={() => setRegView("app")} /></div>;
+  return <div>{bar}<WeekendRegistration ev={ev} auth={auth} phase={phase} /></div>;
 }
 
 // Scouting profile — the stats captains study before bidding. Saved once per
@@ -8155,7 +8216,7 @@ function MatchReport({ ev, onDone, prefill }) {
 // Registration — professional single-flow: status, profile, live registrant
 // roster. Captaincy is the Commissioner's call; players can only quietly
 // signal availability. The host assigns captains from the roster below.
-function WeekendRegistration({ ev, auth, phase, onExplore }) {
+function WeekendRegistration({ ev, auth, phase }) {
   const regOpen = phase === "registration_open";
   const isHost = auth?.role === "host";
   const [reg, setReg] = useState(undefined);
@@ -8450,10 +8511,6 @@ function WeekendRegistration({ ev, auth, phase, onExplore }) {
           {isHost && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "12px 0 0" }}>Captains you assign here become the teams when you open the draft. "Available" marks players who volunteered.</p>}
         </div>
 
-        <div style={{ textAlign: "center", order: 4, marginTop: 8 }}>
-          <button onClick={onExplore} style={shellBtn("ghost", { padding: "12px 26px", fontSize: 13, color: "#7da6ff", borderColor: "rgba(61,123,255,0.4)" })}>⊞ Explore the league →</button>
-          <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 12, marginTop: 8 }}>Browse the Scout Hub, players and rosters while registration runs.</p>
-        </div>
         </div>
       )}
     </div>
