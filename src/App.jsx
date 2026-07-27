@@ -179,29 +179,9 @@ const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brim
 const TEAM_HUES = ["#ff4655", "#00e5ff", "#9d6bff", "#5ad1ff", "#ff8a3d", "#e35cff", "#3ddc84", "#f5c453", "#ff6fae", "#7c9cff", "#ffd24a", "#4dd6c1"];
 const MAX_TEAMS = 12, MIN_TEAMS = 2;
 
-const TEAM_SEEDS = [
-  { name: "CRIMSON PULSE",  captain: "Vex",     hue: "#ff4655" },
-  { name: "NEON SYNDICATE", captain: "Kiro",    hue: "#00e5ff" },
-  { name: "VOID WALKERS",   captain: "Mantra",  hue: "#9d6bff" },
-  { name: "GLACIER UNIT",   captain: "Frost",   hue: "#5ad1ff" },
-  { name: "EMBER PROTOCOL", captain: "Ash",     hue: "#ff8a3d" },
-  { name: "PHANTOM CELL",   captain: "Wraith",  hue: "#e35cff" },
-  { name: "APEX VANGUARD",  captain: "Striker", hue: "#3ddc84" },
-  { name: "IRON HALO",      captain: "Bastion", hue: "#f5c453" },
-];
-
-const SAMPLE_PLAYERS = [
-  { name: "Zephyr",   rank: "Immortal",  role: "Duelist",    agent: "Jett",   kda: 1.42, acs: 268, hs: 31, win: 58, badges: ["Winter Tourney Winner", "MVP"] },
-  { name: "Hexline",  rank: "Diamond",   role: "Controller", agent: "Omen",   kda: 1.18, acs: 221, hs: 24, win: 52, badges: ["IGL"] },
-  { name: "Mirage",   rank: "Ascendant", role: "Initiator",  agent: "Sova",   kda: 1.27, acs: 240, hs: 27, win: 55, badges: ["Clutch King"] },
-  { name: "Tessera",  rank: "Platinum",  role: "Sentinel",   agent: "Killjoy",kda: 1.09, acs: 198, hs: 22, win: 49, badges: [] },
-  { name: "Nocturne", rank: "Gold",      role: "Flex",       agent: "Clove",  kda: 1.02, acs: 187, hs: 19, win: 47, badges: ["Community Pick"] },
-  { name: "Razorwing",rank: "Diamond",   role: "Duelist",    agent: "Raze",   kda: 1.33, acs: 252, hs: 26, win: 54, badges: ["Frag Leader"] },
-  { name: "Cipher9",  rank: "Ascendant", role: "Sentinel",   agent: "Cypher", kda: 1.15, acs: 205, hs: 23, win: 51, badges: ["Lockdown"] },
-  { name: "Velvet",   rank: "Platinum",  role: "Initiator",  agent: "Skye",   kda: 1.11, acs: 210, hs: 21, win: 48, badges: [] },
-];
-
-
+// No demo teams/players: a real league seeds itself from registrations. An
+// empty board is the honest empty state — fake operators in the Scout Hub read
+// as real ones and get scouted, tagged, and drafted by mistake.
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -259,22 +239,33 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
   // old demo seeds are used (preview / first-run before captains exist).
   // poolPlayers: optional [{ userId, name, rank, role, agent, kda, acs, hs, win, badges }]
   // — the weekend's registered (non-captain) players with their scouting stats.
-  const teamDefs = (captains && captains.length)
-    ? captains.map((c, i) => ({
-        name: c.teamName || (TEAM_SEEDS[i]?.name) || `TEAM ${String(i + 1).padStart(2, "0")}`,
+  const capList = (captains && captains.length) ? captains : [];
+  const poolList = (poolPlayers && poolPlayers.length) ? poolPlayers : [];
+  // Teams need at least MIN_TEAMS captains to be a real draft. Below that the
+  // board stays team-less while sign-ups run — but everyone who registered is
+  // still listed below, so the Scout Hub fills up from the first registration.
+  const teamDefs = capList.length >= MIN_TEAMS
+    ? capList.map((c, i) => ({
+        name: c.teamName || `TEAM ${String(i + 1).padStart(2, "0")}`,
         captain: c.name,
         captainUserId: c.userId,
         hue: TEAM_HUES[i % TEAM_HUES.length],
       }))
-    : TEAM_SEEDS;
-  const poolDefs = (poolPlayers && poolPlayers.length >= 1)
-    ? poolPlayers.map((p) => ({
-        id: p.userId, status: "pool", soldTo: null, soldPrice: null,
-        name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
-        kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
-        badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
-      }))
-    : SAMPLE_PLAYERS.map((p) => ({ id: uid(), status: "pool", soldTo: null, soldPrice: null, ...p }));
+    : [];
+  // Everyone registered is scoutable — captains included. A captain carries
+  // isCaptain, which every draw/pool/war-room filter already excludes, so they
+  // appear in the Scout Hub with their stats without ever entering the auction.
+  const asPlayer = (p, isCap) => ({
+    id: p.userId, status: "pool", soldTo: null, soldPrice: null,
+    ...(isCap ? { isCaptain: true } : {}),
+    name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
+    kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
+    badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
+  });
+  const poolDefs = [
+    ...capList.map((c) => asPlayer(c, true)),
+    ...poolList.map((p) => asPlayer(p, false)),
+  ];
   return {
     v: 2,
     teams: teamDefs.map((t, i) => ({ id: "t" + (i + 1), ...t, budget: 10000, roster: [] })),
@@ -1826,9 +1817,9 @@ function PlayerCard({ player, lite = false }) {
           </div>
         </div>
         <div className="grid grid-cols-3 gap-2 px-5 pt-5">
-          <Stat label="KDA" value={Number(player.kda).toFixed(2)} hue="#00e5ff" />
-          <Stat label="ACS" value={player.acs} hue="#ff4655" />
-          <Stat label="HS %" value={player.hs + "%"} hue="#9d6bff" />
+          <Stat label="KDA" value={player.kda == null ? "—" : Number(player.kda).toFixed(2)} hue="#00e5ff" />
+          <Stat label="ACS" value={player.acs == null ? "—" : player.acs} hue="#ff4655" />
+          <Stat label="HS %" value={player.hs == null ? "—" : player.hs + "%"} hue="#9d6bff" />
         </div>
         <div className="px-5 pt-5 pb-7">
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "rgba(236,243,255,0.4)" }}>Trophy cabinet</p>
@@ -3684,9 +3675,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             return;
           }
           // No board yet — show a live preview of registrations (never written).
-          const s = freshState(captains.length >= 2 ? captains : null, pool);
-          if (pool.length === 0) s.players = []; // truthful: nobody registered yet
-          setState(s);
+          // freshState is truthful on its own now: no seeds, so an empty league
+          // yields an empty board, and captains still show even with no pool.
+          setState(freshState(captains, pool));
         } catch (e) { console.error("browse roster", e); if (alive && !stateRef.current) setState(freshState(null)); }
       };
       loadLive();
@@ -5049,9 +5040,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               </div>
             </div>
             <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
-              <span style={{ color: "#00e5ff" }}>KDA {p.kda.toFixed(2)}</span>
-              <span style={{ color: "#ff4655" }}>ACS {p.acs}</span>
-              <span style={{ color: "#9d6bff" }}>HS {p.hs}%</span>
+              <span style={{ color: "#00e5ff" }}>KDA {p.kda == null ? "—" : Number(p.kda).toFixed(2)}</span>
+              <span style={{ color: "#ff4655" }}>ACS {p.acs == null ? "—" : p.acs}</span>
+              <span style={{ color: "#9d6bff" }}>HS {p.hs == null ? "—" : p.hs + "%"}</span>
             </div>
             {p.isCaptain ? <p className="mt-2 text-xs uppercase tracking-widest font-bold" style={{ color: "#f5c453" }}>★ Captain · not in draw</p>
               : tm ? <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: tm.hue }}>◆ {tm.name} · {fmt(p.soldPrice)}</p>
@@ -7082,7 +7073,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
       // loop needs a manual flip and it's easy to forget one on a busy night.
       const hrs = current.created_at ? (Date.now() - new Date(current.created_at).getTime()) / 3.6e6 : 0;
       const stale = { registration_open: hrs > 72, registration_closed: true, drafting: true, matches_live: true }[current.phase];
-      const advLabel = { registration_open: "Close registration", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle the weekend" }[current.phase];
+      const advLabel = { registration_open: "Open the draft", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle the weekend" }[current.phase];
       return stale && advLabel ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 16, padding: "11px 16px", background: "rgba(245,196,83,0.06)", border: "1px solid rgba(245,196,83,0.35)", clipPath: SHELL_NOTCH(9), flexWrap: "wrap" }}>
           <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 600 }}>⚙ {weekendName(current)} is waiting on you — next step: <b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>{advLabel}</b></span>
@@ -7227,11 +7218,13 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
   // and pauses on hidden tabs via visInterval (egress-friendly).
   const [pendingCount, setPendingCount] = useState(0);
   async function loadPending() {
-    if (!HAS_SUPABASE || !isHost || !ev?.id) return;
+    if (!HAS_SUPABASE || !isHost || !ev?.id) return 0;
     try {
       const { data } = await __sb.from("registrations").select("id").eq("event_id", ev.id).eq("status", "pending");
-      setPendingCount((data || []).length);
-    } catch (e) { console.error(e); }
+      const n = (data || []).length;
+      setPendingCount(n);
+      return n;
+    } catch (e) { console.error(e); return pendingCount; }
   }
   useEffect(() => {
     if (!isHost || phase !== "registration_open") { setPendingCount(0); return; }
@@ -7284,9 +7277,12 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
     return () => stop();
   }, [ev?.id, ev?.phase]);
 
-  const NEXT = { registration_open: "registration_closed", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
-  const NEXT_LABEL = { registration_open: "Close registration", registration_closed: "Open the draft", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
-  const PREV = { registration_closed: "registration_open", drafting: "registration_closed", matches_live: "drafting" };
+  // registration_closed is retired — closing registration and opening the draft
+  // are one action now. The enum value still exists in the DB (and the display
+  // maps below still know it) so any legacy row renders, but nothing writes it.
+  const NEXT = { registration_open: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
+  const NEXT_LABEL = { registration_open: "Open the draft", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
+  const PREV = { drafting: "registration_open", matches_live: "drafting" };
   const [arm, setArm] = useState(false); // two-tap confirm on phase advance
   useEffect(() => { if (!arm) return; const t = setTimeout(() => setArm(false), 4000); return () => clearTimeout(t); }, [arm]);
   useEffect(() => { setArm(false); }, [phase]);
@@ -7328,17 +7324,31 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       const priorName = {};
       (existing?.teams || []).forEach(t => { if (t.captainUserId && t.name) priorName[t.captainUserId] = t.name; });
       const withNames = captains.map(c => (priorName[c.userId] ? { ...c, teamName: priorName[c.userId] } : c));
-      if (captains.length >= 2) {
+      // freshState decides for itself whether there are enough captains to form
+      // teams, so one call covers both cases — and either way every registered
+      // player lands on the board instead of being dropped.
+      if (captains.length >= MIN_TEAMS || !existing) {
         await writeState(stamp(freshState(withNames, pool)));
-      } else if (!existing) {
-        // No captains registered and no board yet → seed so the app still renders.
-        await writeState(stamp(freshState(null)));
       }
     } catch (e) { console.error("buildBoard", e); }
   }
 
   async function advance() {
     if (!isHost || !HAS_SUPABASE) return;
+    // Closing registration and opening the draft are one step now, so this is
+    // the last moment pending applications can be approved. Don't let them be
+    // stranded silently — they'd never reach the pool.
+    if (phase === "registration_open") {
+      const n = await loadPending();
+      if (n > 0) {
+        const ok = window.confirm(
+          `${n} application${n === 1 ? " is" : "s are"} still awaiting review.\n\n` +
+          `Opening the draft closes registration — ${n === 1 ? "that player" : "those players"} won't be in the pool.\n\n` +
+          `Open the draft anyway?`
+        );
+        if (!ok) { setRegView("gate"); return; }
+      }
+    }
     setBusy(true);
     try {
       const next = NEXT[phase];
@@ -7462,7 +7472,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       const priorName = {};
       (prior?.teams || []).forEach(t => { if (t.captainUserId && t.name) priorName[t.captainUserId] = t.name; });
       const withNames = captains.map(c => (priorName[c.userId] ? { ...c, teamName: priorName[c.userId] } : c));
-      await writeState(freshState(captains.length >= 2 ? withNames : null, pool));
+      await writeState(freshState(withNames, pool));
       window.location.reload();
     } catch (e) { console.error(e); setBusy(false); }
   }
