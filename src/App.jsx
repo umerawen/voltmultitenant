@@ -205,6 +205,23 @@ function computeSeasonPoints(s) {
   return Object.values(acc);
 }
 
+// Every match in a tournament as one flat list, whatever the format. Groups keep
+// theirs nested, league play uses a flat array (or a map of arrays), single-elim
+// uses rounds, and a grand final sits on its own. Anything reading "all matches"
+// has to cover all four or it silently misses fixtures.
+function flattenMatches(t) {
+  if (!t) return [];
+  const out = [];
+  if (t.groups) Object.values(t.groups).forEach((g) => (g?.matches || []).forEach((m) => m && out.push(m)));
+  if (Array.isArray(t.matches)) t.matches.forEach((m) => m && out.push(m));
+  else if (t.matches && typeof t.matches === "object") Object.values(t.matches).forEach((a) => Array.isArray(a) && a.forEach((m) => m && out.push(m)));
+  if (t.rounds) t.rounds.forEach((r) => (r || []).forEach((m) => m && out.push(m)));
+  if (t.final) out.push(t.final);
+  // A pairing can appear in more than one structure; keep the first by id.
+  const seen = new Set();
+  return out.filter((m) => { const k = m.id ?? JSON.stringify([m.teamA, m.teamB]); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
 // Weekend display name from its date — "Jul 20\u201321" (Sat\u2013Sun) with an
 // optional nickname. Falls back to the legacy counter label when no date exists.
 // A weekend is Sat\u2013Sun; starts_on is the Saturday.
@@ -233,6 +250,26 @@ function comingSaturday() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+// Normalize a registration row (as returned by fetchRosterForEvent, which keys
+// people by `userId`) into a board player keyed by `id`. Shared by freshState
+// and the live registration preview so both produce identical shapes — folding
+// a raw registration row straight into state.players yields a card with no id
+// and no rank, which then breaks every lookup that assumes a real player.
+function regToPlayer(p, isCap) {
+  return {
+    id: p.userId, status: "pool", soldTo: null, soldPrice: null,
+    ...(isCap ? { isCaptain: true } : {}),
+    name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
+    kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
+    badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
+  };
+}
+
+// A player the Commissioner typed in by hand has a short generated id; anyone
+// who registered carries their auth uuid. Manual entries have no registration
+// to rebuild from, so they must be carried across board rebuilds explicitly.
+const isManualPlayer = (p) => !(typeof p?.id === "string" && p.id.length > 30);
+
 function freshState(captains, poolPlayers) {  // captains: optional [{ userId, name, teamName? }] from the real community.
   // When present, teams are built from real registered captains (each tied to a
   // userId so login-based seat claiming maps to the right seat). Otherwise the
@@ -252,19 +289,9 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
         hue: TEAM_HUES[i % TEAM_HUES.length],
       }))
     : [];
-  // Everyone registered is scoutable — captains included. A captain carries
-  // isCaptain, which every draw/pool/war-room filter already excludes, so they
-  // appear in the Scout Hub with their stats without ever entering the auction.
-  const asPlayer = (p, isCap) => ({
-    id: p.userId, status: "pool", soldTo: null, soldPrice: null,
-    ...(isCap ? { isCaptain: true } : {}),
-    name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
-    kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
-    badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
-  });
   const poolDefs = [
-    ...capList.map((c) => asPlayer(c, true)),
-    ...poolList.map((p) => asPlayer(p, false)),
+    ...capList.map((c) => regToPlayer(c, true)),
+    ...poolList.map((p) => regToPlayer(p, false)),
   ];
   return {
     v: 2,
@@ -3658,13 +3685,22 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           const { captains, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
           if (!alive) return;
           // A saved board wins. Regenerating over it is what made every edit
-          // (teams, names, budgets, groups) revert a few seconds later.
+          // (teams, names, budgets, groups) revert a few seconds later — and
+          // what erased hand-added players. The test is whether a board exists
+          // at all, NOT whether it has teams: a league with fewer than two
+          // captains legitimately has none, and gating on teams.length threw
+          // that whole board away every poll.
           const saved = await readState();
           if (!alive) return;
-          if (saved && Array.isArray(saved.teams) && saved.teams.length) {
-            // Keep the host's board; just fold in players who registered since.
+          if (saved && Array.isArray(saved.players)) {
+            // Keep the host's board; fold in anyone who registered since. Match
+            // on userId — registration rows have no `id`, so comparing p.id
+            // matched nothing and re-appended the entire roster every poll.
             const known = new Set((saved.players || []).map(p => p.id));
-            const added = (pool || []).filter(p => !known.has(p.id));
+            const added = [
+              ...(captains || []).filter(c => !known.has(c.userId)).map(c => regToPlayer(c, true)),
+              ...(pool || []).filter(p => !known.has(p.userId)).map(p => regToPlayer(p, false)),
+            ];
             const merged = added.length
               ? { ...saved, players: [...(saved.players || []), ...added] }
               : saved;
@@ -4458,10 +4494,36 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const block = state.block;
   const blockPlayer = block ? state.players.find((p) => p.id === block.playerId) : null;
   const leaderTeam = block?.leaderId ? state.teams.find((t) => t.id === block.leaderId) : null;
-  const pool = state.players.filter((p) => p.status === "pool");
+  // Draftable pool only — captains sit in state.players so they stay scoutable,
+  // but they can never be nominated or bought, so they must not count toward
+  // the draw, the wheel, or the bid-ceiling reserve. Mirrors spinNominate.
+  const pool = state.players.filter((p) => p.status === "pool" && !p.isCaptain);
   const sold = state.players.filter((p) => p.status === "sold").sort((a, b) => b.soldPrice - a.soldPrice);
   const spinLive = state.spin && Date.now() < state.spin.startTs + state.spin.duration + REVEAL_MS;
   const teamOf = (id) => state.teams.find((t) => t.id === id);
+
+  // ── Lobby data: what's next, and where everyone stands ──────────────────
+  // Both derive from the board that's already loaded, so the Lobby costs no
+  // extra network. Byes (teamB null) are skipped — they aren't matches anyone
+  // turns up for.
+  const allMatches = flattenMatches(state.tournament);
+  const upcoming = allMatches
+    .filter((m) => !m.done && m.teamA != null && m.teamB != null)
+    .sort((a, b) => {
+      const ta = a.scheduledAt ? new Date(a.scheduledAt).getTime() : Infinity;
+      const tb = b.scheduledAt ? new Date(b.scheduledAt).getTime() : Infinity;
+      return ta - tb; // unscheduled fixtures sink below scheduled ones
+    })
+    .slice(0, 3);
+  const standings = state.tournament
+    ? computeStandings(state.tournament.teamIds || state.teams.map((t) => t.id), allMatches, state.tournament.overrides).slice(0, 4)
+    : [];
+  const fmtKickoff = (iso) => {
+    if (!iso) return "TBD";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "TBD";
+    return d.toLocaleDateString(undefined, { weekday: "short" }) + " " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  };
 
   // Current view name for the bar (rail may be collapsed to glyphs).
   const viewLabel = view === "account" ? "My Account" : view === "profile" ? "Player File" : view === "report" ? "Report Match" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
@@ -4539,10 +4601,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </button>
       )}
       <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
-      {chrome && <>
-        {railItem("__portal", "⊞", chrome.portalLabel || "League hub", { onClick: chrome.onBack, color: "#7da6ff" })}
-        <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "10px 6px" : "10px auto", background: "rgba(120,150,220,0.2)" }} />
-      </>}
+      {/* the portal/registration entry now lives in the top bar */}
       {railSections.map((sec, si) => (
         <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", gap: 2 }}>
           {si > 0 && <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px" : "8px auto", background: "rgba(120,150,220,0.2)" }} />}
@@ -4587,6 +4646,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
               <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
             </span>
+          </button>
+        )}
+        {/* portal — back out to Registration (or the league hub). Lives in the
+            top bar rather than the side rail so it stays reachable when the
+            rail is collapsed to glyphs or hidden entirely. */}
+        {chrome?.onBack && (
+          <button onClick={chrome.onBack} title={chrome.portalLabel || "League hub"}
+            style={{ height: 36, padding: "0 13px", marginRight: 10, clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, flex: "0 0 auto", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,123,255,0.09)", border: "1px solid rgba(61,123,255,0.35)", color: "#9dc0ff" }}>
+            <span style={{ fontSize: 14, lineHeight: 1 }}>⊞</span>
+            <span className="hidden sm:inline" style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{chrome.portalLabel || "League hub"}</span>
           </button>
         )}
         {/* context — weekend · phase · view, one consistent breadcrumb line */}
@@ -4884,10 +4953,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 </div>
                 <div className="mb-3" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
 
-                {/* captains online */}
+                {/* total players on the board */}
                 <div className="flex items-baseline justify-between gap-3 py-1">
-                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Captains Online</span>
-                  <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", letterSpacing: "0.04em" }}>{state.teams.length}/{state.teams.length}</span>
+                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Total Players</span>
+                  <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", letterSpacing: "0.04em" }}>{state.players.length}</span>
                 </div>
 
                 {/* devices live — real-time presence */}
@@ -4946,13 +5015,64 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
       {TickerTape}
 
+      {/* what's next + where everyone stands — both self-hiding until the
+          weekend actually has a tournament built, so the Lobby stays clean
+          through registration and the auction. */}
+      {(upcoming.length > 0 || standings.length > 0) && (
+        <div className="page-wrap pt-8">
+          <div className="grid lg:grid-cols-2 gap-4">
+
+            {upcoming.length > 0 && (
+              <div className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
+                <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <p className="uppercase text-xs font-bold" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.28em" }}>Upcoming Matches</p>
+                  <button onClick={() => setView("bracket")} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>All →</button>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {upcoming.map((m, i) => { const A = teamOf(m.teamA), B = teamOf(m.teamB); return (
+                    <div key={m.id ?? i} className="flex items-center gap-3 py-2" style={{ borderTop: i ? "1px solid rgba(61,123,255,0.14)" : "none" }}>
+                      <span className="text-xs shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.45)", minWidth: 58 }}>{fmtKickoff(m.scheduledAt)}</span>
+                      <span className="font-bold uppercase truncate text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: A?.hue || "#ecf3ff" }}>{A?.name || "TBD"}</span>
+                      <span className="text-xs shrink-0" style={{ color: "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace" }}>vs</span>
+                      <span className="font-bold uppercase truncate text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: B?.hue || "#ecf3ff" }}>{B?.name || "TBD"}</span>
+                    </div>
+                  ); })}
+                </div>
+              </div>
+            )}
+
+            {standings.length > 0 && (
+              <div className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
+                <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <p className="uppercase text-xs font-bold" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.28em" }}>Standings</p>
+                  <button onClick={() => setView("bracket")} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>Full table →</button>
+                </div>
+                <div className="flex flex-col">
+                  {standings.map((r, i) => { const t = teamOf(r.teamId); return (
+                    <div key={r.teamId} className="flex items-center gap-3 py-2" style={{ borderTop: i ? "1px solid rgba(61,123,255,0.14)" : "none" }}>
+                      <span className="text-xs shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.4)", width: 16 }}>{i + 1}</span>
+                      <span className="font-bold uppercase truncate text-sm flex-1" style={{ fontFamily: "'Rajdhani',sans-serif", color: t?.hue || "#ecf3ff" }}>{t?.name || "—"}</span>
+                      <span className="text-xs shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>{r.won}–{r.lost}</span>
+                      <span className="text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", minWidth: 26, textAlign: "right" }}>{r.pts}</span>
+                    </div>
+                  ); })}
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
       {/* rule summary */}
       <div className="page-wrap py-8">
         <div className="grid md:grid-cols-3 gap-4">
         {[
-          { t: "The Budget", b: "Every team starts with $10,000 and exactly 4 open slots. Captains are pre-seated — you're filling the squad around them." },
-          { t: "The Wheel", b: "Players aren't hand-picked. The Commissioner spins the fate wheel and a random name from the pool hits the block." },
-          { t: "The Bidding", b: "Bids rise in $100 steps. Your max is capped so you always keep enough to buy the cheapest players left for your open slots — the ceiling shifts live as the pool changes, and the button locks if a bid would break it." },
+          { t: "The Budget", b: "$10,000 per team, 4 slots to fill. Captains are already seated." },
+          { t: "The Wheel", b: "No hand-picking — the Commissioner spins and a random name hits the block." },
+          { t: "The Bidding", b: "Bids rise in $100 steps. Your ceiling adjusts live so you can always fill your slots." },
         ].map((r, i) => (
           <div key={i} className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
             <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
@@ -7328,7 +7448,14 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       // teams, so one call covers both cases — and either way every registered
       // player lands on the board instead of being dropped.
       if (captains.length >= MIN_TEAMS || !existing) {
-        await writeState(stamp(freshState(withNames, pool)));
+        const built = stamp(freshState(withNames, pool));
+        // Players the Commissioner typed in by hand have no registration to
+        // rebuild from, so a plain rebuild would silently erase them. Carry
+        // them over (minus any that a real registration now supersedes).
+        const rebuiltIds = new Set(built.players.map(p => p.id));
+        const manual = (existing?.players || []).filter(p => isManualPlayer(p) && !rebuiltIds.has(p.id));
+        if (manual.length) built.players = [...built.players, ...manual];
+        await writeState(built);
       }
     } catch (e) { console.error("buildBoard", e); }
   }
