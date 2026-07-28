@@ -3788,6 +3788,15 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const [filterRank, setFilterRank] = useState("All");
   const [filterRole, setFilterRole] = useState("All");
   const [query, setQuery] = useState("");
+  // Reserve Hub keeps its own filters — a different question ("who can stand in
+  // tonight") than the Scout Hub's ("who should I bid on"). These MUST live up
+  // here with the other hooks: DraftApp early-returns on `!state` further down,
+  // so a hook declared below that runs on some renders and not others, which is
+  // exactly the inconsistent hook count React #310 reports.
+  const [rQuery, setRQuery] = useState("");
+  const [rRank, setRRank] = useState("All");
+  const [rRole, setRRole] = useState("All");
+  const [replacing, setReplacing] = useState(null);   // which of my players is out
   const [resetArmed, setResetArmed] = useState(false);
   const [tClearArmed, setTClearArmed] = useState(false);
   const prevBid = useRef(null);
@@ -5400,12 +5409,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   /* ════════ VIEW: SCOUT HUB ════════ */
-  // Reserve Hub keeps its own filters — you're answering a different question
-  // here ("who can stand in tonight") than in the Scout Hub ("who should I bid on").
-  const [rQuery, setRQuery] = useState("");
-  const [rRank, setRRank] = useState("All");
-  const [rRole, setRRole] = useState("All");
-  const [replacing, setReplacing] = useState(null);   // which of my players is out
   // Scout Hub is the draft roster — sold and unsold both, but not late sign-ups.
   // Those live in the Reserve Hub, which is a different question.
   const filtered = state.players.filter((p) => p.poolEligible !== false).filter((p) =>
