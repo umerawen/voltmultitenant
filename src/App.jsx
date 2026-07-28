@@ -300,6 +300,8 @@ function regToPlayer(p, isCap) {
     name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
     kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
     badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
+    discord: p.discord || null,
+    poolEligible: p.poolEligible !== false,
   };
 }
 
@@ -2027,7 +2029,7 @@ function PlayerCard({ player, lite = false }) {
 }
 
 /* ── full scouting modal with radar ── */
-function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain, onViewProfile }) {
+function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain, onViewProfile, onMoveReserve }) {
   const [confirmDel, setConfirmDel] = useState(false);
   useEffect(() => { setConfirmDel(false); }, [player && player.id]);
   // Close on Escape for keyboard users.
@@ -2106,6 +2108,19 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
                 {drafted ? "✕ Delete player (drafted)" : "✕ Delete player"}
               </button>
             )
+          )}
+          {isAdmin && onMoveReserve && !player.isCaptain && (
+            <button onClick={() => {
+                const toReserve = player.poolEligible !== false;
+                if (toReserve && player.status === "sold" && !window.confirm(
+                  `Move ${player.name} to the reserves? ${fmt(Number(player.soldPrice) || 0)} goes back to their team and the roster slot reopens.`)) return;
+                onMoveReserve(player.id, !toReserve);
+                onClose();
+              }}
+              className="mt-2 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+              {player.poolEligible === false ? "⊞ Move to draft pool" : "⊕ Move to reserves"}
+            </button>
           )}
         </div>
       </div>
@@ -3440,6 +3455,7 @@ const NAV = [
   { id: "lobby", label: "Lobby", glyph: "⌂" },
   { id: "scout", label: "Scout Hub", glyph: "⊞" },
   { id: "block", label: "Auction Block", glyph: "⟁" },
+  { id: "reserve", label: "Reserve Hub", glyph: "⊕" },
   { id: "locker", label: "Locker Room", glyph: "▦" },
   { id: "warroom", label: "War Room", glyph: "✦" },
 ];
@@ -4120,6 +4136,37 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     s.players = s.players.filter((x) => x.id !== pid);
     return s;
   }, true, true);
+  // Move a player between the draft roster and the reserve list. The board holds a
+  // copy for rendering, but registrations.pool_eligible is the durable truth — so
+  // the move survives a rebuild from registrations. Moving a SOLD player out
+  // refunds their team and frees the slot, per the host's call that this is an undo.
+  const setPoolEligible = async (pid, next) => {
+    mutate((s) => {
+      const p = s.players.find((x) => x.id === pid); if (!p) return null;
+      if (p.poolEligible === next) return null;
+      p.poolEligible = next;
+      if (!next && p.status === "sold") {
+        const t = s.teams.find((x) => x.id === p.soldTo);
+        const paid = Math.max(0, Number(p.soldPrice) || 0);
+        if (t) { t.roster = (t.roster || []).filter((id) => id !== pid); t.budget += paid; }
+        s.log.unshift(`${p.name} moved to reserves — ${fmt(paid)} refunded to ${t ? t.name : "their team"}`);
+        s.log = s.log.slice(0, 8);
+        p.status = "pool"; p.soldTo = null; p.soldPrice = null;
+      } else {
+        s.log.unshift(`${p.name} moved to the ${next ? "draft pool" : "reserves"}`);
+        s.log = s.log.slice(0, 8);
+      }
+      return s;
+    }, true);
+    // Registered players have a uuid id; hand-added ones have no registration row.
+    const registered = typeof pid === "string" && pid.length > 30;
+    if (HAS_SUPABASE && registered && window.__VOLT?.weekendId) {
+      try {
+        await __sb.from("registrations").update({ pool_eligible: next })
+          .eq("event_id", window.__VOLT.weekendId).eq("user_id", pid);
+      } catch (e) { console.error("pool_eligible write failed", e); }
+    }
+  };
   const spinNominate = () => { if (!isLeagueOwner()) return; return mutate((s) => {
     if (s.block || (s.spin && Date.now() < s.spin.startTs + SPIN_MS + REVEAL_MS)) return null;
     const poolIds = s.players.filter((p) => p.status === "pool" && !p.isCaptain).map((p) => p.id);
@@ -4728,7 +4775,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // Draftable pool only — captains sit in state.players so they stay scoutable,
   // but they can never be nominated or bought, so they must not count toward
   // the draw, the wheel, or the bid-ceiling reserve. Mirrors spinNominate.
-  const pool = state.players.filter((p) => p.status === "pool" && !p.isCaptain);
+  // The auction wheel: draft-eligible, unsold, not a captain. A late sign-up is
+  // in the league and subbable but was never in the draft, so it must not appear
+  // on the wheel or in the bid-ceiling reserve maths.
+  const pool = state.players.filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false);
   const sold = state.players.filter((p) => p.status === "sold").sort((a, b) => b.soldPrice - a.soldPrice);
   const spinLive = state.spin && Date.now() < state.spin.startTs + state.spin.duration + REVEAL_MS;
   const teamOf = (id) => state.teams.find((t) => t.id === id);
@@ -5350,7 +5400,15 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   /* ════════ VIEW: SCOUT HUB ════════ */
-  const filtered = state.players.filter((p) =>
+  // Reserve Hub keeps its own filters — you're answering a different question
+  // here ("who can stand in tonight") than in the Scout Hub ("who should I bid on").
+  const [rQuery, setRQuery] = useState("");
+  const [rRank, setRRank] = useState("All");
+  const [rRole, setRRole] = useState("All");
+  const [replacing, setReplacing] = useState(null);   // which of my players is out
+  // Scout Hub is the draft roster — sold and unsold both, but not late sign-ups.
+  // Those live in the Reserve Hub, which is a different question.
+  const filtered = state.players.filter((p) => p.poolEligible !== false).filter((p) =>
     (filterRank === "All" || p.rank === filterRank) &&
     (filterRole === "All" || p.role === filterRole) &&
     (!query || p.name.toLowerCase().includes(query.toLowerCase()) || p.agent.toLowerCase().includes(query.toLowerCase()))
@@ -5359,6 +5417,127 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     background: active ? hue + "22" : "rgba(61,123,255,0.05)", border: `1px solid ${active ? hue : "rgba(120,150,220,0.18)"}`,
     color: active ? hue : "rgba(200,215,255,0.6)",
   });
+  /* ── RESERVE HUB ── undrafted registrants, available as substitutes.
+        Same shape and filters as the Scout Hub, but the job is different: a
+        captain whose player has gone dark comes here to find a stand-in. The
+        rank rule keeps that fair — a sub may be one rank below the player they
+        replace, never above, so losing someone can't become an upgrade. ── */
+  const rankIdx = (r) => RANK_LIST.indexOf(r);
+  // Anyone available to stand in: no roster spot and not a captain. That's both
+  // late sign-ups AND players who went undrafted — the registration page promises
+  // undrafted players they can still be subbed in, so they belong here too.
+  const reserves = state.players.filter((p) => p.status !== "sold" && !p.isCaptain);
+  const myRoster = myTeam ? (myTeam.roster || []).map((id) => state.players.find((x) => x.id === id)).filter(Boolean) : [];
+  const missing = replacing ? myRoster.find((p) => p.id === replacing) : null;
+  // At or below one rank down. Null when nobody is selected → no restriction shown.
+  const capIdx = missing ? rankIdx(missing.rank) - 1 : null;
+  const eligible = (p) => capIdx === null || rankIdx(p.rank) <= capIdx;
+
+  const rFiltered = reserves.filter((p) =>
+    (rRank === "All" || p.rank === rRank) &&
+    (rRole === "All" || p.role === rRole) &&
+    (!rQuery || p.name.toLowerCase().includes(rQuery.toLowerCase()) || (p.agent || "").toLowerCase().includes(rQuery.toLowerCase()))
+  );
+  const ReserveView = (
+    <div className="view-in page-wrap py-6">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: "#3ddc84" }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: "#3ddc84", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Substitutes</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Reserve <span style={{ color: "#3ddc84" }}>Hub</span></h2>
+        </div>
+        <span className="text-sm" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{rFiltered.length} / {reserves.length}</span>
+      </div>
+      <p className="text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>
+        Registered but not drafted — available to sub in. Every match they play banks season points.
+        {phase === "drafting" && " These players are still up for auction, so check with the host before calling anyone in."}
+      </p>
+
+      {myRoster.length > 0 && (
+        <div className="mb-5 p-3" style={{ background: "rgba(61,220,132,0.05)", border: "1px solid rgba(61,220,132,0.25)", clipPath: SHELL_NOTCH(9) }}>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.55)" }}>Who can't make it?</span>
+            <select value={replacing || ""} onChange={(e) => setReplacing(e.target.value || null)}
+              style={{ padding: "7px 10px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,220,132,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13, fontWeight: 600 }}>
+              <option value="">— nobody selected —</option>
+              {myRoster.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.rank}</option>)}
+            </select>
+            {missing && (
+              <span className="text-xs" style={{ color: "#9af5c2", fontFamily: "'Rajdhani',sans-serif" }}>
+                Eligible subs: {capIdx >= 0 ? `${RANK_LIST[capIdx]} or below` : "none — they're already the lowest rank"}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,220,132,0.04)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(8) }}>
+        <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
+        <input value={rQuery} onChange={(e) => setRQuery(e.target.value)} placeholder="Search reserves or agents…" className="flex-1 bg-transparent outline-none" style={{ color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15 }} />
+      </div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        <button onClick={() => setRRank("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === "All", "#3ddc84")}>All ranks</button>
+        {RANK_LIST.map((r) => <button key={r} onClick={() => setRRank(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === r, RANKS[r].c)}>{r}</button>)}
+      </div>
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button onClick={() => setRRole("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === "All", "#3ddc84")}>All roles</button>
+        {ROLES.map((r) => <button key={r} onClick={() => setRRole(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === r, "#3ddc84")}>{ROLE_GLYPH[r]} {r}</button>)}
+      </div>
+
+      {reserves.length === 0 ? (
+        <p className="text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>No reserves yet — everyone who registered is on a roster.</p>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+          {rFiltered.map((p) => {
+            const r = RANKS[p.rank] || RANKS.Silver;
+            const ok = eligible(p);
+            return (
+              <div key={p.id} className="relative text-left p-4 overflow-hidden" style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${ok ? r.c + "44" : "rgba(120,150,220,0.18)"}`, opacity: ok ? 1 : 0.45, clipPath: SHELL_NOTCH(10) }}>
+                <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xl font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
+                    <p className="text-xs uppercase tracking-widest mt-1.5" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <RankBadge rank={p.rank} size="sm" />
+                    <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{p.rank}</span>
+                  </div>
+                </div>
+                <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                  <span style={{ color: "#00e5ff" }}>KDA {p.kda == null ? "—" : Number(p.kda).toFixed(2)}</span>
+                  <span style={{ color: "#ff4655" }}>ACS {p.acs == null ? "—" : p.acs}</span>
+                  <span style={{ color: "#9d6bff" }}>HS {p.hs == null ? "—" : p.hs + "%"}</span>
+                </div>
+                {missing && (
+                  <p className="mt-2 text-xs uppercase tracking-widest font-bold" style={{ color: ok ? "#3ddc84" : "rgba(255,138,148,0.8)" }}>
+                    {ok ? "✓ Eligible sub" : "✕ Outranks your player"}
+                  </p>
+                )}
+                <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)" }}>
+                  {p.poolEligible === false ? "Signed up after the pool closed" : "Went undrafted"}
+                </p>
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  <button onClick={() => { setProfileFrom(view); setProfileUser(p.id); setView("profile"); }}
+                    className="text-xs uppercase tracking-widest px-2.5 py-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(61,123,255,0.35)", background: "rgba(61,123,255,0.08)", clipPath: SHELL_NOTCH(5) }}>Profile</button>
+                  {isAdmin && p.poolEligible === false && (
+                    <button onClick={() => setPoolEligible(p.id, true)}
+                      className="text-xs uppercase tracking-widest px-2.5 py-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.45)", background: "rgba(61,220,132,0.08)", clipPath: SHELL_NOTCH(5) }}>⊞ To draft pool</button>
+                  )}
+                  {p.discord
+                    ? <span className="text-xs truncate" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.6)" }} title={"Discord: " + p.discord}>◈ {p.discord}</span>
+                    : <span className="text-xs" style={{ color: "rgba(200,215,255,0.3)" }}>no discord on file</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
   const ScoutView = (
     <div className="view-in page-wrap py-6">
       <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
@@ -5739,7 +5918,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     <Leaderboard isAdmin={isAdmin} />
   );
 
-  const views = { lobby: LobbyView, scout: ScoutView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView,
+  const views = { lobby: LobbyView, scout: ScoutView, reserve: ReserveView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView,
     account: <AccountView auth={auth} chrome={chrome} />,
     profile: <PlayerProfile userId={profileUser} onBack={() => { setProfileUser(null); setView(profileFrom || "scout"); }} />,
     report: chrome?.reportNode || null };
@@ -5747,7 +5926,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
   return shell(
     <>
-      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onViewProfile={(uid) => { setScouted(null); setProfileFrom(view); setProfileUser(uid); setView("profile"); }} />}
+      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onMoveReserve={setPoolEligible} onViewProfile={(uid) => { setScouted(null); setProfileFrom(view); setProfileUser(uid); setView("profile"); }} />}
       {saveErr && (
         <div style={{ position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 210, maxWidth: "92vw",
           display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", fontFamily: "'Rajdhani',sans-serif",
@@ -7295,7 +7474,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       setMyRegs(map);
       // Host: how many applications are waiting on each open weekend.
       if (isHost) {
-        const openIds = (evs || []).filter(e => e.phase === "registration_open").map(e => e.id);
+        const openIds = (evs || []).filter(e => e.phase === "registration_open" || e.phase === "registration_closed").map(e => e.id);
         if (openIds.length) {
           const { data: pend } = await __sb.from("registrations").select("event_id").eq("status", "pending").in("event_id", openIds);
           const pc = {}; (pend || []).forEach(r => { pc[r.event_id] = (pc[r.event_id] || 0) + 1; });
@@ -7602,7 +7781,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     {live?.mineStatus === "approved" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9af5c2", border: "1px solid rgba(61,220,132,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>You're in ✓</span>}
                     {live?.mineStatus === "pending" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Application pending</span>}
                     {live?.mineStatus === "rejected" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#ff8f9a", border: "1px solid rgba(255,70,85,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Not approved</span>}
-                    {current.phase === "registration_open" && live && !live.mineStatus && <span style={{ fontSize: 12, color: "#f5c453" }}>You haven't applied yet</span>}
+                    {(current.phase === "registration_open" || current.phase === "registration_closed") && live && !live.mineStatus && <span style={{ fontSize: 12, color: "#f5c453" }}>You haven't applied yet</span>}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                     {editTime && isHost
@@ -7618,7 +7797,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                         </>}
                   </div>
                 </div>
-                {current.phase === "registration_open" && HAS_SUPABASE && isHost
+                {(current.phase === "registration_open" || current.phase === "registration_closed") && HAS_SUPABASE && isHost
                   ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${live?.pending > 0 ? "rgba(245,196,83,0.4)" : "rgba(61,123,255,0.25)"}`, clipPath: SHELL_NOTCH(10) }}>
                       <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Host</div>
                       {live?.pending > 0
@@ -7627,7 +7806,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                       <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "primary", { padding: "11px 18px", fontSize: 12.5 })}>Review applications →</button>
                       <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "9px 16px", fontSize: 11.5 })}>⊞ Enter the weekend →</button>
                     </div>
-                  : current.phase === "registration_open" && HAS_SUPABASE
+                  : (current.phase === "registration_open" || current.phase === "registration_closed") && HAS_SUPABASE
                   ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "14px 16px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
                       <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
                         onEditProfile={() => setShowProfile(true)} onChanged={load} />
@@ -7782,7 +7961,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 // draft app's live browse mode) ──────────────────────────────────────────
 async function fetchRosterForEvent(eventId) {
   const { data: regs } = await __sb.from("registrations")
-    .select("id, user_id, is_captain, status, availability_confirmed, no_show, wants_captain, users(display_name, wants_captain, trophy_streak)")
+    .select("id, user_id, is_captain, status, availability_confirmed, no_show, wants_captain, pool_eligible, users(display_name, wants_captain, trophy_streak)")
     .eq("event_id", eventId);
   const rows = regs || [];
   const ids = rows.map(r => r.user_id);
@@ -7798,12 +7977,16 @@ async function fetchRosterForEvent(eventId) {
   const withProfile = (r) => {
     const p = profs[r.user_id] || {};
     return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain,
+      // Was this person in the draft? Late sign-ups are false. Missing = legacy
+      // row from before the column existed, which was always draft-eligible.
+      poolEligible: r.pool_eligible !== false,
       volunteered: !!(r.wants_captain || r.users?.wants_captain), // per-weekend hand; legacy users flag as fallback
       trophies: r.users?.trophy_streak || 0,
       status: r.status || "approved", available: !!r.availability_confirmed,
       noShow: !!r.no_show, noShows: noShowCounts[r.user_id] || 0,
       name: r.users?.display_name || "Player",
       rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges,
+      discord: p.discord,   // captains reach reserves here; community-readable, not sensitive
       tracker: p.tracker_url || null };
   };
   const mapped = rows.map(withProfile);
@@ -7877,7 +8060,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     } catch (e) { console.error(e); return pendingCount; }
   }
   useEffect(() => {
-    if (!isHost || phase !== "registration_open") { setPendingCount(0); return; }
+    if (!isHost || !(phase === "registration_open" || phase === "registration_closed")) { setPendingCount(0); return; }
     loadPending();
     const stop = visInterval(loadPending, 15000);
     return () => stop();
@@ -7927,12 +8110,12 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     return () => stop();
   }, [ev?.id, ev?.phase]);
 
-  // registration_closed is retired — closing registration and opening the draft
-  // are one action now. The enum value still exists in the DB (and the display
-  // maps below still know it) so any legacy row renders, but nothing writes it.
-  const NEXT = { registration_open: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
-  const NEXT_LABEL = { registration_open: "Start draft phase", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
-  const PREV = { drafting: "registration_open", matches_live: "drafting" };
+  // registration_closed is back, and this time it earns the step: it's the line
+  // that decides who was in the draft. Sign-ups stay open through it, but anyone
+  // joining from here on is a reserve (pool_eligible = false), not an auction pick.
+  const NEXT = { registration_open: "registration_closed", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
+  const NEXT_LABEL = { registration_open: "Close the draft pool", registration_closed: "Start draft phase", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
+  const PREV = { registration_closed: "registration_open", drafting: "registration_closed", matches_live: "drafting" };
   const [arm, setArm] = useState(false); // two-tap confirm on phase advance
   useEffect(() => { if (!arm) return; const t = setTimeout(() => setArm(false), 4000); return () => clearTimeout(t); }, [arm]);
   useEffect(() => { setArm(false); }, [phase]);
@@ -8002,7 +8185,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     // Closing registration and opening the draft are one step now, so this is
     // the last moment pending applications can be approved. Don't let them be
     // stranded silently — they'd never reach the pool.
-    if (phase === "registration_open") {
+    if (phase === "registration_closed") {
       const n = await loadPending();
       if (n > 0) {
         const ok = window.confirm(
@@ -8204,14 +8387,14 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
       // The top-bar Registration button already routes here via onBack during
       // registration, so it carries the count instead of a separate control.
-      pendingCount: (isHost && phase === "registration_open") ? pendingCount : 0,
+      pendingCount: (isHost && (phase === "registration_open" || phase === "registration_closed")) ? pendingCount : 0,
       // Rendered as a normal view inside the weekend shell (rail + nav intact).
       reportNode: (isHost && matchView)
         ? <MatchReport ev={ev} prefill={reportPrefill} onDone={() => { setMatchView(false); setReportPrefill(null); refreshReported(); }} />
         : null,
       account, onSignOut, hostControls,
       // The Lobby shows this when registration is open — flipping it IS applying.
-      regToggle: (phase === "registration_open" && HAS_SUPABASE && auth?.userId && !isHost)
+      regToggle: ((phase === "registration_open" || phase === "registration_closed") && HAS_SUPABASE && auth?.userId && !isHost)
         ? <PlayToggle ev={ev} mine={myReg} profileComplete={!!(myProfile?.rank && myProfile?.role)} susp={mySusp2} strikes={myStrikes2}
             onEditProfile={() => setRegView("gate")} onChanged={loadMyReg} />
         : null,
@@ -8670,7 +8853,10 @@ function MatchReport({ ev, onDone, prefill }) {
 // roster. Captaincy is the host's call; players can only quietly
 // signal availability. The host assigns captains from the roster below.
 function WeekendRegistration({ ev, auth, phase }) {
-  const regOpen = phase === "registration_open";
+  // Sign-ups run through BOTH registration phases. What changes at the boundary
+  // is whether you land in the draft pool or the reserves, not whether you can join.
+  const regOpen = phase === "registration_open" || phase === "registration_closed";
+  const poolOpen = phase === "registration_open";
   const isHost = auth?.role === "host";
   const [reg, setReg] = useState(undefined);
   const [roster, setRoster] = useState([]);       // approved
@@ -8792,7 +8978,7 @@ function WeekendRegistration({ ev, auth, phase }) {
       <div style={{ textAlign: "center", marginBottom: 26 }}>
         <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)}</div>
         <h1 style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
-        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 14 }}>{regOpen ? "Claim your spot in this weekend's draft pool." : "Registration is closed — the draft opens soon."}</p>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 14 }}>{poolOpen ? "Claim your spot in this weekend's draft pool." : regOpen ? "The draft pool is closed — you can still sign up as a reserve." : "Registration is closed for this weekend."}</p>
         <p style={{ color: "rgba(200,215,255,0.4)", margin: "8px auto 0", fontSize: 12.5, maxWidth: 520 }}>
           {ev?.draft_at && <span style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace" }}>Draft: {new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · {new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} — </span>}
           Teams form from whoever registers (roughly one per 5 players). Not drafted? You can still be subbed into matches — every match you play banks season points.</p>
@@ -8894,6 +9080,14 @@ function WeekendRegistration({ ev, auth, phase }) {
               <input type="checkbox" checked={wantCap} onChange={e => setWantCap(e.target.checked)} style={{ accentColor: "#3d7bff", marginTop: 2, width: 16, height: 16 }} />
               <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>Available to captain</b> <span style={{ color: "rgba(200,215,255,0.4)" }}>(optional)</span> — you'd run the auction budget and draft your squad. The host makes the final call.</span>
             </label>
+            {!poolOpen && (
+              <div style={{ marginTop: 12, padding: "11px 13px", background: "rgba(61,220,132,0.07)", border: "1px solid rgba(61,220,132,0.35)", clipPath: SHELL_NOTCH(8) }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2" }}>Signing up as a reserve</div>
+                <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.55)", marginTop: 3 }}>
+                  The draft pool has closed, so captains can't bid on you. You'll appear in the Reserve Hub and can be subbed into matches — every match you play still banks season points.
+                </div>
+              </div>
+            )}
             <button disabled={busy || !profileComplete || !avail} onClick={apply}
               style={shellBtn("primary", { width: "100%", marginTop: 14, padding: "13px", fontSize: 14, opacity: (busy || !profileComplete || !avail) ? 0.45 : 1 })}>
               {busy ? "…" : "Submit application →"}</button>
