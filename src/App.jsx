@@ -276,6 +276,11 @@ function weekendName(ev) {
 }
 
 // The coming Saturday (local), as a yyyy-mm-dd string — the default for a new weekend.
+// Today as yyyy-mm-dd, local.
+function ymdToday() {
+  const d = new Date(), p = (x) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 function comingSaturday() {
   const d = new Date();
   d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7));
@@ -652,6 +657,100 @@ function TTeamChip({ team, onClick, active, sub }) {
 // ── Branded date+time picker. Custom calendar/time panel on desktop (the
 //    native one can't be themed); falls back to the native input on mobile,
 //    where the OS wheel picker is genuinely better UX. ──
+// Date RANGE picker — one calendar, click the start then the end. Deliberately
+// separate from VoltDateTime: that one carries hours/minutes because match and
+// draft times need them, whereas starts_on/ends_on are DATE columns, so any time
+// shown here would be collected and then silently thrown away.
+function VoltDateRange({ start, end, onChange, placeholder = "Pick the dates" }) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState(() => new Date((start || ymdToday()) + "T12:00:00"));
+  const boxRef = useRef(null);
+  useEffect(() => { if (start) setView(new Date(start + "T12:00:00")); }, [start]);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const y = view.getFullYear(), mo = view.getMonth();
+  const startDow = new Date(y, mo, 1).getDay();
+  const daysInMonth = new Date(y, mo + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const cellYmd = (d) => `${y}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
+  const pick = (d) => {
+    const v = cellYmd(d);
+    // No start yet, or a complete range already set → begin a new one.
+    if (!start || (start && end)) { onChange(v, null); return; }
+    // Second click closes the range; clicking before the start just re-anchors it.
+    if (v < start) onChange(v, null); else onChange(start, v);
+  };
+
+  const fmtShort = (v) => v ? new Date(v + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
+  const summary = !start ? placeholder
+    : !end ? `${fmtShort(start)} → pick the end date`
+    : start === end ? fmtShort(start)
+    : `${fmtShort(start)} – ${fmtShort(end)}`;
+
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ display: "inline-flex", alignItems: "center", gap: 9, padding: "9px 12px", cursor: "pointer",
+          background: "rgba(10,16,30,0.8)", border: `1px solid ${start && !end ? "rgba(245,196,83,0.5)" : "rgba(61,123,255,0.35)"}`,
+          color: start ? "#ecf3ff" : "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, fontWeight: 600 }}>
+        <span style={{ color: "#7da6ff" }}>▦</span>
+        <span>{summary}</span>
+        {start && <span onClick={(e) => { e.stopPropagation(); onChange(null, null); }} title="Clear"
+          style={{ color: "rgba(255,120,135,0.7)", fontSize: 13, marginLeft: 2 }}>✕</span>}
+      </button>
+      {open && (
+        <div style={{ position: "absolute", zIndex: 200, top: "calc(100% + 6px)", left: 0, padding: 12, minWidth: 268,
+          background: "linear-gradient(160deg,rgba(18,24,40,0.99),rgba(9,12,21,0.99))", border: "1px solid rgba(61,123,255,0.4)",
+          clipPath: SHELL_NOTCH(10), boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
+          <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+            <button onClick={() => setView(new Date(y, mo - 1, 1))} style={{ background: "none", border: "1px solid rgba(120,150,220,0.25)", color: "#7da6ff", cursor: "pointer", padding: "2px 8px", fontSize: 12 }}>‹</button>
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#ecf3ff" }}>
+              {view.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+            </span>
+            <button onClick={() => setView(new Date(y, mo + 1, 1))} style={{ background: "none", border: "1px solid rgba(120,150,220,0.25)", color: "#7da6ff", cursor: "pointer", padding: "2px 8px", fontSize: 12 }}>›</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginBottom: 4 }}>
+            {["S","M","T","W","T","F","S"].map((w, i) => (
+              <span key={i} style={{ textAlign: "center", fontSize: 9.5, letterSpacing: "0.1em", color: "rgba(200,215,255,0.35)" }}>{w}</span>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
+            {cells.map((d, i) => {
+              if (d === null) return <span key={i} />;
+              const v = cellYmd(d);
+              const isStart = v === start, isEnd = v === end;
+              const inRange = start && end && v > start && v < end;
+              const edge = isStart || isEnd;
+              return (
+                <button key={i} onClick={() => pick(d)}
+                  style={{ padding: "6px 0", fontSize: 12.5, fontWeight: edge ? 800 : 600, cursor: "pointer",
+                    fontFamily: "'Rajdhani',sans-serif",
+                    background: edge ? "#3d7bff" : inRange ? "rgba(61,123,255,0.18)" : "transparent",
+                    border: `1px solid ${edge ? "#3d7bff" : inRange ? "rgba(61,123,255,0.3)" : "transparent"}`,
+                    color: edge ? "#fff" : inRange ? "#cfe0ff" : "rgba(220,230,255,0.75)" }}>{d}</button>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-between" style={{ marginTop: 10 }}>
+            <span style={{ fontSize: 10.5, color: start && !end ? "#f5c453" : "rgba(200,215,255,0.4)" }}>
+              {start && !end ? "Now pick the end date" : "Click a start, then an end"}
+            </span>
+            <button onClick={() => setOpen(false)} style={{ background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer", padding: "5px 12px", clipPath: SHELL_NOTCH(5) }}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
   const [open, setOpen] = useState(false);
   const [desk, setDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
@@ -3723,11 +3822,15 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // (matched by captainUserId). Host stays "admin"; others can still pick/spectate.
   useEffect(() => {
     if (identity || !state || !auth) return;
-    if (auth.role === "host" || auth.role === "moderator") { setIdentity("admin"); return; }
-    // A captain keeps their seat in every phase — including registration, where
-    // the board may already have teams assigned. Check this before any fallback.
+    // Owning a seat wins over being staff. A host or moderator who captains a
+    // team needs their seat (budget, roster, War Room, bidding) — they keep their
+    // admin powers regardless, because isAdmin is derived from their role below,
+    // not from this value. Checking staff first was the bug: a host-captain was
+    // pinned to "admin", so they had no team and the War Room told them it wasn't
+    // theirs to see.
     const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
     if (mine) { setIdentity(mine.id); return; }
+    if (auth.role === "host" || auth.role === "moderator") { setIdentity("admin"); return; }
     // Browsing during registration with no seat of your own: spectate.
     if (browse) { setIdentity("spectator"); return; }
     // League users never self-claim seats — the host assigns captains.
@@ -4608,14 +4711,17 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     <RoleGate teams={state.teams} onPick={setIdentity} auth={auth} />
   </>);
 
-  const isAdmin = identity === "admin";
+  // Staff keep their admin powers even while holding a captain's seat — the two
+  // are independent. Only an explicit choice to spectate stands them down.
+  const isStaffRole = auth?.role === "host" || auth?.role === "moderator";
+  const isAdmin = isStaffRole ? identity !== "spectator" : identity === "admin";
   // Moderators share the admin identity but not the live auction. window.__VOLT
   // .isHost is strictly the league owner; it is undefined in the no-Supabase
   // preview, so treat undefined as allowed there.
   const isOwner = window.__VOLT?.isHost !== false;
   const canRunAuction = isAdmin && isOwner;
   const isSpectator = identity === "spectator";
-  const myTeam = (isAdmin || isSpectator) ? null : state.teams.find((t) => t.id === identity);
+  const myTeam = state.teams.find((t) => t.id === identity) || null;  // "admin"/"spectator" match nothing
   const block = state.block;
   const blockPlayer = block ? state.players.find((p) => p.id === block.playerId) : null;
   const leaderTeam = block?.leaderId ? state.teams.find((t) => t.id === block.leaderId) : null;
@@ -4663,9 +4769,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   })() : null;
 
   // Seat identity folded into the account chip — no separate pill.
-  const chipSeat = isAdmin ? { label: "Host", color: "#3d7bff" }
+  // Your seat wins the chip: a host who captains a team wants their budget and
+  // open slots at a glance during the auction, not a badge telling them they're
+  // the host — the Manage controls already make that obvious.
+  const chipSeat = myTeam
+    ? { label: myTeam.name, color: myTeam.hue, sub: `${fmt(myTeam.budget)} · ${emptySlots(myTeam)} slots open${isAdmin ? " · host" : ""}` }
+    : isAdmin ? { label: "Host", color: "#3d7bff" }
     : isSpectator ? { label: "Spectator", color: "#7da6ff", sub: "View only · bidding disabled" }
-    : myTeam ? { label: myTeam.name, color: myTeam.hue, sub: `${fmt(myTeam.budget)} · ${emptySlots(myTeam)} slots open` } : null;
+    : null;
 
   /* ── desktop rail — persistent primary nav, collapsible ↔ wide ── */
   const railSections = [
@@ -5579,7 +5690,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     </div>
   );
 
-  const WarRoomView = isAdmin ? (
+  // Holding a seat is what grants the War Room — a host who captains a team gets
+  // their own sandbox like anyone else. The "you can't see this" panel is only for
+  // staff with no team of their own.
+  const WarRoomView = (isAdmin && !myTeam) ? (
     <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
       <div className="flex items-center gap-2 mb-2">
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
@@ -6327,46 +6441,38 @@ function VoltOverlay({ onClose, zIndex = 140, children, dim = "rgba(4,6,12,0.86)
 //    Hosts often plan a weekend or two ahead, so the date is fully theirs to
 //    pick rather than always defaulting to the coming Saturday.
 function WeekendSetup({ mode, ev, onSave, onClose }) {
-  const pad = (x) => String(x).padStart(2, "0");
-  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const isoFromYmd = (s) => (s ? new Date(s + "T12:00:00").toISOString() : null);
-  const initial = ev?.starts_on || comingSaturday();
-  const [iso, setIso] = useState(isoFromYmd(initial));
-  // How long the event runs. spanDays is the preset (2 = Sat–Sun, 7 = a week,
-  // 14 = a fortnight); 0 means the host picked their own end date.
-  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-  const dayGap = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
-  const initialSpan = (() => {
-    if (!ev?.ends_on || !ev?.starts_on) return 2;
-    const n = dayGap(ev.starts_on, ev.ends_on) + 1;
-    return [2, 7, 14].includes(n) ? n : 0;
-  })();
-  const [spanDays, setSpanDays] = useState(initialSpan);
-  const [customEnd, setCustomEnd] = useState(ev?.ends_on || null);
+  // One range, two plain yyyy-mm-dd strings. No parallel spanDays/customEnd/iso
+  // state to keep in sync, and no time component that the date columns discard.
+  const [startYmd, setStartYmd] = useState(ev?.starts_on || comingSaturday());
+  const [endYmd, setEndYmd] = useState(ev?.ends_on || null);
   const [nick, setNick] = useState(
     ev?.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const d = iso ? new Date(iso) : null;
-  const notSaturday = d && d.getDay() !== 6;
-  // The end date the host has actually chosen, however they chose it.
-  const endYmd = !d ? null : (spanDays ? ymd(addDays(d, spanDays - 1)) : (customEnd || null));
-  const label = d ? weekendName({ starts_on: ymd(d), ends_on: endYmd, weekend_label: nick.trim() || null }) : "—";
-  const spanInvalid = !!(d && endYmd && dayGap(ymd(d), endYmd) < 0);
+  const addDays = (v, n) => { const x = new Date(v + "T12:00:00"); x.setDate(x.getDate() + n); const p2 = (q) => String(q).padStart(2, "0"); return `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`; };
+  const dayGap = (a, b) => Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000);
+  const notSaturday = startYmd && new Date(startYmd + "T12:00:00").getDay() !== 6;
+  // An open range (start picked, end not yet) falls back to the classic Sat–Sun.
+  const effectiveEnd = endYmd || (startYmd ? addDays(startYmd, 1) : null);
+  const days = startYmd && effectiveEnd ? dayGap(startYmd, effectiveEnd) + 1 : 0;
 
-  // Quick jumps — this Saturday, and the next three after it.
-  const quick = Array.from({ length: 4 }, (_, i) => {
-    const base = new Date(comingSaturday() + "T12:00:00");
-    base.setDate(base.getDate() + i * 7);
-    return base;
-  });
+  // One-tap shortcuts that set the WHOLE range, so the calendar is only needed
+  // for genuinely custom spans.
+  const sat = comingSaturday();
+  const presets = [
+    { t: "This weekend", s: sat, e: addDays(sat, 1) },
+    { t: "Next weekend", s: addDays(sat, 7), e: addDays(sat, 8) },
+    { t: "One week", s: sat, e: addDays(sat, 6) },
+    { t: "Two weeks", s: sat, e: addDays(sat, 13) },
+  ];
+
+  const label = startYmd ? weekendName({ starts_on: startYmd, ends_on: effectiveEnd, weekend_label: nick.trim() || null }) : "—";
 
   async function save() {
-    if (!d) { setErr("Pick a date first."); return; }
-    if (spanInvalid) { setErr("The end date is before the start date."); return; }
+    if (!startYmd) { setErr("Pick the dates first."); return; }
     setBusy(true); setErr("");
-    try { await onSave({ starts_on: ymd(d), ends_on: endYmd, weekend_label: nick.trim() || null }); onClose(); }
+    try { await onSave({ starts_on: startYmd, ends_on: effectiveEnd, weekend_label: nick.trim() || null }); onClose(); }
     catch (e) { setErr(e.message || "Could not save."); setBusy(false); }
   }
 
@@ -6383,66 +6489,39 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
         </div>
 
         <div style={{ fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", margin: "14px 0 3px" }}>{label}</div>
-        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", margin: "0 0 16px" }}>Pick the start date, then how long it runs. A weekend is the default — longer tournaments work too.</p>
+        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", margin: "0 0 16px" }}>Pick a shortcut, or set any start and end date on the calendar.</p>
 
-        {/* quick jumps */}
-        <div className="flex gap-2 flex-wrap" style={{ marginBottom: 14 }}>
-          {quick.map((q, i) => {
-            const active = d && ymd(d) === ymd(q);
+        {/* one-tap spans */}
+        <div className="flex gap-2 flex-wrap" style={{ marginBottom: 12 }}>
+          {presets.map((q) => {
+            const active = startYmd === q.s && effectiveEnd === q.e;
             return (
-              <button key={i} onClick={() => setIso(isoFromYmd(ymd(q)))}
+              <button key={q.t} onClick={() => { setStartYmd(q.s); setEndYmd(q.e); }}
                 style={{ padding: "7px 12px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer",
                   background: active ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.03)",
                   border: `1px solid ${active ? "#3d7bff" : "rgba(120,150,220,0.22)"}`,
                   color: active ? "#ecf3ff" : "rgba(200,215,255,0.65)", clipPath: SHELL_NOTCH(6) }}>
-                {i === 0 ? "This Sat" : `+${i} week${i > 1 ? "s" : ""}`}
-                <span style={{ display: "block", fontSize: 10, opacity: 0.7, letterSpacing: 0 }}>{q.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                {q.t}
+                <span style={{ display: "block", fontSize: 10, opacity: 0.7, letterSpacing: 0 }}>
+                  {new Date(q.s + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  {q.e !== q.s ? " – " + new Date(q.e + "T12:00:00").toLocaleDateString(undefined, { day: "numeric" }) : ""}
+                </span>
               </button>
             );
           })}
         </div>
 
-        <div style={{ marginBottom: 6, fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Or pick any date</div>
-        <VoltDateTime value={iso} onChange={setIso} placeholder="Choose a date" />
+        <div style={{ marginBottom: 6, fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Or set the dates</div>
+        <VoltDateRange start={startYmd} end={endYmd}
+          onChange={(a, b) => { setStartYmd(a); setEndYmd(b); }} placeholder="Pick start and end" />
+        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", marginTop: 8 }}>
+          {days > 0 ? <>Runs {days} day{days === 1 ? "" : "s"}{!endYmd && " (Sat\u2013Sun by default)"}.</> : "Pick a start date."}
+        </div>
         {notSaturday && (
-          <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 8 }}>
-            Heads up — that's a {d.toLocaleDateString(undefined, { weekday: "long" })}, not a Saturday. It'll still work.
+          <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 6 }}>
+            Heads up \u2014 that starts on a {new Date(startYmd + "T12:00:00").toLocaleDateString(undefined, { weekday: "long" })}, not a Saturday. It'll still work.
           </div>
         )}
-
-        <div style={{ margin: "16px 0 6px", fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>How long does it run</div>
-        <div className="flex gap-2 flex-wrap">
-          {[{ n: 2, t: "Weekend", s: "Sat–Sun" }, { n: 7, t: "1 week", s: "7 days" }, { n: 14, t: "2 weeks", s: "14 days" }, { n: 0, t: "Custom", s: "pick end" }].map((o) => {
-            const active = spanDays === o.n;
-            return (
-              <button key={o.n} onClick={() => {
-                setSpanDays(o.n);
-                // Seed the custom picker from the current end so switching to
-                // Custom doesn't dump the host on an empty field.
-                if (o.n === 0 && !customEnd && d) setCustomEnd(ymd(addDays(d, (spanDays || 2) - 1)));
-              }}
-                style={{ padding: "7px 12px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer",
-                  background: active ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.03)",
-                  border: `1px solid ${active ? "#3d7bff" : "rgba(120,150,220,0.22)"}`,
-                  color: active ? "#ecf3ff" : "rgba(200,215,255,0.65)", clipPath: SHELL_NOTCH(6) }}>
-                {o.t}
-                <span style={{ display: "block", fontSize: 10, opacity: 0.7, letterSpacing: 0 }}>{o.s}</span>
-              </button>
-            );
-          })}
-        </div>
-        {spanDays === 0 && (
-          <div style={{ marginTop: 10 }}>
-            <VoltDateTime value={customEnd ? isoFromYmd(customEnd) : null}
-              onChange={(v) => setCustomEnd(v ? ymd(new Date(v)) : null)} placeholder="Choose the end date" />
-          </div>
-        )}
-        {endYmd && !spanInvalid && (
-          <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", marginTop: 8 }}>
-            Runs {dayGap(ymd(d), endYmd) + 1} day{dayGap(ymd(d), endYmd) === 0 ? "" : "s"} — ends {new Date(endYmd + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}.
-          </div>
-        )}
-        {spanInvalid && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>The end date is before the start date.</div>}
 
         <div style={{ margin: "16px 0 6px", fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Nickname (optional)</div>
         <input value={nick} onChange={(e) => setNick(e.target.value)} maxLength={28} placeholder="e.g. Playoffs"
@@ -6796,7 +6875,7 @@ function PlayerProfile({ userId, onBack, footer }) {
       try {
         const cid = window.__VOLT.communityId;
         const [{ data: u }, { data: p }, { data: mrs }, { data: evs }, { data: strikes }] = await Promise.all([
-          __sb.from("users").select("display_name, trophy_streak, best_streak, weekends_won, brackets_won, suspension_remaining").eq("id", userId).maybeSingle(),
+          __sb.from("users").select("display_name, role, trophy_streak, best_streak, weekends_won, brackets_won, suspension_remaining").eq("id", userId).maybeSingle(),
           __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle(),
           __sb.from("match_results").select("event_id, points_computed, team_won, stat_payload, created_at").eq("community_id", cid).eq("user_id", userId).order("created_at", { ascending: true }),
           __sb.from("events").select("id, weekend_label, starts_on, ends_on, created_at, recap").eq("community_id", cid),
@@ -7088,6 +7167,90 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
         </div>
       )}
     </nav>
+  );
+}
+
+// Owner-only roster of everyone in the league, with one-tap promote/demote.
+// Appointing a helper used to mean drilling into a player's profile from the
+// Scout Hub, which meant it was effectively undiscoverable — and it only reached
+// people registered for the current weekend. This lists the whole league.
+function StaffPanel({ onOpenPlayer }) {
+  const [rows, setRows] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(false);
+
+  async function load() {
+    if (!HAS_SUPABASE) return;
+    try {
+      const { data } = await __sb.from("users")
+        .select("id, display_name, role")
+        .eq("community_id", window.__VOLT.communityId)
+        .order("display_name");
+      setRows(data || []);
+    } catch (e) { console.error("staff", e); setRows([]); }
+  }
+  useEffect(() => { if (open && rows === null) load(); }, [open]);
+
+  async function setRole(u, next) {
+    setBusyId(u.id); setErr("");
+    try {
+      const { error } = await __sb.from("users").update({ role: next }).eq("id", u.id);
+      if (error) throw error;
+      await load();
+    } catch (e) { setErr(e.message || "Could not change that role."); }
+    setBusyId(null);
+  }
+
+  const mods = (rows || []).filter(r => r.role === "moderator").length;
+  return (
+    <div style={{ marginTop: 30 }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          padding: "13px 16px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+          background: "rgba(10,16,30,0.5)", border: "1px solid rgba(120,150,220,0.2)", clipPath: SHELL_NOTCH(9) }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Staff</span>
+          <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)" }}>
+            {mods > 0 ? `${mods} moderator${mods === 1 ? "" : "s"} helping out` : "Appoint someone to help run weekends"}
+          </span>
+        </span>
+        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "\u25b2" : "\u25bc"}</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 8, padding: "14px 16px", background: "rgba(10,16,30,0.4)", border: "1px solid rgba(120,150,220,0.16)", clipPath: SHELL_NOTCH(9) }}>
+          <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", margin: "0 0 12px" }}>
+            Moderators can approve players, assign captains, build brackets and report scores. They can't run the live auction, settle or delete a weekend, or change roles.
+          </p>
+          {rows === null && <p className="vg-loading">// Loading…</p>}
+          {rows && rows.length === 0 && <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.45)", margin: 0 }}>Nobody has joined yet.</p>}
+          <div style={{ display: "grid", gap: 6 }}>
+            {(rows || []).map(u => {
+              const isOwner = u.role === "host";
+              const isMod = u.role === "moderator";
+              return (
+                <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "9px 12px",
+                  background: "rgba(255,255,255,0.03)", border: `1px solid ${isMod ? "rgba(61,220,132,0.3)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(6) }}>
+                  <span onClick={() => onOpenPlayer && onOpenPlayer(u.id)} title="View player profile"
+                    style={{ flex: 1, minWidth: 120, fontWeight: 700, textTransform: "uppercase", fontSize: 13, cursor: "pointer" }}>{u.display_name || "Player"}</span>
+                  <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 700,
+                    color: isOwner ? "#f5c453" : isMod ? "#9af5c2" : "rgba(200,215,255,0.4)" }}>
+                    {isOwner ? "Host" : isMod ? "Moderator" : "Player"}
+                  </span>
+                  {!isOwner && (
+                    <button disabled={busyId === u.id} onClick={() => setRole(u, isMod ? "player" : "moderator")}
+                      style={shellBtn(isMod ? "danger" : "accent", { padding: "6px 11px", fontSize: 10.5, opacity: busyId === u.id ? 0.5 : 1 })}>
+                      {busyId === u.id ? "\u2026" : isMod ? "Remove" : "Make moderator"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 10 }}>\u26a0 {err}</div>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -7573,6 +7736,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isHost && <div style={{ textAlign: "center" }}>
       <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next weekend" : "+ Create weekend"}</button>
     </div>}
+    {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {board && <div style={{ marginTop: 34 }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
