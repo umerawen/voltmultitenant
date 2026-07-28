@@ -4792,7 +4792,15 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             </div>
           )}
           {chrome?.onReport && (
-            <button onClick={chrome.onReport}
+            <button onClick={() => {
+                // With fixtures built, land on the fixture list rather than a blank
+                // form: reporting from a fixture pre-fills both teams, the label and
+                // the winner, and shows which matches still need stats. The blank
+                // form is only the right answer when there's no bracket to pick from.
+                if (state.tournament && flattenMatches(state.tournament).length) setView("bracket");
+                else chrome.onReport();
+              }}
+              title={state.tournament && flattenMatches(state.tournament).length ? "Pick the match to report" : "Report a match"}
               style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>▦ Report</button>
           )}
           {/* portal — back out to Registration (or the league hub). One button for
@@ -7946,6 +7954,14 @@ function MatchReport({ ev, onDone, prefill }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(null); // match_label being edited (null = new match)
+  // Type-to-jump. Valorant sorts its scoreboard by combat score, which changes
+  // every match and isn't knowable until the numbers are in — so the form can't
+  // pre-match that order. Instead you type a few letters of whoever you're
+  // reading and land straight in their row, and the on-screen order stops
+  // mattering at all.
+  const [jump, setJump] = useState("");
+  const jumpRef = useRef(null);
+  const statRefs = useRef({});                  // userId → that row's first input
 
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
   const fieldS = { padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, boxSizing: "border-box", width: 64 };
@@ -8066,6 +8082,24 @@ function MatchReport({ ev, onDone, prefill }) {
 
   if (teams === null) return <div className="vg-shell" style={{ minHeight: "60vh", background: "#0a0d18", color: "rgba(200,215,255,0.6)", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif" }}>Loading rosters…</div>;
 
+  // Everyone currently on either roster, subs included — the pool the jump box
+  // searches. Prefix match wins over substring so typing "ax" finds "axinn"
+  // rather than a name that merely contains those letters.
+  const everyLinePlayer = [
+    ...(teamOf(tA)?.players || []), ...extras.A,
+    ...(teamOf(tB)?.players || []), ...extras.B,
+  ];
+  const jumpQ = jump.trim().toLowerCase();
+  const jumpMatch = !jumpQ ? null
+    : (everyLinePlayer.find(p => p.name.toLowerCase().startsWith(jumpQ))
+       || everyLinePlayer.find(p => p.name.toLowerCase().includes(jumpQ))
+       || null);
+  const goToMatch = () => {
+    if (!jumpMatch) return;
+    const el = statRefs.current[jumpMatch.id];
+    if (el) { el.focus(); el.select?.(); setJump(""); }
+  };
+
   const rosterBlock = (teamId, side) => {
     const t = teamOf(teamId); if (!t) return null;
     const won = winner === side;
@@ -8082,17 +8116,26 @@ function MatchReport({ ev, onDone, prefill }) {
         </div>
         {linePlayers.length === 0 && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 12 }}>No players on this roster yet.</p>}
         <div style={{ display: "grid", gap: 6 }}>
-          {linePlayers.map(p => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
+          {linePlayers.map(p => {
+            const hit = jumpMatch && jumpMatch.id === p.id;
+            // Escape anywhere in a row hops back to the jump box, so the whole
+            // pass is keyboard-only: type a name, Enter, three numbers, Escape.
+            const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); jumpRef.current?.focus(); } };
+            return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: hit ? "rgba(61,220,132,0.1)" : "rgba(255,255,255,0.03)", border: `1px solid ${hit ? "rgba(61,220,132,0.55)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(6) }}>
               <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{p.name}</span>
-              <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
-              <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} style={fieldS} aria-label={`${p.name} assists`} />
-              <input placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} style={fieldS} aria-label={`${p.name} ACS`} />
+              {/* ACS first, then K then A — the column order Valorant's scoreboard
+                  uses, so you read across the game screen and type across the row. */}
+              <input ref={el => { if (el) statRefs.current[p.id] = el; else delete statRefs.current[p.id]; }}
+                placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} onKeyDown={onKey} style={fieldS} aria-label={`${p.name} ACS`} />
+              <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} onKeyDown={onKey} style={fieldS} aria-label={`${p.name} kills`} />
+              <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} onKeyDown={onKey} style={fieldS} aria-label={`${p.name} assists`} />
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: won ? "#3ddc84" : "#7da6ff", width: 58, textAlign: "right" }}>{ptsFor(p.id, won)} pts</span>
               {extras[side].some(x => x.id === p.id) &&
                 <button onClick={() => setExtras(ex => ({ ...ex, [side]: ex[side].filter(x => x.id !== p.id) }))} aria-label={`Remove sub ${p.name}`} style={{ background: "none", border: "none", color: "#ff8a94", cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>}
             </div>
-          ))}
+            );
+          })}
         </div>
         {subPool.length > 0 && (
           <select value="" onChange={e => { const r = subPool.find(x => x.userId === e.target.value); if (r) setExtras(ex => ({ ...ex, [side]: [...ex[side], { id: r.userId, name: r.name }] })); }}
@@ -8161,6 +8204,18 @@ function MatchReport({ ev, onDone, prefill }) {
             ? <>Saves as <b style={{ color: "#7da6ff" }}>{label.trim()}</b></>
             : <>Leave blank and it saves as <b style={{ color: "#7da6ff" }}>{teamOf(tA)?.name || "Team A"} vs {teamOf(tB)?.name || "Team B"}</b>. Add a label if these teams meet more than once.</>}
         </p>
+        {/* jump box — type a name from the scoreboard, hit Enter, land in their row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "4px 0 14px" }}>
+          <input ref={jumpRef} value={jump} onChange={e => setJump(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); goToMatch(); } if (e.key === "Escape") setJump(""); }}
+            placeholder="Type a player's name, press Enter…"
+            style={{ flex: "1 1 240px", minWidth: 0, padding: "9px 12px", background: "rgba(10,16,30,0.8)", border: `1px solid ${jumpQ && !jumpMatch ? "rgba(255,70,85,0.5)" : "rgba(61,123,255,0.3)"}`, color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, fontWeight: 600 }} />
+          <span style={{ fontSize: 11.5, color: jumpQ && !jumpMatch ? "#ff8f9a" : "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>
+            {!jumpQ ? "Read down the game scoreboard in any order — columns match it: ACS, K, A."
+              : jumpMatch ? `↵ jumps to ${jumpMatch.name}`
+              : "No player by that name on either roster."}
+          </span>
+        </div>
         <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
           {rosterBlock(tA, "A")}
           {rosterBlock(tB, "B")}
