@@ -4124,7 +4124,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     s.bidHistory = [];
     s.log.unshift(`Fate chose ${p.name} — opening at ${fmt(s.block.startingBid)}`); s.log = s.log.slice(0, 8);
     return s;
-  }, true);  // optimistic — overlay appears instantly
+  }, true); };  // optimistic — overlay appears instantly
   const placeBid = (teamId) => mutate((s) => {
     const b = s.block; if (!b || b.leaderId === teamId) return null;
     const team = s.teams.find((t) => t.id === teamId); if (!team || emptySlots(team) === 0) return null;
@@ -4135,7 +4135,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const p = s.players.find((x) => x.id === b.playerId);
     s.log.unshift(`${team.name} bids ${fmt(req)} on ${p?.name}`); s.log = s.log.slice(0, 8);
     return s;
-  }, true) };
+  }, true);
   const sell = () => { if (!isLeagueOwner()) return; return mutate((s) => {
     const b = s.block; if (!b || !b.leaderId) return null;
     const team = s.teams.find((t) => t.id === b.leaderId), p = s.players.find((x) => x.id === b.playerId);
@@ -5390,7 +5390,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       </div>
       <p className="text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>
         Registered but not drafted — available to sub in. Every match they play banks season points.
-        {phase === "drafting" && " These players are still up for auction, so check with the host before calling anyone in."}
+        {chrome?.phase === "drafting" && " These players are still up for auction, so check with the host before calling anyone in."}
       </p>
 
       {myRoster.length > 0 && (
@@ -6646,9 +6646,9 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
 
         {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{err}</div>}
 
-        <button disabled={busy || !d} onClick={save}
+        <button disabled={busy || !startYmd} onClick={save}
           style={{ width: "100%", marginTop: 16, padding: "12px", fontSize: 13, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase",
-            cursor: busy || !d ? "not-allowed" : "pointer", opacity: busy || !d ? 0.5 : 1,
+            cursor: busy || !startYmd ? "not-allowed" : "pointer", opacity: busy || !startYmd ? 0.5 : 1,
             background: "rgba(61,123,255,0.18)", border: "1px solid #3d7bff", color: "#ecf3ff", clipPath: SHELL_NOTCH(12) }}>
           {busy ? "…" : mode === "create" ? "Open registration →" : "Save changes"}
         </button>
@@ -8117,7 +8117,9 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     // The DB enforces this too (events_staff_update forbids phase='settled'
     // unless auth_is_host()), so this is the friendly message, not the lock.
     if (NEXT[phase] === "settled" && !isTrueHost) {
-      setErr("Only the host can settle a weekend. Ask them to close it out.");
+      // Belt and braces — events_staff_update also refuses phase='settled'
+      // unless auth_is_host(), so this is the explanation, not the lock.
+      window.alert("Only the host can settle a weekend. Ask them to close it out.");
       return;
     }
     // Closing registration and opening the draft are one step now, so this is
@@ -8317,6 +8319,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       portalLabel: inReg ? "Registration" : "League hub",
       onBack: inReg ? () => setRegView("gate") : onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
+    phase,   // raw phase — DraftApp needs to branch on it, not just label it
       draftAt: ev?.draft_at || null,
       // Confirmed captain for this weekend, from the registration record. The
       // auction board doesn't exist until the draft starts, so during
