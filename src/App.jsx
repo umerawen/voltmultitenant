@@ -6112,6 +6112,38 @@ function HostMenu({ children }) {
 // Persistent account control — shows who you are + sign out. Used on every shell screen.
 function AccountChip({ account, onSignOut, onProfile, seat }) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef(null);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
+
+  async function copyCode(e) {
+    e.stopPropagation();                      // keep the menu open
+    const code = account?.code;
+    if (!code) return;
+    let ok = false;
+    try {
+      if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(code); ok = true; }
+    } catch { /* falls through to the manual path below */ }
+    if (!ok) {
+      // The async clipboard API needs a secure context and can be blocked
+      // outright, so fall back to the old selection trick rather than failing
+      // silently on someone's phone.
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = code; ta.setAttribute("readonly", "");
+        ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select(); ta.setSelectionRange(0, code.length);
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch { ok = false; }
+    }
+    if (!ok) return;
+    setCopied(true);
+    clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(false), 1600);
+  }
+
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
       <button onClick={() => setOpen(o => !o)} aria-label="Account menu"
@@ -6134,7 +6166,17 @@ function AccountChip({ account, onSignOut, onProfile, seat }) {
               {seat.sub && <div style={{ fontSize: 11, color: "rgba(200,215,255,0.5)", marginTop: 3 }}>{seat.sub}</div>}
             </div>
           )}
-          {account.community && <div style={{ fontSize: 12, color: "rgba(200,215,255,0.55)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(120,150,220,0.15)" }}>{account.community}{account.code && <span style={{ display: "block", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#7da6ff", marginTop: 2 }}>code: {account.code}</span>}</div>}
+          {account.community && <div style={{ fontSize: 12, color: "rgba(200,215,255,0.55)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(120,150,220,0.15)" }}>{account.community}{account.code && (
+            <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#7da6ff" }}>code: {account.code}</span>
+              <button onClick={copyCode} title={copied ? "Copied" : "Copy league code"} aria-label="Copy league code"
+                style={{ display: "grid", placeItems: "center", width: 20, height: 20, padding: 0, flex: "0 0 auto", cursor: "pointer", lineHeight: 1, fontSize: 10.5,
+                  background: copied ? "rgba(61,220,132,0.16)" : "rgba(61,123,255,0.1)",
+                  border: `1px solid ${copied ? "rgba(61,220,132,0.55)" : "rgba(61,123,255,0.35)"}`,
+                  color: copied ? "#9af5c2" : "#7da6ff" }}>{copied ? "✓" : "⧉"}</button>
+              {copied && <span style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2", fontWeight: 700 }}>Copied</span>}
+            </span>
+          )}</div>}
           {onProfile && <button onClick={() => { setOpen(false); onProfile(); }} style={shellBtn("ghost", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>⊞ My Account</button>}
           <button onClick={onSignOut} style={shellBtn("danger", { width: "100%", marginTop: onProfile ? 8 : 12, padding: "9px", letterSpacing: "0.1em" })}>Sign out</button>
         </div>
@@ -6572,14 +6614,14 @@ function NotifBell() {
     if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d";
   };
   return (
-    <div style={{ position: "relative", marginRight: 10 }}>
+    <div style={{ position: "relative" }}>
       {unread > 0 && (
         <span style={{ position: "absolute", top: -5, right: -5, zIndex: 2, minWidth: 17, height: 17, padding: "0 4px",
           display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10, fontWeight: 700,
           borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace", pointerEvents: "none",
           boxShadow: "0 0 0 2px #0a0d18" }}>{unread}</span>
       )}
-      <button onClick={openPanel} title="Notifications" style={shellBtn("ghost", { padding: "7px 12px", fontSize: 13, position: "relative" })}>
+      <button onClick={openPanel} title="Notifications" style={shellBtn("ghost", { width: 36, height: 36, padding: 0, display: "grid", placeItems: "center", fontSize: 14, position: "relative" })}>
         ◈
       </button>
       {open && (
@@ -7133,7 +7175,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
     <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px", paddingLeft: railPad, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
       <ShellStyles />
       {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={() => setShowProfile(true)} isHost={isHost} wide={railWideHub} setWide={setRailWide} />}
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
         {HAS_SUPABASE && <NotifBell />}
         {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? () => setShowProfile(true) : null} />}
       </div>
