@@ -178,7 +178,7 @@ function visInterval(fn, activeMs, hiddenMs) {
 }
 
 // Hardcoded access codes (baked into the build — nobody sets these in-app).
-// Commissioner: 1218.  Captains: by seat order, seat 1 → "0001" ... seat 8 → "0008".
+// Host: 1218.  Captains: by seat order, seat 1 → "0001" ... seat 8 → "0008".
 const COMMISH_CODE = "1218";
 const seatCode = (seatIndex) => String(seatIndex + 1).padStart(4, "0"); // 0-based index → "0001".."0008"
 
@@ -298,10 +298,14 @@ function regToPlayer(p, isCap) {
   };
 }
 
-// A player the Commissioner typed in by hand has a short generated id; anyone
+// A player the host typed in by hand has a short generated id; anyone
 // who registered carries their auth uuid. Manual entries have no registration
 // to rebuild from, so they must be carried across board rebuilds explicitly.
 const isManualPlayer = (p) => !(typeof p?.id === "string" && p.id.length > 30);
+
+// The league owner, strictly — moderators are staff but do NOT run the live
+// auction. Undefined means the no-Supabase preview, where everything is allowed.
+const isLeagueOwner = () => window.__VOLT?.isHost !== false;
 
 function freshState(captains, poolPlayers) {  // captains: optional [{ userId, name, teamName? }] from the real community.
   // When present, teams are built from real registered captains (each tied to a
@@ -333,13 +337,13 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
     block: null,
     spin: null,
     draftAt: null, // auction start comes from the weekend (events.draft_at)
-    commishCode: null, // set by the first Commissioner; required thereafter
+    commishCode: null, // set by the first host; required thereafter
     teamCodes: {}, // { teamId: passcode } gating each captain's War Room; set once by that captain
     bidHistory: [],   // [{teamId, amount, ts}] for active block
     soldFlash: null,  // ts of last sale (for red flash)
     lastSoldTo: null, // teamId that secured the most recent sale (for won/lost audio)
     recentSales: [],  // [{playerId, name, teamId, price, bidCount, ts}] newest-first, for the auction feed ticker
-    tournament: null, // { format, matchType, groups, matches, slots, ... } — built by Commissioner
+    tournament: null, // { format, matchType, groups, matches, slots, ... } — built by Host
     log: [],
     stamp: Date.now(),
   };
@@ -529,7 +533,7 @@ function computeStandings(teamIds, matches, overrides) {
     else if (m.winner === m.teamB) { row[m.teamB].won++; row[m.teamB].pts += 3; row[m.teamA].lost++; }
   }
   let rows = teamIds.map((id) => { const r = row[id]; r.diff = r.rf - r.ra; return r; });
-  // apply manual overrides (commissioner can hand-edit pts/diff)
+  // apply manual overrides (host can hand-edit pts/diff)
   if (overrides) rows = rows.map((r) => overrides[r.teamId] ? { ...r, ...overrides[r.teamId], _ov: true } : r);
   // head-to-head helper between two teams
   const h2h = (x, y) => {
@@ -619,7 +623,7 @@ const requiredBid = (b) => (b.leaderId ? b.currentBid + 100 : b.startingBid);
 /* ════════════════ atoms ═══════════════════════════════════════════ */
 
 /* ════════════════════════════════════════════════════════════════════
-   TOURNAMENT UI — Commissioner builds & runs brackets; everyone watches.
+   TOURNAMENT UI — Host builds & runs brackets; everyone watches.
    ════════════════════════════════════════════════════════════════════ */
 
 // notched HUD panel wrapper
@@ -1411,7 +1415,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
     if (!isAdmin) return (
       <div className="view-in page-wrap py-12 flex flex-col items-center text-center">
         {header("Competition", "Tournament", "Brackets")}
-        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>No tournament has been set up yet. The Commissioner will configure the format and brackets — they'll appear here live once it begins.</p>
+        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>No tournament has been set up yet. The host will configure the format and brackets — they'll appear here live once it begins.</p>
       </div>
     );
     const maxGroups = Math.max(2, Math.floor(state.teams.length / 2));
@@ -1508,7 +1512,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
     if (!isAdmin) return (
       <div className="view-in page-wrap py-12 flex flex-col items-center text-center">
         {header("Competition", "Tournament", "Setup")}
-        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The Commissioner is setting up a <b style={{ color: "#7da6ff" }}>{fmtName}</b> ({"BO" + t.bo}). Brackets will appear here once it's locked in.</p>
+        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The host is setting up a <b style={{ color: "#7da6ff" }}>{fmtName}</b> ({"BO" + t.bo}). Brackets will appear here once it's locked in.</p>
       </div>
     );
 
@@ -2181,7 +2185,7 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
             </button>
           </>
         ) : (
-          <p className="text-sm uppercase tracking-widest animate-pulse" style={{ color: "rgba(236,243,255,0.45)" }}>Waiting for the Commissioner to draw the next player…</p>
+          <p className="text-sm uppercase tracking-widest animate-pulse" style={{ color: "rgba(236,243,255,0.45)" }}>Waiting for the host to draw the next player…</p>
         )}
       </div>
     </div>
@@ -2402,6 +2406,7 @@ function RoleGate({ teams, onPick, auth }) {
   const [err, setErr] = useState("");
   const loggedIn = !!auth;           // authenticated via Supabase → no passcodes
   const isHost = auth?.role === "host";
+  const isStaff = auth?.role === "host" || auth?.role === "moderator";
 
   const submit = () => {
     setErr("");
@@ -2421,10 +2426,10 @@ function RoleGate({ teams, onPick, auth }) {
     setSeat(t); setSeatIdx(i); setMode("captain"); setCode(""); setErr("");
   };
 
-  // Commissioner: hosts enter directly; legacy asks for passcode.
+  // Host: hosts enter directly; legacy asks for passcode.
   const enterCommish = () => {
     if (isHost) { onPick("admin"); return; }
-    if (loggedIn) { setErr("Only the community host can enter as Commissioner."); return; }
+    if (loggedIn) { setErr("Only the community host can enter here."); return; }
     setMode("commish"); setCode(""); setErr("");
   };
 
@@ -2492,7 +2497,7 @@ function RoleGate({ teams, onPick, auth }) {
                   <path d="M12 2.5l7 3v5.5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V5.5z" />
                   <path d="M9.4 11.8l1.9 1.9 3.6-3.9" />
                 </svg>
-                Enter as Commissioner
+                Enter as host
               </button>}
             </div>
             <p className="mt-4 text-xs text-center max-w-md" style={{ color: "rgba(200,215,255,0.4)" }}>Players can watch the auction, rosters and scouting reports live, but can't place bids.</p>
@@ -2517,9 +2522,9 @@ function RoleGate({ teams, onPick, auth }) {
         ) : (
           <div className="mt-10 w-full max-w-sm flex flex-col gap-3 p-7 relative" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.08), rgba(10,15,28,0.6))", border: "1px solid rgba(61,123,255,0.4)", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", backdropFilter: "blur(10px)", boxShadow: "0 0 50px rgba(61,123,255,0.18)" }}>
             <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-            <p className="uppercase tracking-[0.25em] text-sm font-bold text-center" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#7da6ff" }}>Commissioner Access</p>
+            <p className="uppercase tracking-[0.25em] text-sm font-bold text-center" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#7da6ff" }}>Host Access</p>
             <p className="text-xs text-center -mt-1 leading-relaxed" style={{ color: "rgba(220,230,255,0.5)" }}>
-              Enter the Commissioner passcode.
+              Enter the host passcode.
             </p>
             <input type="password" autoFocus value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
               placeholder="Passcode" className="px-3 py-2.5 rounded-lg outline-none text-center tracking-widest"
@@ -2667,7 +2672,7 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
           <span style={{ color: "#3ddc84" }}>●</span> Private to you
         </span>
       </div>
-      <p className="text-sm mb-5" style={{ color: "rgba(236,243,255,0.5)" }}>Brainstorm mock lineups and target bids before the auction. Only you can see these — not other captains, not the Commissioner.</p>
+      <p className="text-sm mb-5" style={{ color: "rgba(236,243,255,0.5)" }}>Brainstorm mock lineups and target bids before the auction. Only you can see these — not other captains, not the host.</p>
 
       {/* projected spend bar */}
       <div className="p-4 rounded-2xl mb-5" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${over ? "#ff4655" : "rgba(255,255,255,0.1)"}`, boxShadow: over ? "0 0 24px rgba(255,70,85,0.3)" : "none", transition: "all 250ms" }}>
@@ -2829,7 +2834,7 @@ function AgentArt({ side, src, hue, width = 520, top = -40, imgScale = 1, edgeOf
   );
 }
 
-/* ════════════════ MAP VETO (Commissioner pick/ban tool — local, not synced) ══════ */
+/* ════════════════ MAP VETO (host pick/ban tool — local, not synced) ══════ */
 const ALL_MAPS = ["Ascent", "Bind", "Breeze", "Corrode", "Fracture", "Haven", "Icebox", "Lotus", "Pearl", "Split", "Summit", "Sunset", "Abyss"];
 // Map splash thumbnails. Paste a URL or base64 data URI per map; blanks render a styled placeholder.
 const MAP_IMG = {
@@ -3020,7 +3025,7 @@ function Leaderboard({ isAdmin }) {
       {rows === null && <p style={{ color: "rgba(200,215,255,0.5)" }}>Loading…</p>}
       {rows && rows.length === 0 && (
         <div className="px-5 py-4" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.2)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif" }}>
-          No matches recorded this season yet. Points appear the moment the Commissioner reports the first match.
+          No matches recorded this season yet. Points appear the moment the host reports the first match.
         </div>
       )}
       {rows && rows.length > 0 && (
@@ -3136,7 +3141,7 @@ function MapVeto({ teams }) {
     <div className="view-in page-wrap py-8">
       <div className="flex items-center gap-2 mb-2">
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
-        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Commissioner Tool</p>
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Host Tool</p>
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
       </div>
       <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
@@ -3587,8 +3592,11 @@ const SndFX = (() => {
 function DraftApp({ auth, browse, chrome, initialView }) {
   const [state, setState] = useState(null);
   // Auto-resolve in-app identity from the logged-in role:
-  //  host  → "admin" (Commissioner)   ·   others start unpicked (choose seat/spectator)
-  const [identity, setIdentity] = useState(auth?.role === "host" ? "admin" : null);
+  //  host  → "admin" (Host)   ·   others start unpicked (choose seat/spectator)
+  // A moderator lands in the same "admin" identity as the host — they run the
+  // same operational screens. The narrower powers are gated separately below by
+  // isTrueHost, not by hiding whole surfaces from them.
+  const [identity, setIdentity] = useState((auth?.role === "host" || auth?.role === "moderator") ? "admin" : null);
   const [view, setView] = useState(initialView || "lobby");
   const [tourneyOpen, setTourneyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -3715,14 +3723,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // (matched by captainUserId). Host stays "admin"; others can still pick/spectate.
   useEffect(() => {
     if (identity || !state || !auth) return;
-    if (auth.role === "host") { setIdentity("admin"); return; }
+    if (auth.role === "host" || auth.role === "moderator") { setIdentity("admin"); return; }
     // A captain keeps their seat in every phase — including registration, where
     // the board may already have teams assigned. Check this before any fallback.
     const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
     if (mine) { setIdentity(mine.id); return; }
     // Browsing during registration with no seat of your own: spectate.
     if (browse) { setIdentity("spectator"); return; }
-    // League users never self-claim seats — the Commissioner assigns captains.
+    // League users never self-claim seats — the host assigns captains.
     // Anyone logged in without an owned seat watches as spectator, even on a
     // sample/unbuilt board. The seat gate remains only for legacy/preview mode.
     if (auth.userId) setIdentity("spectator");
@@ -3897,7 +3905,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     else { const t = setTimeout(fire, delay); return () => clearTimeout(t); }
   }, [state?.spin?.startTs]);
 
-  // if a captain's seat is removed by the commissioner, send them back to the gate
+  // if a captain's seat is removed by the host, send them back to the gate
   useEffect(() => {
     if (identity && identity !== "admin" && identity !== "spectator" && state && !state.teams.some((t) => t.id === identity)) setIdentity(null);
   }, [identity, state?.teams?.length]);
@@ -4009,7 +4017,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     s.players = s.players.filter((x) => x.id !== pid);
     return s;
   }, true, true);
-  const spinNominate = () => mutate((s) => {
+  const spinNominate = () => { if (!isLeagueOwner()) return; return mutate((s) => {
     if (s.block || (s.spin && Date.now() < s.spin.startTs + SPIN_MS + REVEAL_MS)) return null;
     const poolIds = s.players.filter((p) => p.status === "pool" && !p.isCaptain).map((p) => p.id);
     if (!poolIds.length) return null;
@@ -4033,8 +4041,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const p = s.players.find((x) => x.id === b.playerId);
     s.log.unshift(`${team.name} bids ${fmt(req)} on ${p?.name}`); s.log = s.log.slice(0, 8);
     return s;
-  }, true);
-  const sell = () => mutate((s) => {
+  }, true) };
+  const sell = () => { if (!isLeagueOwner()) return; return mutate((s) => {
     const b = s.block; if (!b || !b.leaderId) return null;
     const team = s.teams.find((t) => t.id === b.leaderId), p = s.players.find((x) => x.id === b.playerId);
     if (!team || !p) return null;
@@ -4047,13 +4055,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     s.recentSales.unshift({ playerId: p.id, name: p.name, teamId: team.id, price: b.currentBid, bidCount: p.bidCount || 0, ts: Date.now() });
     s.recentSales = s.recentSales.slice(0, 10);
     return s;
-  }, true);
-  const passPlayer = () => mutate((s) => {
+  }, true) };
+  const passPlayer = () => { if (!isLeagueOwner()) return; return mutate((s) => {
     const b = s.block; if (!b) return null;
     const p = s.players.find((x) => x.id === b.playerId);
     if (p) { p.status = "pool"; s.log.unshift(`${p.name} passed — back to the pool`); s.log = s.log.slice(0, 8); }
     s.block = null; s.bidHistory = []; return s;
-  }, true);
+  }, true) };
   const resetAll = () => { if (!resetArmed) { setResetArmed(true); setTimeout(() => setResetArmed(false), 4000); return; } setResetArmed(false); mutate(() => freshState()); };
   const renameTeam = (teamId, name, captain) => mutate((s) => {
     const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
@@ -4083,7 +4091,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     return s;
   }, true, true);
 
-  /* ── manual roster edits (Commissioner only) — add deducts the price, remove refunds it, so budget stays correct ── */
+  /* ── manual roster edits (Host only) — add deducts the price, remove refunds it, so budget stays correct ── */
   const adminAddToRoster = (teamId, playerId, price) => mutate((s) => {
     const t = s.teams.find((x) => x.id === teamId); if (!t || emptySlots(t) === 0) return null;
     const p = s.players.find((x) => x.id === playerId); if (!p || p.status === "sold") return null;
@@ -4173,7 +4181,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     }
   };
 
-  /* ── tournament mutators (Commissioner only) ── */
+  /* ── tournament mutators (Host only) ── */
   const tCreate = (format, matchType, numGroups) => mutate((s) => {
     const ids = s.teams.map((t) => t.id);
     const boNum = matchType === "bo3" ? 3 : 1;       // numeric best-of for match logic
@@ -4185,7 +4193,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       t.locked = false;
       t.final = null; // { teamA, teamB, bo, maps, done, winner } once groups complete
     } else if (format === "roundrobin" || format === "league") {
-      t.teamIds = []; // commissioner adds all participating teams
+      t.teamIds = []; // host adds all participating teams
       t.matches = [];
       t.locked = false;
     } else if (format === "single") {
@@ -4601,6 +4609,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   </>);
 
   const isAdmin = identity === "admin";
+  // Moderators share the admin identity but not the live auction. window.__VOLT
+  // .isHost is strictly the league owner; it is undefined in the no-Supabase
+  // preview, so treat undefined as allowed there.
+  const isOwner = window.__VOLT?.isHost !== false;
+  const canRunAuction = isAdmin && isOwner;
   const isSpectator = identity === "spectator";
   const myTeam = (isAdmin || isSpectator) ? null : state.teams.find((t) => t.id === identity);
   const block = state.block;
@@ -4650,7 +4663,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   })() : null;
 
   // Seat identity folded into the account chip — no separate pill.
-  const chipSeat = isAdmin ? { label: "Commissioner", color: "#3d7bff" }
+  const chipSeat = isAdmin ? { label: "Host", color: "#3d7bff" }
     : isSpectator ? { label: "Spectator", color: "#7da6ff", sub: "View only · bidding disabled" }
     : myTeam ? { label: myTeam.name, color: myTeam.hue, sub: `${fmt(myTeam.budget)} · ${emptySlots(myTeam)} slots open` } : null;
 
@@ -5036,7 +5049,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                     {/* your locked-in status for THIS live weekend — the registration decision is already closed */}
                     <div className="mt-4" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.9rem", letterSpacing: "0.04em" }}>
                       {identity === "admin"
-                        ? <span style={{ color: "#7da6ff" }}>◈ You're running this weekend as Commissioner.</span>
+                        ? <span style={{ color: "#7da6ff" }}>◈ You're running this weekend as host.</span>
                         : (identity && identity !== "spectator")
                           ? <span style={{ color: "#3ddc84" }}>✓ You're a captain this weekend — {(state.teams.find(t => t.id === identity)?.name) || "your squad"}.</span>
                           : <span style={{ color: "rgba(200,215,255,0.6)" }}>● You're spectating this weekend's draft.</span>}
@@ -5098,7 +5111,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
                   {!hasDraftTime ? (
                     <div style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", lineHeight: 1.5, color: "rgba(200,215,255,0.5)" }}>
-                      No auction time set yet.{isAdmin ? " Set one in Manage." : " Your commissioner will announce it."}
+                      No auction time set yet.{isAdmin ? " Set one in Manage." : " Your host will announce it."}
                     </div>
                   ) : cd.live ? (
                     <div className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "1.9rem", lineHeight: 1, letterSpacing: "0.04em", color: "#3ddc84", textShadow: "0 0 18px rgba(61,220,132,0.45)" }}>
@@ -5189,7 +5202,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <div className="grid md:grid-cols-3 gap-4">
         {[
           { t: "The Budget", b: "$10,000 per team, 4 slots to fill. Captains are already seated." },
-          { t: "The Wheel", b: "No hand-picking — the Commissioner spins and a random name hits the block." },
+          { t: "The Wheel", b: "No hand-picking — the host spins and a random name hits the block." },
           { t: "The Bidding", b: "Bids rise in $100 steps. Your ceiling adjusts live so you can always fill your slots." },
         ].map((r, i) => (
           <div key={i} className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
@@ -5294,9 +5307,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <div id="wr-admin-form" className="mt-8 p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.5))", border: `1px solid ${editingPlayer ? "#3ddc8455" : "rgba(61,123,255,0.22)"}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs uppercase tracking-widest" style={{ color: editingPlayer ? "#3ddc84" : "#7da6ff" }}>
-              {editingPlayer ? `Commissioner · editing ${editingPlayer.name}` : "Commissioner · add player"}
+              {editingPlayer ? `Host · editing ${editingPlayer.name}` : "Host · add player"}
             </p>
-            <button onClick={resetAll} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ border: `1px solid ${resetArmed ? "#ff4655" : "rgba(255,70,85,0.5)"}`, background: resetArmed ? "rgba(255,70,85,0.2)" : "transparent", color: resetArmed ? "#ffd2d7" : "#ff8a94" }}>{resetArmed ? "Click again to confirm" : "Reset auction"}</button>
+            {isOwner && <button onClick={resetAll} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ border: `1px solid ${resetArmed ? "#ff4655" : "rgba(255,70,85,0.5)"}`, background: resetArmed ? "rgba(255,70,85,0.2)" : "transparent", color: resetArmed ? "#ffd2d7" : "#ff8a94" }}>{resetArmed ? "Click again to confirm" : "Reset auction"}</button>}
           </div>
           <AddPlayerForm onAdd={addPlayer} editing={editingPlayer} onSave={(p) => { editPlayer(p); setEditingPlayer(null); }} onCancel={() => setEditingPlayer(null)} />
         </div>
@@ -5407,7 +5420,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 </div>
               )}
 
-              {isAdmin && (
+              {canRunAuction && (
                 <div className="flex gap-3 w-full max-w-md">
                   <button onClick={sell} disabled={!block.leaderId} className="flex-1 py-4 text-2xl font-bold uppercase tracking-widest active:scale-95 transition-all"
                     style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(20px 0,100% 0,calc(100% - 20px) 100%,0 100%)", background: block.leaderId ? "linear-gradient(90deg,#1fbf75,#3ddc84)" : "rgba(255,255,255,0.05)", color: block.leaderId ? "#062b18" : "rgba(236,243,255,0.25)", boxShadow: block.leaderId ? "0 0 30px rgba(61,220,132,0.4)" : "none", cursor: block.leaderId ? "pointer" : "not-allowed" }}>SOLD</button>
@@ -5416,7 +5429,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               )}
             </>
           ) : (
-            <ReelStage spin={spinLive ? state.spin : null} players={state.players} pool={pool} isAdmin={isAdmin} onDraw={spinNominate} canDraw={!!pool.length} />
+            <ReelStage spin={spinLive ? state.spin : null} players={state.players} pool={pool} isAdmin={canRunAuction} onDraw={spinNominate} canDraw={!!pool.length} />
           )}
         </div>
 
@@ -5574,7 +5587,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
       </div>
       <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: "#3d7bff" }}>Room</span></h2>
-      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As Commissioner you can't view captains' saved lineups — they're visible only to the captain who made them.</p>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As host you can't view captains' saved lineups — they're visible only to the captain who made them.</p>
     </div>
   ) : (isSpectator && !chrome?.isCaptainElect) ? (
     <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
@@ -5604,7 +5617,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   ) : (
     <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
       <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
-      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The map veto is run by the Commissioner.</p>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The map veto is run by the host.</p>
     </div>
   );
 
@@ -5688,7 +5701,8 @@ function VoltGate() {
       window.__VOLT.communityId = u.community_id;
       window.__VOLT.communityName = u.communities?.name || null;
       window.__VOLT.userName = u.display_name || null;   // used for vote attribution
-      window.__VOLT.isHost = u.role === "host";          // host-only controls on the profile
+      window.__VOLT.isHost = u.role === "host";              // strictly the owner
+      window.__VOLT.isStaff = u.role === "host" || u.role === "moderator"; // + moderators
       // Dive straight into a LIVE weekend (draft/matches) — login shouldn't
       // land on a list when there's a weekend to be inside. Registration and
       // "all settled" fall through to the hub (that's where the play toggle is).
@@ -5786,7 +5800,10 @@ function VoltGate() {
       }
       await __sb.from("users").upsert({
         id: user.id, community_id: c.id,
-        role: existing?.role === "host" ? "host" : "player",   // never silently demote
+        // Keep your role only when you're staying in the same league. A
+        // moderator of one league joining another arrives as a plain player.
+        role: (existing?.community_id === c.id && (existing?.role === "host" || existing?.role === "moderator"))
+          ? existing.role : "player",
         display_name: displayName || existing?.display_name || email.split("@")[0],
       });
       window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
@@ -5884,7 +5901,9 @@ function VoltGate() {
     setPhase("welcome");
   };
 
-  if (phase === "schedule") return <WeekendSchedule community={community} isHost={profile?.role === "host"}
+  if (phase === "schedule") return <WeekendSchedule community={community}
+    isHost={profile?.role === "host" || profile?.role === "moderator"}
+    isTrueHost={profile?.role === "host"}
     account={account} onSignOut={signOut}
     openProfile={pendingProfile} onProfileOpened={() => setPendingProfile(null)}
     onEnter={(ev, view) => { window.__VOLT.weekendId = ev.id; window.__VOLT.weekendLabel = weekendName(ev); setActiveEvent(ev); setTargetView(view || null); setPhase("ready"); }} />;
@@ -5896,7 +5915,8 @@ function VoltGate() {
     return <WeekendApp
       auth={auth}
       event={activeEvent}
-      isHost={profile?.role === "host"}
+      isHost={profile?.role === "host" || profile?.role === "moderator"}
+      isTrueHost={profile?.role === "host"}
       account={account} onSignOut={signOut}
       initialView={targetView}
       onBack={() => { window.__VOLT.weekendId = null; setActiveEvent(null); setTargetView(null); setPhase("schedule"); }} />;
@@ -6068,7 +6088,7 @@ function AccountView({ auth, chrome }) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, fontFamily: "'Rajdhani',sans-serif" }}>
             {me?.email && <div><div style={fieldLabel}>Email</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>{me.email}</div></div>}
-            <div><div style={fieldLabel}>Role</div><div style={{ fontWeight: 700, textTransform: "uppercase", color: (me?.role || auth?.role) === "host" ? "#7da6ff" : "#ecf3ff" }}>{(me?.role || auth?.role) === "host" ? "Commissioner" : "Player"}</div></div>
+            <div><div style={fieldLabel}>Role</div><div style={{ fontWeight: 700, textTransform: "uppercase", color: (me?.role || auth?.role) === "host" ? "#7da6ff" : "#ecf3ff" }}>{(me?.role || auth?.role) === "host" ? "Host" : "Player"}</div></div>
             <div><div style={fieldLabel}>League</div><div style={{ fontWeight: 700, textTransform: "uppercase" }}>{window.__VOLT.communityName || "—"}</div></div>
             {chrome?.account?.code && <div><div style={fieldLabel}>Join code</div><div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#7da6ff" }}>{chrome.account.code}</div></div>}
           </div>
@@ -6559,18 +6579,21 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
       </div>
       <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "rgba(200,215,255,0.55)", marginTop: -4 }}>
         {susp > 0 ? <span style={{ color: "#ff8f9a", fontWeight: 700 }}>Suspended — {susp} tournament{susp === 1 ? "" : "s"} remaining. You can't enter yet.</span>
-          : rejected ? <span style={{ color: "#ff8f9a" }}>Not approved this weekend — talk to the Commissioner.</span>
+          : rejected ? <span style={{ color: "#ff8f9a" }}>Not approved this weekend — talk to the host.</span>
           : status === "approved" ? <span style={{ color: "#9af5c2" }}>You're in ✓{draftLine ? ` — draft ${draftLine}` : ""} · flip off to drop out</span>
-          : status === "pending" ? <span style={{ color: "#f5c453" }}>Application pending — the Commissioner reviews it · flip off to withdraw</span>
+          : status === "pending" ? <span style={{ color: "#f5c453" }}>Application pending — the host reviews it · flip off to withdraw</span>
           : <>One tap enters you in the pool — it confirms you're available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches. No-shows hurt your team.</>}
       </div>
       {strikes > 0 && !on && susp === 0 && (
-        <div style={{ fontSize: 11, color: strikes % 3 === 2 ? "#ff8f9a" : "#f5c453", fontWeight: 600 }}>
-          ⚠ {strikes} no-show{strikes === 1 ? "" : "s"} on record{strikes % 3 === 2 ? " — one more triggers a 3-weekend suspension" : ""}</div>
+        // The rule lives in fn_no_show_penalty: every 2nd strike (2, 4, 6…)
+        // sets a 2-weekend suspension. So the warning fires on odd counts —
+        // you're one strike away whenever you're sitting on 1, 3, 5…
+        <div style={{ fontSize: 11, color: strikes % 2 === 1 ? "#ff8f9a" : "#f5c453", fontWeight: 600 }}>
+          ⚠ {strikes} no-show{strikes === 1 ? "" : "s"} on record{strikes % 2 === 1 ? " — one more triggers a 2-weekend suspension" : ""}</div>
       )}
       {!rejected && susp === 0 && (
         <div style={row}>
-          <span style={{ ...label, fontSize: compact ? 12 : 13, color: capOn ? "#7da6ff" : "rgba(200,215,255,0.6)" }}>I'll captain <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "rgba(200,215,255,0.4)" }}>(the Commissioner decides)</span></span>
+          <span style={{ ...label, fontSize: compact ? 12 : 13, color: capOn ? "#7da6ff" : "rgba(200,215,255,0.6)" }}>I'll captain <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "rgba(200,215,255,0.4)" }}>(the host decides)</span></span>
           <ToggleSwitch on={capOn} color="#3d7bff" disabled={busy} onClick={flipCap} />
         </div>
       )}
@@ -6649,6 +6672,123 @@ function NotifBell() {
 // Public player profile — the Season Race makes individuals the product;
 // this is their page. Opened from leaderboard rows; My Account stays the
 // private edit surface behind it.
+// Contact card. The Discord handle lives on player_profiles and is readable by
+// anyone in the league, so a captain can chase their own draftee without going
+// through the host. The number lives in player_contacts behind a host-only RLS
+// policy and is passed in as null for everyone else — it never reaches the
+// client, so there is nothing here to reveal by accident.
+function ContactPanel({ discord, whatsapp, name }) {
+  const [showWa, setShowWa] = useState(false);
+  const [copied, setCopied] = useState("");
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = async (text, which) => {
+    if (!text) return;
+    let ok = false;
+    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } } catch { /* fall through */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        ok = document.execCommand("copy"); document.body.removeChild(ta);
+      } catch { ok = false; }
+    }
+    if (!ok) return;
+    setCopied(which); clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(""), 1600);
+  };
+  const btn = (label, onClick, tone) => (
+    <button onClick={onClick} style={{ padding: "5px 10px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer",
+      fontFamily: "'Rajdhani',sans-serif", clipPath: SHELL_NOTCH(6),
+      background: tone === "ok" ? "rgba(61,220,132,0.14)" : "rgba(61,123,255,0.1)",
+      border: `1px solid ${tone === "ok" ? "rgba(61,220,132,0.5)" : "rgba(61,123,255,0.35)"}`,
+      color: tone === "ok" ? "#9af5c2" : "#7da6ff" }}>{label}</button>
+  );
+  const row = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" };
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Contact</div>
+      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(9), display: "flex", flexDirection: "column", gap: 12 }}>
+        {discord ? (
+          <div style={row}>
+            <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", width: 62 }}>Discord</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#ecf3ff" }}>{discord}</span>
+            {btn(copied === "d" ? "\u2713 Copied" : "\u29c9 Copy", () => copy(discord, "d"), copied === "d" ? "ok" : null)}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>No Discord handle on file.</div>
+        )}
+
+        {whatsapp && (showWa ? (
+          <div style={{ ...row, paddingTop: 12, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
+            <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(245,196,83,0.7)", width: 62 }}>WhatsApp</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#ecf3ff" }}>+{whatsapp}</span>
+            {btn(copied === "w" ? "\u2713 Copied" : "\u29c9 Copy", () => copy(whatsapp, "w"), copied === "w" ? "ok" : null)}
+            <a href={`https://wa.me/${whatsapp}`} target="_blank" rel="noopener noreferrer"
+              style={{ padding: "5px 10px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", textDecoration: "none",
+                fontFamily: "'Rajdhani',sans-serif", clipPath: SHELL_NOTCH(6), background: "rgba(61,220,132,0.12)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2" }}>Open chat \u2192</a>
+          </div>
+        ) : (
+          <div style={{ paddingTop: 12, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
+            <button onClick={() => setShowWa(true)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left",
+              fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 700, color: "#f5c453", letterSpacing: "0.04em" }}>
+              \u26a0 No reply on Discord? Reveal WhatsApp number \u2192
+            </button>
+            <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>Host only \u2014 {name} shared this as a backup.</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Owner-only: appoint a helper. A moderator runs the operational side of a
+// weekend — approvals, captains, brackets, scores — but cannot settle or delete
+// a weekend, reset the auction, run the live draft, or change anyone's role.
+// That last one is the important bit: a moderator can't promote themselves or
+// demote the owner, because users_host_update stays gated on auth_is_host().
+function ModeratorToggle({ userId, role, name, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const isMod = role === "moderator";
+  async function flip() {
+    const next = isMod ? "player" : "moderator";
+    if (!window.confirm(isMod
+      ? `Remove ${name} as moderator? They'll go back to being a player.`
+      : `Make ${name} a moderator? They'll be able to approve players, assign captains, build brackets and report scores — but not settle or delete weekends, run the live auction, or change roles.`)) return;
+    setBusy(true); setErr("");
+    try {
+      const { error } = await __sb.from("users").update({ role: next }).eq("id", userId);
+      if (error) throw error;
+      onChanged && onChanged();
+    } catch (e) { setErr(e.message || "Could not change that."); }
+    setBusy(false);
+  }
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Staff</div>
+      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${isMod ? "rgba(61,220,132,0.3)" : "rgba(120,150,220,0.18)"}`, clipPath: SHELL_NOTCH(9), display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: isMod ? "#9af5c2" : "rgba(200,215,255,0.7)" }}>
+            {isMod ? "Moderator" : "Player"}
+          </div>
+          <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 3 }}>
+            {isMod
+              ? "Can run approvals, captains, brackets and scores. Can't settle or delete a weekend, run the auction, or change roles."
+              : "Promote to share the organising work for each weekend."}
+          </div>
+        </div>
+        <button disabled={busy} onClick={flip}
+          style={shellBtn(isMod ? "danger" : "accent", { padding: "9px 16px", fontSize: 11.5, opacity: busy ? 0.5 : 1 })}>
+          {busy ? "\u2026" : isMod ? "Remove moderator" : "Make moderator"}
+        </button>
+        {err && <span style={{ fontSize: 11.5, color: "#ff8f9a", width: "100%" }}>\u26a0 {err}</span>}
+      </div>
+    </div>
+  );
+}
+
 function PlayerProfile({ userId, onBack, footer }) {
   const [d, setD] = useState(null);
   useEffect(() => {
@@ -6662,15 +6802,25 @@ function PlayerProfile({ userId, onBack, footer }) {
           __sb.from("events").select("id, weekend_label, starts_on, ends_on, created_at, recap").eq("community_id", cid),
           __sb.from("registrations").select("id, event_id, no_show").eq("community_id", cid).eq("user_id", userId).eq("no_show", true),
         ]);
-        setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [], strikes: strikes || [] });
-      } catch (e) { console.error(e); setD({ u: {}, p: {}, mrs: [], evs: [], strikes: [] }); }
+        // RLS decides this, not the client: the row only comes back for the
+        // player themselves or a host of this community. Everyone else gets
+        // nothing, so there's no contact data on the wire to leak.
+        let contact = null;
+        try {
+          const { data: c } = await __sb.from("player_contacts").select("whatsapp")
+            .eq("user_id", userId).eq("community_id", cid).maybeSingle();
+          contact = c || null;
+        } catch (e) { console.error("contacts", e); }
+        setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [], strikes: strikes || [], contact });
+      } catch (e) { console.error(e); setD({ u: {}, p: {}, mrs: [], evs: [], strikes: [], contact: null }); }
     })();
   }, [userId]);
 
   if (!d) return <div style={{ maxWidth: 980, margin: "0 auto", padding: "60px 22px" }}><p className="vg-loading">// Pulling the file…</p></div>;
 
-  const { u, p, mrs, evs, strikes = [] } = d;
-  const isHostViewer = window.__VOLT?.isHost;
+  const { u, p, mrs, evs, strikes = [], contact = null } = d;
+  const isHostViewer = window.__VOLT?.isHost;                 // league owner only
+  const isStaffViewer = window.__VOLT?.isStaff ?? window.__VOLT?.isHost; // + moderators
   const rank = p.rank || "Iron";
   const r = RANKS[rank] || RANKS.Iron;
   const hue = r.c;
@@ -6810,9 +6960,11 @@ function PlayerProfile({ userId, onBack, footer }) {
       </>}
       {mrs.length === 0 && <p style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", marginTop: 28 }}>No matches played yet — the record starts the first weekend they take the server.</p>}
 
+      {(p?.discord || (isStaffViewer && contact?.whatsapp)) && <ContactPanel discord={p?.discord} whatsapp={isStaffViewer ? contact?.whatsapp : null} name={u.display_name || "this player"} />}
       {/* ── Attendance & strikes. Hosts can discount a strike (keeps the record,
              stops it counting) — the escape valve for genuine emergencies. ── */}
-      {(isHostViewer || strikes.length > 0) && (
+      {isHostViewer && u.role !== "host" && <ModeratorToggle userId={userId} role={u.role} name={u.display_name || "this player"} onChanged={() => setD(null)} />}
+      {(isStaffViewer || strikes.length > 0) && (
         <>
           {sec("Attendance")}
           <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${strikes.length >= 2 ? "rgba(255,70,85,0.35)" : "rgba(120,150,220,0.18)"}`, clipPath: SHELL_NOTCH(9) }}>
@@ -6836,7 +6988,7 @@ function PlayerProfile({ userId, onBack, footer }) {
                       <span style={{ fontSize: 12.5, color: "rgba(220,231,255,0.8)" }}>
                         No-show · <b style={{ color: "#ecf3ff" }}>{ev ? weekendName(ev) : "a past tournament"}</b>
                       </span>
-                      {isHostViewer && (
+                      {isStaffViewer && (
                         <button onClick={async () => {
                             if (!window.confirm("Discount this strike? It stops counting toward a suspension and lifts any active ban.")) return;
                             try { await __sb.from("registrations").update({ no_show: false }).eq("id", s.id); setD(null); }
@@ -6850,7 +7002,7 @@ function PlayerProfile({ userId, onBack, footer }) {
                     </div>
                   );
                 })}
-                {isHostViewer && (
+                {isStaffViewer && (
                   <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 2 }}>
                     Two strikes suspends a player for the next 2 tournaments. Discounting one lifts an active suspension.
                   </p>
@@ -6939,7 +7091,7 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
   );
 }
 
-function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openProfile, onProfileOpened }) {
+function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, onEnter, openProfile, onProfileOpened }) {
   const [events, setEvents] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -7117,6 +7269,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
     await refreshEvents();
   }
   async function deleteWeekend(ev) {
+    if (!isTrueHost) { setErr("Only the host can delete a weekend."); return; }
     if (!window.confirm(`Delete ${weekendName(ev)}? This removes the weekend and its registrations. Reported match points are kept.`)) return;
     try {
       await __sb.from("registrations").delete().eq("event_id", ev.id);
@@ -7304,7 +7457,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
                 </div>
                 {current.phase === "registration_open" && HAS_SUPABASE && isHost
                   ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${live?.pending > 0 ? "rgba(245,196,83,0.4)" : "rgba(61,123,255,0.25)"}`, clipPath: SHELL_NOTCH(10) }}>
-                      <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Commissioner</div>
+                      <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Host</div>
                       {live?.pending > 0
                         ? <span style={{ fontSize: 14, color: "#f5c453", fontWeight: 700 }}>{live.pending} application{live.pending === 1 ? "" : "s"} awaiting your review</span>
                         : <span style={{ fontSize: 13, color: "rgba(200,215,255,0.55)" }}>No applications waiting. Approvals show up here.</span>}
@@ -7414,7 +7567,7 @@ function WeekendSchedule({ community, isHost, account, onSignOut, onEnter, openP
     {!isHost && !current && events.length > 0 && (
       <div style={{ textAlign: "center", padding: "22px 0", color: "rgba(200,215,255,0.55)" }}>
         <p style={{ fontSize: 14 }}>Next weekend hasn't been announced yet.</p>
-        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>You'll get a notification the moment the Commissioner opens registration.</p>
+        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>You'll get a notification the moment the host opens registration.</p>
       </div>
     )}
     {isHost && <div style={{ textAlign: "center" }}>
@@ -7514,7 +7667,10 @@ function matchPoints({ won, acs, kills, assists }) {
 /* ════════════════════════════════════════════════════════════════════
    WEEKEND APP — phase router. Registration → Draft → Matches, per weekend.
    ════════════════════════════════════════════════════════════════════ */
-function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialView }) {
+function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBack, initialView }) {
+  // isHost here means "staff" — host or moderator, both run the weekend. The
+  // owner-only powers (settling, deleting, resetting) check isTrueHost instead,
+  // so a moderator can do the work without being able to undo the league.
   const [ev, setEv] = useState(event);
   const [busy, setBusy] = useState(false);
   const phase = ev?.phase || "drafting";
@@ -7659,7 +7815,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
       // player lands on the board instead of being dropped.
       if (captains.length >= MIN_TEAMS || !existing) {
         const built = stamp(freshState(withNames, pool));
-        // Players the Commissioner typed in by hand have no registration to
+        // Players the host typed in by hand have no registration to
         // rebuild from, so a plain rebuild would silently erase them. Carry
         // them over (minus any that a real registration now supersedes).
         const rebuiltIds = new Set(built.players.map(p => p.id));
@@ -7672,6 +7828,13 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
 
   async function advance() {
     if (!isHost || !HAS_SUPABASE) return;
+    // Settling crowns champions and writes season points, and there's no undo.
+    // The DB enforces this too (events_staff_update forbids phase='settled'
+    // unless auth_is_host()), so this is the friendly message, not the lock.
+    if (NEXT[phase] === "settled" && !isTrueHost) {
+      setErr("Only the host can settle a weekend. Ask them to close it out.");
+      return;
+    }
     // Closing registration and opening the draft are one step now, so this is
     // the last moment pending applications can be approved. Don't let them be
     // stranded silently — they'd never reach the pool.
@@ -7900,7 +8063,7 @@ function WeekendApp({ auth, event, isHost, account, onSignOut, onBack, initialVi
 function ScoutProfileCard({ userId, onSaved }) {
   const [prof, setProf] = useState(undefined);
   const [editing, setEditing] = useState(false);
-  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "" });
+  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", discord: "", whatsapp: "" });
   const [busy, setBusy] = useState(false);
   const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
   const fieldS = { width: "100%", padding: "9px 10px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box" };
@@ -7909,7 +8072,16 @@ function ScoutProfileCard({ userId, onSaved }) {
   async function load() {
     const { data } = await __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle();
     setProf(data || null);
-    if (data) setD({ rank: data.rank || "", role: data.role || "", agent: data.agent || "", kda: data.kda ?? "", acs: data.acs ?? "", hs: data.hs ?? "", win: data.win ?? "", tracker: data.tracker_url || "" });
+    // Contacts live in their own table, not player_profiles — that one is read
+    // with select("*") by every client to build the draft board, so a phone
+    // number sitting in it would be handed to the whole league.
+    let c = null;
+    try {
+      const { data: cd } = await __sb.from("player_contacts").select("whatsapp")
+        .eq("user_id", userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
+      c = cd || null;
+    } catch (e) { console.error("contacts", e); }
+    if (data || c) setD({ rank: data?.rank || "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", discord: data?.discord || "", whatsapp: c?.whatsapp || "" });
   }
   useEffect(() => { load(); }, [userId]);
 
@@ -7922,8 +8094,18 @@ function ScoutProfileCard({ userId, onSaved }) {
       kda: d.kda === "" ? null : parseFloat(d.kda), acs: d.acs === "" ? null : parseInt(d.acs),
       hs: d.hs === "" ? null : parseInt(d.hs), win: d.win === "" ? null : parseInt(d.win),
       tracker_url: d.tracker ? (/^https?:\/\//i.test(d.tracker) ? d.tracker.trim() : "https://" + d.tracker.trim()) : null,
+      discord: d.discord.trim() || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
+    // Digits only — wa.me needs a bare international number, and normalising on
+    // the way in means the host never has to clean it up by hand.
+    const waDigits = (d.whatsapp || "").replace(/[^0-9]/g, "");
+    try {
+      await __sb.from("player_contacts").upsert({
+        user_id: userId, community_id: window.__VOLT.communityId,
+        whatsapp: waDigits || null,
+      }, { onConflict: "user_id,community_id" });
+    } catch (e) { console.error("saveContacts:", e); }
     setBusy(false);
     if (error) {
       // Keep the form open and say what happened — collapsing silently made it
@@ -7969,6 +8151,16 @@ function ScoutProfileCard({ userId, onSaved }) {
               <input value={d[k]} onChange={e => setD({ ...d, [k]: type === "num" ? e.target.value.replace(/[^0-9.]/g, "") : e.target.value })} style={fieldS} /></label>))}
           <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Tracker link (tracker.gg, blitz.gg…)</span>
             <input value={d.tracker} placeholder="tracker.gg/valorant/profile/riot/yourname" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Discord handle</span>
+            <input value={d.discord} placeholder="yourname" onChange={e => setD({ ...d, discord: e.target.value })} style={fieldS} />
+            <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
+              Visible to everyone in the league, so your captain can reach you directly.
+            </span></label>
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>WhatsApp number — backup only</span>
+            <input value={d.whatsapp} inputMode="tel" placeholder="Country code first, e.g. 923001234567" onChange={e => setD({ ...d, whatsapp: e.target.value })} style={fieldS} />
+            <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
+              Only the host can see this, and only if you don't answer on Discord. Captains and other players never see it.
+            </span></label>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button disabled={busy || !d.rank || !d.role} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
@@ -8311,7 +8503,7 @@ function MatchReport({ ev, onDone, prefill }) {
 }
 
 // Registration — professional single-flow: status, profile, live registrant
-// roster. Captaincy is the Commissioner's call; players can only quietly
+// roster. Captaincy is the host's call; players can only quietly
 // signal availability. The host assigns captains from the roster below.
 function WeekendRegistration({ ev, auth, phase }) {
   const regOpen = phase === "registration_open";
@@ -8375,7 +8567,7 @@ function WeekendRegistration({ ev, auth, phase }) {
       await __sb.from("registrations").update({ status }).eq("id", entry.regId);
       await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: status === "approved" ? "approved" : "rejected",
         title: status === "approved" ? "You're in — " + weekendName(ev) : "Application not approved",
-        body: status === "approved" ? "Approved for the pool. Captains can draft you now." : "The Commissioner didn't approve this one. Reach out if that's a mistake." }]);
+        body: status === "approved" ? "Approved for the pool. Captains can draft you now." : "The host didn't approve this one. Reach out if that's a mistake." }]);
       await load();
     } catch (e) { console.error(e); }
     setBusy(false);
@@ -8511,7 +8703,7 @@ function WeekendRegistration({ ev, auth, phase }) {
           {regOpen && !reg && susp > 0 && (
             <div style={{ marginTop: 14, padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: SHELL_NOTCH(8) }}>
               <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {susp} tournament{susp === 1 ? "" : "s"} remaining</div>
-              <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Repeated no-shows triggered an automatic suspension. It counts down as league weekends settle. Talk to the Commissioner if you think this is a mistake.</p>
+              <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Repeated no-shows triggered an automatic suspension. It counts down as league weekends settle. Talk to the host if you think this is a mistake.</p>
             </div>
           )}
 
@@ -8536,16 +8728,16 @@ function WeekendRegistration({ ev, auth, phase }) {
             </label>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 12, cursor: "pointer", color: wantCap ? "#7da6ff" : "rgba(200,215,255,0.55)", fontSize: 13, lineHeight: 1.4 }}>
               <input type="checkbox" checked={wantCap} onChange={e => setWantCap(e.target.checked)} style={{ accentColor: "#3d7bff", marginTop: 2, width: 16, height: 16 }} />
-              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>Available to captain</b> <span style={{ color: "rgba(200,215,255,0.4)" }}>(optional)</span> — you'd run the auction budget and draft your squad. The Commissioner makes the final call.</span>
+              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>Available to captain</b> <span style={{ color: "rgba(200,215,255,0.4)" }}>(optional)</span> — you'd run the auction budget and draft your squad. The host makes the final call.</span>
             </label>
             <button disabled={busy || !profileComplete || !avail} onClick={apply}
               style={shellBtn("primary", { width: "100%", marginTop: 14, padding: "13px", fontSize: 14, opacity: (busy || !profileComplete || !avail) ? 0.45 : 1 })}>
               {busy ? "…" : "Submit application →"}</button>
-            <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "8px 0 0", textAlign: "center" }}>The Commissioner reviews every application before you enter the player pool.</p>
+            <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "8px 0 0", textAlign: "center" }}>The host reviews every application before you enter the player pool.</p>
           </>}
 
-          {myStatus === "pending" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>Your profile and availability were sent to the Commissioner. You'll appear in the Scout Hub once approved — check back here.</p>}
-          {myStatus === "rejected" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>The Commissioner didn't approve this application. Reach out to them if you think that's a mistake.</p>}
+          {myStatus === "pending" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>Your profile and availability were sent to the host. You'll appear in the Scout Hub once approved — check back here.</p>}
+          {myStatus === "rejected" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>The host didn't approve this application. Reach out to them if you think that's a mistake.</p>}
 
           {isIn && me?.isCaptain && (
             <div style={{ marginTop: 14, padding: "12px 15px", background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.55)", clipPath: SHELL_NOTCH(8), boxShadow: "0 0 22px rgba(245,196,83,0.12)" }}>
@@ -8556,7 +8748,7 @@ function WeekendRegistration({ ev, auth, phase }) {
           {isIn && !me?.isCaptain && (regOpen || phase === "registration_closed") && (
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", color: me?.volunteered ? "#7da6ff" : "rgba(200,215,255,0.5)", fontSize: 12.5 }}>
               <input type="checkbox" checked={!!me?.volunteered} disabled={busy} onChange={e => volunteer(e.target.checked)} style={{ accentColor: "#3d7bff" }} />
-              I'll captain if picked — the Commissioner makes the final call.
+              I'll captain if picked — the host makes the final call.
             </label>
           )}
           {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
