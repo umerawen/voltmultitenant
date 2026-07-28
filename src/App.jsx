@@ -6361,6 +6361,62 @@ function HostMenu({ children }) {
 }
 
 // Persistent account control — shows who you are + sign out. Used on every shell screen.
+// Two stacked sheets with a folded corner — reads as "copy" at small sizes far
+// better than the ⧉ glyph it replaces, which rendered inconsistently across
+// fonts and was easy to mistake for a window or a table icon.
+// Self-contained copy button — owns its own "copied" flash and the fallback for
+// browsers where the async clipboard API is blocked, so callers just pass text.
+function CopyButton({ text, label, style }) {
+  const [done, setDone] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  async function go() {
+    if (!text) return;
+    let ok = false;
+    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } } catch { /* fall through */ }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        ok = document.execCommand("copy"); document.body.removeChild(ta);
+      } catch { ok = false; }
+    }
+    if (!ok) return;                       // never claim success we didn't get
+    setDone(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setDone(false), 1600);
+  }
+  return (
+    <button onClick={go} title={done ? "Copied" : "Copy"} aria-label={label || "Copy"}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", ...style }}>
+      {done ? <CheckIcon size={11} /> : <CopyIcon size={11} />}
+      {label !== null && <span>{done ? "Copied" : (label || "Copy")}</span>}
+    </button>
+  );
+}
+
+function CopyIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"
+      style={{ display: "block", flex: "0 0 auto" }}>
+      <path d="M5 8v11h11" />
+      <path d="M9 3h7l4 4v12H9z" />
+      <path d="M16 3v4h4" />
+    </svg>
+  );
+}
+function CheckIcon({ size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"
+      style={{ display: "block", flex: "0 0 auto" }}>
+      <path d="M4 12.5l5.5 5.5L20 6.5" />
+    </svg>
+  );
+}
+
 function AccountChip({ account, onSignOut, onProfile, seat }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -6421,10 +6477,10 @@ function AccountChip({ account, onSignOut, onProfile, seat }) {
             <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#7da6ff" }}>code: {account.code}</span>
               <button onClick={copyCode} title={copied ? "Copied" : "Copy league code"} aria-label="Copy league code"
-                style={{ display: "grid", placeItems: "center", width: 20, height: 20, padding: 0, flex: "0 0 auto", cursor: "pointer", lineHeight: 1, fontSize: 10.5,
+                style={{ display: "grid", placeItems: "center", width: 24, height: 24, padding: 0, flex: "0 0 auto", cursor: "pointer", lineHeight: 1,
                   background: copied ? "rgba(61,220,132,0.16)" : "rgba(61,123,255,0.1)",
                   border: `1px solid ${copied ? "rgba(61,220,132,0.55)" : "rgba(61,123,255,0.35)"}`,
-                  color: copied ? "#9af5c2" : "#7da6ff" }}>{copied ? "✓" : "⧉"}</button>
+                  color: copied ? "#9af5c2" : "#7da6ff" }}>{copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}</button>
               {copied && <span style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2", fontWeight: 700 }}>Copied</span>}
             </span>
           )}</div>}
@@ -6895,7 +6951,7 @@ function ContactPanel({ discord, whatsapp, name }) {
     timer.current = setTimeout(() => setCopied(""), 1600);
   };
   const btn = (label, onClick, tone) => (
-    <button onClick={onClick} style={{ padding: "5px 10px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer",
+    <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer",
       fontFamily: "'Rajdhani',sans-serif", clipPath: SHELL_NOTCH(6),
       background: tone === "ok" ? "rgba(61,220,132,0.14)" : "rgba(61,123,255,0.1)",
       border: `1px solid ${tone === "ok" ? "rgba(61,220,132,0.5)" : "rgba(61,123,255,0.35)"}`,
@@ -6910,7 +6966,7 @@ function ContactPanel({ discord, whatsapp, name }) {
           <div style={row}>
             <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", width: 62 }}>Discord</span>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#ecf3ff" }}>{discord}</span>
-            {btn(copied === "d" ? "\u2713 Copied" : "\u29c9 Copy", () => copy(discord, "d"), copied === "d" ? "ok" : null)}
+            {btn(copied === "d" ? <><CheckIcon size={11} />Copied</> : <><CopyIcon size={11} />Copy</>, () => copy(discord, "d"), copied === "d" ? "ok" : null)}
           </div>
         ) : (
           <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>No Discord handle on file.</div>
@@ -6920,7 +6976,7 @@ function ContactPanel({ discord, whatsapp, name }) {
           <div style={{ ...row, paddingTop: 12, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
             <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(245,196,83,0.7)", width: 62 }}>WhatsApp</span>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#ecf3ff" }}>+{whatsapp}</span>
-            {btn(copied === "w" ? "\u2713 Copied" : "\u29c9 Copy", () => copy(whatsapp, "w"), copied === "w" ? "ok" : null)}
+            {btn(copied === "w" ? <><CheckIcon size={11} />Copied</> : <><CopyIcon size={11} />Copy</>, () => copy(whatsapp, "w"), copied === "w" ? "ok" : null)}
             <a href={`https://wa.me/${whatsapp}`} target="_blank" rel="noopener noreferrer"
               style={{ padding: "5px 10px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", textDecoration: "none",
                 fontFamily: "'Rajdhani',sans-serif", clipPath: SHELL_NOTCH(6), background: "rgba(61,220,132,0.12)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2" }}>Open chat \u2192</a>
@@ -7643,7 +7699,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginTop: 14, padding: "8px 14px", background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(8) }}>
               <span style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>Join code</span>
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff" }}>{community.slug}</span>
-              <button onClick={() => { navigator.clipboard?.writeText(community.slug); }} style={shellBtn("ghost", { padding: "5px 10px", fontSize: 10 })}>Copy</button>
+              <CopyButton text={community.slug} label="Copy" style={shellBtn("ghost", { padding: "5px 10px", fontSize: 10 })} />
             </div>
           )}
           {events && events.length > 0 && (
