@@ -232,22 +232,6 @@ function computeSeasonPoints(s) {
   return Object.values(acc);
 }
 
-// Every match in a tournament as one flat list, whatever the format. Groups keep
-// theirs nested, league play uses a flat array (or a map of arrays), single-elim
-// uses rounds, and a grand final sits on its own. Anything reading "all matches"
-// has to cover all four or it silently misses fixtures.
-function flattenMatches(t) {
-  if (!t) return [];
-  const out = [];
-  if (t.groups) Object.values(t.groups).forEach((g) => (g?.matches || []).forEach((m) => m && out.push(m)));
-  if (Array.isArray(t.matches)) t.matches.forEach((m) => m && out.push(m));
-  else if (t.matches && typeof t.matches === "object") Object.values(t.matches).forEach((a) => Array.isArray(a) && a.forEach((m) => m && out.push(m)));
-  if (t.rounds) t.rounds.forEach((r) => (r || []).forEach((m) => m && out.push(m)));
-  if (t.final) out.push(t.final);
-  // A pairing can appear in more than one structure; keep the first by id.
-  const seen = new Set();
-  return out.filter((m) => { const k = m.id ?? JSON.stringify([m.teamA, m.teamB]); if (seen.has(k)) return false; seen.add(k); return true; });
-}
 
 // Weekend display name from its date — "Jul 20\u201321" (Sat\u2013Sun) with an
 // optional nickname. Falls back to the legacy counter label when no date exists.
@@ -2490,7 +2474,6 @@ function RoleGate({ teams, onPick, auth }) {
   const [err, setErr] = useState("");
   const loggedIn = !!auth;           // authenticated via Supabase → no passcodes
   const isHost = auth?.role === "host";
-  const isStaff = auth?.role === "host" || auth?.role === "moderator";
 
   const submit = () => {
     setErr("");
@@ -8728,14 +8711,19 @@ function MatchReport({ ev, onDone, prefill }) {
         });
       });
       if (!rows.length) throw new Error("No registered players on these rosters.");
-      // Editing: clear the previous rows for this match first, so corrections
-      // replace the record rather than stacking a second copy of the points.
-      if (editing) {
-        const { error: delErr } = await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", editing);
-        if (delErr) throw delErr;
-      }
+      // Always clear any existing rows for this label before inserting, not just
+      // when the edit button was used. Reporting the same fixture twice from the
+      // blank form used to stack a second set of rows and double every player's
+      // points — silently, because nothing in the UI showed the duplicate.
+      const clearKey = editing || ml;   // `ml` is the label these rows are saved under
+      const { error: delErr } = await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", clearKey);
+      if (delErr) throw delErr;
       const { error } = await __sb.from("match_results").insert(rows);
-      if (error) throw error;
+      // The DB also enforces one row per (event, player, match). If that trips,
+      // say what happened rather than surfacing a constraint name.
+      if (error) throw new Error(/match_results_uniq|duplicate key/i.test(error.message || "")
+        ? "That match is already recorded. Open it from the bracket to edit it instead."
+        : error.message);
       setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); await load();
     } catch (e) { setErr(e.message || "Could not save the match."); }
     setBusy(false);
