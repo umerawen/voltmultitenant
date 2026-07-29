@@ -3657,7 +3657,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false); // side nav
   const [isDesk, setIsDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
-  const [railWide, setRailWide] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
+  // Expanded by default: the labels are the whole point of the rail, and a
+  // first-time host shouldn't have to decode nine glyphs. A saved "0" still
+  // wins — collapsing is a deliberate choice, an absent key is not.
+  const [railWide, setRailWide] = useState(() => {
+    try { const v = localStorage.getItem("volt_rail_wide"); return v === null ? true : v === "1"; }
+    catch { return true; }
+  });
   useEffect(() => { try { localStorage.setItem("volt_rail_wide", railWide ? "1" : "0"); } catch {} }, [railWide]);
   const [railTip, setRailTip] = useState(null); // { label, y } — collapsed-rail hover tooltip
   const [nowTick, setNowTick] = useState(Date.now()); // draft countdown tick
@@ -5370,14 +5376,20 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         rank rule keeps that fair — a sub may be one rank below the player they
         replace, never above, so losing someone can't become an upgrade. ── */
   const rankIdx = (r) => RANK_LIST.indexOf(r);
-  // Anyone available to stand in: no roster spot and not a captain. That covers
-  // late sign-ups and players who went undrafted — the registration page promises
-  // undrafted players they can still be subbed in, so they belong here.
-  // Hand-added players are the exception: one typed into the Scout Hub was meant
-  // for the draft, so it stays there. Only ones added from THIS screen (which
-  // carry poolEligible false) show up as reserves.
+  // "Undrafted" only means something once an auction has actually happened.
+  // Before that every unsold player is a draft candidate, not a reserve — which
+  // is why this can't key off status alone: during registration that would list
+  // the entire league as reserves who "went undrafted".
+  const draftHasRun = chrome?.phase === "matches_live" || chrome?.phase === "settled"
+    || state.players.some((p) => p.status === "sold");
+  // A reserve is someone deliberately outside the draft pool (late sign-up, added
+  // as a reserve, or moved out by staff) — plus, once the draft is done, anyone
+  // who registered on time and nobody bought. Hand-added Scout Hub players never
+  // qualify: they were typed in for the draft, so they stay there.
   const reserves = state.players.filter((p) =>
-    p.status !== "sold" && !p.isCaptain && !(isManualPlayer(p) && p.poolEligible !== false));
+    !p.isCaptain && p.status !== "sold" && (
+      p.poolEligible === false || (draftHasRun && !isManualPlayer(p))
+    ));
   const myRoster = myTeam ? (myTeam.roster || []).map((id) => state.players.find((x) => x.id === id)).filter(Boolean) : [];
   const missing = replacing ? myRoster.find((p) => p.id === replacing) : null;
   // At or below one rank down. Null when nobody is selected → no restriction shown.
@@ -5402,8 +5414,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <span className="text-sm" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{rFiltered.length} / {reserves.length}</span>
       </div>
       <p className="text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>
-        Registered but not drafted — available to sub in. Every match they play banks season points.
-        {chrome?.phase === "drafting" && " These players are still up for auction, so check with the host before calling anyone in."}
+        {draftHasRun
+          ? "Players without a roster spot — available to sub in. Every match they play banks season points."
+          : "Anyone outside this weekend's draft pool. Once the auction runs, undrafted players join them here."}
       </p>
 
       {myRoster.length > 0 && (
@@ -5438,14 +5451,21 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       </div>
 
       {reserves.length === 0 ? (
-        <p className="text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>No reserves yet — everyone who registered is on a roster.</p>
+        <p className="text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
+          {draftHasRun
+            ? "No reserves — everyone who registered is on a roster."
+            : "No reserves yet. Late sign-ups land here, and so does anyone you move out of the draft pool."}
+        </p>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
           {rFiltered.map((p) => {
             const r = rankOf(p.rank) || RANKS.Silver;
             const ok = eligible(p);
             return (
-              <div key={p.id} className="relative text-left p-4 overflow-hidden" style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${ok ? r.c + "44" : "rgba(120,150,220,0.18)"}`, opacity: ok ? 1 : 0.45, clipPath: SHELL_NOTCH(10) }}>
+              <div key={p.id} role="button" tabIndex={0} title="Open scouting file"
+                onClick={() => setScouted(p.id)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setScouted(p.id); } }}
+                className="vg-row-x relative text-left p-4 overflow-hidden" style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${ok ? r.c + "44" : "rgba(120,150,220,0.18)"}`, opacity: ok ? 1 : 0.45, clipPath: SHELL_NOTCH(10), cursor: "pointer" }}>
                 <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -5468,13 +5488,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                   </p>
                 )}
                 <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)" }}>
-                  {p.poolEligible === false ? "Signed up after the pool closed" : "Went undrafted"}
+                  {p.poolEligible === false ? "Not in this weekend's draft" : "Went undrafted"}
                 </p>
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
-                  <button onClick={() => { setProfileFrom(view); setProfileUser(p.id); setView("profile"); }}
-                    className="text-xs uppercase tracking-widest px-2.5 py-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(61,123,255,0.35)", background: "rgba(61,123,255,0.08)", clipPath: SHELL_NOTCH(5) }}>Profile</button>
                   {isAdmin && p.poolEligible === false && (
-                    <button onClick={() => setPoolEligible(p.id, true)}
+                    <button onClick={(e) => { e.stopPropagation(); setPoolEligible(p.id, true); }}
                       className="text-xs uppercase tracking-widest px-2.5 py-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.45)", background: "rgba(61,220,132,0.08)", clipPath: SHELL_NOTCH(5) }}>⊞ To draft pool</button>
                   )}
                   {p.discord
@@ -6251,6 +6269,14 @@ function ShellStyles() {
     html { zoom: 1.1; }
     .volt-expand-btn { transition: background .15s, border-color .15s, transform .15s; }
     .volt-expand-btn:hover { background: rgba(61,123,255,0.3); border-color: #6fa0ff; transform: scale(1.08); }
+    /* Expandable list rows — the whole row is the control, so it has to look
+       like one on hover, not just carry a small chevron. */
+    .vg-row-x { transition: background .14s ease; }
+    .vg-row-x:hover { background: rgba(255,255,255,0.055); }
+    .vg-row-x:hover .vg-chev { filter: brightness(1.5); }
+    .vg-row-x:hover .vg-chev-label { color: rgba(255,228,160,0.95); }
+    .vg-chev { transition: transform .16s cubic-bezier(.2,.8,.3,1), background .14s ease, border-color .14s ease; }
+    .vg-chev-label { transition: color .14s ease; }
     .volt-expand-btn { animation: voltExpandHint 2.4s ease-in-out 3; }
     @keyframes voltExpandHint {
       0%, 100% { box-shadow: 0 0 0 0 rgba(61,123,255,0); }
@@ -6588,7 +6614,7 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
             This is a <b style={{ color: "#7da6ff" }}>one-time setup</b>. Captains study it at the auction to decide who to draft, and it powers your player card and radar. You won't fill this in again — it carries across every weekend, and your match stats stack onto it automatically as you play.
           </p>
           <div style={{ display: "grid", gap: 12, margin: "18px 0", padding: "16px 18px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(8) }}>
-            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> rank + role. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> rank, role, Discord handle and WhatsApp number. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
             <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Then you're entered</b> — available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches this weekend.</div>
           </div>
           <button onClick={() => setPhase("edit")} style={shellBtn("primary", { width: "100%", padding: "13px", letterSpacing: "0.14em" })}>Set up my profile →</button>
@@ -6596,8 +6622,8 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
 
         {phase === "edit" && <>
           <div style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Your scouting profile</div>
-          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginBottom: 14 }}>Rank and role are required. Save to enter the weekend.</p>
-          <ScoutProfileCard userId={window.__VOLT.userId} onSaved={afterSave} />
+          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginBottom: 14 }}>Rank, role, Discord and WhatsApp are required. Save to enter the weekend.</p>
+          <ScoutProfileCard userId={window.__VOLT.userId} onSaved={afterSave} embedded />
           {note && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{note}</div>}
         </>}
 
@@ -6639,7 +6665,10 @@ function VoltOverlay({ onClose, zIndex = 140, children, dim = "rgba(4,6,12,0.86)
 function WeekendSetup({ mode, ev, onSave, onClose }) {
   // One range, two plain yyyy-mm-dd strings. No parallel spanDays/customEnd/iso
   // state to keep in sync, and no time component that the date columns discard.
-  const [startYmd, setStartYmd] = useState(ev?.starts_on || comingSaturday());
+  // A new weekend opens blank — pre-selecting "this weekend" made the modal look
+  // already-answered, so a host setting up a future date had to notice and undo a
+  // choice they never made. Editing still loads the weekend's real dates.
+  const [startYmd, setStartYmd] = useState(ev?.starts_on || null);
   const [endYmd, setEndYmd] = useState(ev?.ends_on || null);
   const [nick, setNick] = useState(
     ev?.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : "");
@@ -7469,7 +7498,10 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   const [showPlayer, setShowPlayer] = useState(null); // public player-profile screen (full-screen, rail intact)
   useEffect(() => { if (openProfile) { setShowPlayer(openProfile); onProfileOpened && onProfileOpened(); } }, [openProfile]);
   const [expandPast, setExpandPast] = useState(null); // settled strip → recap card
-  const [railWideHub, setRailWideHub] = useState(() => { try { return localStorage.getItem("volt_rail_wide") === "1"; } catch { return false; } });
+  const [railWideHub, setRailWideHub] = useState(() => {
+    try { const v = localStorage.getItem("volt_rail_wide"); return v === null ? true : v === "1"; }
+    catch { return true; }
+  });
   const setRailWide = (v) => { setRailWideHub(v); try { localStorage.setItem("volt_rail_wide", v ? "1" : "0"); } catch {} };
   const [hubDesk, setHubDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
   useEffect(() => {
@@ -7502,8 +7534,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   }
   async function loadMyMeta() {
     try {
-      const { data: p } = await __sb.from("player_profiles").select("rank, role").eq("user_id", window.__VOLT.userId).maybeSingle();
-      setMyProf(p || null);
+      setMyProf(await loadProfileGate(window.__VOLT.userId));
       const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", window.__VOLT.userId).maybeSingle();
       setMySusp(u?.suspension_remaining || 0);
       const { data: ns } = await __sb.from("registrations").select("id")
@@ -7825,7 +7856,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     </div>
                   : (current.phase === "registration_open" || current.phase === "registration_closed") && HAS_SUPABASE
                   ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "14px 16px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
-                      <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
+                      <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={profileIsComplete(myProf)} susp={mySusp} strikes={myStrikes}
                         onEditProfile={() => setShowProfile(true)} onChanged={load} />
                       <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "8px 14px", fontSize: 11.5, alignSelf: "flex-start" })}>⊞ Enter the weekend →</button>
                     </div>
@@ -7860,7 +7891,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                         <button onClick={() => onEnter(nextReg)} style={shellBtn(pendingByEvent[nextReg.id] > 0 ? "warn" : "ghost", { padding: "9px 16px", fontSize: 12 })}>Review applications →</button>
                       </div>
                     ) : (
-                      <PlayToggle ev={nextReg} mine={myRegs[nextReg.id]} profileComplete={!!(myProf?.rank && myProf?.role)} susp={mySusp} strikes={myStrikes}
+                      <PlayToggle ev={nextReg} mine={myRegs[nextReg.id]} profileComplete={profileIsComplete(myProf)} susp={mySusp} strikes={myStrikes}
                         onEditProfile={() => setShowProfile(true)} onChanged={load} compact />
                     )}
                   </div>
@@ -8054,8 +8085,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     try {
       const { data: r } = await __sb.from("registrations").select("id, status, wants_captain, is_captain").eq("event_id", ev.id).eq("user_id", auth.userId).maybeSingle();
       setMyReg(r || null);
-      const { data: p } = await __sb.from("player_profiles").select("rank, role").eq("user_id", auth.userId).maybeSingle();
-      setMyProfile(p || null);
+      setMyProfile(await loadProfileGate(auth.userId));
       const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", auth.userId).maybeSingle();
       setMySusp2(u?.suspension_remaining || 0);
       const { data: ns } = await __sb.from("registrations").select("id").eq("community_id", window.__VOLT.communityId).eq("user_id", auth.userId).eq("no_show", true);
@@ -8415,7 +8445,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       account, onSignOut, hostControls,
       // The Lobby shows this when registration is open — flipping it IS applying.
       regToggle: ((phase === "registration_open" || phase === "registration_closed") && HAS_SUPABASE && auth?.userId && !isHost)
-        ? <PlayToggle ev={ev} mine={myReg} profileComplete={!!(myProfile?.rank && myProfile?.role)} susp={mySusp2} strikes={myStrikes2}
+        ? <PlayToggle ev={ev} mine={myReg} profileComplete={profileIsComplete(myProfile)} susp={mySusp2} strikes={myStrikes2}
             onEditProfile={() => setRegView("gate")} onChanged={loadMyReg} />
         : null,
     };
@@ -8427,9 +8457,41 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
 
 // Scouting profile — the stats captains study before bidding. Saved once per
 // player (player_profiles), reused across weekends, feeds the draft-pool cards.
-function ScoutProfileCard({ userId, onSaved }) {
+// What a player must have on file before they can enter a weekend. rank, role
+// and discord live on player_profiles; whatsapp is in the host-only
+// player_contacts table (a player can always read their own row), so the gate
+// needs both reads. Returns an object rather than a boolean so callers can tell
+// the user WHICH piece is missing.
+async function loadProfileGate(userId) {
+  const out = { rank: null, role: null, discord: null, whatsapp: null };
+  try {
+    const { data: p } = await __sb.from("player_profiles").select("rank, role, discord").eq("user_id", userId).maybeSingle();
+    if (p) { out.rank = p.rank; out.role = p.role; out.discord = p.discord; }
+  } catch (e) { console.error("profile gate", e); }
+  try {
+    const { data: c } = await __sb.from("player_contacts").select("whatsapp")
+      .eq("user_id", userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
+    if (c) out.whatsapp = c.whatsapp;
+  } catch (e) { console.error("contact gate", e); }
+  return out;
+}
+const profileIsComplete = (p) => !!(p && p.rank && p.role && p.discord && p.whatsapp);
+const profileMissing = (p) => {
+  if (!p) return ["rank", "role", "Discord handle", "WhatsApp number"];
+  const m = [];
+  if (!p.rank) m.push("rank");
+  if (!p.role) m.push("role");
+  if (!p.discord) m.push("Discord handle");
+  if (!p.whatsapp) m.push("WhatsApp number");
+  return m;
+};
+
+function ScoutProfileCard({ userId, onSaved, embedded = false }) {
   const [prof, setProf] = useState(undefined);
-  const [editing, setEditing] = useState(false);
+  // `embedded` means a parent already asked "want to set up your profile?" and
+  // the user said yes — so open straight into the form instead of showing a
+  // second button that asks the same thing again.
+  const [editing, setEditing] = useState(embedded);
   const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", discord: "", whatsapp: "" });
   const [busy, setBusy] = useState(false);
   const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
@@ -8488,9 +8550,9 @@ function ScoutProfileCard({ userId, onSaved }) {
   if (prof === undefined) return null;
   const has = prof && prof.rank;
   return (
-    <div style={{ marginTop: 24, padding: "18px 20px", position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(14), textAlign: "left" }}>
-      <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Your scouting profile</div>
+    <div style={{ marginTop: embedded ? 0 : 24, padding: embedded ? 0 : "18px 20px", position: "relative", background: embedded ? "none" : "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(14), textAlign: "left" }}>
+      {!embedded && <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />}
+      {!embedded && <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Your scouting profile</div>}
       {!editing && <>
         {has
           ? <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
@@ -8518,20 +8580,28 @@ function ScoutProfileCard({ userId, onSaved }) {
               <input value={d[k]} onChange={e => setD({ ...d, [k]: type === "num" ? e.target.value.replace(/[^0-9.]/g, "") : e.target.value })} style={fieldS} /></label>))}
           <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Tracker link (tracker.gg, blitz.gg…)</span>
             <input value={d.tracker} placeholder="tracker.gg/valorant/profile/riot/yourname" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
-          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Discord handle</span>
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Discord handle *</span>
             <input value={d.discord} placeholder="yourname" onChange={e => setD({ ...d, discord: e.target.value })} style={fieldS} />
             <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
               Visible to everyone in the league, so your captain can reach you directly.
             </span></label>
-          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>WhatsApp number — backup only</span>
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>WhatsApp number *</span>
             <input value={d.whatsapp} inputMode="tel" placeholder="Country code first, e.g. 923001234567" onChange={e => setD({ ...d, whatsapp: e.target.value })} style={fieldS} />
             <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
-              Only the host can see this, and only if you don't answer on Discord. Captains and other players never see it.
+              Required so you can be reached if a match is at risk. Only the host and moderators can see it, and only if you don't answer on Discord — captains and other players never do.
             </span></label>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button disabled={busy || !d.rank || !d.role} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
+          <button disabled={busy || !d.rank || !d.role || !d.discord.trim() || (d.whatsapp || "").replace(/[^0-9]/g, "").length < 8} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
           {saveErr && <span style={{ fontSize: 12, color: "#ff8f9a", alignSelf: "center" }}>⚠ {saveErr}</span>}
+          {!saveErr && (() => {
+            const need = [];
+            if (!d.rank) need.push("rank");
+            if (!d.role) need.push("role");
+            if (!d.discord.trim()) need.push("Discord handle");
+            if ((d.whatsapp || "").replace(/[^0-9]/g, "").length < 8) need.push("WhatsApp number");
+            return need.length ? <span style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)", alignSelf: "center" }}>Still needed: {need.join(", ")}</span> : null;
+          })()}
           <button onClick={() => setEditing(false)} style={shellBtn("ghost", { padding: "9px 18px", fontSize: 12 })}>Cancel</button>
         </div>
       </>}
@@ -8890,8 +8960,7 @@ function WeekendRegistration({ ev, auth, phase }) {
       setRoster(r.all); setPendingQ(r.pending); setRejectedQ(r.rejected);
     } catch (e) { console.error(e); }
     try {
-      const { data: p } = await __sb.from("player_profiles").select("rank, role").eq("user_id", window.__VOLT.userId).maybeSingle();
-      setMyProf(p || null);
+      setMyProf(await loadProfileGate(window.__VOLT.userId));
     } catch (e) { console.error(e); setMyProf(null); }
     try {
       const { data: u } = await __sb.from("users").select("suspension_remaining, wants_captain").eq("id", window.__VOLT.userId).maybeSingle();
@@ -8903,7 +8972,7 @@ function WeekendRegistration({ ev, auth, phase }) {
   }
   useEffect(() => { load(); const stop = visInterval(load, 10000); return () => stop(); }, [ev?.id]);
 
-  const profileComplete = !!(myProf?.rank && myProf?.role);
+  const profileComplete = profileIsComplete(myProf);
 
   async function apply() {
     if (!profileComplete || !avail) return;
@@ -9004,20 +9073,33 @@ function WeekendRegistration({ ev, auth, phase }) {
           <div style={{ ...panel, order: 1, borderColor: "rgba(245,196,83,0.4)" }}>
             {corner}
             {secLabel(`Applications · ${pendingQ.length} pending`)}
+            {pendingQ.length > 0 && (
+              <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: "0 0 10px" }}>
+                Tap a row to see their full stats and history before you decide.
+              </p>
+            )}
             {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
             <div style={{ display: "grid", gap: 6 }}>
               {pendingQ.map(r => {
                 const openIt = openApp === r.userId;
                 return (
                   <div key={r.userId} style={{ background: "rgba(245,196,83,0.05)", border: `1px solid rgba(245,196,83,${openIt ? "0.45" : "0.25"})`, clipPath: SHELL_NOTCH(7) }}>
-                    <div onClick={() => setOpenApp(openIt ? null : r.userId)} role="button" title="View full profile"
+                    <div onClick={() => setOpenApp(openIt ? null : r.userId)} role="button" tabIndex={0}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenApp(openIt ? null : r.userId); } }}
+                      className="vg-row-x" title={openIt ? "Hide full stats" : "Show full stats before deciding"}
+                      aria-expanded={openIt}
                       style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flexWrap: "wrap", cursor: "pointer" }}>
-                      <span style={{ color: "#f5c453", fontSize: 11, width: 12 }}>{openIt ? "▾" : "▸"}</span>
+                      <span aria-hidden="true" className="vg-chev" style={{ display: "grid", placeItems: "center",
+                        width: 22, height: 22, flex: "0 0 auto", fontSize: 10, lineHeight: 1, color: "#f5c453",
+                        border: `1px solid rgba(245,196,83,${openIt ? "0.7" : "0.38"})`,
+                        background: `rgba(245,196,83,${openIt ? "0.22" : "0.09"})`,
+                        transform: openIt ? "rotate(90deg)" : "none" }}>▶</span>
                       <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
                       {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
                       {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
                       <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
                       {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 2 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+                      <span className="vg-chev-label" style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700, color: "rgba(245,196,83,0.7)", whiteSpace: "nowrap" }}>{openIt ? "Hide stats" : "Full stats"}</span>
                       <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "approved"); }} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
                       <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "rejected"); }} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
                     </div>
@@ -9072,7 +9154,7 @@ function WeekendRegistration({ ev, auth, phase }) {
           {regOpen && !reg && susp === 0 && <>
             <div style={{ marginTop: 14, padding: "12px 14px", background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.2)", clipPath: SHELL_NOTCH(8) }}>
               <div style={{ fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700, color: profileComplete ? "#9af5c2" : "#f5c453" }}>
-                {myProf === undefined ? "Checking your profile…" : profileComplete ? "✓ Scouting profile complete" : "① Complete your scouting profile — rank and role are required"}</div>
+                {myProf === undefined ? "Checking your profile…" : profileComplete ? "✓ Scouting profile complete" : `① Complete your scouting profile — still needed: ${profileMissing(myProf).join(", ")}`}</div>
               {HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} onSaved={load} />}
             </div>
             {myStrikes > 0 && (
@@ -9134,9 +9216,15 @@ function WeekendRegistration({ ev, auth, phase }) {
                   const openIt = openApp === "roster:" + r.userId;
                   return (
                   <div key={r.userId} style={{ background: "rgba(255,255,255,0.03)", border: `1px solid rgba(120,150,220,${openIt ? "0.3" : "0.14"})`, clipPath: SHELL_NOTCH(7) }}>
-                  <div onClick={() => setOpenApp(openIt ? null : "roster:" + r.userId)} role="button" title="View full profile"
+                  <div onClick={() => setOpenApp(openIt ? null : "roster:" + r.userId)} role="button" tabIndex={0}
+                    onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenApp(openIt ? null : "roster:" + r.userId); } }}
+                    className="vg-row-x" title={openIt ? "Hide full stats" : "Show full stats"} aria-expanded={openIt}
                     style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", cursor: "pointer", flexWrap: "wrap" }}>
-                    <span style={{ color: "#7da6ff", fontSize: 11, width: 12 }}>{openIt ? "▾" : "▸"}</span>
+                    <span aria-hidden="true" className="vg-chev" style={{ display: "grid", placeItems: "center",
+                      width: 22, height: 22, flex: "0 0 auto", fontSize: 10, lineHeight: 1, color: "#7da6ff",
+                      border: `1px solid rgba(61,123,255,${openIt ? "0.7" : "0.38"})`,
+                      background: `rgba(61,123,255,${openIt ? "0.22" : "0.09"})`,
+                      transform: openIt ? "rotate(90deg)" : "none" }}>▶</span>
                     <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1 }}>{r.name}
                       {r.userId === window.__VOLT.userId && <span style={{ color: "rgba(200,215,255,0.4)", fontWeight: 500, marginLeft: 6, fontSize: 11 }}>(you)</span>}
                     </span>
