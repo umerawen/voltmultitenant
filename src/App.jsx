@@ -194,6 +194,11 @@ const RANKS = {
   Radiant:   { bid: 4500, c: "#fff3b0", glow: "rgba(255,243,176,0.60)" },
 };
 const RANK_LIST = Object.keys(RANKS);
+// Ranks arrive from player_profiles.rank, a free-text column with no CHECK —
+// so an unexpected value (legacy row, hand-edited data) must not crash a lookup.
+// Everything that indexes RANKS from data should go through these.
+const rankKey = (r) => (RANKS[r] ? r : "Silver");
+const rankOf = (r) => RANKS[r] || RANKS.Silver;
 const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
 const ROLE_GLYPH = { Duelist: "◆", Initiator: "▲", Controller: "●", Sentinel: "■", Flex: "✦" };
 const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brimstone","Viper","Astra","Harbor","Clove","Sova","Skye","Breach","Fade","KAY/O","Gekko","Killjoy","Cypher","Sage","Chamber","Deadlock","Vyse"];
@@ -295,7 +300,7 @@ function regToPlayer(p, isCap) {
   return {
     id: p.userId, status: "pool", soldTo: null, soldPrice: null,
     ...(isCap ? { isCaptain: true } : {}),
-    name: p.name, rank: p.rank || "Silver", role: p.role || "Flex", agent: p.agent || "—",
+    name: p.name, rank: rankKey(p.rank), role: p.role || "Flex", agent: p.agent || "—",
     kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
     badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
     discord: p.discord || null,
@@ -588,10 +593,10 @@ function propagateElim(t) {
 const fmt = (n) => "$" + Number(n || 0).toLocaleString();
 
 // aggregate a player's per-match tournament stats: K/D/A totaled, ACS averaged
-const emptySlots = (t) => 4 - t.roster.length;
+const emptySlots = (t) => 4 - ((t?.roster || []).length);
 
 // Starting-bid value for an available player (rank-priced). Lower = cheaper.
-const playerBidValue = (p) => (RANKS[p.rank]?.bid ?? 0);
+const playerBidValue = (p) => (rankOf(p.rank)?.bid ?? 0);
 
 // The N cheapest available players' starting bids, summed.
 // `availablePlayers` = the live pool (status === "pool"), i.e. NOT the player on the block and NOT sold.
@@ -2012,7 +2017,7 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
     return () => window.removeEventListener("keydown", onKey);
   }, [player, onClose]);
   if (!player) return null;
-  const r = RANKS[player.rank];
+  const r = rankOf(player.rank);
   const drafted = player.status === "sold";
   return (
     <div role="dialog" aria-modal="true" aria-label={`Scouting report for ${player.name}`} className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(5,6,12,0.84)", backdropFilter: "blur(8px)" }} onClick={onClose}>
@@ -2157,7 +2162,7 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
   const winnerIndex = LOOPS * n + winnerPoolIdx;
   const drawReel = drawing ? Array.from({ length: winnerIndex + n + 8 }, (_, i) => wheelPool[i % n]) : [];
   const winner = drawing ? players.find((p) => p.id === spin.playerId) : null;
-  const wr = winner ? RANKS[winner.rank] : RANKS.Iron;
+  const wr = winner ? rankOf(winner.rank) : RANKS.Iron;
   const done = drawing && Date.now() >= spin.startTs + spin.duration;
 
   useEffect(() => {
@@ -2247,7 +2252,7 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
         {drawing && done && winner ? (
           <div className="bid-pop">
             <p className="text-5xl font-bold uppercase leading-none" style={{ fontFamily: "'Rajdhani',sans-serif", color: wr.c, textShadow: `0 0 30px ${wr.glow}` }}>{winner.name}</p>
-            <p className="uppercase tracking-widest text-sm mt-2" style={{ color: "rgba(236,243,255,0.6)" }}>{winner.rank} · heads to the block at {fmt(RANKS[winner.rank].bid)}</p>
+            <p className="uppercase tracking-widest text-sm mt-2" style={{ color: "rgba(236,243,255,0.6)" }}>{winner.rank} · heads to the block at {fmt(rankOf(winner.rank).bid)}</p>
           </div>
         ) : drawing ? (
           <p className="uppercase tracking-widest text-sm animate-pulse" style={{ color: "rgba(236,243,255,0.45)" }}>{n} candidates in the draw…</p>
@@ -2419,7 +2424,7 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
             <span className="text-sm font-semibold truncate" style={{ color: "#ecf3ff" }}>{team.captain}</span>
             <span className="ml-auto text-xs uppercase shrink-0" style={{ color: "rgba(236,243,255,0.4)" }}>Captain</span>
           </div>
-          {rosterPlayers.map((p) => { const r = RANKS[p.rank]; return (
+          {rosterPlayers.map((p) => { const r = rankOf(p.rank); return (
             <div key={p.id} className="flex items-center gap-1.5">
               <button onClick={() => onScout(p.id)} className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded text-left" style={{ background: "rgba(255,255,255,0.04)" }}>
                 <RankBadge rank={p.rank} size="sm" />
@@ -2643,12 +2648,12 @@ function PlayerPicker({ value, players, onChange }) {
   return (
     <div className="relative flex-1 min-w-0">
       <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left"
-        style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${sel ? RANKS[sel.rank].c + "66" : "rgba(255,255,255,0.12)"}`, color: "#ecf3ff" }}>
+        style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${sel ? rankOf(sel.rank).c + "66" : "rgba(255,255,255,0.12)"}`, color: "#ecf3ff" }}>
         {sel ? (
           <>
             <RankBadge rank={sel.rank} size="sm" />
             <span className="font-semibold truncate" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{sel.name}</span>
-            <span className="text-xs truncate" style={{ color: RANKS[sel.rank].c }}>{ROLE_GLYPH[sel.role]} {sel.role}</span>
+            <span className="text-xs truncate" style={{ color: rankOf(sel.rank).c }}>{ROLE_GLYPH[sel.role]} {sel.role}</span>
           </>
         ) : <span className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>Select a player…</span>}
         <span className="ml-auto text-xs" style={{ color: "rgba(236,243,255,0.4)" }}>▾</span>
@@ -2658,7 +2663,7 @@ function PlayerPicker({ value, players, onChange }) {
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="w-full px-3 py-2 text-sm outline-none" style={{ background: "rgba(255,255,255,0.05)", color: "#ecf3ff", borderBottom: "1px solid rgba(255,255,255,0.1)" }} />
           <div style={{ maxHeight: 220, overflowY: "auto" }}>
             {value && <button onClick={() => { onChange(""); setOpen(false); setQ(""); }} className="w-full text-left px-3 py-2 text-xs uppercase tracking-widest" style={{ color: "#ff8a94" }}>✕ Clear slot</button>}
-            {list.map((p) => { const r = RANKS[p.rank]; return (
+            {list.map((p) => { const r = rankOf(p.rank); return (
               <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); setQ(""); }} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80" style={{ background: p.id === value ? r.c + "1f" : "transparent" }}>
                 <RankBadge rank={p.rank} size="sm" />
                 <span className="text-sm truncate" style={{ color: "#ecf3ff" }}>{p.name}</span>
@@ -2720,7 +2725,7 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
   const tapToFill = (p) => {
     const emptyIdx = lineup.findIndex((s) => !s.playerId);
     if (emptyIdx === -1) return; // all 4 slots full
-    setSlot(emptyIdx, { playerId: p.id, target: String(RANKS[p.rank].bid) });
+    setSlot(emptyIdx, { playerId: p.id, target: String(rankOf(p.rank).bid) });
   };
   const wrChip = (active2, hue = "#3d7bff") => ({
     fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
@@ -2794,30 +2799,30 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
         {lineup.map((slot, i) => {
           const avail = players.filter((p) => !chosenIds.has(p.id) || p.id === slot.playerId);
           const sel = players.find((p) => p.id === slot.playerId);
-          const r = sel ? RANKS[sel.rank] : null;
+          const r = sel ? rankOf(sel.rank) : null;
           return (
             <div key={i} className="flex items-center gap-4 p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${r ? r.c + "44" : "rgba(255,255,255,0.08)"}` }}>
               <span className="w-7 h-7 grid place-items-center rounded-lg text-sm font-bold shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: teamHue, fontFamily: "'Rajdhani',sans-serif" }}>{i + 1}</span>
               <div className="shrink-0" style={{ width: 300 }}>
-                <PlayerPicker value={slot.playerId} players={avail} onChange={(id) => { const np = players.find((p) => p.id === id); const minBid = np ? RANKS[np.rank].bid : 0; setSlot(i, { playerId: id, target: id ? String(minBid) : "" }); }} />
+                <PlayerPicker value={slot.playerId} players={avail} onChange={(id) => { const np = players.find((p) => p.id === id); const minBid = np ? rankOf(np.rank).bid : 0; setSlot(i, { playerId: id, target: id ? String(minBid) : "" }); }} />
               </div>
               {/* slider target bid */}
               <div className="flex-1 min-w-0 flex items-center gap-4" style={{ opacity: slot.playerId ? 1 : 0.35, pointerEvents: slot.playerId ? "auto" : "none" }}>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Target bid</span>
-                    {sel && <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.35)" }}>opens {fmt(RANKS[sel.rank].bid)}</span>}
+                    {sel && <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.35)" }}>opens {fmt(rankOf(sel.rank).bid)}</span>}
                   </div>
                   <input type="range" min="0" max={WR_BUDGET} step="100" disabled={!slot.playerId}
-                    value={parseInt(slot.target) || 0} onChange={(e) => { const minBid = sel ? RANKS[sel.rank].bid : 0; setSlot(i, { target: String(Math.max(minBid, parseInt(e.target.value) || 0)) }); }}
+                    value={parseInt(slot.target) || 0} onChange={(e) => { const minBid = sel ? rankOf(sel.rank).bid : 0; setSlot(i, { target: String(Math.max(minBid, parseInt(e.target.value) || 0)) }); }}
                     className="wr-slider w-full" style={{ "--wr-hue": r ? r.c : teamHue, "--wr-pct": ((parseInt(slot.target) || 0) / WR_BUDGET) * 100 + "%" }} />
                 </div>
                 <div className="shrink-0 flex items-center gap-1 px-3 py-2 rounded-lg" style={{ width: 130, background: "rgba(255,255,255,0.05)", border: `1px solid ${r ? r.c + "55" : "rgba(255,255,255,0.12)"}` }}>
                   <span style={{ color: "rgba(236,243,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>$</span>
-                  <input type="number" min={sel ? RANKS[sel.rank].bid : 0} max={WR_BUDGET} step="100" disabled={!slot.playerId} value={slot.target}
+                  <input type="number" min={sel ? rankOf(sel.rank).bid : 0} max={WR_BUDGET} step="100" disabled={!slot.playerId} value={slot.target}
                     onChange={(e) => setSlot(i, { target: e.target.value })}
-                    onBlur={(e) => { const minBid = sel ? RANKS[sel.rank].bid : 0; const v = parseInt(e.target.value) || 0; if (slot.playerId && v < minBid) setSlot(i, { target: String(minBid) }); }}
-                    placeholder={sel ? String(RANKS[sel.rank].bid) : "0"}
+                    onBlur={(e) => { const minBid = sel ? rankOf(sel.rank).bid : 0; const v = parseInt(e.target.value) || 0; if (slot.playerId && v < minBid) setSlot(i, { target: String(minBid) }); }}
+                    placeholder={sel ? String(rankOf(sel.rank).bid) : "0"}
                     className="w-full bg-transparent outline-none text-right font-bold" style={{ color: r ? r.c : "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }} />
                 </div>
               </div>
@@ -2862,7 +2867,7 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
           {players
             .filter((p) => (wrRank === "All" || p.rank === wrRank) && (wrRole === "All" || p.role === wrRole) && (!wrQuery || p.name.toLowerCase().includes(wrQuery.toLowerCase()) || p.agent.toLowerCase().includes(wrQuery.toLowerCase())))
             .map((p) => {
-              const r = RANKS[p.rank]; const picked = chosenIds.has(p.id); const full = lineup.every((s) => s.playerId);
+              const r = rankOf(p.rank); const picked = chosenIds.has(p.id); const full = lineup.every((s) => s.playerId);
               const disabled = picked || full;
               return (
                 <button key={p.id} onClick={() => tapToFill(p)} disabled={disabled}
@@ -4056,7 +4061,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   }, [busy]);
 
   const SPIN_MS = 7200, REVEAL_MS = 2000;
-  const addPlayer = (p) => mutate((s) => { s.players.push(p); return s; });
+  // `reserve` decides which hub a hand-added player belongs to. It reuses
+  // poolEligible rather than adding a second flag: false already means "not in
+  // the draft", which is exactly what a reserve is.
+  const addPlayer = (p, reserve = false) =>
+    mutate((s) => { s.players.push({ ...p, poolEligible: !reserve }); return s; });
   const editPlayer = (p) => {
     mutate((s) => { const i = s.players.findIndex((x) => x.id === p.id); if (i < 0) return null; s.players[i] = { ...s.players[i], ...p }; return s; });
     // Real players (id = auth uuid) → persist to their profile so edits survive
@@ -4119,7 +4128,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const winnerId = poolIds[Math.floor(Math.random() * poolIds.length)];
     const p = s.players.find((x) => x.id === winnerId);
     p.status = "block";
-    s.block = { playerId: winnerId, startingBid: RANKS[p.rank].bid, currentBid: RANKS[p.rank].bid, leaderId: null, ts: Date.now() };
+    s.block = { playerId: winnerId, startingBid: rankOf(p.rank).bid, currentBid: rankOf(p.rank).bid, leaderId: null, ts: Date.now() };
     s.spin = { playerId: winnerId, pool: poolIds, startTs: Date.now(), duration: SPIN_MS };
     s.bidHistory = [];
     s.log.unshift(`Fate chose ${p.name} — opening at ${fmt(s.block.startingBid)}`); s.log = s.log.slice(0, 8);
@@ -5327,7 +5336,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <div className="page-wrap pb-10">
           <p className="text-xs uppercase tracking-widest mb-3" style={{ color: "#7da6ff" }}>Biggest signings so far</p>
           <div className="flex gap-3 overflow-x-auto pb-2">
-            {sold.slice(0, 6).map((p) => { const r = RANKS[p.rank], tm = teamOf(p.soldTo); return (
+            {sold.slice(0, 6).map((p) => { const r = rankOf(p.rank), tm = teamOf(p.soldTo); return (
               <div key={p.id} className="shrink-0 flex items-center gap-3 p-3 rounded-xl" style={{ minWidth: 230, background: `linear-gradient(135deg, ${r.c}1f, rgba(255,255,255,0.03))`, border: `1px solid ${r.c}44` }}>
                 <RankBadge rank={p.rank} />
                 <div className="min-w-0">
@@ -5361,10 +5370,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         rank rule keeps that fair — a sub may be one rank below the player they
         replace, never above, so losing someone can't become an upgrade. ── */
   const rankIdx = (r) => RANK_LIST.indexOf(r);
-  // Anyone available to stand in: no roster spot and not a captain. That's both
-  // late sign-ups AND players who went undrafted — the registration page promises
-  // undrafted players they can still be subbed in, so they belong here too.
-  const reserves = state.players.filter((p) => p.status !== "sold" && !p.isCaptain);
+  // Anyone available to stand in: no roster spot and not a captain. That covers
+  // late sign-ups and players who went undrafted — the registration page promises
+  // undrafted players they can still be subbed in, so they belong here.
+  // Hand-added players are the exception: one typed into the Scout Hub was meant
+  // for the draft, so it stays there. Only ones added from THIS screen (which
+  // carry poolEligible false) show up as reserves.
+  const reserves = state.players.filter((p) =>
+    p.status !== "sold" && !p.isCaptain && !(isManualPlayer(p) && p.poolEligible !== false));
   const myRoster = myTeam ? (myTeam.roster || []).map((id) => state.players.find((x) => x.id === id)).filter(Boolean) : [];
   const missing = replacing ? myRoster.find((p) => p.id === replacing) : null;
   // At or below one rank down. Null when nobody is selected → no restriction shown.
@@ -5429,7 +5442,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
           {rFiltered.map((p) => {
-            const r = RANKS[p.rank] || RANKS.Silver;
+            const r = rankOf(p.rank) || RANKS.Silver;
             const ok = eligible(p);
             return (
               <div key={p.id} className="relative text-left p-4 overflow-hidden" style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${ok ? r.c + "44" : "rgba(120,150,220,0.18)"}`, opacity: ok ? 1 : 0.45, clipPath: SHELL_NOTCH(10) }}>
@@ -5473,6 +5486,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           })}
         </div>
       )}
+
+      {isAdmin && (
+        <div className="mt-8 p-5" style={{ background: "linear-gradient(160deg, rgba(61,220,132,0.06), rgba(10,15,28,0.5))", border: "1px solid rgba(61,220,132,0.3)", clipPath: SHELL_NOTCH(12) }}>
+          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "#9af5c2" }}>Host · add a reserve</p>
+          <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)" }}>
+            For someone who can stand in but isn't in this weekend's draft. They stay out of the Scout Hub and off the auction wheel.
+          </p>
+          <AddPlayerForm onAdd={(p) => addPlayer(p, true)} />
+        </div>
+      )}
     </div>
   );
 
@@ -5504,7 +5527,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-        {filtered.map((p) => { const r = RANKS[p.rank]; const tm = p.soldTo ? teamOf(p.soldTo) : null; return (
+        {filtered.map((p) => { const r = rankOf(p.rank); const tm = p.soldTo ? teamOf(p.soldTo) : null; return (
           <button key={p.id} onClick={() => setScouted(p.id)} className="relative text-left p-4 transition-all hover:scale-[1.03] overflow-hidden"
             style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${r.c}44`, boxShadow: "0 12px 28px rgba(0,0,0,0.35)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
             <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
@@ -8532,14 +8555,6 @@ function MatchReport({ ev, onDone, prefill }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(null); // match_label being edited (null = new match)
-  // Type-to-jump. Valorant sorts its scoreboard by combat score, which changes
-  // every match and isn't knowable until the numbers are in — so the form can't
-  // pre-match that order. Instead you type a few letters of whoever you're
-  // reading and land straight in their row, and the on-screen order stops
-  // mattering at all.
-  const [jump, setJump] = useState("");
-  const jumpRef = useRef(null);
-  const statRefs = useRef({});                  // userId → that row's first input
 
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
   const fieldS = { padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, boxSizing: "border-box", width: 64 };
@@ -8621,6 +8636,10 @@ function MatchReport({ ev, onDone, prefill }) {
     try {
       const A = teamOf(tA), B = teamOf(tB);
       if (!A || !B || A.id === B.id) throw new Error("Pick two different teams.");
+      // The winner drives the +50 bonus on every row, so a match saved without
+      // one silently under-scores both squads. The banner can clear the winner,
+      // so this has to be checked here rather than assumed.
+      if (winner !== "A" && winner !== "B") throw new Error("Mark which team won before saving.");
       const ml = label.trim() || `${A.name} vs ${B.name}`;
       const rows = [];
       [[A, extras.A, winner === "A"], [B, extras.B, winner === "B"]].forEach(([team, subs, won]) => {
@@ -8660,24 +8679,6 @@ function MatchReport({ ev, onDone, prefill }) {
 
   if (teams === null) return <div className="vg-shell" style={{ minHeight: "60vh", background: "#0a0d18", color: "rgba(200,215,255,0.6)", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif" }}>Loading rosters…</div>;
 
-  // Everyone currently on either roster, subs included — the pool the jump box
-  // searches. Prefix match wins over substring so typing "ax" finds "axinn"
-  // rather than a name that merely contains those letters.
-  const everyLinePlayer = [
-    ...(teamOf(tA)?.players || []), ...extras.A,
-    ...(teamOf(tB)?.players || []), ...extras.B,
-  ];
-  const jumpQ = jump.trim().toLowerCase();
-  const jumpMatch = !jumpQ ? null
-    : (everyLinePlayer.find(p => p.name.toLowerCase().startsWith(jumpQ))
-       || everyLinePlayer.find(p => p.name.toLowerCase().includes(jumpQ))
-       || null);
-  const goToMatch = () => {
-    if (!jumpMatch) return;
-    const el = statRefs.current[jumpMatch.id];
-    if (el) { el.focus(); el.select?.(); setJump(""); }
-  };
-
   const rosterBlock = (teamId, side) => {
     const t = teamOf(teamId); if (!t) return null;
     const won = winner === side;
@@ -8685,35 +8686,36 @@ function MatchReport({ ev, onDone, prefill }) {
     const subPool = allRegs.filter(r => !shown.has(r.userId));
     const linePlayers = [...t.players, ...extras[side]];
     return (
-      <div style={{ flex: 1, minWidth: 280 }}>
+      <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
           <select value={teamId} onChange={e => (side === "A" ? setTA : setTB)(e.target.value)} style={{ ...fieldS, width: "auto", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
             {teams.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
           </select>
-          <button onClick={() => setWinner(side)} style={shellBtn(won ? "accent" : "ghost", { padding: "7px 12px", fontSize: 11 })}>{won ? "✓ Won" : "Mark won"}</button>
+          <button onClick={() => setWinner(won ? null : side)}
+            title={won ? "Click to clear the winner" : "Mark this team as the winner"}
+            style={shellBtn(won ? "accent" : "ghost", { padding: "7px 12px", fontSize: 11, flex: "0 0 auto" })}>
+            {won ? "✓ Winner" : "Mark winner"}
+          </button>
         </div>
-        {linePlayers.length === 0 && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 12 }}>No players on this roster yet.</p>}
+        {linePlayers.length === 0 && (
+          <p style={{ color: "rgba(245,196,83,0.8)", fontSize: 12, margin: "0 0 8px" }}>
+            Nobody on this roster — add a sub below, or pick a different team.
+          </p>
+        )}
         <div style={{ display: "grid", gap: 6 }}>
-          {linePlayers.map(p => {
-            const hit = jumpMatch && jumpMatch.id === p.id;
-            // Escape anywhere in a row hops back to the jump box, so the whole
-            // pass is keyboard-only: type a name, Enter, three numbers, Escape.
-            const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); jumpRef.current?.focus(); } };
-            return (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: hit ? "rgba(61,220,132,0.1)" : "rgba(255,255,255,0.03)", border: `1px solid ${hit ? "rgba(61,220,132,0.55)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(6) }}>
+          {linePlayers.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
               <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{p.name}</span>
               {/* ACS first, then K then A — the column order Valorant's scoreboard
                   uses, so you read across the game screen and type across the row. */}
-              <input ref={el => { if (el) statRefs.current[p.id] = el; else delete statRefs.current[p.id]; }}
-                placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} onKeyDown={onKey} style={fieldS} aria-label={`${p.name} ACS`} />
-              <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} onKeyDown={onKey} style={fieldS} aria-label={`${p.name} kills`} />
-              <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} onKeyDown={onKey} style={fieldS} aria-label={`${p.name} assists`} />
+              <input placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} style={fieldS} aria-label={`${p.name} ACS`} />
+              <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
+              <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} style={fieldS} aria-label={`${p.name} assists`} />
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: won ? "#3ddc84" : "#7da6ff", width: 58, textAlign: "right" }}>{ptsFor(p.id, won)} pts</span>
               {extras[side].some(x => x.id === p.id) &&
                 <button onClick={() => setExtras(ex => ({ ...ex, [side]: ex[side].filter(x => x.id !== p.id) }))} aria-label={`Remove sub ${p.name}`} style={{ background: "none", border: "none", color: "#ff8a94", cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>}
             </div>
-            );
-          })}
+          ))}
         </div>
         {subPool.length > 0 && (
           <select value="" onChange={e => { const r = subPool.find(x => x.userId === e.target.value); if (r) setExtras(ex => ({ ...ex, [side]: [...ex[side], { id: r.userId, name: r.name }] })); }}
@@ -8745,31 +8747,55 @@ function MatchReport({ ev, onDone, prefill }) {
           </div>
         )}
 
-        {/* Matchup banner — who is playing, and who won, at a glance. */}
+        {/* Matchup banner. A fixed 3-column grid rather than a flex row of stacked
+            blocks: the names sit in their own row so they share a baseline no
+            matter which side won, and the result row below always occupies its
+            height so nothing shifts when a winner is picked. */}
         {(() => {
           const A = teamOf(tA), B = teamOf(tB);
-          const side = (t, who) => {
+          const ready = A && B && A.id !== B.id;
+          const nameCell = (t, who) => {
             const won = winner === who;
             const hue = t?.hue || (who === "A" ? "#ff4655" : "#00e5ff");
             return (
-              <div style={{ flex: 1, minWidth: 0, textAlign: who === "A" ? "right" : "left", opacity: t ? 1 : 0.4 }}>
-                <div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700, marginBottom: 4 }}>{who === "A" ? "Team A" : "Team B"}</div>
-                <div style={{ fontSize: 20, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.15, color: won ? "#ecf3ff" : "rgba(220,231,255,0.72)", textShadow: won ? `0 0 18px ${hue}66` : "none", overflowWrap: "anywhere" }}>
-                  {t?.name || "—"}
-                </div>
-                {won && <div style={{ fontSize: 10.5, letterSpacing: "0.18em", textTransform: "uppercase", color: "#3ddc84", fontWeight: 700, marginTop: 5 }}>✓ Winner</div>}
+              <div style={{ minWidth: 0, textAlign: who === "A" ? "right" : "left",
+                fontFamily: "'Rajdhani',sans-serif", fontSize: 22, fontWeight: 800, textTransform: "uppercase",
+                letterSpacing: "0.02em", lineHeight: 1.1, overflowWrap: "anywhere",
+                color: t ? (won ? "#ffffff" : "rgba(220,231,255,0.66)") : "rgba(200,215,255,0.3)",
+                textShadow: won ? `0 0 20px ${hue}77` : "none" }}>
+                {t?.name || "Not set"}
               </div>
             );
           };
+          const resultCell = (who) => (
+            <div style={{ minHeight: 18, textAlign: who === "A" ? "right" : "left" }}>
+              {winner === who && (
+                <span style={{ fontSize: 10.5, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, color: "#3ddc84" }}>✓ Winner</span>
+              )}
+            </div>
+          );
           return (
-            <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 18px", marginBottom: 14,
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", columnGap: 20, rowGap: 4,
+              alignItems: "center", padding: "18px 20px", marginBottom: 14,
               background: "linear-gradient(160deg, rgba(10,16,30,0.7), rgba(8,11,19,0.6))",
-              border: `1px solid ${A && B && A.id !== B.id ? "rgba(61,123,255,0.3)" : "rgba(245,196,83,0.4)"}`, clipPath: SHELL_NOTCH(10) }}>
-              {side(A, "A")}
-              <div style={{ flex: "0 0 auto", textAlign: "center" }}>
-                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>VS</div>
-              </div>
-              {side(B, "B")}
+              border: `1px solid ${ready ? "rgba(61,123,255,0.3)" : "rgba(245,196,83,0.4)"}`, clipPath: SHELL_NOTCH(10) }}>
+              {nameCell(A, "A")}
+              <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 800, letterSpacing: "0.18em",
+                color: "rgba(200,215,255,0.35)", padding: "0 2px" }}>VS</span>
+              {nameCell(B, "B")}
+              {resultCell("A")}
+              <span />
+              {resultCell("B")}
+              {!winner && ready && (
+                <div style={{ gridColumn: "1 / -1", textAlign: "center", marginTop: 6, fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
+                  Mark the winner on a roster below — it sets the +50 bonus.
+                </div>
+              )}
+              {!ready && (
+                <div style={{ gridColumn: "1 / -1", textAlign: "center", marginTop: 6, fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
+                  Pick two different teams to report a match.
+                </div>
+              )}
             </div>
           );
         })()}
@@ -8782,19 +8808,7 @@ function MatchReport({ ev, onDone, prefill }) {
             ? <>Saves as <b style={{ color: "#7da6ff" }}>{label.trim()}</b></>
             : <>Leave blank and it saves as <b style={{ color: "#7da6ff" }}>{teamOf(tA)?.name || "Team A"} vs {teamOf(tB)?.name || "Team B"}</b>. Add a label if these teams meet more than once.</>}
         </p>
-        {/* jump box — type a name from the scoreboard, hit Enter, land in their row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "4px 0 14px" }}>
-          <input ref={jumpRef} value={jump} onChange={e => setJump(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); goToMatch(); } if (e.key === "Escape") setJump(""); }}
-            placeholder="Type a player's name, press Enter…"
-            style={{ flex: "1 1 240px", minWidth: 0, padding: "9px 12px", background: "rgba(10,16,30,0.8)", border: `1px solid ${jumpQ && !jumpMatch ? "rgba(255,70,85,0.5)" : "rgba(61,123,255,0.3)"}`, color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, fontWeight: 600 }} />
-          <span style={{ fontSize: 11.5, color: jumpQ && !jumpMatch ? "#ff8f9a" : "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>
-            {!jumpQ ? "Read down the game scoreboard in any order — columns match it: ACS, K, A."
-              : jumpMatch ? `↵ jumps to ${jumpMatch.name}`
-              : "No player by that name on either roster."}
-          </span>
-        </div>
-        <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, alignItems: "start" }}>
           {rosterBlock(tA, "A")}
           {rosterBlock(tB, "B")}
         </div>
