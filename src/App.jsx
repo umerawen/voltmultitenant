@@ -8483,6 +8483,56 @@ const profileMissing = (p) => {
   return m;
 };
 
+// Match a name read off a screenshot to a player on the board. Riot IDs won't
+// always equal VOLT display names, so this widens gradually: exact, then prefix,
+// then substring, then a loose character-overlap score. Anything below the
+// threshold returns null and the host picks manually — a wrong auto-match writes
+// someone else's stats, which is worse than asking.
+function matchScoreboardName(raw, players) {
+  const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const q = norm(raw);
+  if (!q) return null;
+  const cand = players.map((p) => ({ p, n: norm(p.name) })).filter((c) => c.n);
+  const exact = cand.find((c) => c.n === q);
+  if (exact) return exact.p;
+  const pre = cand.find((c) => c.n.startsWith(q) || q.startsWith(c.n));
+  if (pre) return pre.p;
+  const sub = cand.find((c) => c.n.includes(q) || q.includes(c.n));
+  if (sub) return sub.p;
+  // Loose fallback: share of the shorter string's characters in order.
+  let best = null, bestScore = 0;
+  for (const c of cand) {
+    const [a, b] = c.n.length < q.length ? [c.n, q] : [q, c.n];
+    let i = 0;
+    for (const ch of b) if (i < a.length && a[i] === ch) i++;
+    const score = i / a.length;
+    if (score > bestScore) { bestScore = score; best = c.p; }
+  }
+  return bestScore >= 0.75 ? best : null;
+}
+
+// Shrink before upload: a 4K screenshot is several MB of base64 for no accuracy
+// gain, and the request has a hard size ceiling. 1600px wide keeps the digits
+// crisp enough to read.
+function downscaleImage(file, maxW = 1600) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxW / img.width);
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const dataUrl = c.toDataURL("image/jpeg", 0.9);
+      resolve({ base64: dataUrl.split(",")[1], mimeType: "image/jpeg" });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That file isn't a readable image.")); };
+    img.src = url;
+  });
+}
+
 function ScoutProfileCard({ userId, onSaved, embedded = false }) {
   const [prof, setProf] = useState(undefined);
   // `embedded` means a parent already asked "want to set up your profile?" and
@@ -8622,6 +8672,13 @@ function MatchReport({ ev, onDone, prefill }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(null); // match_label being edited (null = new match)
+  // Screenshot reader. `shot` holds the parsed rows awaiting review — nothing is
+  // written to the stat grid until the host confirms, because a misread ACS
+  // becomes wrong season points that look plausible.
+  const [shotBusy, setShotBusy] = useState(false);
+  const [shotErr, setShotErr] = useState("");
+  const [shot, setShot] = useState(null);   // [{ srcName, playerId|null, acs, kills, assists }]
+  const fileRef = useRef(null);
 
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
   const fieldS = { padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, boxSizing: "border-box", width: 64 };
@@ -8697,6 +8754,54 @@ function MatchReport({ ev, onDone, prefill }) {
   const line = (uid) => lines[uid] || { k: "", a: "", acs: "" };
   const setLine = (uid, k, v) => setLines(ls => ({ ...ls, [uid]: { ...line(uid), [k]: v.replace(/[^0-9]/g, "") } }));
   const ptsFor = (uid, won) => matchPoints({ won, acs: line(uid).acs, kills: line(uid).k, assists: line(uid).a });
+
+  async function readScreenshot(file) {
+    if (!file) return;
+    setShotBusy(true); setShotErr(""); setShot(null);
+    try {
+      const { base64, mimeType } = await downscaleImage(file);
+      const r = await fetch("/api/read-scoreboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64, mimeType }),
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.error || `Reader returned ${r.status}.`);
+      const pool = [
+        ...(teamOf(tA)?.players || []), ...extras.A,
+        ...(teamOf(tB)?.players || []), ...extras.B,
+      ];
+      if (!pool.length) throw new Error("Pick the two teams first, then read the screenshot.");
+      const used = new Set();
+      const mapped = (body.rows || []).map((row) => {
+        // One screenshot row per player — don't let a loose match claim a slot
+        // an earlier, better match already took.
+        const avail = pool.filter((p) => !used.has(p.id));
+        const m = matchScoreboardName(row.name, avail);
+        if (m) used.add(m.id);
+        return { srcName: row.name, playerId: m ? m.id : null, acs: row.acs, kills: row.kills, assists: row.assists };
+      });
+      setShot(mapped);
+    } catch (e) {
+      setShotErr(e.message || "Couldn't read that screenshot.");
+    }
+    setShotBusy(false);
+    if (fileRef.current) fileRef.current.value = "";   // let the same file be re-picked
+  }
+
+  function applyShot() {
+    if (!shot) return;
+    setLines((ls) => {
+      const next = { ...ls };
+      for (const row of shot) {
+        if (!row.playerId) continue;
+        next[row.playerId] = { k: String(row.kills), a: String(row.assists), acs: String(row.acs) };
+      }
+      return next;
+    });
+    setShot(null); setShotErr("");
+  }
+
 
   async function save() {
     setErr(""); setBusy(true);
@@ -8890,6 +8995,76 @@ function MatchReport({ ev, onDone, prefill }) {
             ? <>Saves as <b style={{ color: "#7da6ff" }}>{label.trim()}</b></>
             : <>Leave blank and it saves as <b style={{ color: "#7da6ff" }}>{teamOf(tA)?.name || "Team A"} vs {teamOf(tB)?.name || "Team B"}</b>. Add a label if these teams meet more than once.</>}
         </p>
+        {/* Screenshot reader. Optional shortcut — the grid below still works by
+            hand, and stays the way you correct anything the reader gets wrong. */}
+        <div style={{ margin: "4px 0 16px", padding: "12px 14px", background: "rgba(61,220,132,0.05)", border: "1px solid rgba(61,220,132,0.28)", clipPath: SHELL_NOTCH(9) }}>
+          <div className="flex items-center gap-10 flex-wrap" style={{ gap: 10 }}>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
+              onChange={(e) => readScreenshot(e.target.files && e.target.files[0])} />
+            <button disabled={shotBusy} onClick={() => fileRef.current && fileRef.current.click()}
+              style={shellBtn("accent", { padding: "9px 15px", fontSize: 12, opacity: shotBusy ? 0.5 : 1 })}>
+              {shotBusy ? "Reading…" : "⊞ Read from screenshot"}
+            </button>
+            <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)" }}>
+              Upload the end-of-match scoreboard. You'll review everything before it fills in.
+            </span>
+          </div>
+          {shotErr && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {shotErr}</div>}
+
+          {shot && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, color: "#9af5c2", marginBottom: 6 }}>
+                Check this against the screenshot
+              </div>
+              <div style={{ display: "grid", gap: 5 }}>
+                {shot.map((row, i) => {
+                  const pool = [
+                    ...(teamOf(tA)?.players || []), ...extras.A,
+                    ...(teamOf(tB)?.players || []), ...extras.B,
+                  ];
+                  const taken = new Set(shot.filter((r, k) => k !== i && r.playerId).map((r) => r.playerId));
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "7px 10px",
+                      background: row.playerId ? "rgba(255,255,255,0.03)" : "rgba(245,196,83,0.1)",
+                      border: `1px solid ${row.playerId ? "rgba(120,150,220,0.16)" : "rgba(245,196,83,0.45)"}`, clipPath: SHELL_NOTCH(5) }}>
+                      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.7)", minWidth: 110 }}>{row.srcName}</span>
+                      <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 11 }}>→</span>
+                      <select value={row.playerId || ""}
+                        onChange={(e) => setShot((rs) => rs.map((r, k) => k === i ? { ...r, playerId: e.target.value || null } : r))}
+                        style={{ padding: "5px 8px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 600 }}>
+                        <option value="">— skip this row —</option>
+                        {pool.map((p) => (
+                          <option key={p.id} value={p.id} disabled={taken.has(p.id)}>{p.name}{taken.has(p.id) ? " (taken)" : ""}</option>
+                        ))}
+                      </select>
+                      <span style={{ flex: 1 }} />
+                      {["acs", "kills", "assists"].map((f) => (
+                        <label key={f} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>{f === "acs" ? "ACS" : f === "kills" ? "K" : "A"}</span>
+                          <input value={row[f]} inputMode="numeric"
+                            onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setShot((rs) => rs.map((r, k) => k === i ? { ...r, [f]: v === "" ? 0 : Number(v) } : r)); }}
+                            style={{ width: 52, padding: "4px 6px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(120,150,220,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, textAlign: "center" }} />
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-3 flex-wrap" style={{ marginTop: 10, gap: 10 }}>
+                <button onClick={applyShot} style={shellBtn("primary", { padding: "9px 16px", fontSize: 12 })}>
+                  Fill in {shot.filter((r) => r.playerId).length} player{shot.filter((r) => r.playerId).length === 1 ? "" : "s"} →
+                </button>
+                <button onClick={() => { setShot(null); setShotErr(""); }} style={shellBtn("ghost", { padding: "9px 14px", fontSize: 12 })}>Discard</button>
+                {shot.some((r) => !r.playerId) && (
+                  <span style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
+                    {shot.filter((r) => !r.playerId).length} row{shot.filter((r) => !r.playerId).length === 1 ? "" : "s"} unmatched — assign or skip.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, alignItems: "start" }}>
           {rosterBlock(tA, "A")}
           {rosterBlock(tB, "B")}
