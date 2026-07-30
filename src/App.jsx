@@ -6428,6 +6428,20 @@ function CopyButton({ text, label, style }) {
   );
 }
 
+// A geometric chevron rather than the ▶ glyph. Filled-triangle characters have
+// ink that isn't centred in their em box and it varies by font, so centring the
+// box still looks off. An SVG path is centred in its viewBox by construction, and
+// it rotates cleanly for the open state.
+function ChevronIcon({ size = 9 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"
+      style={{ display: "block", overflow: "visible" }}>
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
 function CopyIcon({ size = 13 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -8737,6 +8751,16 @@ function MatchReport({ ev, onDone, prefill }) {
 
   if (teams === null) return <div className="vg-shell" style={{ minHeight: "60vh", background: "#0a0d18", color: "rgba(200,215,255,0.6)", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif" }}>Loading rosters…</div>;
 
+  // Attendance is scoped to the match being recorded. Listing every registrant
+  // for the weekend meant scrolling past people who weren't playing to find the
+  // two who didn't turn up. Subs count — they're on a roster for this match.
+  const matchUserIds = new Set([
+    ...(teamOf(tA)?.players || []).map((p) => p.id),
+    ...(teamOf(tB)?.players || []).map((p) => p.id),
+    ...extras.A.map((p) => p.id), ...extras.B.map((p) => p.id),
+  ]);
+  const matchRegs = allRegs.filter((r) => matchUserIds.has(r.userId));
+
   const rosterBlock = (teamId, side) => {
     const t = teamOf(teamId); if (!t) return null;
     const won = winner === side;
@@ -8894,11 +8918,13 @@ function MatchReport({ ev, onDone, prefill }) {
       {/* ── Attendance — flag players who confirmed availability but ghosted.
              2nd strike auto-suspends them for the next 2 tournaments (DB trigger).
              Unmarking a mistake lifts an active suspension. ── */}
-      {allRegs.length > 0 && <div style={{ ...panel, marginTop: 16, borderColor: "rgba(255,70,85,0.3)" }}>
-        {secLabel(`Attendance · ${allRegs.filter(r => r.noShow).length} no-show${allRegs.filter(r => r.noShow).length === 1 ? "" : "s"} this weekend`)}
-        <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: "0 0 10px" }}>Mark players who confirmed availability but didn't show. Two strikes auto-suspends for the next 2 tournaments; unmark to forgive (this also lifts an active suspension).</p>
+      {matchRegs.length > 0 && <div style={{ ...panel, marginTop: 16, borderColor: "rgba(255,70,85,0.3)" }}>
+        {secLabel(`Attendance · ${matchRegs.filter(r => r.noShow).length} no-show${matchRegs.filter(r => r.noShow).length === 1 ? "" : "s"} in this match`)}
+        <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: "0 0 10px" }}>
+          Only the players in this match. Mark anyone who confirmed availability but didn't show — a strike counts for the whole weekend, and a 2nd auto-suspends them for the next 2 tournaments. Unmark to forgive (this also lifts an active suspension).
+        </p>
         <div style={{ display: "grid", gap: 5 }}>
-          {allRegs.map(r => {
+          {matchRegs.map(r => {
             const played = saved.some(([, rows]) => rows.some(x => x.user_id === r.userId));
             return (
               <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: r.noShow ? "rgba(255,70,85,0.06)" : "rgba(255,255,255,0.02)", border: `1px solid ${r.noShow ? "rgba(255,70,85,0.3)" : "rgba(120,150,220,0.12)"}`, clipPath: SHELL_NOTCH(6), flexWrap: "wrap" }}>
@@ -9078,10 +9104,10 @@ function WeekendRegistration({ ev, auth, phase }) {
                       aria-expanded={openIt}
                       style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flexWrap: "wrap", cursor: "pointer" }}>
                       <span aria-hidden="true" className="vg-chev" style={{ display: "grid", placeItems: "center",
-                        width: 22, height: 22, flex: "0 0 auto", fontSize: 10, lineHeight: 1, color: "#f5c453",
+                        width: 22, height: 22, flex: "0 0 auto", color: "#f5c453",
                         border: `1px solid rgba(245,196,83,${openIt ? "0.7" : "0.38"})`,
                         background: `rgba(245,196,83,${openIt ? "0.22" : "0.09"})`,
-                        transform: openIt ? "rotate(90deg)" : "none" }}>▶</span>
+                        transform: openIt ? "rotate(90deg)" : "none" }}><ChevronIcon /></span>
                       <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
                       {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
                       {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
@@ -9209,10 +9235,10 @@ function WeekendRegistration({ ev, auth, phase }) {
                     className="vg-row-x" title={openIt ? "Hide full stats" : "Show full stats"} aria-expanded={openIt}
                     style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", cursor: "pointer", flexWrap: "wrap" }}>
                     <span aria-hidden="true" className="vg-chev" style={{ display: "grid", placeItems: "center",
-                      width: 22, height: 22, flex: "0 0 auto", fontSize: 10, lineHeight: 1, color: "#7da6ff",
+                      width: 22, height: 22, flex: "0 0 auto", color: "#7da6ff",
                       border: `1px solid rgba(61,123,255,${openIt ? "0.7" : "0.38"})`,
                       background: `rgba(61,123,255,${openIt ? "0.22" : "0.09"})`,
-                      transform: openIt ? "rotate(90deg)" : "none" }}>▶</span>
+                      transform: openIt ? "rotate(90deg)" : "none" }}><ChevronIcon /></span>
                     <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1 }}>{r.name}
                       {r.userId === window.__VOLT.userId && <span style={{ color: "rgba(200,215,255,0.4)", fontWeight: 500, marginLeft: 6, fontSize: 11 }}>(you)</span>}
                     </span>
