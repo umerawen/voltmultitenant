@@ -149,6 +149,7 @@ function boardKey() {
   return w ? `${STORE_KEY_BASE}::${w}` : STORE_KEY_BASE;
 }
 const POLL_MS = 2500;        // active-tab auction poll (was 1500 — every 300ms saved adds up across clients)
+const POLL_MS_SAFETY = 20000; // Realtime is up — poll only to catch a dead socket
 const POLL_MS_HOT = 1200;    // a player is on the block: bids are contended, so sync hard. With
                              // conditional GET an extra poll is a ~43-byte probe — the full board
                              // only downloads when it actually changed, so this costs almost nothing.
@@ -2332,7 +2333,9 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
   const rosterPlayers = team.roster.map((id) => players.find((p) => p.id === id)).filter(Boolean);
   const rolesHave = new Set(rosterPlayers.map((p) => p.role));
   const rolesNeed = ROLES.filter((r) => r !== "Flex" && !rolesHave.has(r));
-  const availablePool = players.filter((p) => p.status === "pool");
+  // Same definition the auction uses: captains and late sign-ups can't be bought,
+  // so they must not count toward the budget a captain has to hold back.
+  const availablePool = players.filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false);
   const submitAdd = () => { if (!addPid) return; onAddToRoster(team.id, addPid, addPrice === "" ? 0 : Number(addPrice)); setAddPid(""); setAddPrice(""); setAddOpen(false); };
   const save = () => { onRename(team.id, name, cap); setEditing(false); };
 
@@ -3866,46 +3869,89 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       if (alive) setState(s);
     };
     load();
+    // One place that decides whether an incoming board should replace ours.
+    // Both the poll and the Realtime subscription go through here, so the
+    // guards below can never drift apart between the two paths.
+    applyIncomingRef.current = (s) => {
+      if (!alive || !s) return;
+    // ignore remote state that isn't newer than what we have locally (prevents clobbering optimistic writes)
+    if (s.stamp <= localStampRef.current) return;
+    // Guard the draw: if WE have a live spin (or a block the remote lacks) that
+    // the incoming state would erase, keep ours until our write propagates.
+    const local = stateRef.current;
+    // A debounced write is still pending — our local state is ahead of the
+    // server, so anything the poll returns is stale by definition.
+    if (writeTimerRef.current) return;
+    if (local) {
+      const localSpinLive = local.spin && Date.now() < local.spin.startTs + local.spin.duration + 2000;
+      if (localSpinLive && (!s.spin || s.spin.startTs !== local.spin.startTs)) return;
+      if (local.block && !s.block && (!s.spin || (local.spin && s.spin?.startTs !== local.spin.startTs))) return;
+      // Never let a remote read delete a tournament we're mid-setup on, or
+      // roll back group/seed assignments we've already made locally.
+      if (local.tournament && !s.tournament) return;
+      if (local.tournament && s.tournament && !local.tournament.locked) {
+        const count = (t) => {
+          if (!t) return 0;
+          if (t.format === "group") return (t.groups || []).reduce((n, g) => n + (g.teamIds || []).length, 0);
+          if (t.format === "single") return (t.slots || []).filter(Boolean).length;
+          return (t.teamIds || []).length;
+        };
+        if (count(local.tournament) > count(s.tournament)) return;
+      }
+    }
+    if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
+    };
+
     const stop = visInterval(async () => {
       const s = await readState();
-      if (!alive || !s) return;
-      // ignore remote state that isn't newer than what we have locally (prevents clobbering optimistic writes)
-      if (s.stamp <= localStampRef.current) return;
-      // Guard the draw: if WE have a live spin (or a block the remote lacks) that
-      // the incoming state would erase, keep ours until our write propagates.
-      const local = stateRef.current;
-      // A debounced write is still pending — our local state is ahead of the
-      // server, so anything the poll returns is stale by definition.
-      if (writeTimerRef.current) return;
-      if (local) {
-        const localSpinLive = local.spin && Date.now() < local.spin.startTs + local.spin.duration + 2000;
-        if (localSpinLive && (!s.spin || s.spin.startTs !== local.spin.startTs)) return;
-        if (local.block && !s.block && (!s.spin || (local.spin && s.spin?.startTs !== local.spin.startTs))) return;
-        // Never let a remote read delete a tournament we're mid-setup on, or
-        // roll back group/seed assignments we've already made locally.
-        if (local.tournament && !s.tournament) return;
-        if (local.tournament && s.tournament && !local.tournament.locked) {
-          const count = (t) => {
-            if (!t) return 0;
-            if (t.format === "group") return (t.groups || []).reduce((n, g) => n + (g.teamIds || []).length, 0);
-            if (t.format === "single") return (t.slots || []).filter(Boolean).length;
-            return (t.teamIds || []).length;
-          };
-          if (count(local.tournament) > count(s.tournament)) return;
-        }
-      }
-      if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
+      applyIncomingRef.current(s);
     }, () => {
       // Bidding is the only moment where a stale price does real damage, so
       // tighten the cadence while a player is on the block (or the wheel is
       // spinning) and ease back off the rest of the time.
       const s = stateRef.current;
+      // Realtime confirmed up → this poll is only a safety net, so back right
+      // off. The instant the socket reports anything other than SUBSCRIBED we
+      // return to full speed, so a silent disconnect degrades to today's
+      // behaviour rather than to a frozen board.
+      if (liveSyncRef.current) return POLL_MS_SAFETY;
       if (!s) return POLL_MS;
       if (s.block) return POLL_MS_HOT;
       if (s.spin && Date.now() < s.spin.startTs + s.spin.duration + 2000) return POLL_MS_HOT;
       return POLL_MS;
     }, POLL_MS_HIDDEN);
-    return () => { alive = false; stop(); };
+    // ── Realtime ────────────────────────────────────────────────────────────
+    // Push the board the moment it changes instead of waiting for the next poll.
+    // Payloads go through applyIncomingRef — the same guards the poll uses — so a
+    // push can never apply state the poll would have rejected.
+    let ch = null;
+    const cid = window.__VOLT?.communityId;
+    if (HAS_SUPABASE && cid) {
+      const myKey = boardKey();
+      ch = __sb.channel(`board:${cid}`)
+        .on("postgres_changes",
+          { event: "*", schema: "public", table: "community_kv", filter: `community_id=eq.${cid}` },
+          (payload) => {
+            const row = payload?.new;
+            // One channel carries every key for this league; take only the board.
+            if (!row || row.k !== myKey || row.shared !== true || row.user_id != null) return;
+            let parsed = null;
+            try { parsed = row.val ? JSON.parse(row.val) : null; } catch { return; }
+            if (!parsed) return;
+            // Keep the version cache in step, or the next conditional write would
+            // have no version to compare against.
+            if (row.updated_at) __boardCache.set(myKey, { updatedAt: row.updated_at, parsed });
+            applyIncomingRef.current(parsed);
+          })
+        .subscribe((status) => {
+          const up = status === "SUBSCRIBED";
+          setLiveSync(up);
+          // Back after a drop: fetch at once rather than waiting for the next
+          // tick, since changes may have been missed while disconnected.
+          if (up) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
+        });
+    }
+    return () => { alive = false; stop(); if (ch) __sb.removeChannel(ch); };
   }, []);
 
   useEffect(() => {
@@ -4123,31 +4169,69 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     s.log.unshift(`Fate chose ${p.name} — opening at ${fmt(s.block.startingBid)}`); s.log = s.log.slice(0, 8);
     return s;
   }, true); };  // optimistic — overlay appears instantly
-  const placeBid = (teamId) => mutate((s) => {
-    const b = s.block; if (!b || b.leaderId === teamId) return null;
-    const team = s.teams.find((t) => t.id === teamId); if (!team || emptySlots(team) === 0) return null;
-    const availablePool = s.players.filter((p) => p.status === "pool");
-    const req = requiredBid(b); if (maxAllowedBid(team, availablePool) < req) return null;
-    b.currentBid = req; b.leaderId = teamId; b.ts = Date.now();
-    s.bidHistory.unshift({ teamId, amount: req, ts: Date.now() }); s.bidHistory = s.bidHistory.slice(0, 12);
-    const p = s.players.find((x) => x.id === b.playerId);
-    s.log.unshift(`${team.name} bids ${fmt(req)} on ${p?.name}`); s.log = s.log.slice(0, 8);
-    return s;
-  }, true);
-  const sell = () => { if (!isLeagueOwner()) return; return mutate((s) => {
-    const b = s.block; if (!b || !b.leaderId) return null;
-    const team = s.teams.find((t) => t.id === b.leaderId), p = s.players.find((x) => x.id === b.playerId);
-    if (!team || !p) return null;
-    team.budget -= b.currentBid; team.roster.push(p.id);
-    p.status = "sold"; p.soldTo = team.id; p.soldPrice = b.currentBid;
-    p.bidCount = s.bidHistory.length; // how many bids this player drew, for the "most contested" storyline
-    s.log.unshift(`SOLD — ${p.name} → ${team.name} for ${fmt(b.currentBid)}`); s.log = s.log.slice(0, 8);
-    s.block = null; s.bidHistory = []; s.soldFlash = Date.now(); s.lastSoldTo = team.id;
-    if (!Array.isArray(s.recentSales)) s.recentSales = [];
-    s.recentSales.unshift({ playerId: p.id, name: p.name, teamId: team.id, price: b.currentBid, bidCount: p.bidCount || 0, ts: Date.now() });
-    s.recentSales = s.recentSales.slice(0, 10);
-    return s;
-  }, true) };
+  // ── Bidding and selling are decided by the SERVER, not here ──────────────
+  // The client used to compute the new price from its own copy of the board and
+  // write the whole thing back. That is what produced every symptom of the last
+  // tournament: two captains computing the same price, a bid landing on a stale
+  // board, and the host selling to whoever they last saw leading. Now the client
+  // sends only the intent — "I bid", "sell" — and the database reads the live
+  // price under a row lock, validates, and returns the authoritative board.
+  const [bidPending, setBidPending] = useState(false);
+  // Shared by the poll and the Realtime subscription so their guards can't drift.
+  const applyIncomingRef = useRef(() => {});
+  // Realtime health. A websocket that dies quietly is worse than slow polling —
+  // the board would stop updating while still looking live. So the poll never
+  // goes away: it just relaxes to a safety net while the socket is proven up,
+  // and snaps back to full speed the moment it isn't.
+  const [liveSync, setLiveSync] = useState(false);
+  const liveSyncRef = useRef(false);
+  useEffect(() => { liveSyncRef.current = liveSync; }, [liveSync]);
+
+  // Adopt a board handed back by an RPC. It is by definition newer than anything
+  // local, so drop the conditional-GET cache and let the next poll re-prime it.
+  // Adopt a board handed back by an RPC, keeping the version cache primed.
+  // Dropping the cache instead would leave boardVersion() null, and the next
+  // client-side write (spin, pass, a host edit) would then go through as an
+  // UNCONDITIONAL write — silently reinstating last-write-wins.
+  const adoptServerBoard = (res) => {
+    const board = res?.board || null;
+    if (!board) return;
+    localStampRef.current = board.stamp || Date.now();
+    if (res.updatedAt) __boardCache.set(boardKey(), { updatedAt: res.updatedAt, parsed: board });
+    else __boardCache.delete(boardKey());
+    setState(board);
+  };
+
+  const placeBid = async (teamId) => {
+    if (bidPending || !HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    setBidPending(true); setSaveErr(null);
+    try {
+      const { data, error } = await __sb.rpc("volt_place_bid", {
+        p_event: window.__VOLT.weekendId, p_team: teamId,
+      });
+      if (error) throw new Error(error.message || "Bid failed.");
+      adoptServerBoard(data);
+    } catch (e) {
+      // Real rejections are meaningful here (outbid, roster full, over your
+      // limit), so show them rather than failing silently.
+      setSaveErr(String(e.message || "Bid failed.").replace(/^.*?:\s*/, ""));
+    }
+    setBidPending(false);
+  };
+
+  const sell = async () => {
+    if (!isLeagueOwner() || !HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    setBidPending(true); setSaveErr(null);
+    try {
+      const { data, error } = await __sb.rpc("volt_sell", { p_event: window.__VOLT.weekendId });
+      if (error) throw new Error(error.message || "Could not sell.");
+      adoptServerBoard(data);
+    } catch (e) {
+      setSaveErr(String(e.message || "Could not sell.").replace(/^.*?:\s*/, ""));
+    }
+    setBidPending(false);
+  };
+
   const passPlayer = () => { if (!isLeagueOwner()) return; return mutate((s) => {
     const b = s.block; if (!b) return null;
     const p = s.players.find((x) => x.id === b.playerId);
@@ -5202,6 +5286,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                   </span>
                 </div>
 
+                {/* sync — makes a dead websocket visible instead of silent */}
+                <div className="flex items-baseline justify-between gap-3 py-1">
+                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Sync</span>
+                  <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: liveSync ? "#3ddc84" : "#f5c453", letterSpacing: "0.04em" }}>
+                    {liveSync ? "Live" : "Polling"}
+                  </span>
+                </div>
+
                 {/* auction phase — live countdown */}
                 <div className="mt-2 pt-3" style={{ borderTop: "1px solid rgba(61,123,255,0.16)" }}>
                   <div className="flex items-center gap-2 mb-2">
@@ -5646,9 +5738,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                       )}
                     </div>
                   ); })()}
-                  <button onClick={() => placeBid(myTeam.id)} disabled={!canBid} className="w-full py-6 text-3xl font-bold uppercase tracking-widest transition-all active:scale-95"
+                  <button onClick={() => placeBid(myTeam.id)} disabled={!canBid || bidPending} className="w-full py-6 text-3xl font-bold uppercase tracking-widest transition-all active:scale-95"
                     style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(24px 0,100% 0,calc(100% - 24px) 100%,0 100%)", background: canBid ? "linear-gradient(90deg,#ff4655,#ff2d55)" : "rgba(255,255,255,0.05)", color: canBid ? "#fff" : "rgba(236,243,255,0.25)", border: canBid ? "1px solid #ff8a94" : "1px solid rgba(255,255,255,0.1)", boxShadow: canBid ? "0 0 36px rgba(255,70,85,0.5), 0 0 80px rgba(255,70,85,0.2)" : "none", cursor: canBid ? "pointer" : "not-allowed" }}>
-                    {iLead ? "You hold the bid" : `BID ${fmt(myReq)}`}
+                    {bidPending ? "Bidding\u2026" : iLead ? "You hold the bid" : `BID ${fmt(myReq)}`}
                   </button>
                   {myFull ? (
                     <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(236,243,255,0.4)" }}>Roster full — spectating</p>
@@ -5674,7 +5766,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
               {canRunAuction && (
                 <div className="flex gap-3 w-full max-w-md">
-                  <button onClick={sell} disabled={!block.leaderId} className="flex-1 py-4 text-2xl font-bold uppercase tracking-widest active:scale-95 transition-all"
+                  <button onClick={sell} disabled={!block.leaderId || bidPending} className="flex-1 py-4 text-2xl font-bold uppercase tracking-widest active:scale-95 transition-all"
                     style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(20px 0,100% 0,calc(100% - 20px) 100%,0 100%)", background: block.leaderId ? "linear-gradient(90deg,#1fbf75,#3ddc84)" : "rgba(255,255,255,0.05)", color: block.leaderId ? "#062b18" : "rgba(236,243,255,0.25)", boxShadow: block.leaderId ? "0 0 30px rgba(61,220,132,0.4)" : "none", cursor: block.leaderId ? "pointer" : "not-allowed" }}>SOLD</button>
                   <button onClick={passPlayer} className="px-6 py-4 font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(14px 0,100% 0,calc(100% - 14px) 100%,0 100%)", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(236,243,255,0.6)" }}>Pass</button>
                 </div>
@@ -6432,6 +6524,18 @@ function CopyButton({ text, label, style }) {
 // ink that isn't centred in their em box and it varies by font, so centring the
 // box still looks off. An SVG path is centred in its viewBox by construction, and
 // it rotates cleanly for the open state.
+function TrophyIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"
+      style={{ display: "block", flex: "0 0 auto" }}>
+      <path d="M7 4h10v6a5 5 0 0 1-10 0V4z" />
+      <path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3" />
+      <path d="M10 15h4M9 20h6M12 15v5" />
+    </svg>
+  );
+}
+
 function ChevronIcon({ size = 9 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -7414,11 +7518,42 @@ function StaffPanel({ onOpenPlayer }) {
   }
   useEffect(() => { if (open && rows === null) load(); }, [open]);
 
+  // Hand the league over and step down, in one server-side transaction. Typing
+  // the name is deliberate friction: this is the one action the outgoing host
+  // can't reverse on their own — only the new owner can give it back.
+  async function transferOwnership(u) {
+    const name = u.display_name || "this player";
+    const typed = window.prompt(
+      `Transfer ownership of this league to ${name}?\n\n` +
+      `They become the host with full control. You become a moderator — you keep ` +
+      `approvals, brackets and scores, but you can no longer settle or delete weekends, ` +
+      `run the auction, or change roles. Only ${name} can give it back.\n\n` +
+      `Type their name to confirm:`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== name.trim().toLowerCase()) {
+      setErr("That name didn't match — nothing changed.");
+      return;
+    }
+    setBusyId(u.id); setErr("");
+    try {
+      const { error } = await __sb.rpc("volt_transfer_ownership", { p_to: u.id });
+      if (error) throw new Error(error.message || "Could not transfer ownership.");
+      // Every permission on screen has just changed for this account, so reload
+      // rather than trying to re-derive half the app's gating in place.
+      window.location.reload();
+    } catch (e) {
+      setErr(e.message || "Could not transfer ownership.");
+      setBusyId(null);
+    }
+  }
+
   async function setRole(u, next) {
     setBusyId(u.id); setErr("");
     try {
       const { error } = await __sb.from("users").update({ role: next }).eq("id", u.id);
-      if (error) throw error;
+      // The database refuses to leave a league without a host — pass that
+      // message straight through instead of a raw constraint error.
+      if (error) throw new Error(error.message || "Could not change that role.");
       await load();
     } catch (e) { setErr(e.message || "Could not change that role."); }
     setBusyId(null);
@@ -7463,6 +7598,25 @@ function StaffPanel({ onOpenPlayer }) {
                     <button disabled={busyId === u.id} onClick={() => setRole(u, isMod ? "player" : "moderator")}
                       style={shellBtn(isMod ? "danger" : "accent", { padding: "6px 11px", fontSize: 10.5, opacity: busyId === u.id ? 0.5 : 1 })}>
                       {busyId === u.id ? "\u2026" : isMod ? "Remove" : "Make moderator"}
+                    </button>
+                  )}
+                  {!isOwner && (
+                    <button disabled={busyId === u.id}
+                      onClick={() => { if (window.confirm(
+                        `Make ${u.display_name || "this player"} a host?\n\n` +
+                        `They get full control: settling and deleting weekends, resetting the auction, league settings, and changing anyone's role \u2014 including yours.\n\n` +
+                        `You stay a host too. Do this before handing the league over, since a league can't be left without one.`
+                      )) setRole(u, "host"); }}
+                      title="Give this player full control of the league"
+                      style={shellBtn("ghost", { padding: "6px 11px", fontSize: 10.5, opacity: busyId === u.id ? 0.5 : 1 })}>
+                      Make host
+                    </button>
+                  )}
+                  {!isOwner && (
+                    <button disabled={busyId === u.id} onClick={() => transferOwnership(u)}
+                      title="Hand the league over and step down to moderator"
+                      style={shellBtn("danger", { padding: "6px 11px", fontSize: 10.5, opacity: busyId === u.id ? 0.5 : 1 })}>
+                      Transfer ownership
                     </button>
                   )}
                 </div>
@@ -8159,7 +8313,10 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
   // joining from here on is a reserve (pool_eligible = false), not an auction pick.
   const NEXT = { registration_open: "registration_closed", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
   const NEXT_LABEL = { registration_open: "Close the draft pool", registration_closed: "Start draft phase", drafting: "Start matches", matches_live: "Settle weekend", settled: "Settled" };
-  const PREV = { registration_closed: "registration_open", drafting: "registration_closed", matches_live: "drafting" };
+  // settled → matches_live is a real reversal, not a plain phase step: it has to
+  // restore the trophy counters that settling overwrote. stepBack routes it to
+  // volt_unsettle rather than a straight phase update.
+  const PREV = { registration_closed: "registration_open", drafting: "registration_closed", matches_live: "drafting", settled: "matches_live" };
   const [arm, setArm] = useState(false); // two-tap confirm on phase advance
   useEffect(() => { if (!arm) return; const t = setTimeout(() => setArm(false), 4000); return () => clearTimeout(t); }, [arm]);
   useEffect(() => { setArm(false); }, [phase]);
@@ -8168,6 +8325,28 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
   // snapshots are written at settle and must not be re-rolled casually).
   async function stepBack() {
     if (!isHost || !HAS_SUPABASE || !PREV[phase]) return;
+    // Reopening a settled weekend is not a phase change — it has to put back the
+    // trophy streaks, wins and bracket counts that settling overwrote. Only the
+    // host can do it, and only if that settle recorded an undo snapshot.
+    if (phase === "settled") {
+      if (!isTrueHost) { window.alert("Only the host can reopen a settled weekend."); return; }
+      if (!window.confirm(
+        `Reopen ${weekendName(ev)}?\n\n` +
+        `Trophy streaks, weekends won and bracket wins go back to what they were before it was settled, ` +
+        `and the recap is cleared. Match results and season points are kept, so you can fix a report and settle again.`)) return;
+      setBusy(true);
+      try {
+        const { error } = await __sb.rpc("volt_unsettle", { p_event: ev.id });
+        if (error) throw error;
+        const { data } = await __sb.from("events").select("*").eq("id", ev.id).maybeSingle();
+        if (data) setEv(data);
+      } catch (e) {
+        console.error(e);
+        window.alert(e.message || "Could not reopen that weekend.");
+      }
+      setBusy(false);
+      return;
+    }
     if (!window.confirm(`Move ${weekendName(ev)} back to "${PREV[phase].replace(/_/g, " ")}"? The draft board is kept.`)) return;
     setBusy(true);
     try {
@@ -8222,6 +8401,33 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     // Settling crowns champions and writes season points, and there's no undo.
     // The DB enforces this too (events_staff_update forbids phase='settled'
     // unless auth_is_host()), so this is the friendly message, not the lock.
+    if (NEXT[phase] === "settled") {
+      // Settling freezes season points. The commonest way to get burned is
+      // settling with matches still unreported, so surface that first.
+      // WeekendApp has no board in scope, so read it. A minimal flatten is
+      // enough here — we only need played fixtures, whatever the format.
+      const board = await readState();
+      const t = board?.tournament || null;
+      const all = [];
+      if (t) {
+        if (t.groups) Object.values(t.groups).forEach(g => (g?.matches || []).forEach(m => m && all.push(m)));
+        if (Array.isArray(t.matches)) t.matches.forEach(m => m && all.push(m));
+        else if (t.matches) Object.values(t.matches).forEach(a => Array.isArray(a) && a.forEach(m => m && all.push(m)));
+        if (t.rounds) t.rounds.forEach(r => (r || []).forEach(m => m && all.push(m)));
+        if (t.final) all.push(t.final);
+      }
+      const reported = window.__VOLT?.reportedLabels || new Set();
+      const missing = all.filter(m => {
+        if (!m.done || m.teamA == null || m.teamB == null) return false;
+        const A = (board.teams || []).find(x => x.id === m.teamA);
+        const B = (board.teams || []).find(x => x.id === m.teamB);
+        return A && B && !reported.has(`${A.name} vs ${B.name}`);
+      });
+      if (missing.length && !window.confirm(
+        `${missing.length} match${missing.length === 1 ? " has" : "es have"} a score but no player stats recorded.\n\n` +
+        `Settling banks season points from what's been reported — those players get nothing for ${missing.length === 1 ? "that match" : "those matches"}.\n\n` +
+        `Settle anyway?`)) return;
+    }
     if (NEXT[phase] === "settled" && !isTrueHost) {
       // Belt and braces — events_staff_update also refuses phase='settled'
       // unless auth_is_host(), so this is the explanation, not the lock.
@@ -8664,6 +8870,15 @@ function MatchReport({ ev, onDone, prefill }) {
   const [teams, setTeams] = useState(null);   // [{id,name,captain,captainUserId,roster:[{id,name}]}]
   const [tA, setTA] = useState(""); const [tB, setTB] = useState("");
   const [winner, setWinner] = useState("A");
+  // Round score. Optional, but entering it derives the winner — which is the
+  // first thing you read off the scoreboard anyway. Stored on each player row's
+  // stat_payload so the result isn't lost once the match is saved.
+  const [scoreA, setScoreA] = useState("");
+  const [scoreB, setScoreB] = useState("");
+  const syncWinner = (a, b) => {
+    const x = parseInt(a, 10), y = parseInt(b, 10);
+    if (Number.isFinite(x) && Number.isFinite(y) && x !== y) setWinner(x > y ? "A" : "B");
+  };
   const [label, setLabel] = useState("");
   const [lines, setLines] = useState({});     // userId → {k,a,acs}
   const [extras, setExtras] = useState({ A: [], B: [] }); // subs pulled into this match
@@ -8686,13 +8901,26 @@ function MatchReport({ ev, onDone, prefill }) {
 
   async function load() {
     const s = await readState();
-    const board = (s?.teams || []).map(t => ({
-      id: t.id, name: t.name, captainUserId: t.captainUserId || null, captain: t.captain,
+    const board = (s?.teams || []).map(t => {
+      // A team made by hand (Locker Room → add team) has a captain NAME but no
+      // linked account, so there's no id to hang stats on and the captain simply
+      // vanished from this form. If that captain also exists as a board player,
+      // reuse THAT id — which recovers the case where a real registered player is
+      // captaining a hand-made team. Otherwise keep them visible with their board
+      // id so the host can see them and the screenshot reader can match them; the
+      // save step filters out anyone who can't actually be stored.
+      const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const capOnBoard = t.captainUserId ? null
+        : (s.players || []).find(p => norm(p.name) === norm(t.captain));
+      const capId = t.captainUserId || capOnBoard?.id || null;
+      return {
+      id: t.id, name: t.name, captainUserId: capId, captain: t.captain,
       players: [
-        ...(t.captainUserId ? [{ id: t.captainUserId, name: t.captain }] : []),
+        ...(capId ? [{ id: capId, name: t.captain, isCaptain: true }] : []),
         ...(t.roster || []).map(pid => { const p = (s.players || []).find(x => x.id === pid); return p ? { id: p.id, name: p.name } : null; }).filter(Boolean),
       ],
-    }));
+    };
+    });
     setTeams(board);
     // Opened from a fixture card → teams, label, and winner arrive pre-filled.
     const pA = prefill && board.find(t => t.name === prefill.teamAName);
@@ -8726,6 +8954,10 @@ function MatchReport({ ev, onDone, prefill }) {
     const wonId = wonKey ? (idOfRow(wonKey) || nameOfRow(wonKey)) : null;
     setWinner(wonId && t2 && (t2.id === wonId || t2.name === wonId) ? "B" : "A");
     setLabel(ml);
+    // Restore the round score if it was recorded (it's identical on every row).
+    const sp0 = rows.find(r => r.stat_payload && r.stat_payload.scoreA != null)?.stat_payload;
+    setScoreA(sp0 ? String(sp0.scoreA) : "");
+    setScoreB(sp0 ? String(sp0.scoreB) : "");
     // Restore the stat lines.
     const ls = {};
     rows.forEach(r => {
@@ -8816,7 +9048,7 @@ function MatchReport({ ev, onDone, prefill }) {
       const rows = [];
       [[A, extras.A, winner === "A"], [B, extras.B, winner === "B"]].forEach(([team, subs, won]) => {
         [...team.players, ...subs].forEach(p => {
-          if (typeof p.id !== "string" || p.id.length < 30) return; // skip guest/sample players (no account)
+          if (!canBeScored(p)) return;   // no account → match_results.user_id can't be satisfied. The banner above names these players.
           const l = line(p.id);
           rows.push({
             event_id: ev.id, community_id: window.__VOLT.communityId, user_id: p.id,
@@ -8824,12 +9056,17 @@ function MatchReport({ ev, onDone, prefill }) {
             // teamId is the board's stable slot id — it survives a captain
             // renaming the team. `team` is the name as it stood when reported,
             // kept so historical results read correctly.
-            stat_payload: { name: p.name, team: team.name, teamId: team.id || null, k: +l.k || 0, a: +l.a || 0, acs: +l.acs || 0 },
+            stat_payload: { name: p.name, team: team.name, teamId: team.id || null, k: +l.k || 0, a: +l.a || 0, acs: +l.acs || 0,
+              // Round score, same on every row of the match — the only place it
+              // can live, since match_results has no score column of its own.
+              ...(scoreA !== "" && scoreB !== "" ? { scoreA: +scoreA, scoreB: +scoreB } : {}) },
             points_computed: ptsFor(p.id, won),
           });
         });
       });
-      if (!rows.length) throw new Error("No registered players on these rosters.");
+      if (!rows.length) throw new Error(
+        "Nobody on these rosters has an account, so there's nothing that can be saved. " +
+        "Hand-added players can't be scored — they need to sign up for the weekend first.");
       // Always clear any existing rows for this label before inserting, not just
       // when the edit button was used. Reporting the same fixture twice from the
       // blank form used to stack a second set of rows and double every player's
@@ -8843,7 +9080,7 @@ function MatchReport({ ev, onDone, prefill }) {
       if (error) throw new Error(/match_results_uniq|duplicate key/i.test(error.message || "")
         ? "That match is already recorded. Open it from the bracket to edit it instead."
         : error.message);
-      setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); await load();
+      setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); setScoreA(""); setScoreB(""); await load();
     } catch (e) { setErr(e.message || "Could not save the match."); }
     setBusy(false);
   }
@@ -8859,6 +9096,14 @@ function MatchReport({ ev, onDone, prefill }) {
   // Attendance is scoped to the match being recorded. Listing every registrant
   // for the weekend meant scrolling past people who weren't playing to find the
   // two who didn't turn up. Subs count — they're on a roster for this match.
+  // match_results.user_id is NOT NULL with a foreign key to users, so a player
+  // without an account cannot be stored — at all. Hand-added players and hand-made
+  // team captains fall in that bucket. They still show in the grid (so the host can
+  // see the full line-up and the screenshot reader can match names), but they're
+  // flagged, excluded from the save, and named in a warning. Silently dropping them
+  // is what made this look like three separate bugs.
+  const canBeScored = (p) => typeof p?.id === "string" && p.id.length > 30;
+
   const matchUserIds = new Set([
     ...(teamOf(tA)?.players || []).map((p) => p.id),
     ...(teamOf(tB)?.players || []).map((p) => p.id),
@@ -8890,9 +9135,14 @@ function MatchReport({ ev, onDone, prefill }) {
           </p>
         )}
         <div style={{ display: "grid", gap: 6 }}>
-          {linePlayers.map(p => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(6) }}>
-              <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{p.name}</span>
+          {linePlayers.map(p => { const ok = canBeScored(p); return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
+              background: ok ? "rgba(255,255,255,0.03)" : "rgba(245,196,83,0.08)",
+              border: `1px solid ${ok ? "rgba(120,150,220,0.14)" : "rgba(245,196,83,0.4)"}`, clipPath: SHELL_NOTCH(6) }}>
+              <span style={{ flex: 1, minWidth: 90, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{p.name}
+                {p.isCaptain && <span style={{ fontSize: 9.5, letterSpacing: "0.1em", color: "#f5c453", marginLeft: 6 }}>CAPT</span>}
+                {!ok && <span title="No account — stats can't be saved for this player" style={{ display: "block", fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(245,196,83,0.85)", fontWeight: 700 }}>no account · won't save</span>}
+              </span>
               {/* ACS first, then K then A — the column order Valorant's scoreboard
                   uses, so you read across the game screen and type across the row. */}
               <input placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} style={fieldS} aria-label={`${p.name} ACS`} />
@@ -8902,8 +9152,13 @@ function MatchReport({ ev, onDone, prefill }) {
               {extras[side].some(x => x.id === p.id) &&
                 <button onClick={() => setExtras(ex => ({ ...ex, [side]: ex[side].filter(x => x.id !== p.id) }))} aria-label={`Remove sub ${p.name}`} style={{ background: "none", border: "none", color: "#ff8a94", cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>}
             </div>
-          ))}
+          ); })}
         </div>
+        {subPool.length === 0 && (
+          <p style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", margin: "6px 0 0" }}>
+            No subs available — only approved registrants can be subbed in.
+          </p>
+        )}
         {subPool.length > 0 && (
           <select value="" onChange={e => { const r = subPool.find(x => x.userId === e.target.value); if (r) setExtras(ex => ({ ...ex, [side]: [...ex[side], { id: r.userId, name: r.name }] })); }}
             style={{ marginTop: 8, padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px dashed rgba(61,220,132,0.4)", color: "#9af5c2", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", cursor: "pointer" }}>
@@ -8934,52 +9189,49 @@ function MatchReport({ ev, onDone, prefill }) {
           </div>
         )}
 
-        {/* Matchup banner. A fixed 3-column grid rather than a flex row of stacked
-            blocks: the names sit in their own row so they share a baseline no
-            matter which side won, and the result row below always occupies its
-            height so nothing shifts when a winner is picked. */}
+        {/* Matchup banner — one line. The winner is a trophy beside the name rather
+            than a second row of text, and the round score sits between them, which
+            is the order you read it off the scoreboard. Entering the score sets the
+            winner, so the buttons below become a fallback rather than a step. */}
         {(() => {
           const A = teamOf(tA), B = teamOf(tB);
           const ready = A && B && A.id !== B.id;
-          const nameCell = (t, who) => {
-            const won = winner === who;
-            const hue = t?.hue || (who === "A" ? "#ff4655" : "#00e5ff");
+          const scoreBox = (val, set, other, side) => (
+            <input value={val} inputMode="numeric" placeholder="–" aria-label={`${side === "A" ? "Team A" : "Team B"} rounds won`}
+              onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 2); set(v); side === "A" ? syncWinner(v, other) : syncWinner(other, v); }}
+              style={{ width: 46, padding: "5px 4px", textAlign: "center", background: "rgba(10,16,30,0.85)",
+                border: `1px solid ${winner === side ? "rgba(61,220,132,0.5)" : "rgba(120,150,220,0.25)"}`,
+                color: winner === side ? "#9af5c2" : "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace",
+                fontSize: 17, fontWeight: 700 }} />
+          );
+          // Each side is one group: trophy (winner only) → name → score. Same
+          // order on both sides, so the eye reads straight across.
+          const sideGroup = (t, side, val, set, other) => {
+            const won = winner === side;
+            const hue = t?.hue || (side === "A" ? "#ff4655" : "#00e5ff");
             return (
-              <div style={{ minWidth: 0, textAlign: who === "A" ? "right" : "left",
-                fontFamily: "'Rajdhani',sans-serif", fontSize: 22, fontWeight: 800, textTransform: "uppercase",
-                letterSpacing: "0.02em", lineHeight: 1.1, overflowWrap: "anywhere",
-                color: t ? (won ? "#ffffff" : "rgba(220,231,255,0.66)") : "rgba(200,215,255,0.3)",
-                textShadow: won ? `0 0 20px ${hue}77` : "none" }}>
-                {t?.name || "Not set"}
+              <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0,
+                justifyContent: side === "A" ? "flex-end" : "flex-start" }}>
+                {won && <span style={{ color: "#f5c453" }} title="Winner"><TrophyIcon /></span>}
+                <span style={{ minWidth: 0, overflowWrap: "anywhere", textAlign: side === "A" ? "right" : "left",
+                  fontFamily: "'Rajdhani',sans-serif", fontSize: 21, fontWeight: 800, textTransform: "uppercase",
+                  lineHeight: 1.1, color: t ? (won ? "#ffffff" : "rgba(220,231,255,0.6)") : "rgba(200,215,255,0.3)",
+                  textShadow: won ? `0 0 20px ${hue}77` : "none" }}>{t?.name || "Not set"}</span>
+                {scoreBox(val, set, other, side)}
               </div>
             );
           };
-          const resultCell = (who) => (
-            <div style={{ minHeight: 18, textAlign: who === "A" ? "right" : "left" }}>
-              {winner === who && (
-                <span style={{ fontSize: 10.5, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, color: "#3ddc84" }}>✓ Winner</span>
-              )}
-            </div>
-          );
           return (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", columnGap: 20, rowGap: 4,
-              alignItems: "center", padding: "18px 20px", marginBottom: 14,
+            <div style={{ padding: "14px 18px", marginBottom: 14,
               background: "linear-gradient(160deg, rgba(10,16,30,0.7), rgba(8,11,19,0.6))",
               border: `1px solid ${ready ? "rgba(61,123,255,0.3)" : "rgba(245,196,83,0.4)"}`, clipPath: SHELL_NOTCH(10) }}>
-              {nameCell(A, "A")}
-              <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 800, letterSpacing: "0.18em",
-                color: "rgba(200,215,255,0.35)", padding: "0 2px" }}>VS</span>
-              {nameCell(B, "B")}
-              {resultCell("A")}
-              <span />
-              {resultCell("B")}
-              {!winner && ready && (
-                <div style={{ gridColumn: "1 / -1", textAlign: "center", marginTop: 6, fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
-                  Mark the winner on a roster below — it sets the +50 bonus.
-                </div>
-              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", columnGap: 14 }}>
+                {sideGroup(A, "A", scoreA, setScoreA, scoreB)}
+                <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, fontWeight: 800, letterSpacing: "0.18em", color: "rgba(200,215,255,0.35)" }}>VS</span>
+                {sideGroup(B, "B", scoreB, setScoreB, scoreA)}
+              </div>
               {!ready && (
-                <div style={{ gridColumn: "1 / -1", textAlign: "center", marginTop: 6, fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
+                <div style={{ textAlign: "center", marginTop: 8, fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
                   Pick two different teams to report a match.
                 </div>
               )}
@@ -8987,14 +9239,27 @@ function MatchReport({ ev, onDone, prefill }) {
           );
         })()}
 
-        <div style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, marginBottom: 5 }}>Which match is this?</div>
-        <input placeholder="e.g. Round 2 · Grand Final · Map 2 (optional)" value={label} onChange={e => setLabel(e.target.value)}
-          style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box" }} />
-        <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", margin: "6px 0 16px" }}>
-          {label.trim()
-            ? <>Saves as <b style={{ color: "#7da6ff" }}>{label.trim()}</b></>
-            : <>Leave blank and it saves as <b style={{ color: "#7da6ff" }}>{teamOf(tA)?.name || "Team A"} vs {teamOf(tB)?.name || "Team B"}</b>. Add a label if these teams meet more than once.</>}
-        </p>
+        {(() => {
+          const inMatch = [
+            ...(teamOf(tA)?.players || []), ...extras.A,
+            ...(teamOf(tB)?.players || []), ...extras.B,
+          ];
+          const unscoreable = inMatch.filter((p) => !canBeScored(p));
+          if (!unscoreable.length) return null;
+          return (
+            <div style={{ margin: "4px 0 14px", padding: "12px 14px", background: "rgba(245,196,83,0.09)", border: "1px solid rgba(245,196,83,0.45)", clipPath: SHELL_NOTCH(9) }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#f5c453" }}>
+                {unscoreable.length} player{unscoreable.length === 1 ? "" : "s"} can't be scored
+              </div>
+              <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.6)", marginTop: 4, lineHeight: 1.5 }}>
+                {unscoreable.map((p) => p.name).join(", ")} {unscoreable.length === 1 ? "was" : "were"} added by hand and {unscoreable.length === 1 ? "has" : "have"} no account,
+                so season points can't be stored for {unscoreable.length === 1 ? "them" : "them"}. Everyone else saves normally.
+                To score {unscoreable.length === 1 ? "them" : "them"}, they need to sign up for the weekend and be approved.
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Screenshot reader. Optional shortcut — the grid below still works by
             hand, and stays the way you correct anything the reader gets wrong. */}
         <div style={{ margin: "4px 0 16px", padding: "12px 14px", background: "rgba(61,220,132,0.05)", border: "1px solid rgba(61,220,132,0.28)", clipPath: SHELL_NOTCH(9) }}>
@@ -9093,6 +9358,15 @@ function MatchReport({ ev, onDone, prefill }) {
       {/* ── Attendance — flag players who confirmed availability but ghosted.
              2nd strike auto-suspends them for the next 2 tournaments (DB trigger).
              Unmarking a mistake lifts an active suspension. ── */}
+      {matchRegs.length === 0 && (teamOf(tA) || teamOf(tB)) && (
+        <div style={{ ...panel, marginTop: 16, borderColor: "rgba(120,150,220,0.2)" }}>
+          {secLabel("Attendance")}
+          <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: 0 }}>
+            No-shows are tracked against a player's registration, so there's nothing to mark here —
+            nobody in this match signed up for the weekend through the app.
+          </p>
+        </div>
+      )}
       {matchRegs.length > 0 && <div style={{ ...panel, marginTop: 16, borderColor: "rgba(255,70,85,0.3)" }}>
         {secLabel(`Attendance · ${matchRegs.filter(r => r.noShow).length} no-show${matchRegs.filter(r => r.noShow).length === 1 ? "" : "s"} in this match`)}
         <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: "0 0 10px" }}>
