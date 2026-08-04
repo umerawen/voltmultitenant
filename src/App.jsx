@@ -205,7 +205,17 @@ const ROLE_GLYPH = { Duelist: "◆", Initiator: "▲", Controller: "●", Sentin
 const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brimstone","Viper","Astra","Harbor","Clove","Sova","Skye","Breach","Fade","KAY/O","Gekko","Killjoy","Cypher","Sage","Chamber","Deadlock","Vyse"];
 
 const TEAM_HUES = ["#ff4655", "#00e5ff", "#9d6bff", "#5ad1ff", "#ff8a3d", "#e35cff", "#3ddc84", "#f5c453", "#ff6fae", "#7c9cff", "#ffd24a", "#4dd6c1"];
-const MAX_TEAMS = 12, MIN_TEAMS = 2;
+const MIN_TEAMS = 2;   // no maximum — a league runs as many teams as it has captains
+
+// Team colour for the nth team. The hand-picked palette covers the first dozen;
+// past that, colours are generated on the golden angle so a 20-team league still
+// gets visually distinct teams instead of team 13 looking identical to team 1.
+function teamHue(i) {
+  if (i < TEAM_HUES.length) return TEAM_HUES[i];
+  const h = (i * 137.508) % 360;                  // golden angle → maximally spread
+  const l = 58 + ((i % 3) - 1) * 7;               // nudge lightness so neighbours differ
+  return `hsl(${h.toFixed(0)}, 78%, ${l}%)`;
+}
 
 // No demo teams/players: a real league seeds itself from registrations. An
 // empty board is the honest empty state — fake operators in the Scout Hub read
@@ -318,7 +328,7 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
         name: c.teamName || `TEAM ${String(i + 1).padStart(2, "0")}`,
         captain: c.name,
         captainUserId: c.userId,
-        hue: TEAM_HUES[i % TEAM_HUES.length],
+        hue: teamHue(i),
       }))
     : [];
   const poolDefs = [
@@ -3921,33 +3931,61 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       return POLL_MS;
     }, POLL_MS_HIDDEN);
     // ── Realtime ────────────────────────────────────────────────────────────
-    // Push the board the moment it changes instead of waiting for the next poll.
-    // Payloads go through applyIncomingRef — the same guards the poll uses — so a
-    // push can never apply state the poll would have rejected.
+    // The board is ~29KB at 12 teams, so pushing the whole row on every bid would
+    // cost ~940MB of egress across a full 60-player auction. Instead the database
+    // broadcasts a ~210-byte delta and each client applies it locally. The 20s
+    // safety poll doubles as a reconciler: if an applied delta ever drifts from
+    // the truth, the next full read silently corrects it.
     let ch = null;
     const cid = window.__VOLT?.communityId;
     if (HAS_SUPABASE && cid) {
-      const myKey = boardKey();
-      ch = __sb.channel(`board:${cid}`)
-        .on("postgres_changes",
-          { event: "*", schema: "public", table: "community_kv", filter: `community_id=eq.${cid}` },
-          (payload) => {
-            const row = payload?.new;
-            // One channel carries every key for this league; take only the board.
-            if (!row || row.k !== myKey || row.shared !== true || row.user_id != null) return;
-            let parsed = null;
-            try { parsed = row.val ? JSON.parse(row.val) : null; } catch { return; }
-            if (!parsed) return;
-            // Keep the version cache in step, or the next conditional write would
-            // have no version to compare against.
-            if (row.updated_at) __boardCache.set(myKey, { updatedAt: row.updated_at, parsed });
-            applyIncomingRef.current(parsed);
-          })
+      const evId = window.__VOLT?.weekendId || null;
+      const applyDelta = (d) => {
+        const cur = stateRef.current;
+        if (!cur || !d || (d.event && evId && d.event !== evId)) return false;
+        // Older than what we have, or already applied — ignore.
+        if (d.stamp && cur.stamp && d.stamp <= cur.stamp) return true;
+        const s2 = structuredClone(cur);
+        if (d.t === "bid") {
+          if (!s2.block) return false;                 // we're behind; fall back to a fetch
+          s2.block.currentBid = d.currentBid;
+          s2.block.leaderId = d.leaderId;
+          s2.block.ts = d.stamp;
+          s2.bidHistory = [{ teamId: d.leaderId, amount: d.currentBid, ts: d.stamp }, ...(s2.bidHistory || [])].slice(0, 12);
+          s2.log = [`${d.teamName} bids ${fmt(d.currentBid)} on ${d.playerName}`, ...(s2.log || [])].slice(0, 8);
+        } else if (d.t === "sell") {
+          const pl = (s2.players || []).find((x) => x.id === d.playerId);
+          const tm = (s2.teams || []).find((x) => x.id === d.teamId);
+          if (!pl || !tm) return false;
+          if (pl.status !== "sold") {
+            pl.status = "sold"; pl.soldTo = d.teamId; pl.soldPrice = d.price; pl.bidCount = d.bidCount;
+            tm.budget -= d.price;
+            tm.roster = [...(tm.roster || []), d.playerId];
+          }
+          s2.recentSales = [{ playerId: d.playerId, name: d.playerName, teamId: d.teamId,
+            price: d.price, bidCount: d.bidCount, ts: d.stamp }, ...(s2.recentSales || [])].slice(0, 10);
+          s2.log = [`SOLD — ${d.playerName} → ${d.teamName} for ${fmt(d.price)}`, ...(s2.log || [])].slice(0, 8);
+          s2.block = null; s2.bidHistory = []; s2.soldFlash = d.stamp; s2.lastSoldTo = d.teamId;
+        } else {
+          return false;                                 // unknown kind → fetch
+        }
+        s2.stamp = d.stamp;
+        if (d.updatedAt) __boardCache.set(boardKey(), { updatedAt: d.updatedAt, parsed: s2 });
+        applyIncomingRef.current(s2);
+        return true;
+      };
+
+      ch = __sb.channel(`volt:${cid}`, { config: { private: true } })
+        .on("broadcast", { event: "volt" }, (msg) => {
+          const d = msg?.payload;
+          if (!d) return;
+          // Anything we can't apply exactly — a spin, a host edit, or a delta we
+          // arrived too late for — falls back to one full read.
+          if (!applyDelta(d)) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
+        })
         .subscribe((status) => {
           const up = status === "SUBSCRIBED";
           setLiveSync(up);
-          // Back after a drop: fetch at once rather than waiting for the next
-          // tick, since changes may have been missed while disconnected.
           if (up) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
         });
     }
@@ -4247,9 +4285,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     return s;
   }, true, true);
   const addTeam = () => mutate((s) => {
-    if (s.teams.length >= MAX_TEAMS) return null;
     const used = new Set(s.teams.map((t) => t.hue));
-    const hue = TEAM_HUES.find((h) => !used.has(h)) || TEAM_HUES[s.teams.length % TEAM_HUES.length];
+    const hue = TEAM_HUES.find((h) => !used.has(h)) || teamHue(s.teams.length);
     const n = s.teams.length + 1;
     s.teams.push({ id: "t" + uid(), name: "TEAM " + n, captain: "Captain " + n, hue, budget: 10000, roster: [] });
     s.log.unshift(`New team added — ${s.teams.length} teams in the draft`); s.log = s.log.slice(0, 8);
@@ -4331,7 +4368,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           id: nid, name: p.name.toUpperCase().slice(0, 22),
           captain: p.name,
           captainUserId: (typeof p.id === "string" && p.id.length > 30) ? p.id : null,
-          hue: TEAM_HUES[s.teams.length % TEAM_HUES.length],
+          hue: teamHue(s.teams.length),
           budget: 10000, roster: [],
         });
         s.log.unshift(`${p.name} tagged as captain — roster created in the Locker Room`);
@@ -5911,7 +5948,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         {state.teams.map((t) => (
           <TeamCard key={t.id} team={t} players={state.players} lead={block?.leaderId === t.id} isAdmin={isAdmin} onRename={renameTeam} onScout={setScouted} onRemove={removeTeam} canRemove={canRemoveTeam} onAddToRoster={adminAddToRoster} onRemoveFromRoster={adminRemoveFromRoster} onSetBudget={setTeamBudget} />
         ))}
-        {isAdmin && state.teams.length < MAX_TEAMS && (
+        {isAdmin && (
           <button onClick={addTeam} className="flex flex-col items-center justify-center gap-2 py-10 transition-all hover:scale-[1.02] min-h-[220px]"
             style={{ border: "2px dashed rgba(61,123,255,0.4)", background: "rgba(61,123,255,0.05)", color: "#aec6ff", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))" }}>
             <span className="text-4xl leading-none">＋</span>
