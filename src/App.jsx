@@ -7633,6 +7633,9 @@ function DiscordAnnounce({ eventId, communityId }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState("");
+  // Attaching the sign-up buttons only makes sense while registration is open —
+  // otherwise players tap them and get told it's closed.
+  const [withButtons, setWithButtons] = useState(false);
 
   async function send() {
     if (!msg.trim()) return;
@@ -7646,7 +7649,8 @@ function DiscordAnnounce({ eventId, communityId }) {
       const r = await fetch("/api/discord-notify", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ communityId, message: msg.trim(), userIds: t?.userIds || [], announce: true }),
+        body: JSON.stringify({ communityId, message: msg.trim(), userIds: t?.userIds || [],
+                               announce: true, buttons: withButtons ? "register" : undefined }),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
@@ -7667,6 +7671,10 @@ function DiscordAnnounce({ eventId, communityId }) {
             style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy || !msg.trim() ? 0.5 : 1 })}>
             {busy ? "Sending…" : "DM everyone + announce"}
           </button>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12, color: "rgba(200,215,255,0.7)" }}>
+            <input type="checkbox" checked={withButtons} onChange={(e) => setWithButtons(e.target.checked)} />
+            Add sign-up buttons
+          </label>
           <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)" }}>
             Goes to every approved player, and posts in your announcements channel.
           </span>

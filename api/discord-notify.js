@@ -36,7 +36,10 @@ export default async function handler(req, res) {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return res.status(500).json({ error: "DISCORD_BOT_TOKEN is not set" });
 
-  const { communityId, message, userIds, announce } = req.body || {};
+  // `buttons: "register"` attaches the one-tap sign-up row to the announcement.
+  // That's the whole point of the feature: responding should cost one click, not
+  // a link, a login and a form.
+  const { communityId, message, userIds, announce, buttons } = req.body || {};
   if (!communityId || !message) return res.status(400).json({ error: "communityId and message are required" });
 
   try {
@@ -88,7 +91,17 @@ export default async function handler(req, res) {
         content += (content ? "\n\n" : "") +
           `${mentions}\n_(couldn't DM you — your Discord privacy settings block messages from server members)_`;
       }
-      const r = await post(token, `/channels/${channel}/messages`, { content: content.slice(0, 1900) });
+      const payload = { content: content.slice(0, 1900) };
+      if (buttons === "register") {
+        payload.components = [{
+          type: 1,                                  // action row
+          components: [
+            { type: 2, style: 1, label: "Register", custom_id: "volt_register" },
+            { type: 2, style: 2, label: "Register + captain", custom_id: "volt_register_captain" },
+          ],
+        }];
+      }
+      const r = await post(token, `/channels/${channel}/messages`, payload);
       announced = r.ok;
       if (!r.ok) console.error("announce failed", r.reason);
     }
