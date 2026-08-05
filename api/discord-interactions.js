@@ -11,8 +11,8 @@ import crypto from "node:crypto";
 
 export const config = { api: { bodyParser: false } };   // raw body needed for the signature
 
-const PING = 1, APP_COMMAND = 2, COMPONENT = 3;
-const REPLY = 4;
+const PING = 1, APP_COMMAND = 2, COMPONENT = 3, AUTOCOMPLETE = 4;
+const REPLY = 4, AUTOCOMPLETE_RESULT = 8;
 const EPHEMERAL = 64;                                    // only the clicker sees it
 
 export default async function handler(req, res) {
@@ -30,6 +30,7 @@ export default async function handler(req, res) {
   const guild = body.guild_id;
 
   try {
+    if (body.type === AUTOCOMPLETE) return await onAutocomplete(res, body, guild);
     if (body.type === COMPONENT) return await onButton(res, body.data?.custom_id, guild, discordId);
     if (body.type === APP_COMMAND) return await onCommand(res, body, guild, discordId);
     return res.status(200).json({ type: 1 });
@@ -104,7 +105,41 @@ async function onCommand(res, body, guild, discordId) {
       `• **${r.name}** — ${r.rank}${r.discord ? ` · <@${r.discord}>` : ""}`).join("\n"));
   }
 
+  if (name === "scout") {
+    const who = String(opt("player") || "").trim();
+    if (!who) return reply(res, "Give me a name: `/scout player:Rumer`");
+    const p = await rpc("volt_dc_scout", { p_guild: guild, p_name: who });
+    if (p?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
+    if (p?.error === "notfound") return reply(res, `No player called **${who}** in this league.`);
+    const flags = [];
+    if (p.suspended > 0) flags.push(`⛔ suspended for ${p.suspended} more weekend${p.suspended === 1 ? "" : "s"}`);
+    if (p.strikes > 0) flags.push(`⚠ ${p.strikes} no-show${p.strikes === 1 ? "" : "s"}`);
+    if (p.streak > 0) flags.push(`🏆 ${p.streak} weekend streak`);
+    return reply(res,
+      `**${p.name}** · ${p.rank} · ${p.role}${p.agent && p.agent !== "—" ? ` (${p.agent})` : ""}\n` +
+      `KDA ${num(p.kda)} · ACS ${num(p.acs, 0)} · HS ${num(p.hs, 0)}%\n` +
+      `Season: **${num(p.points, 0)}** points from ${p.matches} match${p.matches === 1 ? "" : "es"}` +
+      (p.wins > 0 ? ` · ${p.wins} weekend${p.wins === 1 ? "" : "s"} won` : "") +
+      (p.signedUp ? `\nThis weekend: ${p.signedUp}` : "\nNot signed up this weekend.") +
+      (p.discord ? `\nDiscord: ${p.discord}` : "") +
+      (flags.length ? `\n${flags.join(" · ")}` : ""));
+  }
+
   return reply(res, "Unknown command.");
+}
+
+/* ── autocomplete ────────────────────────────────────────────────────────── */
+
+// Fires as the user types, so they pick a real name instead of guessing spelling.
+async function onAutocomplete(res, body, guild) {
+  const focused = body.data?.options?.find((o) => o.focused);
+  const q = String(focused?.value || "");
+  let choices = [];
+  try {
+    const rows = await rpc("volt_dc_search", { p_guild: guild, p_query: q });
+    choices = Array.isArray(rows) ? rows.slice(0, 25) : [];
+  } catch (e) { console.error("autocomplete", e); }
+  return res.status(200).json({ type: AUTOCOMPLETE_RESULT, data: { choices } });
 }
 
 /* ── buttons ─────────────────────────────────────────────────────────────── */

@@ -19,6 +19,11 @@ const COMMANDS = [
   { name: "roster",      description: "Your team and teammates this weekend" },
   { name: "leaderboard", description: "Season leaderboard" },
   { name: "subs",        description: "Who's available to sub in" },
+  {
+    name: "scout",
+    description: "Look up any player's rank, stats and record",
+    options: [{ name: "player", description: "Start typing a name", type: 3, required: true, autocomplete: true }],
+  },
 ];
 
 export default async function handler(req, res) {
@@ -43,7 +48,16 @@ export default async function handler(req, res) {
     }
     const me = await meRes.json();
 
-    const r = await fetch(`https://discord.com/api/v10/applications/${me.id}/commands`, {
+    // Global commands can take up to an hour to appear. Registering against a
+    // specific server is instant, which is what you want while iterating — pass
+    // ?guild=<server id>. Leave it off to register globally for every server the
+    // bot is in.
+    const guild = (req.query?.guild || "").replace(/\D/g, "");
+    const url = guild
+      ? `https://discord.com/api/v10/applications/${me.id}/guilds/${guild}/commands`
+      : `https://discord.com/api/v10/applications/${me.id}/commands`;
+
+    const r = await fetch(url, {
       method: "PUT",                                  // PUT replaces the entire set
       headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(COMMANDS),
@@ -59,12 +73,15 @@ export default async function handler(req, res) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <body style="font-family:system-ui;background:#0a0d18;color:#ecf3ff;padding:40px;line-height:1.6">
   <h2 style="color:#3ddc84;margin:0 0 4px">✓ Commands registered</h2>
-  <p style="color:#93a4c8;margin:0 0 20px">Bot: <b>${escapeHtml(me.username)}</b></p>
+  <p style="color:#93a4c8;margin:0 0 20px">Bot: <b>${escapeHtml(me.username)}</b> ·
+    ${guild ? `this server only — <b style="color:#3ddc84">available immediately</b>`
+            : `all servers — <b style="color:#f5c453">can take up to an hour to appear</b>`}</p>
   <ul style="color:#c8d6f5">
     ${body.map((c) => `<li><code>/${escapeHtml(c.name)}</code> — ${escapeHtml(c.description)}</li>`).join("")}
   </ul>
   <p style="color:#93a4c8;margin-top:24px">
-    Try one in your Discord server. They may take a minute to appear.
+    ${guild ? "Try one now — press Ctrl+R in Discord if you don't see them yet."
+            : "Add <code>&amp;guild=YOUR_SERVER_ID</code> to this URL to register them instantly for one server instead."}
   </p>
 </body>`);
   } catch (e) {
