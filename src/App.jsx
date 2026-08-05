@@ -7542,6 +7542,92 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
 // Host-facing: send a message to everyone registered for this weekend. DMs go to
 // anyone who linked Discord; the rest are named back so the host knows who was
 // missed rather than assuming everyone got it.
+// Host-only: connect this league to a Discord server. Two IDs, copied out of
+// Discord with Developer Mode on. Deliberately collapsed by default — it's a
+// once-ever setup step, not something to look at every weekend.
+function DiscordServerCard() {
+  const [open, setOpen] = useState(false);
+  const [guild, setGuild] = useState("");
+  const [channel, setChannel] = useState("");
+  const [saved, setSaved] = useState(null);      // null = still loading
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+
+  async function load() {
+    try {
+      const { data } = await __sb.rpc("volt_get_discord");
+      setSaved(data || { guild: null, channel: null });
+      setGuild(data?.guild || ""); setChannel(data?.channel || "");
+    } catch { setSaved({ guild: null, channel: null }); }
+  }
+  useEffect(() => { if (HAS_SUPABASE) load(); }, []);
+
+  async function save(clear) {
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const { error } = await __sb.rpc("volt_set_discord", {
+        p_guild: clear ? null : guild, p_channel: clear ? null : channel });
+      if (error) throw new Error(error.message);
+      setOk(clear ? "Disconnected." : "Connected. Try /status in your server.");
+      await load();
+    } catch (e) { setErr(e.message || "Couldn't save that."); }
+    setBusy(false);
+  }
+
+  const connected = !!saved?.guild;
+  const field = { width: "100%", padding: "9px 11px", background: "rgba(10,16,30,0.85)",
+    border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff",
+    fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 };
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <button onClick={() => setOpen((o) => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          padding: "13px 16px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+          background: "rgba(10,16,30,0.5)", border: `1px solid ${connected ? "rgba(61,220,132,0.3)" : "rgba(120,150,220,0.2)"}`, clipPath: SHELL_NOTCH(9) }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Discord server</span>
+          <span style={{ fontSize: 12.5, color: connected ? "#9af5c2" : "rgba(200,215,255,0.6)" }}>
+            {saved === null ? "…" : connected ? "Connected" : "Not connected — players won't get messages"}
+          </span>
+        </span>
+        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "\u25b2" : "\u25bc"}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 8, padding: "14px 16px", background: "rgba(10,16,30,0.4)", border: "1px solid rgba(120,150,220,0.16)", clipPath: SHELL_NOTCH(9) }}>
+          <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: "0 0 12px", lineHeight: 1.6 }}>
+            In Discord: <b style={{ color: "rgba(200,215,255,0.8)" }}>Settings → Advanced → Developer Mode</b> on.
+            Then right-click your server name → <b style={{ color: "rgba(200,215,255,0.8)" }}>Copy Server ID</b>,
+            and right-click your announcements channel → <b style={{ color: "rgba(200,215,255,0.8)" }}>Copy Channel ID</b>.
+            The VOLT bot has to be in that server.
+          </p>
+          <label style={{ display: "block", marginBottom: 10 }}>
+            <span style={{ display: "block", fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginBottom: 4 }}>Server ID</span>
+            <input value={guild} onChange={(e) => setGuild(e.target.value)} placeholder="1192148403031908452" style={field} />
+          </label>
+          <label style={{ display: "block", marginBottom: 12 }}>
+            <span style={{ display: "block", fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginBottom: 4 }}>Announcements channel ID</span>
+            <input value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="1534683642415153233" style={field} />
+          </label>
+          <div className="flex items-center gap-3 flex-wrap" style={{ gap: 10 }}>
+            <button disabled={busy} onClick={() => save(false)} style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+              {busy ? "\u2026" : connected ? "Update" : "Connect"}
+            </button>
+            {connected && (
+              <button disabled={busy} onClick={() => { if (window.confirm("Disconnect Discord? Players stop getting DMs and announcements.")) save(true); }}
+                style={shellBtn("ghost", { padding: "9px 14px", fontSize: 12 })}>Disconnect</button>
+            )}
+          </div>
+          {ok && <div style={{ fontSize: 11.5, color: "#9af5c2", marginTop: 10 }}>\u2713 {ok}</div>}
+          {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 10 }}>\u26a0 {err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DiscordAnnounce({ eventId, communityId }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -8271,6 +8357,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isHost && <div style={{ textAlign: "center" }}>
       <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next weekend" : "+ Create weekend"}</button>
     </div>}
+    {isTrueHost && HAS_SUPABASE && <DiscordServerCard />}
     {isHost && HAS_SUPABASE && current && (
       <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} />
     )}
