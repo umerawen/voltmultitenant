@@ -7537,6 +7537,125 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
 // Appointing a helper used to mean drilling into a player's profile from the
 // Scout Hub, which meant it was effectively undiscoverable — and it only reached
 // people registered for the current weekend. This lists the whole league.
+// Player-facing: get a code, type /link in Discord. Kept deliberately small —
+// it's a one-time action and then it never needs touching again.
+// Host-facing: send a message to everyone registered for this weekend. DMs go to
+// anyone who linked Discord; the rest are named back so the host knows who was
+// missed rather than assuming everyone got it.
+function DiscordAnnounce({ eventId, communityId }) {
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState("");
+
+  async function send() {
+    if (!msg.trim()) return;
+    setBusy(true); setErr(""); setResult(null);
+    try {
+      const { data: t, error: te } = await __sb.rpc("volt_notify_targets", { p_event: eventId, p_scope: "approved" });
+      if (te) throw new Error(te.message);
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ communityId, message: msg.trim(), userIds: t?.userIds || [], announce: true }),
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
+      setResult(body); setMsg("");
+    } catch (e) { setErr(e.message || "Couldn't send."); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Message the league</div>
+      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(9) }}>
+        <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3}
+          placeholder="e.g. Draft starts in 30 minutes — be in the voice channel."
+          style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, resize: "vertical" }} />
+        <div className="flex items-center gap-3 flex-wrap" style={{ marginTop: 10, gap: 10 }}>
+          <button disabled={busy || !msg.trim()} onClick={send}
+            style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy || !msg.trim() ? 0.5 : 1 })}>
+            {busy ? "Sending…" : "DM everyone + announce"}
+          </button>
+          <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)" }}>
+            Goes to every approved player, and posts in your announcements channel.
+          </span>
+        </div>
+        {result && (
+          <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
+            <span style={{ color: "#9af5c2" }}>✓ DM'd {result.delivered}</span>
+            {result.announced && <span style={{ color: "rgba(200,215,255,0.5)" }}> · posted to the channel</span>}
+            {result.blocked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.blocked.length} have DMs closed — they were @mentioned in the channel instead.</div>}
+            {result.unlinked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.unlinked.length} haven't connected Discord yet — they got nothing.</div>}
+          </div>
+        )}
+        {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {err}</div>}
+      </div>
+    </div>
+  );
+}
+
+function DiscordLinkCard() {
+  const [code, setCode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [linked, setLinked] = useState(null);
+
+  useEffect(() => { (async () => {
+    if (!HAS_SUPABASE || !window.__VOLT?.userId) return;
+    try {
+      const { data } = await __sb.from("player_contacts").select("discord_user_id")
+        .eq("user_id", window.__VOLT.userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
+      setLinked(!!data?.discord_user_id);
+    } catch { setLinked(false); }
+  })(); }, []);
+
+  async function getCode() {
+    setBusy(true); setErr("");
+    try {
+      const { data, error } = await __sb.rpc("volt_discord_link_code");
+      if (error) throw new Error(error.message);
+      setCode(data);
+    } catch (e) { setErr(e.message || "Couldn't get a code."); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Discord</div>
+      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${linked ? "rgba(61,220,132,0.3)" : "rgba(120,150,220,0.18)"}`, clipPath: SHELL_NOTCH(9) }}>
+        {linked ? (
+          <div style={{ fontSize: 12.5, color: "#9af5c2" }}>✓ Connected — you'll get a DM when the draft starts and when matches are set.</div>
+        ) : code ? (
+          <>
+            <div style={{ fontSize: 12, color: "rgba(200,215,255,0.6)", marginBottom: 8 }}>
+              In your league's Discord, type:
+            </div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, fontWeight: 700, color: "#ecf3ff", letterSpacing: "0.06em", padding: "10px 12px", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.35)" }}>
+              /link code:{code}
+            </div>
+            <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 8 }}>Expires in 15 minutes.</div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginBottom: 10 }}>
+              Connect Discord and VOLT will message you directly about drafts and matches, instead of you having to check back.
+            </div>
+            <button disabled={busy} onClick={getCode} style={shellBtn("accent", { padding: "9px 16px", fontSize: 12 })}>
+              {busy ? "…" : "Connect Discord"}
+            </button>
+          </>
+        )}
+        {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {err}</div>}
+      </div>
+    </div>
+  );
+}
+
 function StaffPanel({ onOpenPlayer }) {
   const [rows, setRows] = useState(null);
   const [busyId, setBusyId] = useState(null);
@@ -7929,6 +8048,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             </div>
             <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "0 0 6px" }}>Captains study this before bidding — keep it current between weekends.</p>
             <ScoutProfileCard userId={window.__VOLT.userId} onSaved={loadMyMeta} />
+            {HAS_SUPABASE && <DiscordLinkCard />}
           </div>
         </VoltOverlay>
       )}
@@ -8151,6 +8271,9 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isHost && <div style={{ textAlign: "center" }}>
       <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next weekend" : "+ Create weekend"}</button>
     </div>}
+    {isHost && HAS_SUPABASE && current && (
+      <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} />
+    )}
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {board && <div style={{ marginTop: 34 }}>
       <div style={{ textAlign: "center", marginBottom: 14 }}>

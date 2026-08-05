@@ -19,8 +19,19 @@ const API = "https://discord.com/api/v10";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).end(); }
-  if ((req.headers["x-volt-secret"] || "") !== process.env.VOLT_NOTIFY_SECRET) {
-    return res.status(401).json({ error: "unauthorized" });
+  // Two ways in, so this works from the browser as well as server-to-server:
+  //   1. A logged-in host/moderator calling from VOLT (Authorization: Bearer <jwt>)
+  //   2. A trusted backend job (x-volt-secret)
+  // The first is what the app uses — requiring a shared secret would have meant
+  // putting it in the browser bundle, which would let anyone DM your whole league.
+  const bySecret = (req.headers["x-volt-secret"] || "") === process.env.VOLT_NOTIFY_SECRET
+                   && !!process.env.VOLT_NOTIFY_SECRET;
+  let caller = null;
+  if (!bySecret) {
+    const jwt = (req.headers.authorization || "").replace(/^Bearer /i, "");
+    if (!jwt) return res.status(401).json({ error: "unauthorized" });
+    caller = await whoami(jwt);
+    if (!caller) return res.status(401).json({ error: "session expired — sign in again" });
   }
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return res.status(500).json({ error: "DISCORD_BOT_TOKEN is not set" });
@@ -32,6 +43,15 @@ export default async function handler(req, res) {
     const [community] = await sb(
       `/rest/v1/communities?id=eq.${communityId}&select=name,discord_channel_id`);
     if (!community) return res.status(404).json({ error: "league not found" });
+
+    // A browser caller must be staff of THIS league — not just any logged-in user.
+    if (caller) {
+      const [me] = await sb(
+        `/rest/v1/users?id=eq.${caller}&select=role,community_id`);
+      if (!me || me.community_id !== communityId || !["host", "moderator"].includes(me.role)) {
+        return res.status(403).json({ error: "only the host or a moderator can send this" });
+      }
+    }
 
     // Resolve VOLT user ids -> Discord ids. Anyone who never linked simply can't
     // be reached, and the host needs to know that rather than assume delivery.
@@ -116,6 +136,19 @@ async function post(token, path, body) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Ask Supabase who this token belongs to. Returns the user id, or null if the
+// token is invalid or expired — we never trust an id sent by the client.
+async function whoami(jwt) {
+  try {
+    const r = await fetch(process.env.SUPABASE_URL + "/auth/v1/user", {
+      headers: { apikey: process.env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${jwt}` },
+    });
+    if (!r.ok) return null;
+    const u = await r.json();
+    return u?.id || null;
+  } catch { return null; }
+}
 
 async function sb(path) {
   const r = await fetch(process.env.SUPABASE_URL + path, {
