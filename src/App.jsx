@@ -7628,6 +7628,103 @@ function DiscordServerCard() {
   );
 }
 
+// Fired once the draft is done: DMs every player their team and teammates, and
+// gives them a Discord role so team channels work without manual setup. Separate
+// from the announce box because it's a one-per-weekend action, not a message.
+// The payoff for the availability check: the day before, silence is visible.
+// Only shows once the check has actually gone out, so it isn't noise all week.
+function AvailabilityCard({ eventId }) {
+  const [d, setD] = useState(null);
+  useEffect(() => { (async () => {
+    try {
+      const { data } = await __sb.rpc("volt_availability_summary", { p_event: eventId });
+      setD(data || null);
+    } catch { setD(null); }
+  })(); }, [eventId]);
+
+  if (!d?.asked) return null;
+  const silent = d.silent || [];
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Availability</div>
+      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)",
+        border: `1px solid ${silent.length ? "rgba(245,196,83,0.4)" : "rgba(61,220,132,0.3)"}`, clipPath: SHELL_NOTCH(9) }}>
+        <div style={{ fontSize: 13, color: "#9af5c2", fontWeight: 700 }}>
+          ✓ {d.confirmed} confirmed for the draft
+        </div>
+        {silent.length > 0 ? (
+          <div style={{ fontSize: 12, color: "rgba(245,196,83,0.9)", marginTop: 6, lineHeight: 1.6 }}>
+            ⚠ {silent.length} haven't answered: {silent.join(", ")}
+            <div style={{ color: "rgba(200,215,255,0.45)", marginTop: 4 }}>
+              Worth chasing before the draft — these are the likely no-shows.
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", marginTop: 4 }}>Everyone has answered.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DiscordTeamsCard({ eventId }) {
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState("");
+  const [roles, setRoles] = useState(true);
+
+  async function run() {
+    setBusy(true); setErr(""); setRes(null);
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-teams", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ eventId, assignRoles: roles }),
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
+      setRes(b);
+    } catch (e) { setErr(e.message || "Couldn't send."); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Tell everyone their team</div>
+      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(9) }}>
+        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", margin: "0 0 10px", lineHeight: 1.6 }}>
+          DMs every drafted player their team, captain and squad — so nobody has to ask.
+        </p>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12, color: "rgba(200,215,255,0.7)", marginBottom: 12 }}>
+          <input type="checkbox" checked={roles} onChange={(e) => setRoles(e.target.checked)} />
+          Also give each player a Discord team role
+        </label>
+        <div>
+          <button disabled={busy} onClick={run} style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+            {busy ? "Sending…" : "Send team DMs"}
+          </button>
+        </div>
+        {res && (
+          <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
+            <div style={{ color: "#9af5c2" }}>✓ DM'd {res.dmed} player{res.dmed === 1 ? "" : "s"}
+              {res.rolesAssigned > 0 && ` · ${res.rolesAssigned} role${res.rolesAssigned === 1 ? "" : "s"} assigned`}
+              {res.rolesCreated > 0 && ` (${res.rolesCreated} created)`}</div>
+            {res.blocked > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {res.blocked} have DMs closed.</div>}
+            {res.unlinked > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {res.unlinked} haven't connected Discord — they got nothing.</div>}
+            {res.roleErrors?.length > 0 && (
+              <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Roles: {res.roleErrors.join("; ")}</div>
+            )}
+          </div>
+        )}
+        {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {err}</div>}
+      </div>
+    </div>
+  );
+}
+
 function DiscordAnnounce({ eventId, communityId }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -8366,6 +8463,10 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next weekend" : "+ Create weekend"}</button>
     </div>}
     {isTrueHost && HAS_SUPABASE && <DiscordServerCard />}
+    {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
+    {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
+      <DiscordTeamsCard eventId={current.id} />
+    )}
     {isHost && HAS_SUPABASE && current && (
       <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} />
     )}

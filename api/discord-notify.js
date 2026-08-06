@@ -39,7 +39,10 @@ export default async function handler(req, res) {
   // `buttons: "register"` attaches the one-tap sign-up row to the announcement.
   // That's the whole point of the feature: responding should cost one click, not
   // a link, a login and a form.
-  const { communityId, message, userIds, announce, buttons } = req.body || {};
+  // `buttons` picks a button set; `dmButtons` attaches it to the DMs too, which
+  // is what the availability check needs — the question has to be answerable
+  // right there in the DM, not by going somewhere else.
+  const { communityId, message, userIds, announce, buttons, dmButtons } = req.body || {};
   if (!communityId || !message) return res.status(400).json({ error: "communityId and message are required" });
 
   try {
@@ -75,7 +78,7 @@ export default async function handler(req, res) {
     const delivered = [];
     const blocked = [];
     for (const t of targets) {
-      const r = await dm(token, t.discordId, message);
+      const r = await dm(token, t.discordId, message, dmButtons ? buttonRow(buttons) : null);
       if (r.ok) delivered.push(t.userId);
       else blocked.push({ ...t, reason: r.reason });
       await sleep(250);           // stay well inside Discord's rate limits
@@ -92,15 +95,8 @@ export default async function handler(req, res) {
           `${mentions}\n_(couldn't DM you — your Discord privacy settings block messages from server members)_`;
       }
       const payload = { content: content.slice(0, 1900) };
-      if (buttons === "register") {
-        payload.components = [{
-          type: 1,                                  // action row
-          components: [
-            { type: 2, style: 1, label: "Register", custom_id: "volt_register" },
-            { type: 2, style: 2, label: "Register + captain", custom_id: "volt_register_captain" },
-          ],
-        }];
-      }
+      const row = buttonRow(buttons);
+      if (row) payload.components = row;
       const r = await post(token, `/channels/${channel}/messages`, payload);
       announced = r.ok;
       if (!r.ok) console.error("announce failed", r.reason);
@@ -119,10 +115,26 @@ export default async function handler(req, res) {
 }
 
 // A DM needs a channel opening first; Discord reuses it on subsequent sends.
-async function dm(token, discordId, content) {
+async function dm(token, discordId, content, components) {
   const ch = await post(token, "/users/@me/channels", { recipient_id: discordId });
   if (!ch.ok) return { ok: false, reason: ch.reason };
-  return post(token, `/channels/${ch.body.id}/messages`, { content: content.slice(0, 1900) });
+  const payload = { content: content.slice(0, 1900) };
+  if (components) payload.components = components;
+  return post(token, `/channels/${ch.body.id}/messages`, payload);
+}
+
+// Button sets the bot knows how to send. custom_id has to match the handler in
+// discord-interactions.js.
+function buttonRow(kind) {
+  if (kind === "register") return [{ type: 1, components: [
+    { type: 2, style: 1, label: "Register", custom_id: "volt_register" },
+    { type: 2, style: 2, label: "Register + captain", custom_id: "volt_register_captain" },
+  ] }];
+  if (kind === "availability") return [{ type: 1, components: [
+    { type: 2, style: 3, label: "I'm in", custom_id: "volt_confirm" },
+    { type: 2, style: 4, label: "Can't make it", custom_id: "volt_withdraw" },
+  ] }];
+  return null;
 }
 
 async function post(token, path, body) {

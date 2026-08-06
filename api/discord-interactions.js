@@ -168,6 +168,26 @@ async function onButton(res, customId, guild, discordId) {
       (r.pool ? "" : "\n_The draft pool has closed, so you're signed up as a reserve._") +
       (wantsCaptain ? "\nYou've put your hand up to captain — the host decides." : ""));
   }
+  if (customId === "volt_confirm") {
+    const r = await rpc("volt_dc_confirm", { p_guild: guild, p_discord_id: discordId });
+    if (r?.error === "link") return needsLink(res);
+    if (r?.error === "noweekend") return reply(res, "No weekend is running.");
+    if (r?.error === "notin") return reply(res, "You're not signed up for this weekend.");
+    return reply(res, `Thanks — you're confirmed for **${r.weekend}**. See you at the draft.`);
+  }
+
+  if (customId === "volt_withdraw") {
+    const r = await rpc("volt_dc_withdraw", { p_guild: guild, p_discord_id: discordId });
+    if (r?.error === "link") return needsLink(res);
+    if (r?.error === "noweekend") return reply(res, "No weekend is running.");
+    if (r?.error === "notin") return reply(res, "You weren't signed up for this weekend.");
+    if (r?.error === "toolate") return reply(res,
+      "The draft has already started, so I can't pull you out from here — message your host directly.");
+    return reply(res,
+      `You're out of **${r.weekend}**. No strike — telling us early is exactly right.\n` +
+      `If you change your mind and registration is still open, you can sign up again.`);
+  }
+
   return reply(res, "That button isn't recognised.");
 }
 
