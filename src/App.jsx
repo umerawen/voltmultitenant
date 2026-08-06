@@ -244,9 +244,9 @@ function computeSeasonPoints(s) {
 }
 
 
-// Weekend display name from its date — "Jul 20\u201321" (Sat\u2013Sun) with an
+// Weekend display name from its date — "Jul 20–21" (Sat–Sun) with an
 // optional nickname. Falls back to the legacy counter label when no date exists.
-// A weekend is Sat\u2013Sun; starts_on is the Saturday.
+// A weekend is Sat–Sun; starts_on is the Saturday.
 function weekendName(ev) {
   if (!ev) return "";
   const raw = ev.starts_on;
@@ -266,11 +266,11 @@ function weekendName(ev) {
   const label = sat.getTime() === sun.getTime()
     ? `${mon} ${sat.getDate()}`
     : mon === monS
-      ? `${mon} ${sat.getDate()}\u2013${sun.getDate()}`
-      : `${mon} ${sat.getDate()} \u2013 ${monS} ${sun.getDate()}`;
+      ? `${mon} ${sat.getDate()}–${sun.getDate()}`
+      : `${mon} ${sat.getDate()} – ${monS} ${sun.getDate()}`;
   // Keep a nickname only if the host set one that isn't the old auto counter.
   const nick = ev.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : null;
-  return nick ? `${label} \u00b7 ${nick}` : label;
+  return nick ? `${label} · ${nick}` : label;
 }
 
 // The coming Saturday (local), as a yyyy-mm-dd string — the default for a new weekend.
@@ -5777,7 +5777,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                   ); })()}
                   <button onClick={() => placeBid(myTeam.id)} disabled={!canBid || bidPending} className="w-full py-6 text-3xl font-bold uppercase tracking-widest transition-all active:scale-95"
                     style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(24px 0,100% 0,calc(100% - 24px) 100%,0 100%)", background: canBid ? "linear-gradient(90deg,#ff4655,#ff2d55)" : "rgba(255,255,255,0.05)", color: canBid ? "#fff" : "rgba(236,243,255,0.25)", border: canBid ? "1px solid #ff8a94" : "1px solid rgba(255,255,255,0.1)", boxShadow: canBid ? "0 0 36px rgba(255,70,85,0.5), 0 0 80px rgba(255,70,85,0.2)" : "none", cursor: canBid ? "pointer" : "not-allowed" }}>
-                    {bidPending ? "Bidding\u2026" : iLead ? "You hold the bid" : `BID ${fmt(myReq)}`}
+                    {bidPending ? "Bidding…" : iLead ? "You hold the bid" : `BID ${fmt(myReq)}`}
                   </button>
                   {myFull ? (
                     <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(236,243,255,0.4)" }}>Roster full — spectating</p>
@@ -6879,11 +6879,11 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
         <VoltDateRange start={startYmd} end={endYmd}
           onChange={(a, b) => { setStartYmd(a); setEndYmd(b); }} placeholder="Pick start and end" />
         <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", marginTop: 8 }}>
-          {days > 0 ? <>Runs {days} day{days === 1 ? "" : "s"}{!endYmd && " (Sat\u2013Sun by default)"}.</> : "Pick a start date."}
+          {days > 0 ? <>Runs {days} day{days === 1 ? "" : "s"}{!endYmd && " (Sat–Sun by default)"}.</> : "Pick a start date."}
         </div>
         {notSaturday && (
           <div style={{ fontSize: 11.5, color: "#f5c453", marginTop: 6 }}>
-            Heads up \u2014 that starts on a {new Date(startYmd + "T12:00:00").toLocaleDateString(undefined, { weekday: "long" })}, not a Saturday. It'll still work.
+            Heads up — that starts on a {new Date(startYmd + "T12:00:00").toLocaleDateString(undefined, { weekday: "long" })}, not a Saturday. It'll still work.
           </div>
         )}
 
@@ -7170,15 +7170,15 @@ function ContactPanel({ discord, whatsapp, name }) {
             {btn(copied === "w" ? <><CheckIcon size={11} />Copied</> : <><CopyIcon size={11} />Copy</>, () => copy(whatsapp, "w"), copied === "w" ? "ok" : null)}
             <a href={`https://wa.me/${whatsapp}`} target="_blank" rel="noopener noreferrer"
               style={{ padding: "5px 10px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", textDecoration: "none",
-                fontFamily: "'Rajdhani',sans-serif", clipPath: SHELL_NOTCH(6), background: "rgba(61,220,132,0.12)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2" }}>Open chat \u2192</a>
+                fontFamily: "'Rajdhani',sans-serif", clipPath: SHELL_NOTCH(6), background: "rgba(61,220,132,0.12)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2" }}>Open chat →</a>
           </div>
         ) : (
           <div style={{ paddingTop: 12, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
             <button onClick={() => setShowWa(true)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left",
               fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 700, color: "#f5c453", letterSpacing: "0.04em" }}>
-              \u26a0 No reply on Discord? Reveal WhatsApp number \u2192
+              ⚠ No reply on Discord? Reveal WhatsApp number →
             </button>
-            <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>Host only \u2014 {name} shared this as a backup.</div>
+            <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>Host only — {name} shared this as a backup.</div>
           </div>
         ))}
       </div>
@@ -7224,9 +7224,9 @@ function ModeratorToggle({ userId, role, name, onChanged }) {
         </div>
         <button disabled={busy} onClick={flip}
           style={shellBtn(isMod ? "danger" : "accent", { padding: "9px 16px", fontSize: 11.5, opacity: busy ? 0.5 : 1 })}>
-          {busy ? "\u2026" : isMod ? "Remove moderator" : "Make moderator"}
+          {busy ? "…" : isMod ? "Remove moderator" : "Make moderator"}
         </button>
-        {err && <span style={{ fontSize: 11.5, color: "#ff8f9a", width: "100%" }}>\u26a0 {err}</span>}
+        {err && <span style={{ fontSize: 11.5, color: "#ff8f9a", width: "100%" }}>⚠ {err}</span>}
       </div>
     </div>
   );
@@ -7593,7 +7593,7 @@ function DiscordServerCard() {
             {saved === null ? "…" : connected ? "Connected" : "Not connected — players won't get messages"}
           </span>
         </span>
-        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "\u25b2" : "\u25bc"}</span>
+        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "▲" : "▼"}</span>
       </button>
 
       {open && (
@@ -7614,15 +7614,15 @@ function DiscordServerCard() {
           </label>
           <div className="flex items-center gap-3 flex-wrap" style={{ gap: 10 }}>
             <button disabled={busy} onClick={() => save(false)} style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
-              {busy ? "\u2026" : connected ? "Update" : "Connect"}
+              {busy ? "…" : connected ? "Update" : "Connect"}
             </button>
             {connected && (
               <button disabled={busy} onClick={() => { if (window.confirm("Disconnect Discord? Players stop getting DMs and announcements.")) save(true); }}
                 style={shellBtn("ghost", { padding: "9px 14px", fontSize: 12 })}>Disconnect</button>
             )}
           </div>
-          {ok && <div style={{ fontSize: 11.5, color: "#9af5c2", marginTop: 10 }}>\u2713 {ok}</div>}
-          {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 10 }}>\u26a0 {err}</div>}
+          {ok && <div style={{ fontSize: 11.5, color: "#9af5c2", marginTop: 10 }}>✓ {ok}</div>}
+          {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
         </div>
       )}
     </div>
@@ -7920,7 +7920,7 @@ function StaffPanel({ onOpenPlayer }) {
             {mods > 0 ? `${mods} moderator${mods === 1 ? "" : "s"} helping out` : "Appoint someone to help run weekends"}
           </span>
         </span>
-        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "\u25b2" : "\u25bc"}</span>
+        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "▲" : "▼"}</span>
       </button>
       {open && (
         <div style={{ marginTop: 8, padding: "14px 16px", background: "rgba(10,16,30,0.4)", border: "1px solid rgba(120,150,220,0.16)", clipPath: SHELL_NOTCH(9) }}>
@@ -7945,14 +7945,14 @@ function StaffPanel({ onOpenPlayer }) {
                   {!isOwner && (
                     <button disabled={busyId === u.id} onClick={() => setRole(u, isMod ? "player" : "moderator")}
                       style={shellBtn(isMod ? "danger" : "accent", { padding: "6px 11px", fontSize: 10.5, opacity: busyId === u.id ? 0.5 : 1 })}>
-                      {busyId === u.id ? "\u2026" : isMod ? "Remove" : "Make moderator"}
+                      {busyId === u.id ? "…" : isMod ? "Remove" : "Make moderator"}
                     </button>
                   )}
                   {!isOwner && (
                     <button disabled={busyId === u.id}
                       onClick={() => { if (window.confirm(
                         `Make ${u.display_name || "this player"} a host?\n\n` +
-                        `They get full control: settling and deleting weekends, resetting the auction, league settings, and changing anyone's role \u2014 including yours.\n\n` +
+                        `They get full control: settling and deleting weekends, resetting the auction, league settings, and changing anyone's role — including yours.\n\n` +
                         `You stay a host too. Do this before handing the league over, since a league can't be left without one.`
                       )) setRole(u, "host"); }}
                       title="Give this player full control of the league"
@@ -7971,7 +7971,7 @@ function StaffPanel({ onOpenPlayer }) {
               );
             })}
           </div>
-          {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 10 }}>\u26a0 {err}</div>}
+          {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
         </div>
       )}
     </div>
