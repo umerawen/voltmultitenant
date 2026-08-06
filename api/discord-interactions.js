@@ -55,8 +55,13 @@ async function onCommand(res, body, guild, discordId) {
       : (r?.error || "Couldn't link that code."));
   }
 
+  // These read a league from the server they're run in, so they can't work in a DM.
+  if (!guild && ["status", "leaderboard", "subs", "scout"].includes(name)) {
+    return reply(res, "Run that one in your league's Discord server — I can't tell which league you mean from a DM.");
+  }
+
   if (name === "status") {
-    const s = await rpc("volt_discord_status", { p_guild: guild });
+    const s = await rpc("volt_discord_status", { p_guild: guild || null });
     if (s?.error) return reply(res, s.error);
     if (!s?.weekend) return reply(res, "No weekend is open right now.");
     return reply(res,
@@ -65,7 +70,7 @@ async function onCommand(res, body, guild, discordId) {
   }
 
   if (name === "me") {
-    const m = await rpc("volt_dc_me", { p_guild: guild, p_discord_id: discordId });
+    const m = await rpc("volt_dc_me", { p_guild: guild || null, p_discord_id: discordId });
     if (m?.error === "link") return needsLink(res);
     return reply(res,
       `**${m.name}** · ${m.rank} · ${m.role}${m.agent && m.agent !== "—" ? ` (${m.agent})` : ""}\n` +
@@ -75,7 +80,7 @@ async function onCommand(res, body, guild, discordId) {
   }
 
   if (name === "roster") {
-    const r = await rpc("volt_dc_roster", { p_guild: guild, p_discord_id: discordId });
+    const r = await rpc("volt_dc_roster", { p_guild: guild || null, p_discord_id: discordId });
     if (r?.error === "link") return needsLink(res);
     if (r?.error === "noweekend") return reply(res, "No weekend is running.");
     if (r?.error === "noboard") return reply(res, "The draft hasn't been built yet.");
@@ -88,7 +93,7 @@ async function onCommand(res, body, guild, discordId) {
   }
 
   if (name === "leaderboard") {
-    const rows = await rpc("volt_dc_leaderboard", { p_guild: guild });
+    const rows = await rpc("volt_dc_leaderboard", { p_guild: guild || null });
     if (rows?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
     if (!rows?.length) return reply(res, "No points banked yet this season.");
     const medal = ["🥇", "🥈", "🥉"];
@@ -97,7 +102,7 @@ async function onCommand(res, body, guild, discordId) {
   }
 
   if (name === "subs") {
-    const rows = await rpc("volt_dc_subs", { p_guild: guild });
+    const rows = await rpc("volt_dc_subs", { p_guild: guild || null });
     if (rows?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
     if (rows?.error === "noweekend") return reply(res, "No weekend is running.");
     if (!rows?.length) return reply(res, "Nobody is on the reserve list right now.");
@@ -108,7 +113,7 @@ async function onCommand(res, body, guild, discordId) {
   if (name === "scout") {
     const who = String(opt("player") || "").trim();
     if (!who) return reply(res, "Give me a name: `/scout player:Rumer`");
-    const p = await rpc("volt_dc_scout", { p_guild: guild, p_name: who });
+    const p = await rpc("volt_dc_scout", { p_guild: guild || null, p_name: who });
     if (p?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
     if (p?.error === "notfound") return reply(res, `No player called **${who}** in this league.`);
     const flags = [];
@@ -136,7 +141,7 @@ async function onAutocomplete(res, body, guild) {
   const q = String(focused?.value || "");
   let choices = [];
   try {
-    const rows = await rpc("volt_dc_search", { p_guild: guild, p_query: q });
+    const rows = await rpc("volt_dc_search", { p_guild: guild || null, p_query: q });
     choices = Array.isArray(rows) ? rows.slice(0, 25) : [];
   } catch (e) { console.error("autocomplete", e); }
   return res.status(200).json({ type: AUTOCOMPLETE_RESULT, data: { choices } });
@@ -150,7 +155,7 @@ async function onButton(res, customId, guild, discordId) {
   if (customId === "volt_register" || customId === "volt_register_captain") {
     const wantsCaptain = customId === "volt_register_captain";
     const r = await rpc("volt_dc_register", {
-      p_guild: guild, p_discord_id: discordId, p_captain: wantsCaptain });
+      p_guild: guild || null, p_discord_id: discordId, p_captain: wantsCaptain });
 
     if (r?.error === "link") return needsLink(res);
     if (r?.error === "closed") return reply(res, "Registration isn't open right now.");
@@ -169,7 +174,7 @@ async function onButton(res, customId, guild, discordId) {
       (wantsCaptain ? "\nYou've put your hand up to captain — the host decides." : ""));
   }
   if (customId === "volt_confirm") {
-    const r = await rpc("volt_dc_confirm", { p_guild: guild, p_discord_id: discordId });
+    const r = await rpc("volt_dc_confirm", { p_guild: guild || null, p_discord_id: discordId });
     if (r?.error === "link") return needsLink(res);
     if (r?.error === "noweekend") return reply(res, "No weekend is running.");
     if (r?.error === "notin") return reply(res, "You're not signed up for this weekend.");
@@ -177,7 +182,7 @@ async function onButton(res, customId, guild, discordId) {
   }
 
   if (customId === "volt_withdraw") {
-    const r = await rpc("volt_dc_withdraw", { p_guild: guild, p_discord_id: discordId });
+    const r = await rpc("volt_dc_withdraw", { p_guild: guild || null, p_discord_id: discordId });
     if (r?.error === "link") return needsLink(res);
     if (r?.error === "noweekend") return reply(res, "No weekend is running.");
     if (r?.error === "notin") return reply(res, "You weren't signed up for this weekend.");
