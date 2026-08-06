@@ -6492,6 +6492,7 @@ function AccountView({ auth, chrome }) {
         <p style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif" }}>Captains see this on the auction block — keep it honest, keep it current. Edits update the radar above.</p>
         <ScoutProfileCard userId={auth?.userId} onSaved={() => { try { __sb.from("users").select("*").eq("id", auth.userId).maybeSingle().then(({ data }) => data && setMe(data)); } catch {} }} />
       </div>
+      {HAS_SUPABASE && <DiscordLinkCard />}
 
       {chrome?.onSignOut && (
         <button onClick={chrome.onSignOut} style={shellBtn("danger", { padding: "12px", letterSpacing: "0.14em" })}>Sign out</button>
@@ -9975,6 +9976,7 @@ function WeekendRegistration({ ev, auth, phase }) {
               <div style={{ fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700, color: profileComplete ? "#9af5c2" : "#f5c453" }}>
                 {myProf === undefined ? "Checking your profile…" : profileComplete ? "✓ Scouting profile complete" : `① Complete your scouting profile — still needed: ${profileMissing(myProf).join(", ")}`}</div>
               {HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} onSaved={load} />}
+              {HAS_SUPABASE && <DiscordLinkCard />}
             </div>
             {myStrikes > 0 && (
               <div style={{ marginTop: 14, padding: "11px 14px", background: myStrikes % 3 === 2 ? "rgba(255,70,85,0.07)" : "rgba(245,196,83,0.06)", border: `1px solid ${myStrikes % 3 === 2 ? "rgba(255,70,85,0.45)" : "rgba(245,196,83,0.35)"}`, clipPath: SHELL_NOTCH(7) }}>
@@ -10022,6 +10024,7 @@ function WeekendRegistration({ ev, auth, phase }) {
             </label>
           )}
           {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
+          {isIn && HAS_SUPABASE && <DiscordLinkCard />}
         </div>
 
 
