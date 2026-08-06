@@ -300,6 +300,9 @@ function regToPlayer(p, isCap) {
     badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
     discord: p.discord || null,
     poolEligible: p.poolEligible !== false,
+    // false once they've tapped "Can't make it" — the Reserve Hub has to show
+    // this or a captain will call someone who has already said no.
+    available: p.available !== false,
   };
 }
 
@@ -3387,17 +3390,19 @@ function MapVeto({ teams }) {
 }
 
 /* ════════════════ NAV ═════════════════════════════════════════════ */
+// Plain names in the nav — it's a signpost you scan in half a second, so it has
+// to say what's behind it. The pages keep their own flavour in their headings.
 const NAV = [
-  { id: "lobby", label: "Lobby", glyph: "⌂" },
-  { id: "scout", label: "Scout Hub", glyph: "⊞" },
-  { id: "block", label: "Auction Block", glyph: "⟁" },
-  { id: "reserve", label: "Reserve Hub", glyph: "⊕" },
-  { id: "locker", label: "Locker Room", glyph: "▦" },
-  { id: "warroom", label: "War Room", glyph: "✦" },
+  { id: "lobby", label: "Home", glyph: "⌂" },
+  { id: "scout", label: "Player Pool", glyph: "⊞" },
+  { id: "block", label: "Live Auction", glyph: "⟁" },
+  { id: "reserve", label: "Reserve Pool", glyph: "⊕" },
+  { id: "locker", label: "Rosters", glyph: "▦" },
+  { id: "warroom", label: "Mock Draft", glyph: "✦" },
 ];
 // grouped under the "Tournament" dropdown to keep the nav from overflowing
 const TOURNEY_NAV = [
-  { id: "bracket", label: "Brackets", glyph: "◈" },
+  { id: "bracket", label: "Fixtures", glyph: "◈" },
   { id: "leaderboard", label: "Leaderboard", glyph: "≣" },
   { id: "veto", label: "Map Veto", glyph: "⊘", adminOnly: true },
 ];
@@ -5574,7 +5579,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             const r = rankOf(p.rank) || RANKS.Silver;
             const ok = eligible(p);
             return (
-              <div key={p.id} role="button" tabIndex={0} title="Open scouting file"
+              <div key={p.id} role="button" tabIndex={0}
+                title={p.available === false ? "This player has said they can't make it" : "Open scouting file"}
                 onClick={() => setScouted(p.id)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setScouted(p.id); } }}
                 className="vg-row-x relative text-left p-4 overflow-hidden" style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${ok ? r.c + "44" : "rgba(120,150,220,0.18)"}`, opacity: ok ? 1 : 0.45, clipPath: SHELL_NOTCH(10), cursor: "pointer" }}>
@@ -5599,8 +5605,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                     {ok ? "✓ Eligible sub" : "✕ Outranks your player"}
                   </p>
                 )}
-                <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)" }}>
-                  {p.poolEligible === false ? "Not in this weekend's draft" : "Went undrafted"}
+                <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: p.available === false ? "rgba(255,138,148,0.9)" : "rgba(200,215,255,0.4)" }}>
+                  {p.available === false ? "✕ Said they can't make it"
+                    : p.poolEligible === false ? "Not in this weekend's draft"
+                    : "Went undrafted"}
                 </p>
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
                   {isAdmin && p.poolEligible === false && (

@@ -189,8 +189,9 @@ async function onButton(res, customId, guild, discordId) {
     if (r?.error === "toolate") return reply(res,
       "The draft has already started, so I can't pull you out from here — message your host directly.");
     return reply(res,
-      `You're out of **${r.weekend}**. No strike — telling us early is exactly right.\n` +
-      `If you change your mind and registration is still open, you can sign up again.`);
+      `Thanks for telling us — you're out of the draft for **${r.weekend}**. No strike.\n` +
+      `You're on the reserve list, so if you free up you can still be subbed into a match. ` +
+      `Changed your mind? Tick "I'm available" again in VOLT.`);
   }
 
   return reply(res, "That button isn't recognised.");
