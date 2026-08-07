@@ -7644,33 +7644,50 @@ function DiscordServerCard() {
 // Only shows once the check has actually gone out, so it isn't noise all week.
 function AvailabilityCard({ eventId }) {
   const [d, setD] = useState(null);
+  const [unlinked, setUnlinked] = useState([]);
   useEffect(() => { (async () => {
     try {
       const { data } = await __sb.rpc("volt_availability_summary", { p_event: eventId });
       setD(data || null);
     } catch { setD(null); }
+    try {
+      // Unlinked players are invisible to every Discord feature, so surface them
+      // here rather than letting the host discover it when nobody turns up.
+      const { data: u } = await __sb.rpc("volt_unlinked", { p_event: eventId });
+      setUnlinked(Array.isArray(u) ? u : []);
+    } catch { setUnlinked([]); }
   })(); }, [eventId]);
 
-  if (!d?.asked) return null;
-  const silent = d.silent || [];
+  const silent = d?.silent || [];
+  if (!d?.asked && !unlinked.length) return null;
   return (
     <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Availability</div>
+      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Who we can reach</div>
       <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)",
-        border: `1px solid ${silent.length ? "rgba(245,196,83,0.4)" : "rgba(61,220,132,0.3)"}`, clipPath: SHELL_NOTCH(9) }}>
-        <div style={{ fontSize: 13, color: "#9af5c2", fontWeight: 700 }}>
-          ✓ {d.confirmed} confirmed for the draft
-        </div>
-        {silent.length > 0 ? (
+        border: `1px solid ${(silent.length || unlinked.length) ? "rgba(245,196,83,0.4)" : "rgba(61,220,132,0.3)"}`, clipPath: SHELL_NOTCH(9) }}>
+        {d?.asked && (
+          <div style={{ fontSize: 13, color: "#9af5c2", fontWeight: 700 }}>
+            ✓ {d.confirmed} confirmed for the draft
+          </div>
+        )}
+        {unlinked.length > 0 && (
+          <div style={{ fontSize: 12, color: "rgba(245,196,83,0.9)", marginTop: 6, lineHeight: 1.6 }}>
+            ⚠ {unlinked.length} haven't connected Discord: {unlinked.join(", ")}
+            <div style={{ color: "rgba(200,215,255,0.45)", marginTop: 2 }}>
+              They get no reminders, no availability check and no team DM. Ask them to hit Connect Discord in VOLT.
+            </div>
+          </div>
+        )}
+        {d?.asked && silent.length > 0 ? (
           <div style={{ fontSize: 12, color: "rgba(245,196,83,0.9)", marginTop: 6, lineHeight: 1.6 }}>
             ⚠ {silent.length} haven't answered: {silent.join(", ")}
             <div style={{ color: "rgba(200,215,255,0.45)", marginTop: 4 }}>
               Worth chasing before the draft — these are the likely no-shows.
             </div>
           </div>
-        ) : (
+        ) : d?.asked ? (
           <div style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", marginTop: 4 }}>Everyone has answered.</div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -7800,20 +7817,35 @@ function DiscordAnnounce({ eventId, communityId }) {
 }
 
 function DiscordLinkCard() {
-  const [code, setCode] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [linked, setLinked] = useState(null);
+  const [code, setCode] = useState(null);       // fallback if OAuth is unavailable
 
-  useEffect(() => { (async () => {
+  async function load() {
     if (!HAS_SUPABASE || !window.__VOLT?.userId) return;
     try {
       const { data } = await __sb.from("player_contacts").select("discord_user_id")
         .eq("user_id", window.__VOLT.userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
       setLinked(!!data?.discord_user_id);
     } catch { setLinked(false); }
-  })(); }, []);
+  }
+  useEffect(() => { load(); }, []);
 
+  // One click: hand Discord a signed token identifying this VOLT account, let
+  // them approve, come back linked. The old code flow lost half the people who
+  // started it — too many steps across two apps.
+  async function connect() {
+    setBusy(true); setErr("");
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      window.location.href = `/api/discord-oauth?token=${encodeURIComponent(jwt)}`;
+    } catch (e) { setErr(e.message || "Couldn't start."); setBusy(false); }
+  }
+
+  // Kept for anyone whose browser blocks the redirect, or who'd rather type.
   async function getCode() {
     setBusy(true); setErr("");
     try {
@@ -7827,27 +7859,43 @@ function DiscordLinkCard() {
   return (
     <div style={{ marginTop: 22 }}>
       <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Discord</div>
-      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${linked ? "rgba(61,220,132,0.3)" : "rgba(120,150,220,0.18)"}`, clipPath: SHELL_NOTCH(9) }}>
+      <div style={{ padding: "16px 18px", background: linked ? "rgba(10,16,30,0.5)" : "rgba(245,196,83,0.07)",
+        border: `1px solid ${linked ? "rgba(61,220,132,0.3)" : "rgba(245,196,83,0.45)"}`, clipPath: SHELL_NOTCH(9) }}>
         {linked ? (
-          <div style={{ fontSize: 12.5, color: "#9af5c2" }}>✓ Connected — you'll get a DM when the draft starts and when matches are set.</div>
-        ) : code ? (
-          <>
-            <div style={{ fontSize: 12, color: "rgba(200,215,255,0.6)", marginBottom: 8 }}>
-              In your league's Discord, type:
-            </div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, fontWeight: 700, color: "#ecf3ff", letterSpacing: "0.06em", padding: "10px 12px", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.35)" }}>
-              /link code:{code}
-            </div>
-            <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 8 }}>Expires in 15 minutes.</div>
-          </>
+          <div style={{ fontSize: 12.5, color: "#9af5c2" }}>✓ Connected — you'll get a DM when the draft is set and when matches go up.</div>
         ) : (
           <>
-            <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginBottom: 10 }}>
-              Connect Discord and VOLT will message you directly about drafts and matches, instead of you having to check back.
+            {/* Say what they lose by skipping this, or it reads as optional and
+                gets skipped — which is exactly what happened in testing. */}
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#ffe4a0", marginBottom: 4 }}>
+              You won't get draft reminders until you connect Discord
             </div>
-            <button disabled={busy} onClick={getCode} style={shellBtn("accent", { padding: "9px 16px", fontSize: 12 })}>
+            <div style={{ fontSize: 12, color: "rgba(200,215,255,0.6)", marginBottom: 12, lineHeight: 1.6 }}>
+              VOLT messages you the day before to check you're still free, 30 minutes before the draft,
+              and again when you find out your team. Without this, you get none of it.
+            </div>
+            <button disabled={busy} onClick={connect}
+              style={shellBtn("primary", { padding: "10px 18px", fontSize: 12.5, opacity: busy ? 0.5 : 1 })}>
               {busy ? "…" : "Connect Discord"}
             </button>
+            {code ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.55)", marginBottom: 6 }}>
+                  Or type this in your league's Discord:
+                </div>
+                <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, fontWeight: 700, color: "#ecf3ff",
+                  padding: "9px 12px", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.35)" }}>
+                  /link code:{code}
+                </div>
+                <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 6 }}>Expires in 15 minutes.</div>
+              </div>
+            ) : (
+              <button onClick={getCode} style={{ display: "block", marginTop: 10, background: "none", border: "none",
+                padding: 0, color: "rgba(200,215,255,0.5)", fontSize: 11.5, textDecoration: "underline", cursor: "pointer",
+                fontFamily: "'Rajdhani',sans-serif" }}>
+                Trouble connecting? Use a code instead
+              </button>
+            )}
           </>
         )}
         {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {err}</div>}
@@ -7856,6 +7904,12 @@ function DiscordLinkCard() {
   );
 }
 
+// Host-facing: send a message to everyone registered for this weekend. DMs go to
+// anyone who linked Discord; the rest are named back so the host knows who was
+// missed rather than assuming everyone got it.
+// Host-only: connect this league to a Discord server. Two IDs, copied out of
+// Discord with Developer Mode on. Deliberately collapsed by default — it's a
+// once-ever setup step, not something to look at every weekend.
 function StaffPanel({ onOpenPlayer }) {
   const [rows, setRows] = useState(null);
   const [busyId, setBusyId] = useState(null);

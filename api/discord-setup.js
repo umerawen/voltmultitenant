@@ -19,6 +19,7 @@ const COMMANDS = [
   { name: "roster",      description: "Your team and teammates this weekend" },
   { name: "leaderboard", description: "Season leaderboard" },
   { name: "subs",        description: "Who's available to sub in" },
+  { name: "rollcall",    description: "Show who hasn't connected Discord yet" },
   {
     name: "scout",
     description: "Look up any player's rank, stats and record",

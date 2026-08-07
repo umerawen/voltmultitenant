@@ -50,9 +50,11 @@ async function onCommand(res, body, guild, discordId) {
     const code = String(opt("code") || "").trim();
     if (!code) return reply(res, "Add the code from VOLT: `/link code:ABC123`");
     const r = await rpc("volt_discord_redeem", { p_code: code, p_discord_id: discordId });
-    return reply(res, r?.ok
-      ? `Linked. You're **${r.name}** in **${r.league}** — I'll message you about drafts and matches.`
-      : (r?.error || "Couldn't link that code."));
+    if (r?.ok) return reply(res,
+      `Linked. You're **${r.name}** in **${r.league}** — I'll message you about drafts and matches.`);
+    return reply(res,
+      "That code didn't work — they expire after 15 minutes. Open VOLT → your account → " +
+      "**Connect Discord** for a fresh one, or just use the one-click button there instead.");
   }
 
   // These read a league from the server they're run in, so they can't work in a DM.
@@ -108,6 +110,19 @@ async function onCommand(res, body, guild, discordId) {
     if (!rows?.length) return reply(res, "Nobody is on the reserve list right now.");
     return reply(res, "**Available to sub in**\n" + rows.map((r) =>
       `• **${r.name}** — ${r.rank}${r.discord ? ` · <@${r.discord}>` : ""}`).join("\n"));
+  }
+
+  if (name === "rollcall") {
+    const r = await rpc("volt_dc_rollcall", { p_guild: guild });
+    if (r?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
+    if (r?.error === "noweekend") return reply(res, "No weekend is running.");
+    const missing = r?.missing || [];
+    if (!missing.length) return reply(res, "Everyone registered has connected Discord. Nothing to chase.");
+    // Public on purpose — the point is that the named players actually see it.
+    return res.status(200).json({ type: REPLY, data: { content:
+      `**${missing.length} player${missing.length === 1 ? " hasn't" : "s haven't"} connected Discord yet**\n` +
+      missing.map((m) => m.discord ? `<@${m.discord}>` : `**${m.name}**`).join(" ") +
+      `\n\nOpen VOLT → your account → **Connect Discord**. Without it you won't get draft reminders or your team DM.` } });
   }
 
   if (name === "scout") {
@@ -168,8 +183,8 @@ async function onButton(res, customId, guild, discordId) {
 
     return reply(res,
       (r.status === "approved"
-        ? `You're in for **${r.weekend}**.`
-        : `Application sent for **${r.weekend}** — the host will review it shortly.`) +
+        ? `You're in for **${r.weekend}**. I'll DM you the day before to check you're still free, and again when the draft is about to start.`
+        : `Application sent for **${r.weekend}** — the host will review it shortly, and I'll let you know either way.`) +
       (r.pool ? "" : "\n_The draft pool has closed, so you're signed up as a reserve._") +
       (wantsCaptain ? "\nYou've put your hand up to captain — the host decides." : ""));
   }
