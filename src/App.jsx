@@ -7802,20 +7802,47 @@ function DiscordTeamsCard({ eventId }) {
   );
 }
 
-function DiscordAnnounce({ eventId, communityId }) {
+function DiscordAnnounce({ eventId, communityId, phase }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState("");
-  // Attaching the sign-up buttons only makes sense while registration is open —
-  // otherwise players tap them and get told it's closed.
-  const [withButtons, setWithButtons] = useState(false);
+  // Who this goes to. It used to be hardcoded to people already registered,
+  // which made the sign-up buttons useless — every recipient was already in.
+  // "Not signed up yet" is the audience that actually needs a Register button.
+  const [scope, setScope] = useState("approved");
+  const [counts, setCounts] = useState({});          // scope → how many that reaches
+  const regOpen = phase === "registration_open";
+  // Recruiting scopes only exist while registration is open; otherwise a tap on
+  // Register just tells them it's closed.
+  const SCOPES = regOpen
+    ? [["approved", "Already signed up"], ["unregistered", "Not signed up yet"], ["all", "Whole league"]]
+    : [["approved", "Already signed up"], ["all", "Whole league"]];
+  const recruiting = scope !== "approved" && regOpen;
+
+  // Preview the reach of each audience so the host isn't sending blind.
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      const out = {};
+      for (const [k] of SCOPES) {
+        try {
+          const { data } = await __sb.rpc("volt_notify_targets", { p_event: eventId, p_scope: k });
+          out[k] = { total: data?.userIds?.length || 0, unlinked: data?.unlinked || 0 };
+        } catch (e) { console.error("target preview", k, e); }
+      }
+      if (!dead) setCounts(out);
+    })();
+    return () => { dead = true; };
+  }, [eventId, phase, result]);
+
+  useEffect(() => { if (!regOpen && scope === "unregistered") setScope("approved"); }, [regOpen]);
 
   async function send() {
     if (!msg.trim()) return;
     setBusy(true); setErr(""); setResult(null);
     try {
-      const { data: t, error: te } = await __sb.rpc("volt_notify_targets", { p_event: eventId, p_scope: "approved" });
+      const { data: t, error: te } = await __sb.rpc("volt_notify_targets", { p_event: eventId, p_scope: scope });
       if (te) throw new Error(te.message);
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
@@ -7823,8 +7850,12 @@ function DiscordAnnounce({ eventId, communityId }) {
       const r = await fetch("/api/discord-notify", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        // dmButtons puts Register in the DM itself — the whole point of a recruiting
+        // message is that answering costs one tap, not a trip back to the app.
         body: JSON.stringify({ communityId, message: msg.trim(), userIds: t?.userIds || [],
-                               announce: true, buttons: withButtons ? "register" : undefined }),
+                               announce: true,
+                               buttons: recruiting ? "register" : undefined,
+                               dmButtons: recruiting || undefined }),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
@@ -7835,23 +7866,44 @@ function DiscordAnnounce({ eventId, communityId }) {
 
   return (
     <div style={{ marginTop: 14 }}>
-      <SectionHead title="Message the league" hint="DMs every approved player, and posts to your channel" />
+      <SectionHead title="Message the league" hint="DMs the audience you pick, and posts to your channel" />
       <div style={PANEL()}>
         <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3}
           placeholder="e.g. Draft starts in 30 minutes — be in the voice channel."
           style={{ width: "100%", padding: "11px 13px", background: "rgba(8,12,24,0.85)", border: "1px solid rgba(61,123,255,0.28)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, lineHeight: 1.5, resize: "vertical", clipPath: SHELL_NOTCH(7) }} />
-        {/* Send and its one option sit on the same line; the explainer moved to
-            its own row so nothing gets squeezed to a sliver. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+          <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>Send to</span>
+          {SCOPES.map(([k, label]) => {
+            const on = scope === k, c = counts[k];
+            return (
+              <button key={k} onClick={() => setScope(k)}
+                style={{ padding: "6px 12px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 700,
+                  letterSpacing: "0.04em", clipPath: SHELL_NOTCH(6),
+                  background: on ? "rgba(61,123,255,0.16)" : "rgba(10,16,30,0.5)",
+                  border: `1px solid ${on ? "rgba(61,123,255,0.6)" : "rgba(120,150,220,0.18)"}`,
+                  color: on ? "#cfe0ff" : "rgba(200,215,255,0.55)" }}>
+                {label}{c ? <span style={{ opacity: 0.6, fontWeight: 500 }}> · {c.total}</span> : null}
+              </button>
+            );
+          })}
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
           <button disabled={busy || !msg.trim()} onClick={send}
             style={shellBtn("primary", { padding: "10px 18px", fontSize: 12, opacity: busy || !msg.trim() ? 0.5 : 1 })}>
-            {busy ? "Sending…" : "DM everyone + announce"}
+            {busy ? "Sending…" : "Send"}
           </button>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12.5, color: "rgba(200,215,255,0.7)" }}>
-            <input type="checkbox" checked={withButtons} onChange={(e) => setWithButtons(e.target.checked)} />
-            Add sign-up buttons
-          </label>
+          {recruiting
+            ? <span style={{ fontSize: 12, color: "#9af5c2" }}>◈ Register + Register&nbsp;+&nbsp;captain buttons ride along, in the DM and the channel post.</span>
+            : <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
+                {regOpen ? "Everyone here is already signed up, so no sign-up buttons are attached."
+                         : "Registration is closed, so there's nothing to sign up for."}
+              </span>}
         </div>
+        {counts[scope]?.unlinked > 0 && (
+          <div style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)", marginTop: 8 }}>
+            ⚠ {counts[scope].unlinked} of them haven't connected Discord — they won't get the DM, only the channel post.
+          </div>
+        )}
         {result && (
           <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
             <span style={{ color: "#9af5c2" }}>✓ DM'd {result.delivered}</span>
@@ -8664,7 +8716,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <DiscordTeamsCard eventId={current.id} />
     )}
     {isHost && HAS_SUPABASE && current && (
-      <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} />
+      <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} phase={current.phase} />
     )}
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {board && <div style={{ marginTop: 42 }}>
