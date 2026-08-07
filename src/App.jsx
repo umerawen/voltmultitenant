@@ -6384,6 +6384,43 @@ function shellBtn(kind, extra) {
     ...kinds[kind], ...(extra || {}),
   };
 }
+// ── Shared section chrome ────────────────────────────────────────────────
+// Every panel on the league home draws its label, rule and shell from here so
+// the page reads as one system instead of a stack of one-off boxes.
+const SEC_LABEL = { fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", whiteSpace: "nowrap" };
+const SEC_RULE = { flex: 1, minWidth: 12, height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.3), rgba(61,123,255,0))" };
+const PANEL = (tone, pad) => ({
+  padding: pad || "18px 20px",
+  background: "linear-gradient(160deg, rgba(17,23,40,0.72), rgba(10,13,22,0.72))",
+  border: `1px solid ${tone || "rgba(120,150,220,0.18)"}`,
+  clipPath: SHELL_NOTCH(10),
+});
+function SectionHead({ title, hint, right }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+      <span style={SEC_LABEL}>// {title}</span>
+      {hint && <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.42)", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hint}</span>}
+      <span style={SEC_RULE} />
+      {right}
+    </div>
+  );
+}
+// Panels that stay shut until needed (Discord setup, Staff) share one head, so a
+// collapsed row and an open section still look like the same family.
+function CollapseHead({ title, hint, open, onToggle, tone }) {
+  return (
+    <button onClick={onToggle}
+      style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
+        cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", textAlign: "left",
+        background: "linear-gradient(160deg, rgba(17,23,40,0.72), rgba(10,13,22,0.72))",
+        border: `1px solid ${tone || "rgba(120,150,220,0.18)"}`, clipPath: SHELL_NOTCH(10) }}>
+      <span style={SEC_LABEL}>// {title}</span>
+      {hint && <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", fontWeight: 500 }}>{hint}</span>}
+      <span style={SEC_RULE} />
+      <span style={{ color: "#7da6ff", fontSize: 10, transform: open ? "rotate(180deg)" : "none", transition: "transform .18s cubic-bezier(.2,.8,.3,1)" }}>▼</span>
+    </button>
+  );
+}
 function ShellStyles() {
   return <style>{`
     html { zoom: 1.1; }
@@ -6406,6 +6443,11 @@ function ShellStyles() {
     @media (max-width: 1440px) { html { zoom: 1.04; } }
     @media (max-width: 1180px) { html { zoom: 1; } }
     @media (max-width: 900px) { .page-wrap { padding-left: 18px; padding-right: 18px; } }
+    /* Hero: headline block on the left, the one thing you'd act on pinned right.
+       Without the explicit column the action box wrapped underneath and left
+       half the card empty. */
+    .volt-tourn-hero { display: grid; grid-template-columns: minmax(0,1fr) minmax(248px,318px); gap: 24px; align-items: start; }
+    @media (max-width: 880px) { .volt-tourn-hero { grid-template-columns: minmax(0,1fr); gap: 18px; } }
     .vg-shell select { -webkit-appearance: none; -moz-appearance: none; appearance: none;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%235b8dff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
       background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px !important;
@@ -7599,22 +7641,13 @@ function DiscordServerCard() {
     fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 };
 
   return (
-    <div style={{ marginTop: 22 }}>
-      <button onClick={() => setOpen((o) => !o)}
-        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-          padding: "13px 16px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
-          background: "rgba(10,16,30,0.5)", border: `1px solid ${connected ? "rgba(61,220,132,0.3)" : "rgba(120,150,220,0.2)"}`, clipPath: SHELL_NOTCH(9) }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Discord server</span>
-          <span style={{ fontSize: 12.5, color: connected ? "#9af5c2" : "rgba(200,215,255,0.6)" }}>
-            {saved === null ? "…" : connected ? "Connected" : "Not connected — players won't get messages"}
-          </span>
-        </span>
-        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "▲" : "▼"}</span>
-      </button>
+    <div style={{ marginTop: 14 }}>
+      <CollapseHead title="Discord server" open={open} onToggle={() => setOpen((o) => !o)}
+        tone={connected ? "rgba(61,220,132,0.3)" : "rgba(245,196,83,0.32)"}
+        hint={saved === null ? "…" : connected ? "Connected" : "Not connected — players won't get messages"} />
 
       {open && (
-        <div style={{ marginTop: 8, padding: "14px 16px", background: "rgba(10,16,30,0.4)", border: "1px solid rgba(120,150,220,0.16)", clipPath: SHELL_NOTCH(9) }}>
+        <div style={{ marginTop: 8, ...PANEL(null, "16px 18px") }}>
           <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: "0 0 12px", lineHeight: 1.6 }}>
             In Discord: <b style={{ color: "rgba(200,215,255,0.8)" }}>Settings → Advanced → Developer Mode</b> on.
             Then right-click your server name → <b style={{ color: "rgba(200,215,255,0.8)" }}>Copy Server ID</b>,
@@ -7671,17 +7704,16 @@ function AvailabilityCard({ eventId }) {
   const silent = d?.silent || [];
   if (!d?.asked && !unlinked.length) return null;
   return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Who we can reach</div>
-      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)",
-        border: `1px solid ${(silent.length || unlinked.length) ? "rgba(245,196,83,0.4)" : "rgba(61,220,132,0.3)"}`, clipPath: SHELL_NOTCH(9) }}>
+    <div style={{ marginTop: 14 }}>
+      <SectionHead title="Who we can reach" />
+      <div style={PANEL((silent.length || unlinked.length) ? "rgba(245,196,83,0.4)" : "rgba(61,220,132,0.3)")}>
         {d?.asked && (
-          <div style={{ fontSize: 13, color: "#9af5c2", fontWeight: 700 }}>
+          <div style={{ fontSize: 13.5, color: "#9af5c2", fontWeight: 700 }}>
             ✓ {d.confirmed} confirmed for the draft
           </div>
         )}
         {unlinked.length > 0 && (
-          <div style={{ fontSize: 12, color: "rgba(245,196,83,0.9)", marginTop: 6, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12.5, color: "rgba(245,196,83,0.9)", marginTop: 10, lineHeight: 1.65 }}>
             ⚠ {unlinked.length} haven't connected Discord: {unlinked.join(", ")}
             <div style={{ color: "rgba(200,215,255,0.45)", marginTop: 2 }}>
               They get no reminders, no availability check and no team DM.
@@ -7698,14 +7730,14 @@ function AvailabilityCard({ eventId }) {
           </div>
         )}
         {d?.asked && silent.length > 0 ? (
-          <div style={{ fontSize: 12, color: "rgba(245,196,83,0.9)", marginTop: 6, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12.5, color: "rgba(245,196,83,0.9)", marginTop: 10, lineHeight: 1.65 }}>
             ⚠ {silent.length} haven't answered: {silent.join(", ")}
-            <div style={{ color: "rgba(200,215,255,0.45)", marginTop: 4 }}>
+            <div style={{ color: "rgba(200,215,255,0.42)", marginTop: 4 }}>
               Worth chasing before the draft — these are the likely no-shows.
             </div>
           </div>
         ) : d?.asked ? (
-          <div style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", marginTop: 4 }}>Everyone has answered.</div>
+          <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", marginTop: 6 }}>Everyone has answered.</div>
         ) : null}
       </div>
     </div>
@@ -7737,13 +7769,13 @@ function DiscordTeamsCard({ eventId }) {
   }
 
   return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Tell everyone their team</div>
-      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(9) }}>
-        <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", margin: "0 0 10px", lineHeight: 1.6 }}>
+    <div style={{ marginTop: 14 }}>
+      <SectionHead title="Tell everyone their team" />
+      <div style={PANEL()}>
+        <p style={{ fontSize: 13, color: "rgba(200,215,255,0.6)", margin: "0 0 12px", lineHeight: 1.6 }}>
           DMs every drafted player their team, captain and squad — so nobody has to ask.
         </p>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12, color: "rgba(200,215,255,0.7)", marginBottom: 12 }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12.5, color: "rgba(200,215,255,0.7)", marginBottom: 14 }}>
           <input type="checkbox" checked={roles} onChange={(e) => setRoles(e.target.checked)} />
           Also give each player a Discord team role
         </label>
@@ -7802,24 +7834,23 @@ function DiscordAnnounce({ eventId, communityId }) {
   }
 
   return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Message the league</div>
-      <div style={{ padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(9) }}>
+    <div style={{ marginTop: 14 }}>
+      <SectionHead title="Message the league" hint="DMs every approved player, and posts to your channel" />
+      <div style={PANEL()}>
         <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3}
           placeholder="e.g. Draft starts in 30 minutes — be in the voice channel."
-          style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, resize: "vertical" }} />
-        <div className="flex items-center gap-3 flex-wrap" style={{ marginTop: 10, gap: 10 }}>
+          style={{ width: "100%", padding: "11px 13px", background: "rgba(8,12,24,0.85)", border: "1px solid rgba(61,123,255,0.28)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, lineHeight: 1.5, resize: "vertical", clipPath: SHELL_NOTCH(7) }} />
+        {/* Send and its one option sit on the same line; the explainer moved to
+            its own row so nothing gets squeezed to a sliver. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
           <button disabled={busy || !msg.trim()} onClick={send}
-            style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy || !msg.trim() ? 0.5 : 1 })}>
+            style={shellBtn("primary", { padding: "10px 18px", fontSize: 12, opacity: busy || !msg.trim() ? 0.5 : 1 })}>
             {busy ? "Sending…" : "DM everyone + announce"}
           </button>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12, color: "rgba(200,215,255,0.7)" }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12.5, color: "rgba(200,215,255,0.7)" }}>
             <input type="checkbox" checked={withButtons} onChange={(e) => setWithButtons(e.target.checked)} />
             Add sign-up buttons
           </label>
-          <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)" }}>
-            Goes to every approved player, and posts in your announcements channel.
-          </span>
         </div>
         {result && (
           <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
@@ -7895,10 +7926,10 @@ function DiscordLinkCard() {
   }
 
   return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Discord</div>
-      <div style={{ padding: "16px 18px", background: linked ? "rgba(10,16,30,0.5)" : "rgba(245,196,83,0.07)",
-        border: `1px solid ${linked ? "rgba(61,220,132,0.3)" : "rgba(245,196,83,0.45)"}`, clipPath: SHELL_NOTCH(9) }}>
+    <div style={{ marginTop: 20 }}>
+      <SectionHead title="Discord" />
+      <div style={{ ...PANEL(linked ? "rgba(61,220,132,0.3)" : "rgba(245,196,83,0.45)"),
+        background: linked ? "linear-gradient(160deg, rgba(17,23,40,0.72), rgba(10,13,22,0.72))" : "rgba(245,196,83,0.07)" }}>
         {linked ? (
           <div style={{ fontSize: 12.5, color: "#9af5c2" }}>✓ Connected — you'll get a DM when the draft is set and when matches go up.</div>
         ) : (
@@ -8009,21 +8040,12 @@ function StaffPanel({ onOpenPlayer }) {
 
   const mods = (rows || []).filter(r => r.role === "moderator").length;
   return (
-    <div style={{ marginTop: 30 }}>
-      <button onClick={() => setOpen(o => !o)}
-        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-          padding: "13px 16px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
-          background: "rgba(10,16,30,0.5)", border: "1px solid rgba(120,150,220,0.2)", clipPath: SHELL_NOTCH(9) }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Staff</span>
-          <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)" }}>
-            {mods > 0 ? `${mods} moderator${mods === 1 ? "" : "s"} helping out` : "Appoint someone to help run tournaments"}
-          </span>
-        </span>
-        <span style={{ color: "#7da6ff", fontSize: 11 }}>{open ? "▲" : "▼"}</span>
-      </button>
+    <div style={{ marginTop: 14 }}>
+      <CollapseHead title="Staff" open={open} onToggle={() => setOpen(o => !o)}
+        tone={mods > 0 ? "rgba(61,220,132,0.28)" : "rgba(120,150,220,0.18)"}
+        hint={mods > 0 ? `${mods} moderator${mods === 1 ? "" : "s"} helping out` : "Appoint someone to help run tournaments"} />
       {open && (
-        <div style={{ marginTop: 8, padding: "14px 16px", background: "rgba(10,16,30,0.4)", border: "1px solid rgba(120,150,220,0.16)", clipPath: SHELL_NOTCH(9) }}>
+        <div style={{ marginTop: 8, ...PANEL(null, "16px 18px") }}>
           <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", margin: "0 0 12px" }}>
             Moderators can approve players, assign captains, build brackets and report scores. They can't run the live auction, settle or delete a tournament, or change roles.
           </p>
@@ -8345,24 +8367,31 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         </VoltOverlay>
       )}
       <div style={{ maxWidth: hideHeader ? 1000 : 840, margin: "0 auto", padding: hideHeader ? "16px 20px 0" : "34px 20px 0" }}>
-        {!hideHeader && <div style={{ textAlign: "center", marginBottom: 26 }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.4em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT LEAGUE</div>
-          <div style={{ fontSize: "clamp(34px, 6vw, 52px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.05, marginTop: 6, textShadow: "0 0 40px rgba(61,123,255,0.35)" }}>
+        {!hideHeader && <div style={{ textAlign: "center", marginBottom: 30 }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.44em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT LEAGUE</div>
+          <div style={{ fontSize: "clamp(32px, 5.2vw, 48px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.04, marginTop: 8, textShadow: "0 0 40px rgba(61,123,255,0.35)" }}>
             {community?.name || "Community"}</div>
+          {/* A short rule under the name gives the block a base line, so the join
+              code pill reads as attached to it rather than floating. */}
+          <div style={{ width: 88, height: 2, margin: "12px auto 0", background: "linear-gradient(90deg, rgba(61,123,255,0), #3d7bff, rgba(61,123,255,0))", opacity: 0.7 }} />
           {community?.slug && (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginTop: 14, padding: "8px 14px", background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(8) }}>
-              <span style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>Join code</span>
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff" }}>{community.slug}</span>
-              <CopyButton text={community.slug} label="Copy" style={shellBtn("ghost", { padding: "5px 10px", fontSize: 10 })} />
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 12, marginTop: 16, padding: "7px 8px 7px 15px", background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(8) }}>
+              <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Join code</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff", letterSpacing: "0.02em" }}>{community.slug}</span>
+              <CopyButton text={community.slug} label="Copy" style={shellBtn("ghost", { padding: "5px 11px", fontSize: 9.5, letterSpacing: "0.16em" })} />
             </div>
           )}
-          {events && events.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "center", gap: 24, marginTop: 16, flexWrap: "wrap", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.55)" }}>
-              <span><span style={{ color: "#7da6ff", fontWeight: 700 }}>{events.filter(e => e.phase === "settled").length}</span> tournaments settled</span>
-              {board && <span><span style={{ color: "#7da6ff", fontWeight: 700 }}>{board.length}</span> players on the board</span>}
-              {board && board[0] && <span>race leader <span style={{ color: "#f5c453", fontWeight: 700, textTransform: "uppercase" }}>{board[0].name}</span> · {board[0].pts} pts</span>}
-            </div>
-          )}
+          {events && events.length > 0 && (() => {
+            const bits = [];
+            bits.push(<span key="s"><b style={{ color: "#7da6ff", fontWeight: 700 }}>{events.filter(e => e.phase === "settled").length}</b> settled</span>);
+            if (board) bits.push(<span key="p"><b style={{ color: "#7da6ff", fontWeight: 700 }}>{board.length}</b> on the board</span>);
+            if (board && board[0]) bits.push(<span key="l">leader <b style={{ color: "#f5c453", fontWeight: 700, textTransform: "uppercase" }}>{board[0].name}</b> · {board[0].pts} pts</span>);
+            return (
+              <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", rowGap: 6, marginTop: 18, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5, letterSpacing: "0.03em", color: "rgba(200,215,255,0.45)" }}>
+                {bits.map((b, i) => <span key={i} style={{ padding: "0 15px", lineHeight: 1.15, borderLeft: i ? "1px solid rgba(120,150,220,0.22)" : "none" }}>{b}</span>)}
+              </div>
+            );
+          })()}
         </div>}
         {inner}
         {err && <p style={{ color: "#ff8a94", fontSize: 13, marginTop: 12, textAlign: "center" }}>{err}</p>}
@@ -8408,63 +8437,79 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         </div>
       : <div style={{ display: "grid", gap: 12, marginBottom: 22 }}>
           {current && (
-            <div style={{ position: "relative", padding: "24px 24px 22px", background: "linear-gradient(160deg,rgba(24,32,54,0.95),rgba(10,13,22,0.95))", border: "1px solid rgba(61,123,255,0.45)", clipPath: SHELL_NOTCH(16), boxShadow: "0 0 40px rgba(61,123,255,0.12)" }}>
+            <div style={{ position: "relative", padding: "20px 24px 22px", background: "linear-gradient(160deg,rgba(24,32,54,0.95),rgba(10,13,22,0.95))", border: "1px solid rgba(61,123,255,0.45)", clipPath: SHELL_NOTCH(16), boxShadow: "0 0 40px rgba(61,123,255,0.12)" }}>
               <span style={{ position: "absolute", left: 0, top: 0, width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
               <span style={{ position: "absolute", right: 0, bottom: 0, width: 10, height: 10, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-              <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 6 }}>// This tournament</div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-                <div>
-                  <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{weekendName(current)}
-                    {isHost && <>
-                      <button onClick={() => setSetupWeekend({ mode: "edit", ev: current })} title="Edit date / nickname" style={shellBtn("ghost", { padding: "3px 8px", fontSize: 10, marginLeft: 10, verticalAlign: "middle" })}>✎</button>
-                      <button onClick={() => deleteWeekend(current)} title="Delete tournament" style={shellBtn("danger", { padding: "3px 8px", fontSize: 10, marginLeft: 6, verticalAlign: "middle" })}>✕</button>
-                    </>}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: PHASE_COLOR[current.phase], fontWeight: 700 }}>
+              {/* Label rule spans the card and carries the host's edit/delete out
+                  of the headline — they were breaking the title's line before. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                <span style={SEC_LABEL}>// This tournament</span>
+                <span style={SEC_RULE} />
+                {isHost && <>
+                  <button onClick={() => setSetupWeekend({ mode: "edit", ev: current })} title="Edit date / nickname" style={shellBtn("ghost", { padding: "4px 9px", fontSize: 10, lineHeight: 1, opacity: 0.8 })}>✎</button>
+                  <button onClick={() => deleteWeekend(current)} title="Delete tournament" style={shellBtn("danger", { padding: "4px 9px", fontSize: 10, lineHeight: 1, opacity: 0.8 })}>✕</button>
+                </>}
+              </div>
+              <div className="volt-tourn-hero">
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: "clamp(22px, 2.7vw, 31px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.08 }}>{weekendName(current)}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 11, flexWrap: "wrap", rowGap: 8 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: PHASE_COLOR[current.phase], fontWeight: 700 }}>
                       <span style={{ width: 7, height: 7, borderRadius: "50%", background: PHASE_COLOR[current.phase], boxShadow: `0 0 8px ${PHASE_COLOR[current.phase]}` }} />
                       {PHASE_LABEL[current.phase]}
                     </span>
-                    {live && <span style={{ fontSize: 12, color: "rgba(200,215,255,0.55)" }}>{live.count} in the pool{isHost && live.pending > 0 && <span style={{ color: "#f5c453", fontWeight: 700 }}> · {live.pending} awaiting review</span>}</span>}
-                    {live?.mineStatus === "approved" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#9af5c2", border: "1px solid rgba(61,220,132,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>You're in ✓</span>}
-                    {live?.mineStatus === "pending" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Application pending</span>}
-                    {live?.mineStatus === "rejected" && <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#ff8f9a", border: "1px solid rgba(255,70,85,0.4)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Not approved</span>}
-                    {(current.phase === "registration_open" || current.phase === "registration_closed") && live && !live.mineStatus && <span style={{ fontSize: 12, color: "#f5c453" }}>You haven't applied yet</span>}
+                    {live && <span style={{ display: "inline-flex", alignItems: "center", gap: 12, fontSize: 12.5, color: "rgba(200,215,255,0.5)" }}>
+                      <span style={{ width: 1, height: 12, background: "rgba(120,150,220,0.25)" }} />
+                      <span><b style={{ color: "#cfe0ff", fontWeight: 700 }}>{live.count}</b> in the pool</span>
+                      {isHost && live.pending > 0 && <span style={{ color: "#f5c453", fontWeight: 700 }}>{live.pending} awaiting review</span>}
+                    </span>}
+                    {live?.mineStatus === "approved" && <span style={{ fontSize: 9.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "#9af5c2", background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.4)", padding: "4px 9px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>You're in ✓</span>}
+                    {live?.mineStatus === "pending" && <span style={{ fontSize: 9.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "#f5c453", background: "rgba(245,196,83,0.07)", border: "1px solid rgba(245,196,83,0.45)", padding: "4px 9px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Application pending</span>}
+                    {live?.mineStatus === "rejected" && <span style={{ fontSize: 9.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "#ff8f9a", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", padding: "4px 9px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Not approved</span>}
+                    {(current.phase === "registration_open" || current.phase === "registration_closed") && live && !live.mineStatus && <span style={{ fontSize: 12.5, color: "#f5c453" }}>You haven't applied yet</span>}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {/* Draft time is the one fact everybody scans for — give it a
+                      chip of its own rather than a loose line of mono text. */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
                     {editTime && isHost
                       ? <>
                           <VoltDateTime value={draftAtDraft} onChange={setDraftAtDraft} placeholder="Set draft time" />
                           <button onClick={() => { saveDraftTime(current, draftAtDraft ? (() => { const d = new Date(draftAtDraft); const p = x => String(x).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; })() : ""); setEditTime(false); }} style={shellBtn("accent", { padding: "6px 12px", fontSize: 11 })}>Save</button>
                           <button onClick={() => setEditTime(false)} style={shellBtn("ghost", { padding: "6px 10px", fontSize: 11 })}>Cancel</button>
                         </>
-                      : <>
-                          <span style={{ fontSize: 12.5, color: current.draft_at ? "#7da6ff" : "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>
-                            {current.draft_at ? "Draft: " + fmtDraftAt(current.draft_at) : "Draft time not set"}</span>
-                          {isHost && <button onClick={() => { setDraftAtDraft(current.draft_at ? new Date(current.draft_at).toISOString() : null); setEditTime(true); }} style={shellBtn("ghost", { padding: "4px 10px", fontSize: 10 })}>{current.draft_at ? "Change" : "Set time"}</button>}
-                        </>}
+                      : <div style={{ display: "inline-flex", alignItems: "center", gap: 11, padding: "6px 7px 6px 13px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.2)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>Draft</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: current.draft_at ? "#cfe0ff" : "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace" }}>
+                            {current.draft_at ? fmtDraftAt(current.draft_at) : "Not set yet"}</span>
+                          {isHost && <button onClick={() => { setDraftAtDraft(current.draft_at ? new Date(current.draft_at).toISOString() : null); setEditTime(true); }} style={shellBtn("ghost", { padding: "4px 10px", fontSize: 9.5, letterSpacing: "0.16em" })}>{current.draft_at ? "Change" : "Set time"}</button>}
+                        </div>}
                   </div>
                 </div>
                 {(current.phase === "registration_open" || current.phase === "registration_closed") && HAS_SUPABASE && isHost
-                  ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "16px 18px", background: "rgba(10,16,30,0.5)", border: `1px solid ${live?.pending > 0 ? "rgba(245,196,83,0.4)" : "rgba(61,123,255,0.25)"}`, clipPath: SHELL_NOTCH(10) }}>
-                      <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Host</div>
+                  ? <div style={{ display: "flex", flexDirection: "column", gap: 11, padding: "16px 17px", background: "rgba(8,12,24,0.6)", border: `1px solid ${live?.pending > 0 ? "rgba(245,196,83,0.4)" : "rgba(61,123,255,0.25)"}`, clipPath: SHELL_NOTCH(10) }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ ...SEC_LABEL, fontSize: 9.5, letterSpacing: "0.26em" }}>// Host</span>
+                        <span style={SEC_RULE} />
+                      </div>
                       {live?.pending > 0
-                        ? <span style={{ fontSize: 14, color: "#f5c453", fontWeight: 700 }}>{live.pending} application{live.pending === 1 ? "" : "s"} awaiting your review</span>
-                        : <span style={{ fontSize: 13, color: "rgba(200,215,255,0.55)" }}>No applications waiting. Approvals show up here.</span>}
-                      <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "primary", { padding: "11px 18px", fontSize: 12.5 })}>Review applications →</button>
-                      <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "9px 16px", fontSize: 11.5 })}>⊞ Enter the tournament →</button>
+                        ? <span style={{ fontSize: 14.5, color: "#f5c453", fontWeight: 700, lineHeight: 1.35 }}>{live.pending} application{live.pending === 1 ? "" : "s"} awaiting your review</span>
+                        : <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", lineHeight: 1.5 }}>No applications waiting. Approvals show up here.</span>}
+                      <div style={{ display: "grid", gap: 8, marginTop: 2 }}>
+                        <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "primary", { padding: "11px 16px", fontSize: 12 })}>Review applications →</button>
+                        <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "9px 16px", fontSize: 11 })}>⊞ Enter the tournament →</button>
+                      </div>
                     </div>
                   : (current.phase === "registration_open" || current.phase === "registration_closed") && HAS_SUPABASE
-                  ? <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "0 1 320px", padding: "14px 16px", background: "rgba(10,16,30,0.5)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
+                  ? <div style={{ display: "flex", flexDirection: "column", gap: 11, padding: "16px 17px", background: "rgba(8,12,24,0.6)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
                       <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={profileIsComplete(myProf)} susp={mySusp} strikes={myStrikes}
                         onEditProfile={() => setShowProfile(true)} onChanged={load} />
-                      <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "8px 14px", fontSize: 11.5, alignSelf: "flex-start" })}>⊞ Enter the tournament →</button>
+                      <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "9px 16px", fontSize: 11 })}>⊞ Enter the tournament →</button>
                     </div>
-                  : <button onClick={() => onEnter(current)} style={shellBtn("primary", { padding: "13px 26px", fontSize: 13.5 })}>{heroCTA}</button>}
+                  : <button onClick={() => onEnter(current)} style={shellBtn("primary", { padding: "15px 22px", fontSize: 13, width: "100%" })}>{heroCTA}</button>}
               </div>
               {myRegs[current.id]?.is_captain && (myRegs[current.id]?.status || "approved") === "approved" && (
-                <div style={{ marginTop: 16, padding: "13px 16px", background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.55)", clipPath: SHELL_NOTCH(9), boxShadow: "0 0 24px rgba(245,196,83,0.12)" }}>
-                  <span style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", textShadow: "0 0 12px rgba(245,196,83,0.6)" }}>★ You're a captain this tournament</span>
+                <div style={{ marginTop: 18, padding: "13px 16px", background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.55)", clipPath: SHELL_NOTCH(9), boxShadow: "0 0 24px rgba(245,196,83,0.12)" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", textShadow: "0 0 12px rgba(245,196,83,0.6)" }}>★ You're a captain this tournament</span>
                   <span style={{ fontSize: 12, color: "rgba(200,215,255,0.6)", marginLeft: 10 }}>$10,000 budget{current.draft_at ? ` · draft ${fmtDraftAt(current.draft_at)}` : ""} — scout the pool, then run your auction.</span>
                 </div>
               )}
@@ -8560,9 +8605,17 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>You'll get a notification the moment the host opens registration.</p>
       </div>
     )}
-    {isHost && <div style={{ textAlign: "center" }}>
+    {isHost && <div style={{ textAlign: "center", marginTop: 2 }}>
       <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })} style={btn(events.length === 0 || !current)}>{busy ? "…" : current ? "+ Create next tournament" : "+ Create tournament"}</button>
     </div>}
+    {/* Everything below is host machinery. One quiet divider separates it from
+        the league itself, so players' eyes stop here and hosts' don't. */}
+    {isHost && HAS_SUPABASE && (
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 38, marginBottom: 2 }}>
+        <span style={{ ...SEC_LABEL, color: "rgba(200,215,255,0.32)", letterSpacing: "0.34em" }}>// Running the league</span>
+        <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(120,150,220,0.22), rgba(120,150,220,0))" }} />
+      </div>
+    )}
     {isTrueHost && HAS_SUPABASE && <DiscordServerCard />}
     {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
     {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
@@ -8572,11 +8625,11 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} />
     )}
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
-    {board && <div style={{ marginTop: 34 }}>
-      <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
-        <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Season <span style={{ color: "#3d7bff" }}>Race</span></div>
-        <div style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", marginTop: 3 }}>+50 win · ACS÷4 · K+⅓A — every match counts, subs included</div>
+    {board && <div style={{ marginTop: 42 }}>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
+        <div style={{ fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 2 }}>Season <span style={{ color: "#3d7bff" }}>Race</span></div>
+        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 5 }}>+50 win · ACS÷4 · K+⅓A — every match counts, subs included</div>
       </div>
       <div style={{ display: "grid", gap: 6 }}>
         {board.map((r, i) => (
@@ -8594,14 +8647,14 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         ))}
       </div>
     </div>}
-    {season && <div style={{ marginTop: 34 }}>
-      <div style={{ textAlign: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
-        <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Captain <span style={{ color: "#3d7bff" }}>Standings</span></div>
+    {season && <div style={{ marginTop: 42 }}>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
+        <div style={{ fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 2 }}>Captain <span style={{ color: "#3d7bff" }}>Standings</span></div>
       </div>
       <div style={{ display: "grid", gap: 6 }}>
         {season.map((r, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)") }}>
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
             <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}<span style={{ color: "rgba(200,215,255,0.45)", fontWeight: 500, textTransform: "none", marginLeft: 8, fontSize: 13 }}>· {r.captain}</span></span>
             <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{r.tournaments}w · {r.won}-{r.lost}</span>
