@@ -49,7 +49,14 @@ async function onCommand(res, body, guild, discordId) {
   if (name === "link") {
     const code = String(opt("code") || "").trim();
     if (!code) return reply(res, "Add the code from VOLT: `/link code:ABC123`");
-    const r = await rpc("volt_discord_redeem", { p_code: code, p_discord_id: discordId });
+    // Pass the Discord username through so captains see the right handle on the
+    // scouting card. The OAuth flow already does this; without it, anyone who
+    // links by code shows as "Discord not connected" even though they are.
+    const r = await rpc("volt_discord_redeem", {
+      p_code: code,
+      p_discord_id: discordId,
+      p_handle: body.member?.user?.username || body.user?.username || null,
+    });
     if (r?.ok) return reply(res,
       `Linked. You're **${r.name}** in **${r.league}** — I'll message you about drafts and matches.`);
     return reply(res,
