@@ -7812,13 +7812,26 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
   // "Not signed up yet" is the audience that actually needs a Register button.
   const [scope, setScope] = useState("approved");
   const [counts, setCounts] = useState({});          // scope → how many that reaches
+  // What the recipient can tap. Explicit rather than inferred from the audience,
+  // because "who gets it" and "what can they do about it" are separate decisions.
+  const [reply, setReply] = useState("none");
   const regOpen = phase === "registration_open";
-  // Recruiting scopes only exist while registration is open; otherwise a tap on
-  // Register just tells them it's closed.
   const SCOPES = regOpen
     ? [["approved", "Already signed up"], ["unregistered", "Not signed up yet"], ["all", "Whole league"]]
     : [["approved", "Already signed up"], ["all", "Whole league"]];
-  const recruiting = scope !== "approved" && regOpen;
+  // Each reply set is one row of real Discord buttons. Showing the exact labels
+  // means the host knows what lands, instead of guessing from ours.
+  const REPLIES = [
+    { k: "none", label: "Nothing", note: "Just the message.", buttons: [] },
+    { k: "register", label: "Sign up", note: "One tap to enter the tournament — no link, no login.",
+      buttons: ["Register", "Register + captain"], needs: regOpen,
+      why: "Registration has to be open for these to work." },
+    { k: "availability", label: "Are you still coming?", note: "Answers land in “Who we can reach” below, so silence is visible before the draft.",
+      buttons: ["I'm in", "Can't make it"], needs: scope !== "unregistered",
+      why: "Only people already signed up can confirm." },
+  ];
+  const activeReply = REPLIES.find(r => r.k === reply) || REPLIES[0];
+  const replyOk = activeReply.needs !== false;
 
   // Preview the reach of each audience so the host isn't sending blind.
   useEffect(() => {
@@ -7837,6 +7850,7 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
   }, [eventId, phase, result]);
 
   useEffect(() => { if (!regOpen && scope === "unregistered") setScope("approved"); }, [regOpen]);
+  useEffect(() => { if (!replyOk) setReply("none"); }, [replyOk]);
 
   async function send() {
     if (!msg.trim()) return;
@@ -7850,15 +7864,21 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
       const r = await fetch("/api/discord-notify", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-        // dmButtons puts Register in the DM itself — the whole point of a recruiting
-        // message is that answering costs one tap, not a trip back to the app.
+        // dmButtons puts the row in the DM itself — the point of asking a question
+        // is that answering costs one tap, not a trip back to the app.
         body: JSON.stringify({ communityId, message: msg.trim(), userIds: t?.userIds || [],
                                announce: true,
-                               buttons: recruiting ? "register" : undefined,
-                               dmButtons: recruiting || undefined }),
+                               buttons: reply === "none" ? undefined : reply,
+                               dmButtons: reply === "none" ? undefined : true }),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
+      // Stamp the event so "Who we can reach" starts counting replies. Without
+      // this the card never appears no matter how many people answer.
+      if (reply === "availability") {
+        try { await __sb.rpc("volt_availability_mark_asked", { p_event: eventId }); }
+        catch (e) { console.error("mark asked", e); }
+      }
       setResult(body); setMsg("");
     } catch (e) { setErr(e.message || "Couldn't send."); }
     setBusy(false);
@@ -7887,17 +7907,41 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
             );
           })}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+          <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>Let them reply with</span>
+          {REPLIES.map((r) => {
+            const on = reply === r.k, off = r.needs === false;
+            return (
+              <button key={r.k} disabled={off} onClick={() => setReply(r.k)} title={off ? r.why : r.note}
+                style={{ padding: "6px 12px", cursor: off ? "not-allowed" : "pointer", fontFamily: "'Rajdhani',sans-serif",
+                  fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", clipPath: SHELL_NOTCH(6), opacity: off ? 0.35 : 1,
+                  background: on ? "rgba(61,220,132,0.14)" : "rgba(10,16,30,0.5)",
+                  border: `1px solid ${on ? "rgba(61,220,132,0.5)" : "rgba(120,150,220,0.18)"}`,
+                  color: on ? "#9af5c2" : "rgba(200,215,255,0.55)" }}>
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
+        {/* Show the actual Discord buttons rather than describing them. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", marginTop: 9, minHeight: 26 }}>
+          {activeReply.buttons.length > 0 && <>
+            <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)" }}>They'll see:</span>
+            {activeReply.buttons.map((b, i) => (
+              <span key={b} style={{ padding: "4px 12px", fontSize: 11.5, fontWeight: 600, borderRadius: 4,
+                background: i === 0 ? "#5865f2" : "rgba(120,130,150,0.28)", color: "#fff" }}>{b}</span>
+            ))}
+          </>}
+          <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)", flex: "1 1 200px" }}>{activeReply.note}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
           <button disabled={busy || !msg.trim()} onClick={send}
             style={shellBtn("primary", { padding: "10px 18px", fontSize: 12, opacity: busy || !msg.trim() ? 0.5 : 1 })}>
             {busy ? "Sending…" : "Send"}
           </button>
-          {recruiting
-            ? <span style={{ fontSize: 12, color: "#9af5c2" }}>◈ Register + Register&nbsp;+&nbsp;captain buttons ride along, in the DM and the channel post.</span>
-            : <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
-                {regOpen ? "Everyone here is already signed up, so no sign-up buttons are attached."
-                         : "Registration is closed, so there's nothing to sign up for."}
-              </span>}
+          <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)" }}>
+            Goes out as a DM to each person above, and as one post in your announcements channel.
+          </span>
         </div>
         {counts[scope]?.unlinked > 0 && (
           <div style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)", marginTop: 8 }}>
