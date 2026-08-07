@@ -6812,7 +6812,7 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
             This is a <b style={{ color: "#7da6ff" }}>one-time setup</b>. Captains study it at the auction to decide who to draft, and it powers your player card and radar. You won't fill this in again — it carries across every tournament, and your match stats stack onto it automatically as you play.
           </p>
           <div style={{ display: "grid", gap: 12, margin: "18px 0", padding: "16px 18px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(8) }}>
-            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> rank, role, Discord handle and WhatsApp number. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> rank, role, a connected Discord and a WhatsApp number. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
             <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Then you're entered</b> — available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches this tournament.</div>
           </div>
           <button onClick={() => setPhase("edit")} style={shellBtn("primary", { width: "100%", padding: "13px", letterSpacing: "0.14em" })}>Set up my profile →</button>
@@ -6820,7 +6820,7 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
 
         {phase === "edit" && <>
           <div style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Your scouting profile</div>
-          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginBottom: 14 }}>Rank, role, Discord and WhatsApp are required. Save to enter the tournament.</p>
+          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginBottom: 14 }}>Rank, role, a connected Discord and WhatsApp are required. Save to enter the tournament.</p>
           <ScoutProfileCard userId={window.__VOLT.userId} onSaved={afterSave} embedded />
           {note && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{note}</div>}
         </>}
@@ -7219,7 +7219,7 @@ function ContactPanel({ discord, whatsapp, name }) {
             {btn(copied === "d" ? <><CheckIcon size={11} />Copied</> : <><CopyIcon size={11} />Copy</>, () => copy(discord, "d"), copied === "d" ? "ok" : null)}
           </div>
         ) : (
-          <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>No Discord handle on file.</div>
+          <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>Discord not connected.</div>
         )}
 
         {whatsapp && (showWa ? (
@@ -7889,6 +7889,47 @@ function useDiscordLinked() {
   return linked;
 }
 
+// Discord is where every reminder, availability check and team DM lands — an
+// unlinked player is invisible to the whole loop. So this sits at the very top
+// of the league home until it's done, then never appears again.
+function DiscordConnectBanner() {
+  const linked = useDiscordLinked();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  if (linked !== false) return null;   // null = still loading, true = done
+  async function connect() {
+    setBusy(true); setErr("");
+    try { await startDiscordOAuth(); }
+    catch (e) { setErr(e.message || "Couldn't start."); setBusy(false); }
+  }
+  return (
+    <div style={{ marginBottom: 20, padding: "17px 20px", display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap",
+      background: "linear-gradient(160deg, rgba(245,196,83,0.1), rgba(18,16,11,0.75))",
+      border: "1px solid rgba(245,196,83,0.5)", clipPath: SHELL_NOTCH(12), boxShadow: "0 0 30px rgba(245,196,83,0.1)" }}>
+      <div style={{ flex: "1 1 340px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 7 }}>
+          <span style={{ ...SEC_LABEL, color: "#f5c453" }}>// Connect Discord</span>
+          <span style={{ flex: 1, minWidth: 12, height: 1, background: "linear-gradient(90deg, rgba(245,196,83,0.35), rgba(245,196,83,0))" }} />
+        </div>
+        <div style={{ fontSize: 15.5, fontWeight: 700, color: "#ffe4a0", lineHeight: 1.3 }}>
+          You won't get draft reminders until you connect Discord
+        </div>
+        <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginTop: 6, lineHeight: 1.65 }}>
+          VOLT messages you the day before to check you're still free, 30 minutes before the draft,
+          and again when you find out your team. Without this you get none of it — and your captain can't reach you.
+        </div>
+        {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {err}</div>}
+      </div>
+      <button disabled={busy} onClick={connect}
+        style={shellBtn("warn", { padding: "13px 22px", fontSize: 12.5, whiteSpace: "nowrap",
+          background: "linear-gradient(180deg,#f5c453,#d9a52e)", borderColor: "rgba(255,228,160,0.65)",
+          color: "#171104", boxShadow: "0 0 22px rgba(245,196,83,0.32)", opacity: busy ? 0.5 : 1 })}>
+        {busy ? "…" : "◈ Connect Discord"}
+      </button>
+    </div>
+  );
+}
+
 function DiscordLinkCard() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -8431,6 +8472,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   );
 
   return wrap(<>
+    {HAS_SUPABASE && <DiscordConnectBanner />}
     {events.length === 0
       ? <div style={{ textAlign: "center", padding: "30px 0", color: "rgba(200,215,255,0.6)" }}>
           <p>No tournaments yet.{isHost ? " Create the first one to start." : " Check back when your host opens a tournament."}</p>
@@ -9170,31 +9212,36 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
 
 // Scouting profile — the stats captains study before bidding. Saved once per
 // player (player_profiles), reused across tournaments, feeds the draft-pool cards.
-// What a player must have on file before they can enter a tournament. rank, role
-// and discord live on player_profiles; whatsapp is in the host-only
-// player_contacts table (a player can always read their own row), so the gate
-// needs both reads. Returns an object rather than a boolean so callers can tell
-// the user WHICH piece is missing.
+// What a player must have on file before they can enter a tournament. rank and
+// role live on player_profiles; whatsapp and the Discord link are in the
+// host-only player_contacts table (a player can always read their own row), so
+// the gate needs both reads. Returns an object rather than a boolean so callers
+// can tell the user WHICH piece is missing.
+//
+// Discord is no longer a typed handle — it's the OAuth link, since a typed one
+// proved nothing and left the bot unable to reach half the league. `discord`
+// (the profile text) is kept as a fallback so members who filled it in under
+// the old rules aren't locked out mid-season.
 async function loadProfileGate(userId) {
-  const out = { rank: null, role: null, discord: null, whatsapp: null };
+  const out = { rank: null, role: null, discord: null, whatsapp: null, linked: false };
   try {
     const { data: p } = await __sb.from("player_profiles").select("rank, role, discord").eq("user_id", userId).maybeSingle();
     if (p) { out.rank = p.rank; out.role = p.role; out.discord = p.discord; }
   } catch (e) { console.error("profile gate", e); }
   try {
-    const { data: c } = await __sb.from("player_contacts").select("whatsapp")
+    const { data: c } = await __sb.from("player_contacts").select("whatsapp, discord_user_id")
       .eq("user_id", userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
-    if (c) out.whatsapp = c.whatsapp;
+    if (c) { out.whatsapp = c.whatsapp; out.linked = !!c.discord_user_id; }
   } catch (e) { console.error("contact gate", e); }
   return out;
 }
-const profileIsComplete = (p) => !!(p && p.rank && p.role && p.discord && p.whatsapp);
+const profileIsComplete = (p) => !!(p && p.rank && p.role && p.whatsapp && (p.linked || p.discord));
 const profileMissing = (p) => {
-  if (!p) return ["rank", "role", "Discord handle", "WhatsApp number"];
+  if (!p) return ["rank", "role", "a connected Discord", "WhatsApp number"];
   const m = [];
   if (!p.rank) m.push("rank");
   if (!p.role) m.push("role");
-  if (!p.discord) m.push("Discord handle");
+  if (!p.linked && !p.discord) m.push("a connected Discord");
   if (!p.whatsapp) m.push("WhatsApp number");
   return m;
 };
@@ -9255,7 +9302,10 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
   // the user said yes — so open straight into the form instead of showing a
   // second button that asks the same thing again.
   const [editing, setEditing] = useState(embedded);
-  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", discord: "", whatsapp: "" });
+  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", whatsapp: "" });
+  // Read-only: the handle and link state both come from the Discord OAuth flow.
+  const [dc, setDc] = useState({ linked: false, handle: "" });
+  const [dcBusy, setDcBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
   const fieldS = { width: "100%", padding: "9px 10px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box" };
@@ -9269,11 +9319,12 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
     // number sitting in it would be handed to the whole league.
     let c = null;
     try {
-      const { data: cd } = await __sb.from("player_contacts").select("whatsapp")
+      const { data: cd } = await __sb.from("player_contacts").select("whatsapp, discord_user_id")
         .eq("user_id", userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
       c = cd || null;
     } catch (e) { console.error("contacts", e); }
-    if (data || c) setD({ rank: data?.rank || "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", discord: data?.discord || "", whatsapp: c?.whatsapp || "" });
+    setDc({ linked: !!c?.discord_user_id, handle: data?.discord || "" });
+    if (data || c) setD({ rank: data?.rank || "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", whatsapp: c?.whatsapp || "" });
   }
   useEffect(() => { load(); }, [userId]);
 
@@ -9286,7 +9337,6 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
       kda: d.kda === "" ? null : parseFloat(d.kda), acs: d.acs === "" ? null : parseInt(d.acs),
       hs: d.hs === "" ? null : parseInt(d.hs), win: d.win === "" ? null : parseInt(d.win),
       tracker_url: d.tracker ? (/^https?:\/\//i.test(d.tracker) ? d.tracker.trim() : "https://" + d.tracker.trim()) : null,
-      discord: d.discord.trim() || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
     // Digits only — wa.me needs a bare international number, and normalising on
@@ -9343,11 +9393,22 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
               <input value={d[k]} onChange={e => setD({ ...d, [k]: type === "num" ? e.target.value.replace(/[^0-9.]/g, "") : e.target.value })} style={fieldS} /></label>))}
           <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Tracker link (tracker.gg, blitz.gg…)</span>
             <input value={d.tracker} placeholder="tracker.gg/valorant/profile/riot/yourname" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
-          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Discord handle *</span>
-            <input value={d.discord} placeholder="yourname" onChange={e => setD({ ...d, discord: e.target.value })} style={fieldS} />
+          {/* Not typed any more — a hand-entered handle proved nothing and the bot
+              still couldn't reach anyone. The OAuth link is the source of both. */}
+          <div style={{ gridColumn: "1 / -1" }}><span style={labS}>Discord *</span>
+            {dc.linked
+              ? <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "rgba(61,220,132,0.06)", border: "1px solid rgba(61,220,132,0.35)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, color: "#9af5c2", fontWeight: 700 }}>✓ Connected</span>
+                  {dc.handle && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#ecf3ff" }}>{dc.handle}</span>}
+                </div>
+              : <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 10px 9px 12px", background: "rgba(245,196,83,0.07)", border: "1px solid rgba(245,196,83,0.45)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5, color: "#ffe4a0", flex: "1 1 180px" }}>Not connected — required to enter a tournament.</span>
+                  <button disabled={dcBusy} onClick={async () => { setDcBusy(true); try { await startDiscordOAuth(); } catch { setDcBusy(false); } }}
+                    style={shellBtn("warn", { padding: "7px 14px", fontSize: 11, whiteSpace: "nowrap" })}>{dcBusy ? "…" : "◈ Connect Discord"}</button>
+                </div>}
             <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
-              Visible to everyone in the league, so your captain can reach you directly.
-            </span></label>
+              Your handle is pulled from Discord, so captains always have the right one — and VOLT can DM you about drafts and matches.
+            </span></div>
           <label style={{ gridColumn: "1 / -1" }}><span style={labS}>WhatsApp number *</span>
             <input value={d.whatsapp} inputMode="tel" placeholder="Country code first, e.g. 923001234567" onChange={e => setD({ ...d, whatsapp: e.target.value })} style={fieldS} />
             <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
@@ -9355,13 +9416,13 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
             </span></label>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button disabled={busy || !d.rank || !d.role || !d.discord.trim() || (d.whatsapp || "").replace(/[^0-9]/g, "").length < 8} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
+          <button disabled={busy || !d.rank || !d.role || !(dc.linked || dc.handle) || (d.whatsapp || "").replace(/[^0-9]/g, "").length < 8} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
           {saveErr && <span style={{ fontSize: 12, color: "#ff8f9a", alignSelf: "center" }}>⚠ {saveErr}</span>}
           {!saveErr && (() => {
             const need = [];
             if (!d.rank) need.push("rank");
             if (!d.role) need.push("role");
-            if (!d.discord.trim()) need.push("Discord handle");
+            if (!dc.linked && !dc.handle) need.push("Discord connection");
             if ((d.whatsapp || "").replace(/[^0-9]/g, "").length < 8) need.push("WhatsApp number");
             return need.length ? <span style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)", alignSelf: "center" }}>Still needed: {need.join(", ")}</span> : null;
           })()}
