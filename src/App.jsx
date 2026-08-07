@@ -6615,6 +6615,7 @@ function CheckIcon({ size = 13 }) {
 
 function AccountChip({ account, onSignOut, onProfile, seat }) {
   const [open, setOpen] = useState(false);
+  const dcLinked = useDiscordLinked();
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef(null);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
@@ -6680,6 +6681,14 @@ function AccountChip({ account, onSignOut, onProfile, seat }) {
               {copied && <span style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2", fontWeight: 700 }}>Copied</span>}
             </span>
           )}</div>}
+          {/* Only shown when they haven't linked — otherwise it's noise in a menu
+              people open several times a session. */}
+          {dcLinked === false && (
+            <button onClick={() => { setOpen(false); startDiscordOAuth().catch(() => {}); }}
+              style={shellBtn("accent", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em", fontSize: 11.5 })}>
+              ◈ Connect Discord
+            </button>
+          )}
           {onProfile && <button onClick={() => { setOpen(false); onProfile(); }} style={shellBtn("ghost", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>⊞ My Account</button>}
           <button onClick={onSignOut} style={shellBtn("danger", { width: "100%", marginTop: onProfile ? 8 : 12, padding: "9px", letterSpacing: "0.1em" })}>Sign out</button>
         </div>
@@ -7645,6 +7654,7 @@ function DiscordServerCard() {
 function AvailabilityCard({ eventId }) {
   const [d, setD] = useState(null);
   const [unlinked, setUnlinked] = useState([]);
+  const dcLinked = useDiscordLinked();
   useEffect(() => { (async () => {
     try {
       const { data } = await __sb.rpc("volt_availability_summary", { p_event: eventId });
@@ -7674,8 +7684,17 @@ function AvailabilityCard({ eventId }) {
           <div style={{ fontSize: 12, color: "rgba(245,196,83,0.9)", marginTop: 6, lineHeight: 1.6 }}>
             ⚠ {unlinked.length} haven't connected Discord: {unlinked.join(", ")}
             <div style={{ color: "rgba(200,215,255,0.45)", marginTop: 2 }}>
-              They get no reminders, no availability check and no team DM. Ask them to hit Connect Discord in VOLT.
+              They get no reminders, no availability check and no team DM.
+              {" "}Run <code style={{ color: "rgba(200,215,255,0.7)" }}>/rollcall</code> in Discord to nudge them.
             </div>
+            {/* If the host is one of the unconnected, fixing it should be right
+                here rather than "go and find the card". */}
+            {dcLinked === false && (
+              <button onClick={() => startDiscordOAuth().catch(() => {})}
+                style={shellBtn("accent", { padding: "8px 14px", fontSize: 11.5, marginTop: 8 })}>
+                ◈ Connect yours now
+              </button>
+            )}
           </div>
         )}
         {d?.asked && silent.length > 0 ? (
@@ -7816,6 +7835,29 @@ function DiscordAnnounce({ eventId, communityId }) {
   );
 }
 
+// Every "Connect Discord" entry point goes through here so they behave the same:
+// hand Discord a signed token identifying this VOLT account and let it redirect.
+async function startDiscordOAuth() {
+  const { data: sess } = await __sb.auth.getSession();
+  const jwt = sess?.session?.access_token;
+  if (!jwt) throw new Error("Session expired — sign in again.");
+  window.location.href = `/api/discord-oauth?token=${encodeURIComponent(jwt)}`;
+}
+
+// Is the signed-in player linked yet? Null while loading.
+function useDiscordLinked() {
+  const [linked, setLinked] = useState(null);
+  useEffect(() => { (async () => {
+    if (!HAS_SUPABASE || !window.__VOLT?.userId || !window.__VOLT?.communityId) { setLinked(true); return; }
+    try {
+      const { data } = await __sb.from("player_contacts").select("discord_user_id")
+        .eq("user_id", window.__VOLT.userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
+      setLinked(!!data?.discord_user_id);
+    } catch { setLinked(true); }   // fail quiet rather than nag on a network blip
+  })(); }, []);
+  return linked;
+}
+
 function DiscordLinkCard() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -7837,12 +7879,8 @@ function DiscordLinkCard() {
   // started it — too many steps across two apps.
   async function connect() {
     setBusy(true); setErr("");
-    try {
-      const { data: sess } = await __sb.auth.getSession();
-      const jwt = sess?.session?.access_token;
-      if (!jwt) throw new Error("Session expired — sign in again.");
-      window.location.href = `/api/discord-oauth?token=${encodeURIComponent(jwt)}`;
-    } catch (e) { setErr(e.message || "Couldn't start."); setBusy(false); }
+    try { await startDiscordOAuth(); }
+    catch (e) { setErr(e.message || "Couldn't start."); setBusy(false); }
   }
 
   // Kept for anyone whose browser blocks the redirect, or who'd rather type.
