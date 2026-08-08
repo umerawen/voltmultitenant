@@ -7335,7 +7335,7 @@ function PlayerProfile({ userId, onBack, footer }) {
       try {
         const cid = window.__VOLT.communityId;
         const [{ data: u }, { data: p }, { data: mrs }, { data: evs }, { data: strikes }] = await Promise.all([
-          __sb.from("users").select("display_name, role, trophy_streak, best_streak, tournaments_won, brackets_won, suspension_remaining").eq("id", userId).maybeSingle(),
+          __sb.from("users").select("display_name, role, trophy_streak, best_streak, weekends_won, brackets_won, suspension_remaining").eq("id", userId).maybeSingle(),
           __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle(),
           __sb.from("match_results").select("event_id, points_computed, team_won, stat_payload, created_at").eq("community_id", cid).eq("user_id", userId).order("created_at", { ascending: true }),
           __sb.from("events").select("id, weekend_label, starts_on, ends_on, created_at, recap").eq("community_id", cid),
@@ -7350,6 +7350,8 @@ function PlayerProfile({ userId, onBack, footer }) {
             .eq("user_id", userId).eq("community_id", cid).maybeSingle();
           contact = c || null;
         } catch (e) { console.error("contacts", e); }
+        if (!u) console.error("player file: users row did not load for", userId,
+          "— name, trophies, wins and suspension will all show as defaults.");
         setD({ u: u || {}, p: p || {}, mrs: mrs || [], evs: evs || [], strikes: strikes || [], contact });
       } catch (e) { console.error(e); setD({ u: {}, p: {}, mrs: [], evs: [], strikes: [], contact: null }); }
     })();
@@ -7434,14 +7436,18 @@ function PlayerProfile({ userId, onBack, footer }) {
                       <span style={{ color: rankOf(p.peak_rank).c, opacity: 0.8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{rankLabel(p.peak_rank, p.peak_rank_div)}</span>
                     </span>
                   )}
-                  <span style={{ color: "rgba(236,243,255,0.3)" }}>·</span>
+                </div>
+                {/* Role, agent and the tracker link share one row: they're all
+                    "who this player is", and the button on its own line left a
+                    ragged column of three short rows. */}
+                <div style={{ display: "flex", gap: 10, marginTop: 9, fontSize: 12.5, flexWrap: "wrap", alignItems: "center" }}>
                   {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
                   {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
+                  {p.tracker_url
+                    ? <a href={p.tracker_url} target="_blank" rel="noopener noreferrer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7deaff", background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.5)", borderRadius: 6, textDecoration: "none", whiteSpace: "nowrap" }}>⌖ View tracker ↗</a>
+                    : !onBack && <span style={{ fontSize: 11, color: "rgba(200,215,255,0.4)" }}>No tracker link — add one in your scouting profile below.</span>}
                 </div>
-                {p.tracker_url
-                  ? <a href={p.tracker_url} target="_blank" rel="noopener noreferrer"
-                      style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, padding: "6px 13px", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7deaff", background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.5)", borderRadius: 6, textDecoration: "none" }}>⌖ View tracker ↗</a>
-                  : !onBack && <span style={{ display: "inline-block", marginTop: 12, fontSize: 11, color: "rgba(200,215,255,0.4)" }}>No tracker link — add one in your scouting profile below.</span>}
               </div>
             </div>
           </div>
@@ -7487,7 +7493,7 @@ function PlayerProfile({ userId, onBack, footer }) {
         {bigTile("Season pts", pts, "#f5c453")}
         {bigTile("Matches", mrs.length, "#5b8dff")}
         {bigTile("Wins", wins, "#3ddc84", winRate != null ? winRate + "% win rate" : null)}
-        {bigTile("Tournaments won", u.tournaments_won || 0, "#f5c453")}
+        {bigTile("Tournaments won", u.weekends_won || 0, "#f5c453")}
         {bigTile("Avg ACS", avgAcs, "#ff4655")}
       </div>
       <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
