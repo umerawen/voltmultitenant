@@ -200,6 +200,12 @@ const RANK_LIST = Object.keys(RANKS);
 // Everything that indexes RANKS from data should go through these.
 const rankKey = (r) => (RANKS[r] ? r : "Silver");
 const rankOf = (r) => RANKS[r] || RANKS.Silver;
+// Divisions are display only. The tier stays in `rank` because bid values,
+// filters and sorting all key off it — folding "Platinum 3" into one string
+// would mean every one of those lookups has to parse it back apart.
+const RANK_DIVS = [1, 2, 3];
+const hasDivisions = (r) => !!RANKS[r] && r !== "Radiant";
+const rankLabel = (r, div) => (r ? r + (hasDivisions(r) && div ? ` ${div}` : "") : "—");
 const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
 const ROLE_GLYPH = { Duelist: "◆", Initiator: "▲", Controller: "●", Sentinel: "■", Flex: "✦" };
 const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brimstone","Viper","Astra","Harbor","Clove","Sova","Skye","Breach","Fade","KAY/O","Gekko","Killjoy","Cypher","Sage","Chamber","Deadlock","Vyse"];
@@ -295,7 +301,9 @@ function regToPlayer(p, isCap) {
   return {
     id: p.userId, status: "pool", soldTo: null, soldPrice: null,
     ...(isCap ? { isCaptain: true } : {}),
-    name: p.name, rank: rankKey(p.rank), role: p.role || "Flex", agent: p.agent || "—",
+    name: p.name, rank: rankKey(p.rank), rankDiv: p.rankDiv ?? null,
+    peakRank: p.peakRank ?? null, peakRankDiv: p.peakRankDiv ?? null,
+    role: p.role || "Flex", agent: p.agent || "—",
     kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
     badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
     discord: p.discord || null,
@@ -1854,9 +1862,10 @@ function TOverrideEditor({ state, t, teamOf, onOverride }) {
     </div>
   );
 }
-function RankBadge({ rank, size = "md" }) {
+function RankBadge({ rank, div, size = "md" }) {
   const r = RANKS[rank] || RANKS.Iron;
   const dim = size === "xl" ? 80 : size === "lg" ? 64 : size === "md" ? 34 : 24;
+  const showDiv = hasDivisions(rank) && !!div;
   return (
     <div className="relative grid place-items-center" style={{ width: dim, height: dim }}>
       <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
@@ -1867,16 +1876,26 @@ function RankBadge({ rank, size = "md" }) {
       <span className="relative font-bold text-black" style={{ fontSize: dim * 0.34, fontFamily: "'Rajdhani',sans-serif" }}>
         {rank === "Radiant" ? "R" : rank[0]}
       </span>
+      {/* Division rides in the corner rather than inside the crest — at 24px the
+          hexagon has no room for two glyphs without both becoming unreadable. */}
+      {showDiv && (
+        <span style={{ position: "absolute", right: dim * -0.06, bottom: dim * -0.04,
+          minWidth: dim * 0.38, height: dim * 0.38, display: "grid", placeItems: "center",
+          fontSize: dim * 0.28, lineHeight: 1, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif",
+          color: r.c, background: "#0a0d18", border: `1px solid ${r.c}`, borderRadius: dim * 0.1,
+          padding: `0 ${dim * 0.06}px` }}>{div}</span>
+      )}
     </div>
   );
 }
 
 
 // Big hero crest that foregrounds the player's RANK (the meaningful headline stat)
-function RankCrest({ rank }) {
+function RankCrest({ rank, div }) {
   const r = RANKS[rank] || RANKS.Iron;
   const s = 104;
   const letter = rank === "Radiant" ? "R" : rank[0];
+  const showDiv = hasDivisions(rank) && !!div;
   return (
     <div className="relative grid place-items-center" style={{ width: s, height: s }}>
       <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
@@ -1889,6 +1908,12 @@ function RankCrest({ rank }) {
         style={{ color: r.c, fontSize: s * 0.40, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 16px ${r.glow}` }}>
         {letter}
       </span>
+      {showDiv && (
+        <span className="absolute font-bold leading-none"
+          style={{ right: 4, bottom: 10, fontSize: s * 0.19, fontFamily: "'Rajdhani',sans-serif",
+            color: "#0a0d18", background: r.c, borderRadius: 5, padding: "3px 7px",
+            boxShadow: `0 0 12px ${r.glow}` }}>{div}</span>
+      )}
     </div>
   );
 }
@@ -1975,11 +2000,11 @@ function PlayerCard({ player, lite = false }) {
             style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 150, right: -10, top: -18, color: "rgba(255,255,255,0.07)", letterSpacing: "-0.04em" }}>{player.acs}</span>
           <span className="absolute pointer-events-none select-none uppercase font-bold"
             style={{ fontFamily: "'Rajdhani',sans-serif", right: 14, top: 112, fontSize: 12, letterSpacing: 3, color: "rgba(255,255,255,0.18)" }}>ACS</span>
-          <div className={lite ? "" : "float-soft"}><RankCrest rank={player.rank} /></div>
+          <div className={lite ? "" : "float-soft"}><RankCrest rank={player.rank} div={player.rankDiv} /></div>
           <h2 className="relative mt-6 text-5xl font-bold uppercase leading-none text-center px-4"
             style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", letterSpacing: "0.04em", textShadow: `0 0 24px ${r.glow}` }}>{player.name}</h2>
           <div className="relative mt-4 flex items-center gap-3 pb-2">
-            <span className="uppercase tracking-widest font-semibold" style={{ color: r.c, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 10px ${r.glow}` }}>{player.rank}</span>
+            <span className="uppercase tracking-widest font-semibold" style={{ color: r.c, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 10px ${r.glow}` }}>{rankLabel(player.rank, player.rankDiv)}</span>
             <span style={{ color: "rgba(236,243,255,0.35)" }}>·</span>
             <span className="uppercase tracking-widest text-sm" style={{ color: "rgba(236,243,255,0.75)" }}>{player.agent}</span>
           </div>
@@ -2427,7 +2452,7 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
           {rosterPlayers.map((p) => { const r = rankOf(p.rank); return (
             <div key={p.id} className="flex items-center gap-1.5">
               <button onClick={() => onScout(p.id)} className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded text-left" style={{ background: "rgba(255,255,255,0.04)" }}>
-                <RankBadge rank={p.rank} size="sm" />
+                <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
                 <div className="min-w-0">
                   <p className="text-sm truncate" style={{ color: "#ecf3ff" }}>{p.name}</p>
                   <p className="text-xs truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role}</p>
@@ -2449,7 +2474,7 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
                     className="w-full px-2 py-1.5 rounded text-xs outline-none"
                     style={{ background: "rgba(10,14,24,0.9)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }}>
                     <option value="">Select player…</option>
-                    {availablePool.map((p) => <option key={p.id} value={p.id}>{p.name} · {ROLE_GLYPH[p.role]} {p.role} · {p.rank}</option>)}
+                    {availablePool.map((p) => <option key={p.id} value={p.id}>{p.name} · {ROLE_GLYPH[p.role]} {p.role} · {rankLabel(p.rank, p.rankDiv)}</option>)}
                   </select>
                   <input value={addPrice} onChange={(e) => setAddPrice(e.target.value.replace(/[^0-9]/g, ""))} placeholder="Price label (optional)"
                     inputMode="numeric"
@@ -2650,7 +2675,7 @@ function PlayerPicker({ value, players, onChange }) {
         style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${sel ? rankOf(sel.rank).c + "66" : "rgba(255,255,255,0.12)"}`, color: "#ecf3ff" }}>
         {sel ? (
           <>
-            <RankBadge rank={sel.rank} size="sm" />
+            <RankBadge rank={sel.rank} div={sel.rankDiv} size="sm" />
             <span className="font-semibold truncate" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{sel.name}</span>
             <span className="text-xs truncate" style={{ color: rankOf(sel.rank).c }}>{ROLE_GLYPH[sel.role]} {sel.role}</span>
           </>
@@ -2664,9 +2689,9 @@ function PlayerPicker({ value, players, onChange }) {
             {value && <button onClick={() => { onChange(""); setOpen(false); setQ(""); }} className="w-full text-left px-3 py-2 text-xs uppercase tracking-widest" style={{ color: "#ff8a94" }}>✕ Clear slot</button>}
             {list.map((p) => { const r = rankOf(p.rank); return (
               <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); setQ(""); }} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80" style={{ background: p.id === value ? r.c + "1f" : "transparent" }}>
-                <RankBadge rank={p.rank} size="sm" />
+                <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
                 <span className="text-sm truncate" style={{ color: "#ecf3ff" }}>{p.name}</span>
-                <span className="text-xs truncate" style={{ color: r.c }}>{p.rank}</span>
+                <span className="text-xs truncate" style={{ color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span>
                 <span className="ml-auto text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.5)" }}>{fmt(r.bid)}</span>
               </button>
             ); })}
@@ -2882,7 +2907,7 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
                       <p className="text-base font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
                       <p className="text-[11px] uppercase tracking-widest mt-1" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role}</p>
                     </div>
-                    <RankBadge rank={p.rank} size="sm" />
+                    <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
                   </div>
                   <div className="flex items-center gap-3 mt-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
                     <span className="text-xs"><span style={{ color: "#5b8dff" }}>{p.acs}</span><span className="text-[9px] ml-0.5" style={{ color: "rgba(200,215,255,0.4)" }}>ACS</span></span>
@@ -5461,7 +5486,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           <div className="flex gap-3 overflow-x-auto pb-2">
             {sold.slice(0, 6).map((p) => { const r = rankOf(p.rank), tm = teamOf(p.soldTo); return (
               <div key={p.id} className="shrink-0 flex items-center gap-3 p-3 rounded-xl" style={{ minWidth: 230, background: `linear-gradient(135deg, ${r.c}1f, rgba(255,255,255,0.03))`, border: `1px solid ${r.c}44` }}>
-                <RankBadge rank={p.rank} />
+                <RankBadge rank={p.rank} div={p.rankDiv} />
                 <div className="min-w-0">
                   <p className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
                   <p className="text-xs truncate" style={{ color: tm?.hue }}>{tm?.name}</p>
@@ -5543,7 +5568,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <select value={replacing || ""} onChange={(e) => setReplacing(e.target.value || null)}
               style={{ padding: "7px 10px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,220,132,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13, fontWeight: 600 }}>
               <option value="">— nobody selected —</option>
-              {myRoster.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.rank}</option>)}
+              {myRoster.map((p) => <option key={p.id} value={p.id}>{p.name} · {rankLabel(p.rank, p.rankDiv)}</option>)}
             </select>
             {missing && (
               <span className="text-xs" style={{ color: "#9af5c2", fontFamily: "'Rajdhani',sans-serif" }}>
@@ -5591,8 +5616,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                     <p className="text-xs uppercase tracking-widest mt-1.5" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <RankBadge rank={p.rank} size="sm" />
-                    <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{p.rank}</span>
+                    <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+                    <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span>
                   </div>
                 </div>
                 <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
@@ -5675,8 +5700,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 <p className="text-xs uppercase tracking-widest mt-1.5" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
-                <RankBadge rank={p.rank} size="sm" />
-                <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{p.rank}</span>
+                <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span>
               </div>
             </div>
             <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
@@ -7324,6 +7349,7 @@ function PlayerProfile({ userId, onBack, footer }) {
   const isHostViewer = window.__VOLT?.isHost;                 // league owner only
   const isStaffViewer = window.__VOLT?.isStaff ?? window.__VOLT?.isHost; // + moderators
   const rank = p.rank || "Iron";
+  const rankDiv = p.rank_div ?? null;
   const r = RANKS[rank] || RANKS.Iron;
   const hue = r.c;
   const name = u.display_name || "Player";
@@ -7380,11 +7406,16 @@ function PlayerProfile({ userId, onBack, footer }) {
             <span style={{ position: "absolute", right: -8, top: -22, fontSize: 128, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.04em", color: "rgba(255,255,255,0.07)", fontFamily: "'Rajdhani',sans-serif", pointerEvents: "none", userSelect: "none" }}>{avgAcs || p.acs || ""}</span>
             {(avgAcs || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>ACS</span> : null}
             <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
-              <RankCrest rank={rank} />
+              <RankCrest rank={rank} div={rankDiv} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 34, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.03, display: "flex", alignItems: "center", flexWrap: "wrap", textShadow: `0 0 24px ${r.glow}` }}>{name}<TrophyChip n={u.trophy_streak} big /></div>
                 <div style={{ display: "flex", gap: 9, marginTop: 8, fontSize: 12.5, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textShadow: `0 0 10px ${r.glow}` }}>{rank}</span>
+                  <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textShadow: `0 0 10px ${r.glow}` }}>{rankLabel(rank, rankDiv)}</span>
+                  {p.peak_rank && p.peak_rank !== rank && (
+                    <span title="Highest rank ever reached" style={{ color: "rgba(200,215,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      peak {rankLabel(p.peak_rank, p.peak_rank_div)}
+                    </span>
+                  )}
                   <span style={{ color: "rgba(236,243,255,0.3)" }}>·</span>
                   {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
                   {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
@@ -8832,7 +8863,9 @@ async function fetchRosterForEvent(eventId) {
       status: r.status || "approved", available: !!r.availability_confirmed,
       noShow: !!r.no_show, noShows: noShowCounts[r.user_id] || 0,
       name: r.users?.display_name || "Player",
-      rank: p.rank, role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges,
+      rank: p.rank, rankDiv: p.rank_div ?? null,
+      peakRank: p.peak_rank ?? null, peakRankDiv: p.peak_rank_div ?? null,
+      role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges,
       discord: p.discord,   // captains reach reserves here; community-readable, not sensitive
       tracker: p.tracker_url || null };
   };
@@ -9398,7 +9431,15 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
   // the user said yes — so open straight into the form instead of showing a
   // second button that asks the same thing again.
   const [editing, setEditing] = useState(embedded);
-  const [d, setD] = useState({ rank: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", whatsapp: "" });
+  const [d, setD] = useState({ rank: "", rankDiv: "", peakRank: "", peakRankDiv: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", whatsapp: "" });
+  // Screenshot import. Prefills the form and stops — the player still reviews
+  // and saves, because captains bid real money against these numbers and an
+  // auto-saved OCR result looks verified when it isn't.
+  const [shotBusy, setShotBusy] = useState(false);
+  const [shotErr, setShotErr] = useState("");
+  const [shotScope, setShotScope] = useState("");   // which panel the reader used
+  const [shotFilled, setShotFilled] = useState([]); // fields it actually populated
+  const [dragOver, setDragOver] = useState(false);
   // Read-only: the handle and link state both come from the Discord OAuth flow.
   const [dc, setDc] = useState({ linked: false, handle: "" });
   const [dcBusy, setDcBusy] = useState(false);
@@ -9420,16 +9461,76 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
       c = cd || null;
     } catch (e) { console.error("contacts", e); }
     setDc({ linked: !!c?.discord_user_id, handle: data?.discord || "" });
-    if (data || c) setD({ rank: data?.rank || "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", whatsapp: c?.whatsapp || "" });
+    if (data || c) setD({ rank: data?.rank || "", rankDiv: data?.rank_div ?? "", peakRank: data?.peak_rank || "", peakRankDiv: data?.peak_rank_div ?? "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", whatsapp: c?.whatsapp || "" });
   }
   useEffect(() => { load(); }, [userId]);
+
+  // Paste, drop or pick — all three land here. Paste is the one that matters:
+  // Snipping Tool then Ctrl+V is the natural motion, and it skips saving a file.
+  async function readTracker(file) {
+    if (!file) return;
+    setShotBusy(true); setShotErr(""); setShotScope(""); setShotFilled([]);
+    try {
+      const { base64, mimeType } = await downscaleImage(file);
+      const r = await fetch("/api/read-tracker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64, mimeType }),
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.error || `Reader returned ${r.status}.`);
+      const filled = [];
+      setD((prev) => {
+        const next = { ...prev };
+        const put = (key, val, label) => {
+          if (val === null || val === undefined || val === "") return;
+          next[key] = String(val); filled.push(label);
+        };
+        put("rank", body.rank, "rank");
+        if (body.rank) next.rankDiv = body.rankDiv ? String(body.rankDiv) : "";
+        put("peakRank", body.peakRank, "peak rank");
+        if (body.peakRank) next.peakRankDiv = body.peakRankDiv ? String(body.peakRankDiv) : "";
+        put("agent", body.agent, "agent");
+        put("kda", body.kda, "KDA");
+        put("acs", body.acs, "ACS");
+        put("hs", body.hs, "HS%");
+        put("win", body.win, "win%");
+        return next;
+      });
+      setShotFilled(filled);
+      setShotScope(body.scope || "");
+      // Role is a judgement call about how you play, not a number on a page.
+      if (!body.rank) setShotErr("Couldn't find a rank — set that one yourself.");
+    } catch (e) {
+      setShotErr(e.message || "Couldn't read that screenshot.");
+    }
+    setShotBusy(false);
+  }
+
+  // Only while the form is open, so a stray paste elsewhere in the app is ignored.
+  useEffect(() => {
+    if (!editing) return;
+    const onPaste = (e) => {
+      const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
+      if (!item) return;
+      e.preventDefault();
+      readTracker(item.getAsFile());
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [editing]);
 
   const [saveErr, setSaveErr] = useState("");
   async function save() {
     setBusy(true);
     const { error } = await __sb.from("player_profiles").upsert({
       user_id: userId, community_id: window.__VOLT.communityId,
-      rank: d.rank || null, role: d.role || null, agent: d.agent || null,
+      rank: d.rank || null,
+      // Radiant has no divisions, so never persist one for it.
+      rank_div: hasDivisions(d.rank) && d.rankDiv ? parseInt(d.rankDiv) : null,
+      peak_rank: d.peakRank || null,
+      peak_rank_div: hasDivisions(d.peakRank) && d.peakRankDiv ? parseInt(d.peakRankDiv) : null,
+      role: d.role || null, agent: d.agent || null,
       kda: d.kda === "" ? null : parseFloat(d.kda), acs: d.acs === "" ? null : parseInt(d.acs),
       hs: d.hs === "" ? null : parseInt(d.hs), win: d.win === "" ? null : parseInt(d.win),
       tracker_url: d.tracker ? (/^https?:\/\//i.test(d.tracker) ? d.tracker.trim() : "https://" + d.tracker.trim()) : null,
@@ -9465,7 +9566,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
       {!editing && <>
         {has
           ? <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-              {[["RANK", prof.rank], ["ROLE", prof.role || "—"], ["AGENT", prof.agent || "—"], ["KDA", prof.kda ?? "—"], ["ACS", prof.acs ?? "—"], ["HS%", prof.hs != null ? prof.hs + "%" : "—"], ["WIN%", prof.win != null ? prof.win + "%" : "—"]].map(([k, v]) => (
+              {[["RANK", rankLabel(prof.rank, prof.rank_div)], ["PEAK", prof.peak_rank ? rankLabel(prof.peak_rank, prof.peak_rank_div) : "—"], ["ROLE", prof.role || "—"], ["AGENT", prof.agent || "—"], ["KDA", prof.kda ?? "—"], ["ACS", prof.acs ?? "—"], ["HS%", prof.hs != null ? prof.hs + "%" : "—"], ["WIN%", prof.win != null ? prof.win + "%" : "—"]].map(([k, v]) => (
                 <div key={k} style={{ padding: "6px 11px", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(6) }}>
                   <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7da6ff" }}>{k}</div>
                   <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, color: "#ecf3ff", fontWeight: 700 }}>{v}</div>
@@ -9475,10 +9576,57 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
         <button onClick={() => setEditing(true)} style={shellBtn(has ? "ghost" : "primary", { padding: "9px 18px", fontSize: 12 })}>{has ? "Edit my stats" : "Set up my stats →"}</button>
       </>}
       {editing && <>
+        {/* Filling seven stat fields by hand is the heaviest friction in the
+            gate. This reads them off a tracker screenshot instead — prefill
+            only, never autosave. */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); readTracker(e.dataTransfer?.files?.[0]); }}
+          style={{ marginBottom: 14, padding: "14px 16px", clipPath: SHELL_NOTCH(9),
+            background: dragOver ? "rgba(61,123,255,0.12)" : "rgba(10,16,30,0.45)",
+            border: `1px ${dragOver ? "solid" : "dashed"} rgba(61,123,255,${dragOver ? 0.6 : 0.3})` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#cfe0ff" }}>⎘ Fill this in from a screenshot</span>
+            <label style={{ ...shellBtn("ghost", { padding: "7px 14px", fontSize: 11, cursor: shotBusy ? "wait" : "pointer" }), display: "inline-block" }}>
+              {shotBusy ? "Reading…" : "Choose image"}
+              <input type="file" accept="image/*" disabled={shotBusy} style={{ display: "none" }}
+                onChange={(e) => { readTracker(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+            <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)" }}>or paste with Ctrl+V, or drag one here</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)", marginTop: 6, lineHeight: 1.55 }}>
+            Screenshot your tracker.gg overview on the <b style={{ color: "rgba(200,215,255,0.6)" }}>Competitive</b> tab
+            for the current act. Everything it reads lands in the fields below for you to check before saving.
+          </div>
+          {shotScope && (
+            <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 8 }}>
+              ✓ Read {shotFilled.length} field{shotFilled.length === 1 ? "" : "s"} from <b>{shotScope}</b>
+              <span style={{ color: "rgba(200,215,255,0.45)" }}> — check that's the right tab, then review the values.</span>
+            </div>
+          )}
+          {shotErr && <div style={{ fontSize: 12, color: "#f5c453", marginTop: 8 }}>⚠ {shotErr}</div>}
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(110px,1fr))", gap: 10, marginBottom: 14 }}>
+          {/* Tier and division are separate controls because the tier alone
+              drives opening bids and pool filters — the number is cosmetic. */}
           <label><span style={labS}>Rank *</span>
-            <select value={d.rank} onChange={e => setD({ ...d, rank: e.target.value })} style={fieldS}>
+            <select value={d.rank} onChange={e => setD({ ...d, rank: e.target.value, rankDiv: hasDivisions(e.target.value) ? d.rankDiv : "" })} style={fieldS}>
               <option value="">— select —</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
+            </select></label>
+          <label><span style={labS}>Division</span>
+            <select value={d.rankDiv} disabled={!hasDivisions(d.rank)} onChange={e => setD({ ...d, rankDiv: e.target.value })}
+              style={{ ...fieldS, opacity: hasDivisions(d.rank) ? 1 : 0.4 }}>
+              <option value="">{d.rank === "Radiant" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
+            </select></label>
+          <label><span style={labS}>Peak rank</span>
+            <select value={d.peakRank} onChange={e => setD({ ...d, peakRank: e.target.value, peakRankDiv: hasDivisions(e.target.value) ? d.peakRankDiv : "" })} style={fieldS}>
+              <option value="">— none —</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
+            </select></label>
+          <label><span style={labS}>Peak division</span>
+            <select value={d.peakRankDiv} disabled={!hasDivisions(d.peakRank)} onChange={e => setD({ ...d, peakRankDiv: e.target.value })}
+              style={{ ...fieldS, opacity: hasDivisions(d.peakRank) ? 1 : 0.4 }}>
+              <option value="">{d.peakRank === "Radiant" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
             </select></label>
           <label><span style={labS}>Role</span>
             <select value={d.role} onChange={e => setD({ ...d, role: e.target.value })} style={fieldS}>
