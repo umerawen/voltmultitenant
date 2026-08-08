@@ -2008,6 +2008,14 @@ function PlayerCard({ player, lite = false }) {
             <span style={{ color: "rgba(236,243,255,0.35)" }}>·</span>
             <span className="uppercase tracking-widest text-sm" style={{ color: "rgba(236,243,255,0.75)" }}>{player.agent}</span>
           </div>
+          {/* Peak sits under the current rank, deliberately quieter — it's context
+              for a captain, not the number the auction runs on. */}
+          {player.peakRank && (
+            <div className="relative flex items-center gap-2 pb-1" title="Highest rank ever reached. Does not affect the opening bid.">
+              <span className="uppercase text-[10px] tracking-[0.2em]" style={{ color: "rgba(236,243,255,0.35)", fontFamily: "'Rajdhani',sans-serif" }}>Peak</span>
+              <span className="uppercase text-xs font-semibold tracking-widest" style={{ color: rankOf(player.peakRank).c, opacity: 0.85, fontFamily: "'Rajdhani',sans-serif" }}>{rankLabel(player.peakRank, player.peakRankDiv)}</span>
+            </div>
+          )}
         </div>
         <div className="grid grid-cols-3 gap-2 px-5 pt-5">
           <Stat label="KDA" value={player.kda == null ? "—" : Number(player.kda).toFixed(2)} hue="#00e5ff" />
@@ -2054,8 +2062,12 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
           <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Role</span><span style={{ color: "#ecf3ff" }}>{player.role}</span></div>
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Agent</span><span style={{ color: "#ecf3ff" }}>{player.agent}</span></div>
-            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Opens at</span><span style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(r.bid)}</span></div>
+            {/* Naming the tier here removes the ambiguity a peak rank introduces:
+                the opener comes from CURRENT rank, never peak. */}
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }} title="Set by current rank — peak rank never affects the price"><span style={{ color: "rgba(200,215,255,0.5)" }}>Opens at</span><span style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(r.bid)} <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, opacity: 0.6, textTransform: "uppercase", letterSpacing: "0.08em" }}>{player.rank}</span></span></div>
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Status</span><span style={{ color: player.status === "sold" ? "#3ddc84" : "#5b8dff" }}>{player.status === "sold" ? "Drafted" : player.status === "block" ? "On block" : "Available"}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Current</span><span style={{ color: r.c, fontWeight: 600 }}>{rankLabel(player.rank, player.rankDiv)}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }} title="Highest rank ever reached. Does not affect the opening bid."><span style={{ color: "rgba(200,215,255,0.5)" }}>Peak</span><span style={{ color: player.peakRank ? (rankOf(player.peakRank).c) : "rgba(200,215,255,0.35)", fontWeight: 600 }}>{player.peakRank ? rankLabel(player.peakRank, player.peakRankDiv) : "—"}</span></div>
           </div>
           {onViewProfile && typeof player.id === "string" && player.id.length > 30 && (
             <button onClick={() => onViewProfile(player.id)}
@@ -7410,10 +7422,16 @@ function PlayerProfile({ userId, onBack, footer }) {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 34, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.03, display: "flex", alignItems: "center", flexWrap: "wrap", textShadow: `0 0 24px ${r.glow}` }}>{name}<TrophyChip n={u.trophy_streak} big /></div>
                 <div style={{ display: "flex", gap: 9, marginTop: 8, fontSize: 12.5, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textShadow: `0 0 10px ${r.glow}` }}>{rankLabel(rank, rankDiv)}</span>
-                  {p.peak_rank && p.peak_rank !== rank && (
-                    <span title="Highest rank ever reached" style={{ color: "rgba(200,215,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                      peak {rankLabel(p.peak_rank, p.peak_rank_div)}
+                  {/* Labelled outright. With two ranks on one line, an unlabelled
+                      pair is guesswork — and only the current one sets the bid. */}
+                  <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }} title="Current rank — this is what sets the opening bid">
+                    <span style={{ fontSize: 10, letterSpacing: "0.18em", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>NOW</span>
+                    <span style={{ color: hue, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textShadow: `0 0 10px ${r.glow}` }}>{rankLabel(rank, rankDiv)}</span>
+                  </span>
+                  {p.peak_rank && (
+                    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }} title="Highest rank ever reached. Does not affect the opening bid.">
+                      <span style={{ fontSize: 10, letterSpacing: "0.18em", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>PEAK</span>
+                      <span style={{ color: rankOf(p.peak_rank).c, opacity: 0.8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>{rankLabel(p.peak_rank, p.peak_rank_div)}</span>
                     </span>
                   )}
                   <span style={{ color: "rgba(236,243,255,0.3)" }}>·</span>
@@ -10310,7 +10328,7 @@ function WeekendRegistration({ ev, auth, phase }) {
     return (
       <div style={{ padding: "2px 14px 14px 34px", borderTop: `1px solid ${borderColor}` }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-          {stat("Rank", r.rank)}{stat("Role", r.role)}{stat("Agent", r.agent)}{stat("KDA", r.kda)}{stat("ACS", r.acs)}{stat("HS%", r.hs != null && r.hs !== "" ? r.hs + "%" : null)}{stat("Win%", r.win != null && r.win !== "" ? r.win + "%" : null)}
+          {stat("Rank", r.rank ? rankLabel(r.rank, r.rankDiv) : null)}{stat("Peak", r.peakRank ? rankLabel(r.peakRank, r.peakRankDiv) : null)}{stat("Role", r.role)}{stat("Agent", r.agent)}{stat("KDA", r.kda)}{stat("ACS", r.acs)}{stat("HS%", r.hs != null && r.hs !== "" ? r.hs + "%" : null)}{stat("Win%", r.win != null && r.win !== "" ? r.win + "%" : null)}
         </div>
         <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 10, flexWrap: "wrap", fontSize: 12, color: "rgba(200,215,255,0.55)" }}>
           {r.volunteered && <span style={{ color: "#7da6ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11 }}>✋ wants to captain</span>}
