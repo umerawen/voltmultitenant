@@ -7870,6 +7870,11 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
   // What the recipient can tap. Explicit rather than inferred from the audience,
   // because "who gets it" and "what can they do about it" are separate decisions.
   const [reply, setReply] = useState("none");
+  // Where it lands. A draft reminder wants DMs; "sign-ups are open" wants the
+  // channel, where people who aren't in the league yet can still see it.
+  const [deliver, setDeliver] = useState("both");
+  const sendsDM = deliver !== "channel";
+  const sendsChannel = deliver !== "dm";
   const regOpen = phase === "registration_open";
   const SCOPES = regOpen
     ? [["approved", "Already signed up"], ["unregistered", "Not signed up yet"], ["all", "Whole league"]]
@@ -7882,8 +7887,11 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
       buttons: ["Register", "Register + captain"], needs: regOpen,
       why: "Registration has to be open for these to work." },
     { k: "availability", label: "Are you still coming?", note: "Answers land in “Who we can reach” below, so silence is visible before the draft.",
-      buttons: ["I'm in", "Can't make it"], needs: scope !== "unregistered",
-      why: "Only people already signed up can confirm." },
+      // Answers are tracked per player, so a channel-only post has nobody to
+      // attribute them to — "Who we can reach" would stay blank either way.
+      buttons: ["I'm in", "Can't make it"], needs: scope !== "unregistered" && sendsDM,
+      why: scope === "unregistered" ? "Only people already signed up can confirm."
+        : "Needs to go out as a DM so replies can be tracked per player." },
   ];
   const activeReply = REPLIES.find(r => r.k === reply) || REPLIES[0];
   const replyOk = activeReply.needs !== false;
@@ -7921,16 +7929,17 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         // dmButtons puts the row in the DM itself — the point of asking a question
         // is that answering costs one tap, not a trip back to the app.
-        body: JSON.stringify({ communityId, message: msg.trim(), userIds: t?.userIds || [],
-                               announce: true,
+        body: JSON.stringify({ communityId, message: msg.trim(),
+                               userIds: sendsDM ? (t?.userIds || []) : [],
+                               announce: sendsChannel,
                                buttons: reply === "none" ? undefined : reply,
-                               dmButtons: reply === "none" ? undefined : true }),
+                               dmButtons: reply === "none" || !sendsDM ? undefined : true }),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
       // Stamp the event so "Who we can reach" starts counting replies. Without
       // this the card never appears no matter how many people answer.
-      if (reply === "availability") {
+      if (reply === "availability" && sendsDM) {
         try { await __sb.rpc("volt_availability_mark_asked", { p_event: eventId }); }
         catch (e) { console.error("mark asked", e); }
       }
@@ -7947,7 +7956,26 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
           placeholder="e.g. Draft starts in 30 minutes — be in the voice channel."
           style={{ width: "100%", padding: "11px 13px", background: "rgba(8,12,24,0.85)", border: "1px solid rgba(61,123,255,0.28)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, lineHeight: 1.5, resize: "vertical", clipPath: SHELL_NOTCH(7) }} />
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-          <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>Send to</span>
+          <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>Deliver as</span>
+          {[["both", "DM + channel"], ["dm", "DM only"], ["channel", "Channel only"]].map(([k, label]) => {
+            const on = deliver === k;
+            return (
+              <button key={k} onClick={() => setDeliver(k)}
+                style={{ padding: "6px 12px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 700,
+                  letterSpacing: "0.04em", clipPath: SHELL_NOTCH(6),
+                  background: on ? "rgba(157,107,255,0.16)" : "rgba(10,16,30,0.5)",
+                  border: `1px solid ${on ? "rgba(157,107,255,0.6)" : "rgba(120,150,220,0.18)"}`,
+                  color: on ? "#d6bcff" : "rgba(200,215,255,0.55)" }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {/* Channel-only reaches whoever is in the server, so picking an audience
+            of VOLT members has nothing to act on. Say so rather than leaving a
+            live-looking control that does nothing. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, opacity: sendsDM ? 1 : 0.4, pointerEvents: sendsDM ? "auto" : "none" }}>
+          <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>DM to</span>
           {SCOPES.map(([k, label]) => {
             const on = scope === k, c = counts[k];
             return (
@@ -7962,6 +7990,11 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
             );
           })}
         </div>
+        {!sendsDM && (
+          <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)", marginTop: 6 }}>
+            Nobody is DM'd — it goes to everyone who can see your announcements channel, in the league or not.
+          </div>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
           <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>Let them reply with</span>
           {REPLIES.map((r) => {
@@ -7995,20 +8028,25 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
             {busy ? "Sending…" : "Send"}
           </button>
           <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)" }}>
-            Goes out as a DM to each person above, and as one post in your announcements channel.
+            {deliver === "both" ? "A DM to each person above, plus one post in your announcements channel."
+              : deliver === "dm" ? "A DM to each person above. Nothing is posted publicly — except an @mention for anyone whose DMs are closed."
+              : "One post in your announcements channel. No DMs."}
           </span>
         </div>
-        {counts[scope]?.unlinked > 0 && (
+        {sendsDM && counts[scope]?.unlinked > 0 && (
           <div style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)", marginTop: 8 }}>
             ⚠ {counts[scope].unlinked} of them haven't connected Discord — they won't get the DM, only the channel post.
           </div>
         )}
         {result && (
           <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
-            <span style={{ color: "#9af5c2" }}>✓ DM'd {result.delivered}</span>
+            {result.delivered > 0
+              ? <span style={{ color: "#9af5c2" }}>✓ DM'd {result.delivered}</span>
+              : <span style={{ color: "#9af5c2" }}>✓ Sent</span>}
             {result.announced && <span style={{ color: "rgba(200,215,255,0.5)" }}> · posted to the channel</span>}
             {result.blocked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.blocked.length} have DMs closed — they were @mentioned in the channel instead.</div>}
             {result.unlinked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.unlinked.length} haven't connected Discord yet — they got nothing.</div>}
+            {!result.announced && !result.delivered && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Nothing was delivered. Check your announcements channel is set under Discord server.</div>}
           </div>
         )}
         {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {err}</div>}
