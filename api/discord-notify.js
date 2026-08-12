@@ -42,12 +42,21 @@ export default async function handler(req, res) {
   // `buttons` picks a button set; `dmButtons` attaches it to the DMs too, which
   // is what the availability check needs — the question has to be answerable
   // right there in the DM, not by going somewhere else.
-  const { communityId, message, userIds, announce, buttons, dmButtons } = req.body || {};
+  // `embed` renders the channel post as a rich embed instead of plain content.
+  // Worth the extra field: an embed description holds 4096 characters against
+  // 2000 for a message, and a long pinned guide would otherwise be truncated
+  // mid-sentence with no error.
+  // `pin` pins that post — needs Manage Messages on the bot.
+  // `channelName` posts to a named channel instead of the announcements one,
+  // creating it if it doesn't exist. That's how the signup guide gets its own
+  // #sign-up-here without the host copying a channel ID by hand.
+  const { communityId, message, userIds, announce, buttons, dmButtons, embed, pin,
+          channelName } = req.body || {};
   if (!communityId || !message) return res.status(400).json({ error: "communityId and message are required" });
 
   try {
     const [community] = await sb(
-      `/rest/v1/communities?id=eq.${communityId}&select=name,discord_channel_id`);
+      `/rest/v1/communities?id=eq.${communityId}&select=name,discord_channel_id,discord_guild_id`);
     if (!community) return res.status(404).json({ error: "league not found" });
 
     // A browser caller must be staff of THIS league — not just any logged-in user.
@@ -86,7 +95,30 @@ export default async function handler(req, res) {
 
     // Announcement, plus a mention fallback for anyone the DM couldn't reach.
     let announced = false;
-    const channel = community.discord_channel_id;
+    let pinned = false;
+    let pinError = null;
+    let channel = community.discord_channel_id;
+    let channelId = null;          // reported back so the app can remember it
+
+    // Reuse before create: running this twice must not leave two #sign-up-here
+    // channels behind, and a host who already made one by hand should keep it.
+    if (channelName && community.discord_guild_id) {
+      const want = slugChannel(channelName);
+      const list = await get(token, `/guilds/${community.discord_guild_id}/channels`);
+      const found = Array.isArray(list.body)
+        ? list.body.find((c) => c.type === 0 && c.name === want) : null;
+      if (found) { channel = found.id; channelId = found.id; }
+      else {
+        const made = await post(token, `/guilds/${community.discord_guild_id}/channels`,
+          { name: want, type: 0, topic: `How to join ${community.name} — read the pinned post.` });
+        if (!made.ok) {
+          return res.status(502).json({ error:
+            made.reason === "dms_closed" ? "Couldn't create the channel."
+              : `Couldn't create #${want} — ${made.reason}. The bot needs the Manage Channels permission.` });
+        }
+        channel = made.body.id; channelId = made.body.id;
+      }
+    }
     if (channel && (announce || blocked.length)) {
       let content = announce ? message : "";
       if (blocked.length) {
@@ -94,12 +126,26 @@ export default async function handler(req, res) {
         content += (content ? "\n\n" : "") +
           `${mentions}\n_(couldn't DM you — your Discord privacy settings block messages from server members)_`;
       }
-      const payload = { content: content.slice(0, 1900) };
+      const payload = embed
+        ? { embeds: [{ description: content.slice(0, 4000), color: 0x3d7bff }] }
+        : { content: content.slice(0, 1900) };
+      // Mention fallbacks have to sit outside the embed — Discord does not fire
+      // a notification for a mention that only appears inside one.
+      if (embed && blocked.length) payload.content = blocked.map((b) => `<@${b.discordId}>`).join(" ");
       const row = buttonRow(buttons);
       if (row) payload.components = row;
       const r = await post(token, `/channels/${channel}/messages`, payload);
       announced = r.ok;
       if (!r.ok) console.error("announce failed", r.reason);
+
+      // Pinning is best-effort and reported separately. It needs Manage
+      // Messages, which plenty of servers won't have granted, and a failure to
+      // pin must never look like a failure to post.
+      if (r.ok && pin && r.body?.id) {
+        const pr = await put(token, `/channels/${channel}/pins/${r.body.id}`);
+        pinned = pr.ok;
+        if (!pr.ok) { pinError = pr.reason; console.error("pin failed", pr.reason); }
+      }
     }
 
     return res.status(200).json({
@@ -107,6 +153,9 @@ export default async function handler(req, res) {
       blocked: blocked.map((b) => b.userId),
       unlinked,
       announced,
+      pinned,
+      pinError,
+      channelId,
     });
   } catch (e) {
     console.error("notify failed", e);
@@ -134,7 +183,51 @@ function buttonRow(kind) {
     { type: 2, style: 3, label: "I'm in", custom_id: "volt_confirm" },
     { type: 2, style: 4, label: "Can't make it", custom_id: "volt_withdraw" },
   ] }];
+  // For the pinned welcome post. Same register action, but labelled to read
+  // right under a guide rather than under a one-off announcement.
+  if (kind === "welcome") return [{ type: 1, components: [
+    { type: 2, style: 1, label: "Sign up for this tournament", custom_id: "volt_register" },
+    { type: 2, style: 2, label: "Sign up + captain", custom_id: "volt_register_captain" },
+  ] }];
   return null;
+}
+
+// Pinning is a PUT with no body, so it can't go through post().
+async function put(token, path) {
+  const r = await fetch(API + path, {
+    method: "PUT",
+    headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
+  });
+  if (r.status === 429) {
+    const retry = Number(r.headers.get("retry-after") || 1);
+    await sleep(retry * 1000 + 250);
+    return put(token, path);
+  }
+  if (!r.ok) {
+    let reason = `http ${r.status}`;
+    try {
+      const j = await r.json();
+      // 50013 here always means the same thing: no Manage Messages.
+      if (j?.code === 50013) reason = "the bot needs the Manage Messages permission to pin";
+      else if (j?.code === 30003) reason = "that channel already has 50 pinned messages";
+      else reason = j?.message || reason;
+    } catch { /* keep the status */ }
+    return { ok: false, reason };
+  }
+  return { ok: true };
+}
+
+async function get(token, path) {
+  const r = await fetch(API + path, { headers: { Authorization: `Bot ${token}` } });
+  if (!r.ok) return { ok: false, reason: `http ${r.status}` };
+  return { ok: true, body: await r.json().catch(() => null) };
+}
+
+// Discord lowercases channel names and replaces spaces with hyphens anyway;
+// doing it here means the find-or-create comparison actually matches.
+function slugChannel(name) {
+  return String(name).toLowerCase().trim()
+    .replace(/[^a-z0-9\-_]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 90) || "sign-up-here";
 }
 
 async function post(token, path, body) {

@@ -30,8 +30,11 @@ export default async function handler(req, res) {
   const guild = body.guild_id;
 
   try {
+    // The app and the bot are the same Vercel deployment, so the host header is
+    // the app's own origin — no extra env var to keep in sync.
+    const origin = `https://${req.headers.host}`;
     if (body.type === AUTOCOMPLETE) return await onAutocomplete(res, body, guild);
-    if (body.type === COMPONENT) return await onButton(res, body.data?.custom_id, guild, discordId);
+    if (body.type === COMPONENT) return await onButton(res, body.data?.custom_id, guild, discordId, origin);
     if (body.type === APP_COMMAND) return await onCommand(res, body, guild, discordId);
     return res.status(200).json({ type: 1 });
   } catch (e) {
@@ -171,7 +174,7 @@ async function onAutocomplete(res, body, guild) {
 
 /* ── buttons ─────────────────────────────────────────────────────────────── */
 
-async function onButton(res, customId, guild, discordId) {
+async function onButton(res, customId, guild, discordId, origin) {
   // The whole point: registering is one tap, with no link to follow and nothing
   // to log into. Every failure says exactly what to do next.
   if (customId === "volt_register" || customId === "volt_register_captain") {
@@ -179,13 +182,30 @@ async function onButton(res, customId, guild, discordId) {
     const r = await rpc("volt_dc_register", {
       p_guild: guild || null, p_discord_id: discordId, p_captain: wantsCaptain });
 
-    if (r?.error === "link") return needsLink(res);
-    if (r?.error === "closed") return reply(res, "Registration isn't open right now.");
-    if (r?.error === "already") return reply(res, "You're already signed up for this weekend.");
-    if (r?.error === "suspended") return reply(res, `You're suspended for ${r.n} more weekend${r.n === 1 ? "" : "s"}.`);
-    if (r?.error === "profile") return reply(res,
-      "Your scouting profile isn't finished — captains need your rank and role before they can draft you. " +
-      "Complete it in VOLT, then tap Register again.");
+    // A newcomer pressing this button is the most common first contact anyone
+    // has with VOLT. Bouncing them with "I don't know who you are" wastes it —
+    // so every failure hands back the exact link that fixes it. The reply is
+    // ephemeral, so the channel stays clean however many people tap it.
+    if (r?.error === "link") {
+      const j = joinUrl(origin, r.league);
+      return reply(res,
+        `**Welcome!** You're not in ${r.league?.name || "the league"} yet — it takes about a minute.\n\n` +
+        `**1.** Sign up here: ${j}\n` +
+        `**2.** Fill in your rank, role and a WhatsApp number.\n` +
+        `**3.** Press **Connect Discord** on your profile.\n\n` +
+        `Then come back and tap the button again — it'll put you straight in the pool.`);
+    }
+    if (r?.error === "closed") return reply(res, "Registration isn't open right now. I'll post here when it is.");
+    if (r?.error === "already") return reply(res, "You're already signed up for this one. Nothing else to do.");
+    if (r?.error === "suspended") return reply(res, `You're suspended for ${r.n} more tournament${r.n === 1 ? "" : "s"}.`);
+    if (r?.error === "profile") {
+      const miss = (r.missing || []).join(", ") || "a few details";
+      return reply(res,
+        `Almost — your profile still needs **${miss}**.\n\n` +
+        `Finish it here: ${joinUrl(origin, r.league)}\n` +
+        `Captains see your profile when they bid, so this is what gets you a fair price.\n\n` +
+        `Then tap the button again.`);
+    }
     if (!r?.ok) return reply(res, "Couldn't sign you up. Try again in a moment.");
 
     return reply(res,
@@ -227,7 +247,11 @@ function reply(res, content) {
   return res.status(200).json({ type: REPLY, data: { content, flags: EPHEMERAL } });
 }
 const needsLink = (res) => reply(res,
-  "I don't know who you are yet. Open VOLT → your account → **Connect Discord**, then run `/link` with the code.");
+  "I don't know who you are yet. Open VOLT → your account → **Connect Discord**. " +
+  "It's one click — no code to type.");
+// Deep link that pre-fills the join code, so nobody has to copy it between apps.
+const joinUrl = (origin, league) =>
+  league?.slug ? `${origin}/?join=${encodeURIComponent(league.slug)}` : origin;
 
 function readRaw(req) {
   return new Promise((resolve, reject) => {

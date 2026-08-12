@@ -6101,6 +6101,16 @@ function VoltGate() {
   const [targetView, setTargetView] = useState(null); // deep-link a rail view when entering a tournament
   const [pendingProfile, setPendingProfile] = useState(null); // open a player profile after routing to the hub
 
+  // ?join=<code> lets a host post one link instead of asking people to copy a
+  // code between two apps. Read once on mount and stripped from the URL, so a
+  // refresh after joining doesn't try to re-join.
+  const joinLink = useRef(null);
+  if (joinLink.current === null) {
+    let c = "";
+    try { c = new URLSearchParams(window.location.search).get("join") || ""; } catch { /* no URL */ }
+    joinLink.current = c.trim().toLowerCase();
+  }
+
   // In preview (no Supabase), skip straight into the app with a memory community.
   useEffect(() => {
     if (!HAS_SUPABASE) {
@@ -6110,10 +6120,18 @@ function VoltGate() {
       setPhase("ready");
       return;
     }
+    if (joinLink.current) {
+      setCcode(joinLink.current);
+      // Drop the query string but keep history usable — otherwise a refresh
+      // after joining reopens the join screen for someone already in a league.
+      try { window.history.replaceState({}, "", window.location.pathname); } catch { /* ignore */ }
+    }
     (async () => {
       const { data } = await __sb.auth.getSession();
       if (data?.session) { setSession(data.session); await loadProfile(data.session.user.id); }
-      else setPhase("welcome");
+      // A code in the URL means they came from an invite, so send them straight
+      // to the join form rather than a generic welcome screen.
+      else setPhase(joinLink.current ? "join" : "welcome");
     })();
     const { data: sub } = __sb.auth.onAuthStateChange((_e, s) => {
       setSession(s || null);
@@ -8081,6 +8099,294 @@ function useDiscordLinked() {
 // Discord is where every reminder, availability check and team DM lands — an
 // unlinked player is invisible to the whole loop. So this sits at the very top
 // of the league home until it's done, then never appears again.
+// ── Pinned signup guide ──────────────────────────────────────────────────
+// Every league needs the same post in its #sign-up channel, but the contents
+// differ per league — name, join code, whether the bot is even connected. So
+// it's generated from live data rather than being a template the host fills in
+// and then forgets to update when the draft time moves.
+//
+// Output is Discord-flavoured markdown, not the app's own styling: it's going
+// to be pasted into Discord, so ** and > have to survive the trip.
+// Discord hard-caps a message at 2000 characters and an embed description at
+// 4096. The bot posts an embed so it has room, but a host who pastes this by
+// hand is stuck with 2000 — so the text is written to fit under it.
+//
+// Shape: the action comes first, the walkthrough sits underneath it behind a
+// heading that says who it's for. A returning player reads two lines and taps;
+// a newcomer gets the full three steps without having to ask. Putting the
+// steps first would make everyone read four paragraphs to find the button.
+const DISCORD_MSG_LIMIT = 2000;
+function buildJoinGuide({ community, current, connected, origin }) {
+  const link = `${origin}/?join=${community?.slug || ""}`;
+  const L = [];
+  const add = (...xs) => L.push(...xs);
+
+  add(`# ${community?.name || "Our league"}`, "");
+  add("**You don't need a team.** Sign up on your own, captains bid for you at a live auction, " +
+      "and you play the weekend with whoever wins you.", "");
+
+  if (current) {
+    add(`**${weekendName(current)}** — ${PHASE_LABEL[current.phase] || current.phase}`);
+    if (current.draft_at) {
+      // <t:unix:F> renders in each reader's own clock. A fixed time in one
+      // timezone is the biggest single cause of missed drafts.
+      const unix = Math.floor(new Date(current.draft_at).getTime() / 1000);
+      add(`Draft: <t:${unix}:F> — <t:${unix}:R>, in your timezone.`);
+    }
+    add("");
+  }
+
+  if (connected) {
+    add("## Played with us before?", "");
+    add("Tap the button below. That's it — you're in the pool.", "");
+  }
+
+  add("## First time here?", "");
+  add(`**1. Make your account** — ${link}`);
+  add("> The join code is already filled in. Takes about a minute.");
+  add("**2. Fill in your profile** — your rank, your role, and a WhatsApp number.");
+  add("> Quickest way: paste a screenshot of your tracker.gg Competitive page and it reads your stats for you.");
+  add("> Your number is only ever seen by the host and mods, and only if a match is falling apart.");
+  if (connected) {
+    add("**3. Press Connect Discord** on your profile.");
+    add("> One click, no code to type. It's how you hear when the draft starts and which team picked you.");
+    add("");
+    add("Then tap the button below. If you get stuck, tap it anyway — it'll tell you what's missing.");
+  } else {
+    add("**3. Flip “I'm playing this tournament”** on the site.");
+    add("> ⚠ This league hasn't connected its Discord server yet, so sign-ups happen on the site for now.");
+  }
+  add("");
+
+  add("**Worth knowing:**", "");
+  add("· Captains see your rank and stats when they bid, so put down an honest one — it gets you a fairer price.");
+  add("· The day before the draft I'll ask if you're still free. **Answer it.** " +
+      "Pulling out costs you nothing; going quiet and not showing up is a no-show.");
+  add("· Your first tournament gets reviewed by the host. After two clean ones you're approved instantly.");
+  add("");
+
+  if (connected) {
+    add("`/me` your stats · `/roster` your team · `/leaderboard` the season · " +
+        "`/subs` who's free · `/scout` look up a player", "");
+  }
+
+  add("-# We store your Discord name and ID, your display name, the stats you enter, and a WhatsApp " +
+      "number that only the host and mods can see. We never see your Riot or email password, or any payment details.");
+  return L.join("\n");
+}
+
+function JoinGuideCard({ community, current }) {
+  const [open, setOpen] = useState(false);
+  const [connected, setConnected] = useState(null);
+  const [hasSignup, setHasSignup] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [res, setRes] = useState("");
+  const [err, setErr] = useState("");
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
+  useEffect(() => {
+    if (!open || connected !== null) return;
+    (async () => {
+      try {
+        const { data } = await __sb.rpc("volt_get_discord");
+        setConnected(!!(data?.guild && data?.channel));
+        setHasSignup(!!data?.signupChannel);
+      } catch (e) { console.error("guide discord", e); setConnected(false); }
+    })();
+  }, [open, connected]);
+
+  const text = buildJoinGuide({ community, current, connected: !!connected, origin });
+
+  // `where` is either the announcements channel the host already set, or a
+  // dedicated #sign-up-here the bot creates. A guide buried in announcements
+  // scrolls away in a week, which is the whole reason for the second option.
+  async function post(where) {
+    setBusy(where); setErr(""); setRes("");
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        // No userIds: this is a channel post, not a DM blast. DMing a reference
+        // people come back to would be spam.
+        body: JSON.stringify({ communityId: community?.id, message: text,
+                               userIds: [], announce: true, buttons: "welcome",
+                               embed: true, pin: true,
+                               channelName: where === "signup" ? "sign-up-here" : undefined }),
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
+      // Remember the channel so a second run reuses it instead of hunting again.
+      if (body?.channelId) {
+        try { await __sb.rpc("volt_set_signup_channel", { p_channel: body.channelId }); setHasSignup(true); }
+        catch (e) { console.error("save signup channel", e); }
+      }
+      const dest = where === "signup" ? "#sign-up-here" : "your announcements channel";
+      if (!body?.announced) setErr("Couldn't post — check your announcements channel is set under Discord server.");
+      else if (body.pinned) setRes(`Posted and pinned to ${dest}.`);
+      // Failing to pin is not failing to post, so it reads as a footnote.
+      else setRes(`Posted to ${dest}. Couldn't pin it — ` + (body.pinError || "pin it yourself") + ".");
+    } catch (e) { setErr(e.message || "Couldn't post."); }
+    setBusy("");
+  }
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <CollapseHead title="Signup guide" open={open} onToggle={() => setOpen((o) => !o)}
+        hint="The post that explains your league to new players" />
+      {open && (
+        <div style={{ marginTop: 8, ...PANEL(null, "16px 18px") }}>
+          <p style={{ fontSize: 13, color: "rgba(200,215,255,0.6)", margin: "0 0 12px", lineHeight: 1.6 }}>
+            Built from your league's live details, so the draft time is always current. Re-post it whenever
+            something changes — the bot reuses the same channel rather than making another one.
+          </p>
+          <textarea readOnly value={text} rows={14}
+            data-len={text.length}
+            onFocus={(e) => e.target.select()}
+            style={{ width: "100%", padding: "12px 14px", background: "rgba(8,12,24,0.85)",
+              border: "1px solid rgba(61,123,255,0.24)", color: "rgba(236,243,255,0.85)",
+              fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5, lineHeight: 1.65,
+              resize: "vertical", clipPath: SHELL_NOTCH(7) }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+            {connected && (
+              <button disabled={!!busy} onClick={() => post("signup")}
+                style={shellBtn("primary", { padding: "10px 18px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+                {busy === "signup" ? "Working…" : hasSignup ? "◈ Update #sign-up-here" : "◈ Create #sign-up-here & post"}
+              </button>
+            )}
+            {connected && (
+              <button disabled={!!busy} onClick={() => post("announce")}
+                style={shellBtn("ghost", { padding: "10px 18px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+                {busy === "announce" ? "Posting…" : "Post to announcements"}
+              </button>
+            )}
+            <CopyButton text={text} label="Copy" style={shellBtn("ghost", { padding: "10px 16px", fontSize: 12 })} />
+            <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)" }}>
+              {connected
+                ? "Posting attaches the sign-up button and pins it. A pasted copy can't have either — only the bot can."
+                : "Connect your Discord server above and the bot can post this itself, with a sign-up button attached."}
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: text.length > DISCORD_MSG_LIMIT ? "#f5c453" : "rgba(200,215,255,0.3)",
+            marginTop: 8, fontFamily: "'IBM Plex Mono',monospace" }}>
+            {text.length} / {DISCORD_MSG_LIMIT} characters
+            {text.length > DISCORD_MSG_LIMIT && " — too long to paste by hand; use “Post it for me” instead"}
+          </div>
+          {res && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {res}</div>}
+          {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Transactions ledger ──────────────────────────────────────────────────
+// A public feed of every roster change. All of this already happened somewhere
+// in the app, but scattered across the auction board, the roster page and the
+// host's approval queue — so nothing answered "what changed since I looked?".
+//
+// Entries are written by DB triggers and inside volt_sell, not from here. Three
+// code paths change registrations (web app, Discord bot, host review), and
+// client-side logging would have silently missed two of them.
+const LEDGER_KINDS = {
+  DRAFTED:        { label: "Drafted",    hue: "#3ddc84", verb: (e) => `→ ${e.team_name}` },
+  UNDRAFTED:      { label: "Released",   hue: "#ff8f9a", verb: (e) => (e.team_name ? `from ${e.team_name}` : "") },
+  SUB_IN:         { label: "Sub in",     hue: "#00e5ff", verb: (e) => (e.team_name ? `→ ${e.team_name}` : "") },
+  TRADE:          { label: "Trade",      hue: "#9d6bff", verb: (e) => e.detail || "" },
+  CAPTAIN:        { label: "Captain",    hue: "#f5c453", verb: () => "is captaining this tournament" },
+  UNCAPTAIN:      { label: "Stepped down", hue: "rgba(200,215,255,0.5)", verb: () => "is no longer captain" },
+  APPLIED:        { label: "Applied",    hue: "#5b8dff", verb: () => "wants in" },
+  APPROVED:       { label: "Approved",   hue: "#3ddc84", verb: () => "is in the pool" },
+  REJECTED:       { label: "Declined",   hue: "#ff8f9a", verb: () => "" },
+  WITHDREW:       { label: "Withdrew",   hue: "#f5c453", verb: () => "" },
+  NO_SHOW:        { label: "No-show",    hue: "#ff8f9a", verb: () => "didn't turn up" },
+  STRIKE_CLEARED: { label: "Strike lifted", hue: "#3ddc84", verb: () => "" },
+  WON:            { label: "Won",        hue: "#f5c453", verb: (e) => (e.team_name ? `with ${e.team_name}` : "") },
+  SETTLED:        { label: "Settled",    hue: "#f5c453", verb: (e) => e.detail || "" },
+  TEAM_CREATED:   { label: "New team",   hue: "#00e5ff", verb: (e) => e.team_name || "" },
+  NOTE:           { label: "Note",       hue: "rgba(200,215,255,0.5)", verb: (e) => e.detail || "" },
+};
+function ledgerAgo(d) {
+  const s = Math.max(1, Math.floor((Date.now() - new Date(d).getTime()) / 1000));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+function LeagueLedger({ onOpenPlayer }) {
+  const PAGE = 8;
+  const [rows, setRows] = useState(null);
+  const [more, setMore] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function load(before) {
+    try {
+      const { data, error } = await __sb.rpc("volt_ledger", { p_limit: PAGE + 1, p_before: before || null });
+      if (error) throw new Error(error.message);
+      const page = data || [];
+      setMore(page.length > PAGE);
+      const keep = page.slice(0, PAGE);
+      setRows((prev) => (before ? [...(prev || []), ...keep] : keep));
+    } catch (e) {
+      console.error("ledger", e);
+      setRows((prev) => prev || []);
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  if (rows === null) return null;           // stay invisible until we know
+  if (!rows.length) return null;            // a brand-new league has no history
+
+  return (
+    <div style={{ marginTop: 42 }}>
+      <SectionHead title="Transactions" hint="Every roster move, newest first" />
+      <div style={PANEL(null, "6px 4px")}>
+        {rows.map((e, i) => {
+          const k = LEDGER_KINDS[e.kind] || LEDGER_KINDS.NOTE;
+          const clickable = !!e.subject_user_id && !!onOpenPlayer;
+          return (
+            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 14px",
+              borderTop: i ? "1px solid rgba(120,150,220,0.09)" : "none" }}>
+              {/* Fixed-width kind column, so the eye can scan one edge instead
+                  of chasing labels that start at different places. */}
+              <span style={{ flex: "0 0 96px", fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase",
+                fontWeight: 700, color: k.hue, fontFamily: "'Rajdhani',sans-serif", overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.label}</span>
+              <span onClick={clickable ? () => onOpenPlayer(e.subject_user_id) : undefined}
+                style={{ fontSize: 13.5, fontWeight: 700, color: "#ecf3ff", textTransform: "uppercase",
+                  letterSpacing: "0.02em", cursor: clickable ? "pointer" : "default", whiteSpace: "nowrap" }}>
+                {e.subject_name || "—"}
+              </span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "rgba(200,215,255,0.5)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {k.verb(e)}
+              </span>
+              {e.amount != null && (
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, fontWeight: 700, color: "#9af5c2" }}>
+                  {fmt(e.amount)}
+                </span>
+              )}
+              <span style={{ flex: "0 0 auto", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                color: "rgba(200,215,255,0.3)", minWidth: 30, textAlign: "right" }}>{ledgerAgo(e.created_at)}</span>
+            </div>
+          );
+        })}
+      </div>
+      {more && (
+        <div style={{ textAlign: "center", marginTop: 10 }}>
+          <button disabled={busy} onClick={async () => {
+            setBusy(true); await load(rows[rows.length - 1]?.created_at); setBusy(false);
+          }} style={shellBtn("ghost", { padding: "7px 16px", fontSize: 11 })}>
+            {busy ? "…" : "Show more"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DiscordConnectBanner() {
   const linked = useDiscordLinked();
   const [busy, setBusy] = useState(false);
@@ -8848,6 +9154,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       </div>
     )}
     {isTrueHost && HAS_SUPABASE && <DiscordServerCard />}
+    {isHost && HAS_SUPABASE && <JoinGuideCard community={community} current={current} />}
     {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
     {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
       <DiscordTeamsCard eventId={current.id} />
@@ -8856,6 +9163,9 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} phase={current.phase} />
     )}
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
+    {/* Public to every member, not staff-only — the feed is the league's own
+        record of itself, and that only works if players can read it. */}
+    {HAS_SUPABASE && <LeagueLedger onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {board && <div style={{ marginTop: 42 }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
         <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
