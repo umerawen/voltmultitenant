@@ -253,6 +253,12 @@ function computeSeasonPoints(s) {
 // Tournament display name from its date — "Jul 20–21" (Sat–Sun) with an
 // optional nickname. Falls back to the legacy counter label when no date exists.
 // A tournament is Sat–Sun; starts_on is the Saturday.
+// Module scope, not component scope: the signup-guide builder sits above the
+// schedule component and needs these too, and a phase should read identically
+// wherever it appears.
+const PHASE_LABEL = { registration_open: "Registration open", registration_closed: "Registration closed", drafting: "Draft live", matches_live: "Matches live", settled: "Settled" };
+const PHASE_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#3d7bff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.4)" };
+
 function weekendName(ev) {
   if (!ev) return "";
   const raw = ev.starts_on;
@@ -8939,14 +8945,12 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   if (showPlayer) return wrap(<PlayerProfile userId={showPlayer} onBack={() => setShowPlayer(null)} />, true);
 
   const btn = (primary) => shellBtn(primary ? "primary" : "ghost", { padding: "11px 22px", fontSize: 13 });
-  const PHASE_LABEL = { registration_open: "Registration open", registration_closed: "Registration closed", drafting: "Draft live", matches_live: "Matches live", settled: "Settled" };
 
   // ── Current tournament hero + the rest as quiet strips ──
   const current = pickCurrent(events);
   const upcoming = events.filter(e => e.phase !== "settled" && e.id !== current?.id);
   const past = events.filter(e => e.phase === "settled");
 
-  const PHASE_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#3d7bff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.4)" };
   const heroCTA = !current ? "" :
     current.phase === "registration_open" ? (live?.mineStatus === "approved" ? "Enter tournament →" : live?.mineStatus ? "View application →" : "Apply now →") :
     current.phase === "registration_closed" ? "Enter tournament →" :
