@@ -672,12 +672,33 @@ function VoltDateRange({ start, end, onChange, placeholder = "Pick the dates" })
   const [open, setOpen] = useState(false);
   const [view, setView] = useState(() => new Date((start || ymdToday()) + "T12:00:00"));
   const boxRef = useRef(null);
+  // The calendar has to be portalled to <body>. Its usual home — the tournament
+  // setup modal — carries clipPath for the notched corners, and clip-path clips
+  // every descendant regardless of position or z-index. An absolutely
+  // positioned dropdown just gets sliced off at the panel edge.
+  const [anchor, setAnchor] = useState(null); // viewport rect of the trigger
   useEffect(() => { if (start) setView(new Date(start + "T12:00:00")); }, [start]);
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onDoc = (e) => {
+      if (boxRef.current && boxRef.current.contains(e.target)) return;
+      if (e.target.closest && e.target.closest("[data-volt-drpanel]")) return; // inside the portalled panel
+      setOpen(false);
+    };
+    const place = () => {
+      const r = boxRef.current?.getBoundingClientRect();
+      if (r) setAnchor({ top: r.bottom, bottom: r.top, left: r.left });
+    };
+    place();
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    // Capture phase: the modal itself scrolls, and that scroll doesn't bubble.
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
   }, [open]);
 
   const y = view.getFullYear(), mo = view.getMonth();
@@ -713,8 +734,19 @@ function VoltDateRange({ start, end, onChange, placeholder = "Pick the dates" })
         {start && <span onClick={(e) => { e.stopPropagation(); onChange(null, null); }} title="Clear"
           style={{ color: "rgba(255,120,135,0.7)", fontSize: 13, marginLeft: 2 }}>✕</span>}
       </button>
-      {open && (
-        <div style={{ position: "absolute", zIndex: 200, top: "calc(100% + 6px)", left: 0, padding: 12, minWidth: 268,
+      {open && anchor && createPortal((
+        (() => {
+          const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+          const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+          const H = 330;                                   // roughly the panel's height
+          // Flip above the button when there isn't room below, then clamp so it
+          // can never sit off-screen on a short window.
+          const below = anchor.top + 6;
+          const flip = below + H > vh - 8;
+          const top = flip ? Math.max(8, anchor.bottom - H - 6) : Math.min(below, Math.max(8, vh - H - 8));
+          return (
+        <div data-volt-drpanel="1" style={{ position: "fixed", zIndex: 200, top,
+          left: Math.max(8, Math.min(anchor.left, vw - 288)), padding: 12, minWidth: 268,
           background: "linear-gradient(160deg,rgba(18,24,40,0.99),rgba(9,12,21,0.99))", border: "1px solid rgba(61,123,255,0.4)",
           clipPath: SHELL_NOTCH(10), boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
           <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
@@ -753,7 +785,9 @@ function VoltDateRange({ start, end, onChange, placeholder = "Pick the dates" })
             <button onClick={() => setOpen(false)} style={{ background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", cursor: "pointer", padding: "5px 12px", clipPath: SHELL_NOTCH(5) }}>Done</button>
           </div>
         </div>
-      )}
+          );
+        })()
+      ), document.body)}
     </div>
   );
 }
@@ -6964,7 +6998,10 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
     <VoltOverlay onClose={onClose} zIndex={150}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 470, padding: "24px 26px 22px",
         background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)",
-        clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+        clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif",
+        // Without a cap the panel just grows past the viewport and the Save
+        // button ends up unreachable on a laptop screen.
+        maxHeight: "calc(100vh - 40px)", overflowY: "auto" }}>
         <div className="flex items-center justify-between gap-3">
           <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>
             // {mode === "create" ? "New tournament" : "Edit tournament"}
