@@ -8424,6 +8424,226 @@ function JoinGuideCard({ community, current }) {
   );
 }
 
+// ── Draft recap + Discord event ──────────────────────────────────────────
+// Two one-shot host actions that turn a VOLT fact into something native in
+// Discord. The recap is the artifact the weekend has been missing; the
+// scheduled event is a reminder channel that survives closed DMs.
+function DiscordMomentsCard({ eventId, phase, draftAt }) {
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const drafted = ["drafting", "matches_live", "settled"].includes(phase);
+
+  async function go(mode) {
+    setBusy(mode); setErr(""); setMsg("");
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-recap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ eventId, mode }),
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
+      setMsg(mode === "event"
+        ? (b.updated ? "Event updated to the new draft time." : "Draft night is on the server's event list — people can hit Interested.")
+        : `Posted — ${b.teams} rosters, ${b.sold} players.`);
+    } catch (e) { setErr(e.message || "Couldn't do that."); }
+    setBusy("");
+  }
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <SectionHead title="Post to Discord" hint="One-tap moments worth sharing" />
+      <div style={PANEL()}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button disabled={!!busy || !drafted} onClick={() => go("recap")}
+            title={drafted ? "Every roster, every price, biggest buy and best value"
+                           : "Available once the auction has run"}
+            style={shellBtn("primary", { padding: "10px 18px", fontSize: 12, opacity: (!drafted || busy) ? 0.5 : 1 })}>
+            {busy === "recap" ? "Posting…" : "◈ Post draft results"}
+          </button>
+          <button disabled={!!busy || !draftAt} onClick={() => go("event")}
+            title={draftAt ? "Creates a Discord event people can mark Interested on"
+                           : "Set a draft time first"}
+            style={shellBtn("ghost", { padding: "10px 18px", fontSize: 12, opacity: (!draftAt || busy) ? 0.5 : 1 })}>
+            {busy === "event" ? "Working…" : "🗓 Add draft night to the server"}
+          </button>
+        </div>
+        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)", marginTop: 10, lineHeight: 1.6 }}>
+          {drafted ? "The results post shows every roster with what each captain paid, plus the biggest buy and the best value of the night."
+                   : "Draft results unlock once the auction has run."}
+          {" "}A server event notifies people through Discord itself, which still reaches anyone with DMs closed.
+        </div>
+        {msg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {msg}</div>}
+        {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Sub desk ─────────────────────────────────────────────────────────────
+// A captain short a player at 9pm shouldn't have to read a list and DM
+// strangers. They pick who's out, everyone eligible gets a DM with one button,
+// and the captain chooses from whoever offered.
+//
+// Deliberately not first-come: the point of collecting offers is that the
+// captain picks the one who fits the composition, not the one with the fastest
+// thumbs. The rank rule (a sub must be strictly LOWER ranked than the player
+// going out) is enforced in the database, so a team can never come out of a
+// substitution stronger than it went in.
+function SubDesk({ eventId, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const [roster, setRoster] = useState([]);
+  const [reqs, setReqs] = useState([]);
+  const [picking, setPicking] = useState(null);   // userId of the player going out
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  async function load() {
+    try {
+      const [{ data: open }, { data: ros }] = await Promise.all([
+        __sb.rpc("volt_sub_open", { p_event: eventId }),
+        __sb.rpc("volt_sub_roster", { p_event: eventId }),
+      ]);
+      setReqs(Array.isArray(open) ? open : []);
+      setRoster(Array.isArray(ros) ? ros : []);
+    } catch (e) { console.error("sub desk", e); }
+  }
+  useEffect(() => { if (open) load(); }, [open, eventId]);
+  // Offers arrive by Discord, so the picker has to refresh itself or the
+  // captain sits looking at an empty list while taps land in the database.
+  useEffect(() => {
+    if (!open) return;
+    const t = setInterval(load, 6000);
+    return () => clearInterval(t);
+  }, [open, eventId]);
+
+  async function ask(outUserId) {
+    setBusy(outUserId); setErr(""); setMsg("");
+    try {
+      const team = (roster.find((x) => x.userId === outUserId) || {}).team || "the team";
+      const { data, error } = await __sb.rpc("volt_sub_request",
+        { p_event: eventId, p_out: outUserId, p_team: team });
+      if (error) throw new Error(error.message);
+      if (data?.error === "already_open") { setErr("There's already an open request for that player."); setBusy(""); return; }
+
+      const { data: el } = await __sb.rpc("volt_sub_eligible", { p_event: eventId, p_out: outUserId });
+      const targets = (el?.players || []).filter((x) => x.linked).map((x) => x.userId);
+      if (!targets.length) {
+        setErr(`Nobody below ${el?.outRank || "that rank"} has Discord connected, so there's no one to ask.`);
+        setPicking(null); setBusy(""); load(); return;
+      }
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      const r = await fetch("/api/discord-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({
+          communityId: window.__VOLT.communityId,
+          message: `**${team} needs a sub.**\n` +
+            `${data?.outName || "A player"} (${data?.outRank || "—"}) can't make it. ` +
+            `You're eligible to cover.\n\nTap below if you can play. The captain picks from everyone who offers.`,
+          userIds: targets, announce: false,
+          buttons: `sub:${data.id}`, dmButtons: true,
+        }),
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || "Couldn't send the DMs.");
+      setMsg(`Asked ${b?.delivered ?? targets.length} player${targets.length === 1 ? "" : "s"}. Offers show up here.`);
+      setPicking(null); load();
+    } catch (e) { setErr(e.message || "Couldn't open the request."); }
+    setBusy("");
+  }
+
+  async function fill(reqId, userId) {
+    setBusy(userId); setErr(""); setMsg("");
+    try {
+      const { data, error } = await __sb.rpc("volt_sub_fill", { p_request: reqId, p_user: userId });
+      if (error) throw new Error(error.message);
+      if (data?.error === "closed") { setErr("That request was already filled."); load(); setBusy(""); return; }
+      if (data?.error === "not_offered") { setErr("That player hasn't offered."); setBusy(""); return; }
+      setMsg(`${data.name} is subbing in for ${data.team}.`);
+      load(); onChanged && onChanged();
+    } catch (e) { setErr(e.message || "Couldn't fill it."); }
+    setBusy("");
+  }
+
+  const waiting = reqs.reduce((n, r) => n + (r.offers?.length || 0), 0);
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <CollapseHead title="Sub desk" open={open} onToggle={() => setOpen((o) => !o)}
+        tone={waiting > 0 ? "rgba(61,220,132,0.4)" : reqs.length ? "rgba(245,196,83,0.35)" : null}
+        hint={waiting > 0 ? `${waiting} offer${waiting === 1 ? "" : "s"} waiting`
+              : reqs.length ? `${reqs.length} open` : "Someone dropped out?"} />
+      {open && (
+        <div style={{ marginTop: 8, ...PANEL(null, "16px 18px") }}>
+          {reqs.map((r) => (
+            <div key={r.id} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: "1px solid rgba(120,150,220,0.12)" }}>
+              <div style={{ fontSize: 13.5, color: "#ecf3ff", fontWeight: 700 }}>
+                Covering for {r.outName} <span style={{ color: "rgba(200,215,255,0.45)", fontWeight: 500 }}>· {r.outRank} · {r.team}</span>
+              </div>
+              {r.offers?.length ? (
+                <div style={{ display: "grid", gap: 7, marginTop: 10 }}>
+                  {r.offers.map((o) => (
+                    <div key={o.userId} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px",
+                      background: "rgba(61,220,132,0.06)", border: "1px solid rgba(61,220,132,0.3)", clipPath: SHELL_NOTCH(7) }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#ecf3ff", textTransform: "uppercase" }}>{o.name}</span>
+                      <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>{rankLabel(o.rank, o.rankDiv)}{o.role ? ` · ${o.role}` : ""}</span>
+                      <span style={{ flex: 1 }} />
+                      <button disabled={!!busy} onClick={() => fill(r.id, o.userId)}
+                        style={shellBtn("primary", { padding: "6px 14px", fontSize: 11, opacity: busy ? 0.5 : 1 })}>
+                        {busy === o.userId ? "…" : "Pick"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "rgba(200,215,255,0.42)", marginTop: 6 }}>
+                  Waiting on offers — everyone eligible has been DM'd.
+                </div>
+              )}
+            </div>
+          ))}
+
+          {picking ? (
+            <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)" }}>Opening the request…</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginBottom: 10, lineHeight: 1.6 }}>
+                Who can't make it? Everyone <b style={{ color: "#cfe0ff" }}>below their rank</b> gets asked,
+                so the team can't come out stronger than it went in.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(roster || []).map((p) => (
+                  <button key={p.userId} disabled={!!busy}
+                    onClick={() => { setPicking(p.userId); ask(p.userId); }}
+                    title={`${rankLabel(p.rank, p.rankDiv)}${p.team ? " · " + p.team : ""}`}
+                    style={shellBtn("ghost", { padding: "8px 14px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+                    {busy === p.userId ? "…" : p.name}
+                    <span style={{ opacity: 0.5, marginLeft: 7, fontSize: 10.5 }}>{p.rank}</span>
+                  </button>
+                ))}
+                {!(roster || []).length && (
+                  <span style={{ fontSize: 12, color: "rgba(200,215,255,0.4)" }}>
+                    Nobody's been drafted yet — the sub desk opens once the auction has run.
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+          {msg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {msg}</div>}
+          {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Transactions ledger ──────────────────────────────────────────────────
 // A public feed of every roster change. All of this already happened somewhere
 // in the app, but scattered across the auction board, the roster page and the
@@ -9296,6 +9516,12 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isTrueHost && HAS_SUPABASE && <DiscordServerCard />}
     {isHost && HAS_SUPABASE && <JoinGuideCard community={community} current={current} />}
     {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
+    {isHost && HAS_SUPABASE && current && (
+      <DiscordMomentsCard eventId={current.id} phase={current.phase} draftAt={current.draft_at} />
+    )}
+    {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
+      <SubDesk eventId={current.id} onChanged={load} />
+    )}
     {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
       <DiscordTeamsCard eventId={current.id} />
     )}

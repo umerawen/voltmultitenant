@@ -248,6 +248,25 @@ async function onButton(res, customId, guild, discordId, origin) {
       `Changed your mind? Tick "I'm available" again in VOLT.`);
   }
 
+  // Offering to sub. The rank rule is enforced in volt_sub_offer, not here —
+  // the DM went out minutes ago and the situation may have moved since.
+  if (customId.startsWith("volt_sub_yes:")) {
+    const reqId = customId.slice("volt_sub_yes:".length);
+    const u = await rpc("volt_dc_user", { p_guild: guild || null, p_discord_id: discordId });
+    const uid = Array.isArray(u) ? u[0]?.user_id : u?.user_id;
+    if (!uid) return needsLink(res);
+    const r = await rpc("volt_sub_offer", { p_request: reqId, p_user: uid });
+    if (r?.error === "gone") return reply(res, "That request no longer exists.");
+    if (r?.error === "closed") return reply(res, "Too late — that spot has already been filled.");
+    if (r?.error === "ineligible") return reply(res,
+      "You're not eligible for this one. Subs have to be a lower rank than the player they're covering, " +
+      "so the team can't come out stronger than it went in.");
+    if (!r?.ok) return reply(res, "Couldn't record that. Try again in a moment.");
+    return reply(res,
+      `Thanks — **${r.team}** knows you're available to cover for **${r.out}**.\n` +
+      `The captain picks from everyone who offered, so hold tight. I'll message you either way.`);
+  }
+
   return reply(res, "That button isn't recognised.");
 }
 

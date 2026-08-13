@@ -245,6 +245,14 @@ function buttonRow(kind) {
   ] }];
   // For the pinned welcome post. Same register action, but labelled to read
   // right under a guide rather than under a one-off announcement.
+  // custom_id carries the request id so the handler knows which vacancy the
+  // tap refers to — a player can be asked about two at once on a bad night.
+  if (String(kind).startsWith("sub:")) {
+    const id = String(kind).slice(4);
+    return [{ type: 1, components: [
+      { type: 2, style: 3, label: "I can sub", custom_id: `volt_sub_yes:${id}` },
+    ] }];
+  }
   if (kind === "welcome") return [{ type: 1, components: [
     { type: 2, style: 1, label: "Sign up for this tournament", custom_id: "volt_register" },
     { type: 2, style: 2, label: "Sign up + captain", custom_id: "volt_register_captain" },
