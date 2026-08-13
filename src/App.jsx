@@ -7721,6 +7721,34 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
 // Host-only: connect this league to a Discord server. Two IDs, copied out of
 // Discord with Developer Mode on. Deliberately collapsed by default — it's a
 // once-ever setup step, not something to look at every tournament.
+// Three separate cards each asked the database for the same Discord config on
+// every league-home render. It changes when a host edits it and at no other
+// time, so it's fetched once and shared. `bust` is called after a write so the
+// next read is fresh rather than stale for a minute.
+let __dcCache = { at: 0, data: null, inflight: null };
+async function loadDiscordCfg(force) {
+  if (force) __dcCache = { at: 0, data: null, inflight: null };
+  if (__dcCache.data && Date.now() - __dcCache.at < 60000) return __dcCache.data;
+  if (__dcCache.inflight) return __dcCache.inflight;
+  __dcCache.inflight = (async () => {
+    try {
+      const { data } = await __sb.rpc("volt_get_discord");
+      __dcCache = { at: Date.now(), data: data || {}, inflight: null };
+      return __dcCache.data;
+    } catch (e) {
+      console.error("discord cfg", e);
+      __dcCache.inflight = null;
+      return {};
+    }
+  })();
+  return __dcCache.inflight;
+}
+function useDiscordCfg() {
+  const [cfg, setCfg] = useState(null);
+  useEffect(() => { let ok = true; loadDiscordCfg().then((d) => ok && setCfg(d)); return () => { ok = false; }; }, []);
+  return cfg;
+}
+
 function DiscordServerCard() {
   const [open, setOpen] = useState(false);
   const [guild, setGuild] = useState("");
@@ -7742,6 +7770,7 @@ function DiscordServerCard() {
   async function save(clear) {
     setBusy(true); setErr(""); setOk("");
     try {
+      __dcCache = { at: 0, data: null, inflight: null };   // config changed — next read must be fresh
       const { error } = await __sb.rpc("volt_set_discord", {
         p_guild: clear ? null : guild, p_channel: clear ? null : channel });
       if (error) throw new Error(error.message);
@@ -7942,12 +7971,9 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
   const sendsChannel = deliver !== "dm";
 
   useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await __sb.rpc("volt_get_discord");
-        setRole({ id: data?.roleId || null, name: data?.roleName || "VOLT Player" });
-      } catch (e) { console.error("role lookup", e); }
-    })();
+    let ok = true;
+    loadDiscordCfg().then((d) => ok && setRole({ id: d?.roleId || null, name: d?.roleName || "VOLT Player" }));
+    return () => { ok = false; };
   }, []);
   const regOpen = phase === "registration_open";
   const SCOPES = regOpen
@@ -7971,17 +7997,15 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
   const replyOk = activeReply.needs !== false;
 
   // Preview the reach of each audience so the host isn't sending blind.
+  // One call for all three: the chips render integers, so there's no reason to
+  // download three full lists of user IDs to produce them.
   useEffect(() => {
     let dead = false;
     (async () => {
-      const out = {};
-      for (const [k] of SCOPES) {
-        try {
-          const { data } = await __sb.rpc("volt_notify_targets", { p_event: eventId, p_scope: k });
-          out[k] = { total: data?.userIds?.length || 0, unlinked: data?.unlinked || 0 };
-        } catch (e) { console.error("target preview", k, e); }
-      }
-      if (!dead) setCounts(out);
+      try {
+        const { data } = await __sb.rpc("volt_notify_counts", { p_event: eventId });
+        if (!dead && data) setCounts(data);
+      } catch (e) { console.error("target preview", e); }
     })();
     return () => { dead = true; };
   }, [eventId, phase, result]);
@@ -8271,13 +8295,13 @@ function JoinGuideCard({ community, current }) {
 
   useEffect(() => {
     if (!open || connected !== null) return;
-    (async () => {
-      try {
-        const { data } = await __sb.rpc("volt_get_discord");
-        setConnected(!!(data?.guild && data?.channel));
-        setHasSignup(!!data?.signupChannel);
-      } catch (e) { console.error("guide discord", e); setConnected(false); }
-    })();
+    let ok = true;
+    loadDiscordCfg().then((d) => {
+      if (!ok) return;
+      setConnected(!!(d?.guild && d?.channel));
+      setHasSignup(!!d?.signupChannel);
+    });
+    return () => { ok = false; };
   }, [open, connected]);
 
   const text = buildJoinGuide({ community, current, connected: !!connected, origin });
@@ -8345,6 +8369,7 @@ function JoinGuideCard({ community, current }) {
       if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
       // Remember the channel so a second run reuses it instead of hunting again.
       if (body?.channelId) {
+        __dcCache = { at: 0, data: null, inflight: null };
         try { await __sb.rpc("volt_set_signup_channel", { p_channel: body.channelId }); setHasSignup(true); }
         catch (e) { console.error("save signup channel", e); }
       }
@@ -8420,6 +8445,79 @@ function JoinGuideCard({ community, current }) {
           {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Discord arena ────────────────────────────────────────────────────────
+// Builds the tournament's home inside Discord. Split into two steps because
+// they have different prerequisites: the common channels need nothing and are
+// worth having up before sign-ups close, while team roles and private rooms
+// can't exist until the auction has actually assigned people to teams.
+function DiscordArenaCard({ eventId, phase }) {
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const [warn, setWarn] = useState("");
+  const drafted = ["drafting", "matches_live", "settled"].includes(phase);
+
+  async function run(mode, label) {
+    setBusy(mode); setErr(""); setMsg(""); setWarn("");
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-arena", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ eventId, mode }),
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
+      const made = b.created?.length || 0, kept = b.reused?.length || 0;
+      if (mode === "teams") {
+        setMsg(`${b.teams} teams — ${made} things created, ${kept} already there, ${b.assigned} players given their role.`);
+      } else if (mode === "standings") {
+        setMsg(b.edited ? "Standings updated in place." : "Standings posted.");
+      } else {
+        setMsg(`${made} created, ${kept} already there.`);
+      }
+      // Partial success is the normal outcome when a permission is missing, so
+      // errors surface alongside the result rather than replacing it.
+      if (b.errors?.length) setWarn(b.errors.slice(0, 3).join(" · "));
+    } catch (e) { setErr(e.message || "Couldn't do that."); }
+    setBusy("");
+  }
+
+  const B = ({ mode, label, on = true, kind = "ghost", tip }) => (
+    <button disabled={!!busy || !on} onClick={() => run(mode, label)} title={tip}
+      style={shellBtn(kind, { padding: "10px 16px", fontSize: 12, opacity: (!on || busy) ? 0.5 : 1 })}>
+      {busy === mode ? "Working…" : label}
+    </button>
+  );
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <SectionHead title="Discord arena" hint="Channels, team rooms and live results" />
+      <div style={PANEL()}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <B mode="common" label="⊞ Set up channels" kind="primary"
+             tip="Category, #results, #standings, #trash-talk, and voice rooms" />
+          <B mode="teams" label="◈ Build team rooms" on={drafted} kind={drafted ? "primary" : "ghost"}
+             tip={drafted ? "A role, a private text room and a private voice room per team"
+                          : "Available once the auction has run"} />
+          <B mode="standings" label="⟳ Post standings" />
+        </div>
+        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 11, lineHeight: 1.65 }}>
+          <b style={{ color: "rgba(200,215,255,0.7)" }}>Set up channels</b> is safe to run now — nothing in it
+          depends on the draft. <b style={{ color: "rgba(200,215,255,0.7)" }}>Build team rooms</b> gives each
+          team a role, a private text channel and its own voice room, visible only to that team and staff.
+          Both are safe to re-run: existing channels are reused, never duplicated.
+        </div>
+        {msg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {msg}</div>}
+        {warn && <div style={{ fontSize: 11.5, color: "rgba(245,196,83,0.9)", marginTop: 8 }}>⚠ {warn}</div>}
+        {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
+      </div>
     </div>
   );
 }
@@ -9517,6 +9615,9 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isHost && HAS_SUPABASE && <JoinGuideCard community={community} current={current} />}
     {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
     {isHost && HAS_SUPABASE && current && (
+      <DiscordArenaCard eventId={current.id} phase={current.phase} />
+    )}
+    {isHost && HAS_SUPABASE && current && (
       <DiscordMomentsCard eventId={current.id} phase={current.phase} draftAt={current.draft_at} />
     )}
     {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
@@ -10419,6 +10520,33 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
    MATCH REPORT — host records a match; every player earns season points.
    +50 win · ACS÷4 · K+⅓A  → one match_results row per player.
    ════════════════════════════════════════════════════════════════════ */
+// Fire-and-forget: the match is already banked by the time this runs, so every
+// failure is logged and swallowed rather than surfaced. Standings are refreshed
+// in the same breath, since a result that doesn't move the table looks broken.
+async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
+  try {
+    const { data: sess } = await __sb.auth.getSession();
+    const jwt = sess?.session?.access_token;
+    if (!jwt) return;
+    const players = rows.map((r) => ({
+      name: r.stat_payload?.name, acs: r.stat_payload?.acs,
+      kills: r.stat_payload?.k, assists: r.stat_payload?.a, deaths: r.stat_payload?.d ?? 0,
+    })).sort((x, y) => (y.acs || 0) - (x.acs || 0));
+    const send = (mode, payload) => fetch("/api/discord-arena", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ eventId: ev.id, mode, payload }),
+    }).catch(() => {});
+    await send("results", {
+      teamA: A.name, teamB: B.name,
+      scoreA: scoreA !== "" ? scoreA : (winner === "A" ? "W" : "L"),
+      scoreB: scoreB !== "" ? scoreB : (winner === "B" ? "W" : "L"),
+      players,
+    });
+    await send("standings", null);
+  } catch (e) { console.error("discord result post", e); }
+}
+
 function MatchReport({ ev, onDone, prefill }) {
   const [teams, setTeams] = useState(null);   // [{id,name,captain,captainUserId,roster:[{id,name}]}]
   const [tA, setTA] = useState(""); const [tB, setTB] = useState("");
@@ -10633,6 +10761,10 @@ function MatchReport({ ev, onDone, prefill }) {
       if (error) throw new Error(/match_results_uniq|duplicate key/i.test(error.message || "")
         ? "That match is already recorded. Open it from the bracket to edit it instead."
         : error.message);
+      // Push the result to Discord. Deliberately after the save and outside the
+      // failure path: a Discord outage must never make a recorded match look
+      // like it didn't save. Worst case the host presses "Post standings".
+      postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB);
       setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); setScoreA(""); setScoreB(""); await load();
     } catch (e) { setErr(e.message || "Could not save the match."); }
     setBusy(false);
