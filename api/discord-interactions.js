@@ -33,7 +33,11 @@ export default async function handler(req, res) {
     // The app and the bot are the same Vercel deployment, so the host header is
     // the app's own origin — no extra env var to keep in sync.
     const origin = `https://${req.headers.host}`;
+    // Autocomplete has no message to tag, so don't pay for the lookup.
     if (body.type === AUTOCOMPLETE) return await onAutocomplete(res, body, guild);
+    // One lookup per interaction, stashed for reply() to pick up. A DM has no
+    // guild, so there's nothing to resolve and messages go out untagged.
+    ctx.tag = guild ? await tagFor(guild) : null;
     if (body.type === COMPONENT) return await onButton(res, body.data?.custom_id, guild, discordId, origin);
     if (body.type === APP_COMMAND) return await onCommand(res, body, guild, discordId);
     return res.status(200).json({ type: 1 });
@@ -129,10 +133,10 @@ async function onCommand(res, body, guild, discordId) {
     const missing = r?.missing || [];
     if (!missing.length) return reply(res, "Everyone registered has connected Discord. Nothing to chase.");
     // Public on purpose — the point is that the named players actually see it.
-    return res.status(200).json({ type: REPLY, data: { content:
+    return res.status(200).json({ type: REPLY, data: { content: stamp(
       `**${missing.length} player${missing.length === 1 ? " hasn't" : "s haven't"} connected Discord yet**\n` +
       missing.map((m) => m.discord ? `<@${m.discord}>` : `**${m.name}**`).join(" ") +
-      `\n\nOpen VOLT → your account → **Connect Discord**. Without it you won't get draft reminders or your team DM.` } });
+      `\n\nOpen VOLT → your account → **Connect Discord**. Without it you won't get draft reminders or your team DM.`) } });
   }
 
   if (name === "scout") {
@@ -208,6 +212,11 @@ async function onButton(res, customId, guild, discordId, origin) {
     }
     if (!r?.ok) return reply(res, "Couldn't sign you up. Try again in a moment.");
 
+    // Grant the player role immediately rather than waiting for the host's
+    // next sync — someone who just signed up should be pingable now, and show
+    // up in the member list as playing.
+    await setPlayerRole(guild, discordId, true);
+
     return reply(res,
       (r.status === "approved"
         ? `You're in for **${r.weekend}**. I'll DM you the day before to check you're still free, and again when the draft is about to start.`
@@ -230,6 +239,9 @@ async function onButton(res, customId, guild, discordId, origin) {
     if (r?.error === "notin") return reply(res, "You weren't signed up for this weekend.");
     if (r?.error === "toolate") return reply(res,
       "The draft has already started, so I can't pull you out from here — message your host directly.");
+    // Pulling out drops the role too, so the next ping doesn't reach someone
+    // who already said they can't make it.
+    await setPlayerRole(guild, discordId, false);
     return reply(res,
       `Thanks for telling us — you're out of the draft for **${r.weekend}**. No strike.\n` +
       `You're on the reserve list, so if you free up you can still be subbed into a match. ` +
@@ -243,8 +255,41 @@ async function onButton(res, customId, guild, discordId, origin) {
 
 const num = (v, d = 2) => (v == null ? "—" : Number(v).toFixed(d));
 
+// Per-request scratch space. Vercel gives each invocation its own module
+// instance, so there's no cross-request bleed between different leagues.
+const ctx = { tag: null };
+
+// Add or remove the league's player role for one person. Best-effort by
+// design: a missing permission must never turn a successful sign-up into an
+// error, and the host's next full sync will correct it either way.
+async function setPlayerRole(guild, discordId, grant) {
+  if (!guild || !discordId) return;
+  try {
+    const r = await rpc("volt_dc_role_for", { p_guild: guild, p_discord_id: discordId });
+    const roleId = r?.roleId;
+    if (!roleId) return;                       // league hasn't set one up yet
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) return;
+    const resp = await fetch(
+      `https://discord.com/api/v10/guilds/${guild}/members/${discordId}/roles/${roleId}`,
+      { method: grant ? "PUT" : "DELETE", headers: { Authorization: `Bot ${token}` } });
+    if (!resp.ok) console.error("role", grant ? "grant" : "revoke", "failed", resp.status);
+  } catch (e) { console.error("setPlayerRole", e); }
+}
+
+async function tagFor(guild) {
+  try {
+    const t = await rpc("volt_dc_tag", { p_guild: guild });
+    return t?.tag ? String(t.tag) : null;
+  } catch (e) { console.error("tag lookup", e); return null; }
+}
+
+// `-#` is Discord's subtext: small and grey, so the tag labels the message
+// without competing with it. Prepended in one place so every reply carries it.
+const stamp = (content) => (ctx.tag ? `-# ◈ ${ctx.tag}\n${content}` : content);
+
 function reply(res, content) {
-  return res.status(200).json({ type: REPLY, data: { content, flags: EPHEMERAL } });
+  return res.status(200).json({ type: REPLY, data: { content: stamp(content), flags: EPHEMERAL } });
 }
 const needsLink = (res) => reply(res,
   "I don't know who you are yet. Open VOLT → your account → **Connect Discord**. " +

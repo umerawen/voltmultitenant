@@ -8296,9 +8296,20 @@ function JoinGuideCard({ community, current }) {
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
       const c = body?.roleSynced;
-      if (body?.roleError) setErr(`Role: ${body.roleError}`);
-      else if (c) setRes(`Player role synced — ${c.added} added, ${c.removed} removed, ${c.kept} already had it.`);
-      else setRes("Player role is ready.");
+      // An endpoint that predates role support returns 200 and quietly ignores
+      // syncRole. Reporting that as success is worse than failing — the host
+      // walks away believing the role exists. Detect it by its absence.
+      if (!("roleId" in (body || {}))) {
+        setErr("The server is running an older version of /api/discord-notify — re-upload it to Vercel, then try again.");
+      } else if (body?.roleError) {
+        setErr(`Role: ${body.roleError}`);
+      } else if (!body?.roleId) {
+        setErr("Couldn't create the role. Give the bot Manage Roles in Server Settings → Roles.");
+      } else if (c) {
+        setRes(`Player role synced — ${c.added} added, ${c.removed} removed, ${c.kept} already had it.`);
+      } else {
+        setRes("Player role created. Nobody's approved for this tournament yet, so it's empty.");
+      }
     } catch (e) { setErr(e.message || "Couldn't sync."); }
     setBusy("");
   }

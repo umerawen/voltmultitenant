@@ -42,6 +42,11 @@ export default async function handler(req, res) {
       `/rest/v1/communities?id=eq.${ev.community_id}&select=discord_guild_id`);
     const guild = community?.discord_guild_id;
 
+    // Same tournament stamp the rest of the bot uses, so a team DM read later
+    // still says which tournament it was for.
+    const tag = ev.weekend_label || null;
+    const stamp = (t) => (tag ? `-# ◈ ${tag}\n${t}` : t);
+
     // The board is the source of truth for who ended up where.
     const key = encodeURIComponent(`volt-auction-v2::${eventId}`);
     const [row] = await sb(
@@ -93,7 +98,7 @@ export default async function handler(req, res) {
           (names.length ? `\nYour squad:\n${names.join("\n")}` : "\nNo squad yet.") +
           `\n\nUse \`/roster\` any time to see this again.`;
 
-        const r = await dm(token, did, msg);
+        const r = await dm(token, did, stamp(msg));
         if (r.ok) out.dmed++; else out.blocked++;
 
         if (roleId) {

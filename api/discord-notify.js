@@ -50,14 +50,26 @@ export default async function handler(req, res) {
   // `channelName` posts to a named channel instead of the announcements one,
   // creating it if it doesn't exist. That's how the signup guide gets its own
   // #sign-up-here without the host copying a channel ID by hand.
+  // `syncRole` recomputes who holds the league's player role and fixes the
+  // difference; `mentionRole` pings it on the channel post.
   const { communityId, message, userIds, announce, buttons, dmButtons, embed, pin,
-          channelName } = req.body || {};
-  if (!communityId || !message) return res.status(400).json({ error: "communityId and message are required" });
+          channelName, syncRole, mentionRole, roleName } = req.body || {};
+  if (!communityId) return res.status(400).json({ error: "communityId is required" });
+  // A role-only sync sends nothing, so it legitimately has no message.
+  if (!message && !syncRole) return res.status(400).json({ error: "message is required" });
 
   try {
     const [community] = await sb(
-      `/rest/v1/communities?id=eq.${communityId}&select=name,discord_channel_id,discord_guild_id`);
+      `/rest/v1/communities?id=eq.${communityId}` +
+      `&select=name,discord_channel_id,discord_guild_id,discord_role_id,discord_role_name`);
     if (!community) return res.status(404).json({ error: "league not found" });
+
+    // Stamp every outgoing message with the tournament it belongs to, so a DM
+    // read three days later still says what it was about. Resolved server-side
+    // from one DB function rather than passed in, so the bot and the app can't
+    // disagree about what the current tournament is called.
+    const tag = await rpcTag(community.discord_guild_id);
+    const stamp = (t) => (tag ? `-# ◈ ${tag}\n${t}` : t);
 
     // A browser caller must be staff of THIS league — not just any logged-in user.
     if (caller) {
@@ -87,10 +99,38 @@ export default async function handler(req, res) {
     const delivered = [];
     const blocked = [];
     for (const t of targets) {
-      const r = await dm(token, t.discordId, message, dmButtons ? buttonRow(buttons) : null);
+      const r = await dm(token, t.discordId, stamp(message), dmButtons ? buttonRow(buttons) : null);
       if (r.ok) delivered.push(t.userId);
       else blocked.push({ ...t, reason: r.reason });
       await sleep(250);           // stay well inside Discord's rate limits
+    }
+
+    // ── Player role ──────────────────────────────────────────────────────
+    // One role per league, membership re-synced per tournament. The desired
+    // membership is recomputed from the database every time rather than
+    // tracked incrementally, so a sync that failed while the bot was offline
+    // or missing a permission simply corrects itself on the next run.
+    let roleId = community.discord_role_id || null;
+    let roleSynced = null;
+    let roleError = null;
+    if ((syncRole || mentionRole) && community.discord_guild_id) {
+      const g = community.discord_guild_id;
+      const ensured = await ensureRole(token, g, roleId,
+        roleName || community.discord_role_name || "VOLT Player");
+      if (!ensured.ok) roleError = ensured.reason;
+      else {
+        if (ensured.id !== roleId) {
+          roleId = ensured.id;
+          await patchCommunity(communityId, { discord_role_id: roleId,
+            discord_role_name: ensured.name });
+        }
+        if (syncRole) {
+          const want = await rpc("volt_dc_role_members", { p_guild: g });
+          const r = await syncRoleMembers(token, g, roleId, want?.members || []);
+          roleSynced = r.counts;
+          if (r.reason) roleError = r.reason;
+        }
+      }
     }
 
     // Announcement, plus a mention fallback for anyone the DM couldn't reach.
@@ -120,7 +160,10 @@ export default async function handler(req, res) {
       }
     }
     if (channel && (announce || blocked.length)) {
-      let content = announce ? message : "";
+      let content = announce ? stamp(message) : "";
+      // The ping goes on its own first line so the message body reads cleanly
+      // whether or not a role is attached.
+      if (announce && mentionRole && roleId) content = `<@&${roleId}>\n${content}`;
       if (blocked.length) {
         const mentions = blocked.map((b) => `<@${b.discordId}>`).join(" ");
         content += (content ? "\n\n" : "") +
@@ -129,6 +172,13 @@ export default async function handler(req, res) {
       const payload = embed
         ? { embeds: [{ description: content.slice(0, 4000), color: 0x3d7bff }] }
         : { content: content.slice(0, 1900) };
+      // A mention inside an embed never notifies anyone, so when we're pinging
+      // the role it has to be hoisted into plain content above the embed.
+      if (embed && mentionRole && roleId) payload.content = `<@&${roleId}>`;
+      // Whitelist exactly what may be pinged. Without this a stray @everyone in
+      // a host's message would notify the whole server.
+      payload.allowed_mentions = { parse: [], roles: mentionRole && roleId ? [roleId] : [],
+                                   users: blocked.map((b) => b.discordId) };
       // Mention fallbacks have to sit outside the embed — Discord does not fire
       // a notification for a mention that only appears inside one.
       if (embed && blocked.length) payload.content = blocked.map((b) => `<@${b.discordId}>`).join(" ");
@@ -156,6 +206,9 @@ export default async function handler(req, res) {
       pinned,
       pinError,
       channelId,
+      roleId,
+      roleSynced,
+      roleError,
     });
   } catch (e) {
     console.error("notify failed", e);
@@ -215,6 +268,131 @@ async function put(token, path) {
     return { ok: false, reason };
   }
   return { ok: true };
+}
+
+// Find-or-create the league's player role. Prefers the stored ID so a host who
+// renames it in Discord keeps the same role; falls back to matching by name so
+// a role they made by hand gets adopted instead of duplicated.
+async function ensureRole(token, guild, storedId, wantName) {
+  const list = await get(token, `/guilds/${guild}/roles`);
+  const roles = Array.isArray(list.body) ? list.body : [];
+  if (storedId) {
+    const still = roles.find((r) => r.id === storedId);
+    if (still) return { ok: true, id: still.id, name: still.name };
+    // Deleted in Discord — fall through and make a new one.
+  }
+  const byName = roles.find((r) => r.name.toLowerCase() === String(wantName).toLowerCase());
+  if (byName) return { ok: true, id: byName.id, name: byName.name };
+
+  const made = await post(token, `/guilds/${guild}/roles`,
+    // mentionable so anyone can ping it, and hoisted so signed-up players are
+    // visible in the member list — that visibility is half the point.
+    { name: wantName, color: 0x3d7bff, mentionable: true, hoist: true });
+  if (!made.ok) {
+    return { ok: false, reason: made.reason === "Missing Permissions"
+      ? "the bot needs Manage Roles to create the player role" : made.reason };
+  }
+  return { ok: true, id: made.body.id, name: made.body.name };
+}
+
+// Diff the role's current holders against who should hold it, then apply only
+// the difference. Sending every member every time would burn rate limit on a
+// 60-player league and re-notify people who already had it.
+async function syncRoleMembers(token, guild, roleId, wantIds) {
+  const want = new Set((wantIds || []).filter(Boolean).map(String));
+  const counts = { added: 0, removed: 0, kept: 0 };
+  let reason = null;
+
+  // Paginate: /members caps at 1000 per page.
+  let after = "0", have = [];
+  for (let page = 0; page < 10; page++) {
+    const r = await get(token, `/guilds/${guild}/members?limit=1000&after=${after}`);
+    if (!r.ok) { return { counts, reason: "couldn't read the member list — enable the Server Members Intent for the bot" }; }
+    const batch = Array.isArray(r.body) ? r.body : [];
+    have = have.concat(batch);
+    if (batch.length < 1000) break;
+    after = batch[batch.length - 1]?.user?.id || after;
+  }
+
+  const holders = new Set(have.filter((m) => (m.roles || []).includes(roleId))
+                              .map((m) => m.user?.id).filter(Boolean));
+  for (const id of want) {
+    if (holders.has(id)) { counts.kept++; continue; }
+    const r = await put(token, `/guilds/${guild}/members/${id}/roles/${roleId}`);
+    if (r.ok) counts.added++; else if (!reason) reason = r.reason;
+    await sleep(250);
+  }
+  for (const id of holders) {
+    if (want.has(id)) continue;
+    const r = await del(token, `/guilds/${guild}/members/${id}/roles/${roleId}`);
+    if (r.ok) counts.removed++; else if (!reason) reason = r.reason;
+    await sleep(250);
+  }
+  return { counts, reason };
+}
+
+async function del(token, path) {
+  const r = await fetch(API + path, { method: "DELETE", headers: { Authorization: `Bot ${token}` } });
+  if (r.status === 429) {
+    const retry = Number(r.headers.get("retry-after") || 1);
+    await sleep(retry * 1000 + 250);
+    return del(token, path);
+  }
+  if (!r.ok) return { ok: false, reason: r.status === 403
+    ? "the bot's role must sit above the player role in Server Settings → Roles" : `http ${r.status}` };
+  return { ok: true };
+}
+
+// Write back the role we created, using the service key — the browser never
+// touches this, so a client can't point a league at an arbitrary role.
+async function patchCommunity(id, patch) {
+  try {
+    await fetch(`${process.env.SUPABASE_URL}/rest/v1/communities?id=eq.${id}`, {
+      method: "PATCH",
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json", Prefer: "return=minimal",
+      },
+      body: JSON.stringify(patch),
+    });
+  } catch (e) { console.error("save role", e); }
+}
+
+// Generic RPC helper, same shape as the tag lookup.
+async function rpc(fn, args) {
+  try {
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(args),
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { console.error("rpc", fn, e); return null; }
+}
+
+// Same tag the bot's slash commands use, via the same DB function.
+async function rpcTag(guild) {
+  if (!guild) return null;
+  try {
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/volt_dc_tag`, {
+      method: "POST",
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_guild: guild }),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j?.tag ? String(j.tag) : null;
+  } catch (e) { console.error("tag lookup", e); return null; }
 }
 
 async function get(token, path) {
