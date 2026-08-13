@@ -33,6 +33,8 @@ const COMMON = [
     topic: "Match results as they come in. Posted automatically." },
   { ref: "standings", name: "standings",  type: 0, readOnly: true,
     topic: "The season race. Updated after every match." },
+  { ref: "fixtures",  name: "fixtures",   type: 0, readOnly: true,
+    topic: "Who plays who, and when. Updated whenever the schedule changes." },
   { ref: "general",   name: "trash-talk", type: 0, readOnly: false,
     topic: "Say something you'll regret." },
   { ref: "stage",     name: "Draft Stage", type: 2 },
@@ -69,6 +71,7 @@ export default async function handler(req, res) {
     if (mode === "teams")     return res.status(200).json(await buildTeams(ctx));
     if (mode === "results")   return res.status(200).json(await postResult(ctx, payload));
     if (mode === "standings") return res.status(200).json(await postStandings(ctx));
+    if (mode === "fixtures")  return res.status(200).json(await postFixtures(ctx));
     return res.status(400).json({ error: `unknown mode ${mode}` });
   } catch (e) {
     console.error("arena failed", e);
@@ -171,6 +174,56 @@ async function postResult(ctx, payload) {
     { embeds: [embed], allowed_mentions: { parse: [] } });
   if (!r.ok) throw new Error(`Couldn't post the result — ${r.reason}`);
   return { ok: true };
+}
+
+// Like standings, this edits one message rather than posting a new one. A
+// fixtures channel that grows by a post per reschedule is a changelog, not a
+// schedule — players need the current answer at a glance, not its history.
+async function postFixtures(ctx) {
+  const ch = await lookup(ctx, "text", "fixtures");
+  if (!ch) throw new Error("Run “Set up channels” first — there's no #fixtures channel yet.");
+  const f = await rpc("volt_dc_fixtures", { p_event: ctx.eventId });
+  if (f?.error === "noboard") throw new Error("There's no draft board yet.");
+  if (f?.error === "nofixtures") throw new Error("No fixtures have been built yet — set the format and lock the schedule first.");
+  const list = f.matches || [];
+  if (!list.length) throw new Error("The schedule is empty.");
+
+  const rounds = {};
+  for (const m of list) (rounds[m.round || 1] ||= []).push(m);
+
+  const body = Object.keys(rounds).sort((a, b) => a - b).map((r) => {
+    const head = f.format === "single" ? `**Round ${r}**` : `**Matchday ${r}**`;
+    const lines = rounds[r].map((m) => {
+      // <t:unix:f> renders in each reader's own timezone, which is the whole
+      // reason for posting this in Discord rather than linking to the site.
+      const when = m.at ? `<t:${Math.floor(new Date(m.at).getTime() / 1000)}:f>` : "_time TBA_";
+      if (m.done) {
+        return `~~${m.a} vs ${m.b}~~ — **${m.winner || "done"}** won`;
+      }
+      return `**${m.a}** vs **${m.b}** · ${when}${m.bo ? ` · Bo${m.bo}` : ""}`;
+    });
+    return `${head}
+${lines.join("
+")}`;
+  }).join("
+
+");
+
+  const embed = { title: "Fixtures", color: 0x3d7bff,
+    description: body.slice(0, 4000),
+    footer: { text: f.tag || ctx.ev.weekend_label || "" },
+    timestamp: new Date().toISOString() };
+
+  const prior = await lookup(ctx, "message", "fixtures");
+  if (prior) {
+    const upd = await call(ctx.token, `/channels/${ch}/messages/${prior}`, "PATCH", { embeds: [embed] });
+    if (upd.ok) return { ok: true, edited: true, matches: list.length };
+    // Deleted by hand — fall through and post a fresh one.
+  }
+  const r = await call(ctx.token, `/channels/${ch}/messages`, "POST", { embeds: [embed] });
+  if (!r.ok) throw new Error(`Couldn't post fixtures — ${r.reason}`);
+  await remember(ctx, "message", "fixtures", r.body.id, false, { channel: ch });
+  return { ok: true, edited: false, matches: list.length };
 }
 
 async function postStandings(ctx) {

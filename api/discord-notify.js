@@ -53,7 +53,7 @@ export default async function handler(req, res) {
   // `syncRole` recomputes who holds the league's player role and fixes the
   // difference; `mentionRole` pings it on the channel post.
   const { communityId, message, userIds, announce, buttons, dmButtons, embed, pin,
-          channelName, syncRole, mentionRole, roleName } = req.body || {};
+          channelName, syncRole, mentionRole, roleName, buttonUrl } = req.body || {};
   if (!communityId) return res.status(400).json({ error: "communityId is required" });
   // A role-only sync sends nothing, so it legitimately has no message.
   if (!message && !syncRole) return res.status(400).json({ error: "message is required" });
@@ -99,7 +99,7 @@ export default async function handler(req, res) {
     const delivered = [];
     const blocked = [];
     for (const t of targets) {
-      const r = await dm(token, t.discordId, stamp(message), dmButtons ? buttonRow(buttons) : null);
+      const r = await dm(token, t.discordId, stamp(message), dmButtons ? buttonRow(buttons, buttonUrl) : null);
       if (r.ok) delivered.push(t.userId);
       else blocked.push({ ...t, reason: r.reason });
       await sleep(250);           // stay well inside Discord's rate limits
@@ -188,7 +188,7 @@ export default async function handler(req, res) {
       // Mention fallbacks have to sit outside the embed — Discord does not fire
       // a notification for a mention that only appears inside one.
       if (embed && blocked.length) payload.content = blocked.map((b) => `<@${b.discordId}>`).join(" ");
-      const row = buttonRow(buttons);
+      const row = buttonRow(buttons, buttonUrl);
       if (row) payload.components = row;
       const r = await post(token, `/channels/${channel}/messages`, payload);
       announced = r.ok;
@@ -234,7 +234,7 @@ async function dm(token, discordId, content, components) {
 
 // Button sets the bot knows how to send. custom_id has to match the handler in
 // discord-interactions.js.
-function buttonRow(kind) {
+function buttonRow(kind, url) {
   if (kind === "register") return [{ type: 1, components: [
     { type: 2, style: 1, label: "Register", custom_id: "volt_register" },
     { type: 2, style: 2, label: "Register + captain", custom_id: "volt_register_captain" },
@@ -253,10 +253,20 @@ function buttonRow(kind) {
       { type: 2, style: 3, label: "I can sub", custom_id: `volt_sub_yes:${id}` },
     ] }];
   }
-  if (kind === "welcome") return [{ type: 1, components: [
-    { type: 2, style: 1, label: "Sign up for this tournament", custom_id: "volt_register" },
-    { type: 2, style: 2, label: "Sign up + captain", custom_id: "volt_register_captain" },
-  ] }];
+  // The welcome row leads with a LINK button (style 5). Link buttons open a URL
+  // without firing an interaction, so a newcomer — who is the person most likely
+  // to tap the first thing they see — lands on the sign-up page instead of an
+  // error telling them the bot doesn't know who they are.
+  //
+  // The one-tap register stays, but second and explicitly labelled for people
+  // who already have an account.
+  if (kind === "welcome") {
+    const row = [];
+    if (url) row.push({ type: 2, style: 5, label: "Create your account →", url });
+    row.push({ type: 2, style: 1, label: "Already signed up? Add me", custom_id: "volt_register" });
+    row.push({ type: 2, style: 2, label: "…and I'll captain", custom_id: "volt_register_captain" });
+    return [{ type: 1, components: row }];
+  }
   return null;
 }
 

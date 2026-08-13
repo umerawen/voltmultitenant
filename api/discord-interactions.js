@@ -12,7 +12,7 @@ import crypto from "node:crypto";
 export const config = { api: { bodyParser: false } };   // raw body needed for the signature
 
 const PING = 1, APP_COMMAND = 2, COMPONENT = 3, AUTOCOMPLETE = 4;
-const REPLY = 4, AUTOCOMPLETE_RESULT = 8;
+const REPLY = 4, DEFERRED = 5, AUTOCOMPLETE_RESULT = 8;
 const EPHEMERAL = 64;                                    // only the clicker sees it
 
 export default async function handler(req, res) {
@@ -29,33 +29,59 @@ export default async function handler(req, res) {
   const discordId = body.member?.user?.id || body.user?.id;
   const guild = body.guild_id;
 
+  // Autocomplete is the one thing that can't be deferred — Discord wants the
+  // choices in the immediate response — but it's also a single fast query.
+  if (body.type === AUTOCOMPLETE) {
+    try { return await onAutocomplete(res, body, guild); }
+    catch (e) { console.error("autocomplete", e);
+      return res.status(200).json({ type: AUTOCOMPLETE_RESULT, data: { choices: [] } }); }
+  }
+
+  // ── Everything else is DEFERRED ────────────────────────────────────────
+  // Discord gives an endpoint 3 seconds to acknowledge an interaction, and
+  // shows "This interaction failed" if it misses. A Vercel cold start plus two
+  // Supabase round trips can exceed that, which made the sign-up button look
+  // broken even when the registration succeeded — the work completed, the
+  // acknowledgement just arrived too late to count.
+  //
+  // Answering with type 5 acknowledges instantly and buys a 15-minute window to
+  // send the real message, so the reply can never race the timeout again.
+  const isPublic = body.type === APP_COMMAND && body.data?.name === "rollcall";
+  res.status(200).json({ type: DEFERRED, data: isPublic ? {} : { flags: EPHEMERAL } });
+
+  const out = { content: null };
   try {
-    // The app and the bot are the same Vercel deployment, so the host header is
-    // the app's own origin — no extra env var to keep in sync.
     const origin = `https://${req.headers.host}`;
-    // Autocomplete has no message to tag, so don't pay for the lookup.
-    if (body.type === AUTOCOMPLETE) return await onAutocomplete(res, body, guild);
-    // One lookup per interaction, stashed for reply() to pick up. A DM has no
-    // guild, so there's nothing to resolve and messages go out untagged.
-    ctx.tag = guild ? await tagFor(guild) : null;
-    if (body.type === COMPONENT) return await onButton(res, body.data?.custom_id, guild, discordId, origin);
-    if (body.type === APP_COMMAND) return await onCommand(res, body, guild, discordId);
-    return res.status(200).json({ type: 1 });
+    // Fetched alongside the handler rather than before it: the tag is only
+    // decoration, and it shouldn't add latency to the work that matters.
+    const tagP = guild ? tagFor(guild) : Promise.resolve(null);
+    if (body.type === COMPONENT) await onButton(out, body.data?.custom_id, guild, discordId, origin);
+    else if (body.type === APP_COMMAND) await onCommand(out, body, guild, discordId);
+    ctx.tag = await tagP;
   } catch (e) {
     console.error("interaction failed", e);
-    return reply(res, "Something went wrong. Try again in a moment.");
+    out.content = "Something went wrong. Try again in a moment.";
   }
+  // Follow up on the deferred response. The interaction token is valid for 15
+  // minutes and needs no bot token of its own.
+  try {
+    await fetch(`https://discord.com/api/v10/webhooks/${body.application_id}/${body.token}/messages/@original`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: stamp(out.content || "Done.").slice(0, 1900) }),
+    });
+  } catch (e) { console.error("followup failed", e); }
 }
 
 /* ── slash commands ──────────────────────────────────────────────────────── */
 
-async function onCommand(res, body, guild, discordId) {
+async function onCommand(out, body, guild, discordId) {
   const name = body.data?.name;
   const opt = (k) => body.data?.options?.find((o) => o.name === k)?.value;
 
   if (name === "link") {
     const code = String(opt("code") || "").trim();
-    if (!code) return reply(res, "Add the code from VOLT: `/link code:ABC123`");
+    if (!code) return reply(out, "Add the code from VOLT: `/link code:ABC123`");
     // Pass the Discord username through so captains see the right handle on the
     // scouting card. The OAuth flow already does this; without it, anyone who
     // links by code shows as "Discord not connected" even though they are.
@@ -64,31 +90,31 @@ async function onCommand(res, body, guild, discordId) {
       p_discord_id: discordId,
       p_handle: body.member?.user?.username || body.user?.username || null,
     });
-    if (r?.ok) return reply(res,
+    if (r?.ok) return reply(out,
       `Linked. You're **${r.name}** in **${r.league}** — I'll message you about drafts and matches.`);
-    return reply(res,
+    return reply(out,
       "That code didn't work — they expire after 15 minutes. Open VOLT → your account → " +
       "**Connect Discord** for a fresh one, or just use the one-click button there instead.");
   }
 
   // These read a league from the server they're run in, so they can't work in a DM.
   if (!guild && ["status", "leaderboard", "subs", "scout"].includes(name)) {
-    return reply(res, "Run that one in your league's Discord server — I can't tell which league you mean from a DM.");
+    return reply(out, "Run that one in your league's Discord server — I can't tell which league you mean from a DM.");
   }
 
   if (name === "status") {
     const s = await rpc("volt_discord_status", { p_guild: guild || null });
-    if (s?.error) return reply(res, s.error);
-    if (!s?.weekend) return reply(res, "No weekend is open right now.");
-    return reply(res,
+    if (s?.error) return reply(out, s.error);
+    if (!s?.weekend) return reply(out, "No weekend is open right now.");
+    return reply(out,
       `**${s.weekend}** — ${s.phase.replace(/_/g, " ")}\n` +
       `Registered: **${s.approved}** · Awaiting review: **${s.pending}**`);
   }
 
   if (name === "me") {
     const m = await rpc("volt_dc_me", { p_guild: guild || null, p_discord_id: discordId });
-    if (m?.error === "link") return needsLink(res);
-    return reply(res,
+    if (m?.error === "link") return needsLink(out);
+    return reply(out,
       `**${m.name}** · ${m.rank} · ${m.role}${m.agent && m.agent !== "—" ? ` (${m.agent})` : ""}\n` +
       `KDA ${num(m.kda)} · ACS ${num(m.acs, 0)} · HS ${num(m.hs, 0)}%\n` +
       `Season: **${num(m.points, 0)}** points from ${m.matches} match${m.matches === 1 ? "" : "es"}` +
@@ -97,12 +123,12 @@ async function onCommand(res, body, guild, discordId) {
 
   if (name === "roster") {
     const r = await rpc("volt_dc_roster", { p_guild: guild || null, p_discord_id: discordId });
-    if (r?.error === "link") return needsLink(res);
-    if (r?.error === "noweekend") return reply(res, "No weekend is running.");
-    if (r?.error === "noboard") return reply(res, "The draft hasn't been built yet.");
-    if (r?.error === "undrafted") return reply(res, "You're not on a team this weekend — you can still be subbed in.");
+    if (r?.error === "link") return needsLink(out);
+    if (r?.error === "noweekend") return reply(out, "No weekend is running.");
+    if (r?.error === "noboard") return reply(out, "The draft hasn't been built yet.");
+    if (r?.error === "undrafted") return reply(out, "You're not on a team this weekend — you can still be subbed in.");
     const mates = (r.mates || []).map((p) => `• ${p.name} — ${p.rank}${p.role ? ` · ${p.role}` : ""}`).join("\n");
-    return reply(res,
+    return reply(out,
       `**${r.team}**${r.youAreCaptain ? " — you're the captain" : `\nCaptain: ${r.captain}`}\n` +
       (mates || "_No players drafted yet._") +
       (r.budget ? `\n\nBudget left: $${Number(r.budget).toLocaleString()}` : ""));
@@ -110,46 +136,46 @@ async function onCommand(res, body, guild, discordId) {
 
   if (name === "leaderboard") {
     const rows = await rpc("volt_dc_leaderboard", { p_guild: guild || null });
-    if (rows?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
-    if (!rows?.length) return reply(res, "No points banked yet this season.");
+    if (rows?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
+    if (!rows?.length) return reply(out, "No points banked yet this season.");
     const medal = ["🥇", "🥈", "🥉"];
-    return reply(res, "**Season leaderboard**\n" + rows.map((r, i) =>
+    return reply(out, "**Season leaderboard**\n" + rows.map((r, i) =>
       `${medal[i] || `${i + 1}.`} **${r.name}** — ${num(r.pts, 0)} pts (${r.played})`).join("\n"));
   }
 
   if (name === "subs") {
     const rows = await rpc("volt_dc_subs", { p_guild: guild || null });
-    if (rows?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
-    if (rows?.error === "noweekend") return reply(res, "No weekend is running.");
-    if (!rows?.length) return reply(res, "Nobody is on the reserve list right now.");
-    return reply(res, "**Available to sub in**\n" + rows.map((r) =>
+    if (rows?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
+    if (rows?.error === "noweekend") return reply(out, "No weekend is running.");
+    if (!rows?.length) return reply(out, "Nobody is on the reserve list right now.");
+    return reply(out, "**Available to sub in**\n" + rows.map((r) =>
       `• **${r.name}** — ${r.rank}${r.discord ? ` · <@${r.discord}>` : ""}`).join("\n"));
   }
 
   if (name === "rollcall") {
     const r = await rpc("volt_dc_rollcall", { p_guild: guild });
-    if (r?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
-    if (r?.error === "noweekend") return reply(res, "No weekend is running.");
+    if (r?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
+    if (r?.error === "noweekend") return reply(out, "No weekend is running.");
     const missing = r?.missing || [];
-    if (!missing.length) return reply(res, "Everyone registered has connected Discord. Nothing to chase.");
+    if (!missing.length) return reply(out, "Everyone registered has connected Discord. Nothing to chase.");
     // Public on purpose — the point is that the named players actually see it.
-    return res.status(200).json({ type: REPLY, data: { content: stamp(
+    return reply(out,
       `**${missing.length} player${missing.length === 1 ? " hasn't" : "s haven't"} connected Discord yet**\n` +
       missing.map((m) => m.discord ? `<@${m.discord}>` : `**${m.name}**`).join(" ") +
-      `\n\nOpen VOLT → your account → **Connect Discord**. Without it you won't get draft reminders or your team DM.`) } });
+      `\n\nOpen VOLT → your account → **Connect Discord**. Without it you won't get draft reminders or your team DM.`);
   }
 
   if (name === "scout") {
     const who = String(opt("player") || "").trim();
-    if (!who) return reply(res, "Give me a name: `/scout player:Rumer`");
+    if (!who) return reply(out, "Give me a name: `/scout player:Rumer`");
     const p = await rpc("volt_dc_scout", { p_guild: guild || null, p_name: who });
-    if (p?.error === "unlinked") return reply(res, "This server isn't linked to a VOLT league yet.");
-    if (p?.error === "notfound") return reply(res, `No player called **${who}** in this league.`);
+    if (p?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
+    if (p?.error === "notfound") return reply(out, `No player called **${who}** in this league.`);
     const flags = [];
     if (p.suspended > 0) flags.push(`⛔ suspended for ${p.suspended} more weekend${p.suspended === 1 ? "" : "s"}`);
     if (p.strikes > 0) flags.push(`⚠ ${p.strikes} no-show${p.strikes === 1 ? "" : "s"}`);
     if (p.streak > 0) flags.push(`🏆 ${p.streak} weekend streak`);
-    return reply(res,
+    return reply(out,
       `**${p.name}** · ${p.rank} · ${p.role}${p.agent && p.agent !== "—" ? ` (${p.agent})` : ""}\n` +
       `KDA ${num(p.kda)} · ACS ${num(p.acs, 0)} · HS ${num(p.hs, 0)}%\n` +
       `Season: **${num(p.points, 0)}** points from ${p.matches} match${p.matches === 1 ? "" : "es"}` +
@@ -159,7 +185,7 @@ async function onCommand(res, body, guild, discordId) {
       (flags.length ? `\n${flags.join(" · ")}` : ""));
   }
 
-  return reply(res, "Unknown command.");
+  return reply(out, "Unknown command.");
 }
 
 /* ── autocomplete ────────────────────────────────────────────────────────── */
@@ -178,7 +204,7 @@ async function onAutocomplete(res, body, guild) {
 
 /* ── buttons ─────────────────────────────────────────────────────────────── */
 
-async function onButton(res, customId, guild, discordId, origin) {
+async function onButton(out, customId, guild, discordId, origin) {
   // The whole point: registering is one tap, with no link to follow and nothing
   // to log into. Every failure says exactly what to do next.
   if (customId === "volt_register" || customId === "volt_register_captain") {
@@ -192,32 +218,36 @@ async function onButton(res, customId, guild, discordId, origin) {
     // ephemeral, so the channel stays clean however many people tap it.
     if (r?.error === "link") {
       const j = joinUrl(origin, r.league);
-      return reply(res,
+      return reply(out,
         `**Welcome!** You're not in ${r.league?.name || "the league"} yet — it takes about a minute.\n\n` +
         `**1.** Sign up here: ${j}\n` +
         `**2.** Fill in your rank, role and a WhatsApp number.\n` +
         `**3.** Press **Connect Discord** on your profile.\n\n` +
         `Then come back and tap the button again — it'll put you straight in the pool.`);
     }
-    if (r?.error === "closed") return reply(res, "Registration isn't open right now. I'll post here when it is.");
-    if (r?.error === "already") return reply(res, "You're already signed up for this one. Nothing else to do.");
-    if (r?.error === "suspended") return reply(res, `You're suspended for ${r.n} more tournament${r.n === 1 ? "" : "s"}.`);
+    if (r?.error === "closed") return reply(out,
+      "There's no tournament open for sign-ups at the moment. I'll post in here the moment there is.");
+    if (r?.error === "already") return reply(out,
+      "✅ **You're already in — nothing more to do.**\n" +
+      "You signed up on the site, so I've got you. I'll DM you the day before the draft to check " +
+      "you're still free, and again when the draft is about to start.");
+    if (r?.error === "suspended") return reply(out, `You're suspended for ${r.n} more tournament${r.n === 1 ? "" : "s"}.`);
     if (r?.error === "profile") {
       const miss = (r.missing || []).join(", ") || "a few details";
-      return reply(res,
+      return reply(out,
         `Almost — your profile still needs **${miss}**.\n\n` +
         `Finish it here: ${joinUrl(origin, r.league)}\n` +
         `Captains see your profile when they bid, so this is what gets you a fair price.\n\n` +
         `Then tap the button again.`);
     }
-    if (!r?.ok) return reply(res, "Couldn't sign you up. Try again in a moment.");
+    if (!r?.ok) return reply(out, "Couldn't sign you up. Try again in a moment.");
 
     // Grant the player role immediately rather than waiting for the host's
     // next sync — someone who just signed up should be pingable now, and show
     // up in the member list as playing.
     await setPlayerRole(guild, discordId, true);
 
-    return reply(res,
+    return reply(out,
       (r.status === "approved"
         ? `You're in for **${r.weekend}**. I'll DM you the day before to check you're still free, and again when the draft is about to start.`
         : `Application sent for **${r.weekend}** — the host will review it shortly, and I'll let you know either way.`) +
@@ -226,23 +256,23 @@ async function onButton(res, customId, guild, discordId, origin) {
   }
   if (customId === "volt_confirm") {
     const r = await rpc("volt_dc_confirm", { p_guild: guild || null, p_discord_id: discordId });
-    if (r?.error === "link") return needsLink(res);
-    if (r?.error === "noweekend") return reply(res, "No weekend is running.");
-    if (r?.error === "notin") return reply(res, "You're not signed up for this weekend.");
-    return reply(res, `Thanks — you're confirmed for **${r.weekend}**. See you at the draft.`);
+    if (r?.error === "link") return needsLink(out);
+    if (r?.error === "noweekend") return reply(out, "No weekend is running.");
+    if (r?.error === "notin") return reply(out, "You're not signed up for this weekend.");
+    return reply(out, `Thanks — you're confirmed for **${r.weekend}**. See you at the draft.`);
   }
 
   if (customId === "volt_withdraw") {
     const r = await rpc("volt_dc_withdraw", { p_guild: guild || null, p_discord_id: discordId });
-    if (r?.error === "link") return needsLink(res);
-    if (r?.error === "noweekend") return reply(res, "No weekend is running.");
-    if (r?.error === "notin") return reply(res, "You weren't signed up for this weekend.");
-    if (r?.error === "toolate") return reply(res,
+    if (r?.error === "link") return needsLink(out);
+    if (r?.error === "noweekend") return reply(out, "No weekend is running.");
+    if (r?.error === "notin") return reply(out, "You weren't signed up for this weekend.");
+    if (r?.error === "toolate") return reply(out,
       "The draft has already started, so I can't pull you out from here — message your host directly.");
     // Pulling out drops the role too, so the next ping doesn't reach someone
     // who already said they can't make it.
     await setPlayerRole(guild, discordId, false);
-    return reply(res,
+    return reply(out,
       `Thanks for telling us — you're out of the draft for **${r.weekend}**. No strike.\n` +
       `You're on the reserve list, so if you free up you can still be subbed into a match. ` +
       `Changed your mind? Tick "I'm available" again in VOLT.`);
@@ -254,20 +284,20 @@ async function onButton(res, customId, guild, discordId, origin) {
     const reqId = customId.slice("volt_sub_yes:".length);
     const u = await rpc("volt_dc_user", { p_guild: guild || null, p_discord_id: discordId });
     const uid = Array.isArray(u) ? u[0]?.user_id : u?.user_id;
-    if (!uid) return needsLink(res);
+    if (!uid) return needsLink(out);
     const r = await rpc("volt_sub_offer", { p_request: reqId, p_user: uid });
-    if (r?.error === "gone") return reply(res, "That request no longer exists.");
-    if (r?.error === "closed") return reply(res, "Too late — that spot has already been filled.");
-    if (r?.error === "ineligible") return reply(res,
+    if (r?.error === "gone") return reply(out, "That request no longer exists.");
+    if (r?.error === "closed") return reply(out, "Too late — that spot has already been filled.");
+    if (r?.error === "ineligible") return reply(out,
       "You're not eligible for this one. Subs have to be a lower rank than the player they're covering, " +
       "so the team can't come out stronger than it went in.");
-    if (!r?.ok) return reply(res, "Couldn't record that. Try again in a moment.");
-    return reply(res,
+    if (!r?.ok) return reply(out, "Couldn't record that. Try again in a moment.");
+    return reply(out,
       `Thanks — **${r.team}** knows you're available to cover for **${r.out}**.\n` +
       `The captain picks from everyone who offered, so hold tight. I'll message you either way.`);
   }
 
-  return reply(res, "That button isn't recognised.");
+  return reply(out, "That button isn't recognised.");
 }
 
 /* ── plumbing ────────────────────────────────────────────────────────────── */
@@ -307,10 +337,14 @@ async function tagFor(guild) {
 // without competing with it. Prepended in one place so every reply carries it.
 const stamp = (content) => (ctx.tag ? `-# ◈ ${ctx.tag}\n${content}` : content);
 
-function reply(res, content) {
-  return res.status(200).json({ type: REPLY, data: { content: stamp(content), flags: EPHEMERAL } });
+// Records the reply rather than sending it. The deferred flow above does the
+// sending, which means every existing `return reply(...)` call site keeps
+// working with no change.
+function reply(out, content) {
+  if (out && typeof out === "object") out.content = content;
+  return out;
 }
-const needsLink = (res) => reply(res,
+const needsLink = (out) => reply(out,
   "I don't know who you are yet. Open VOLT → your account → **Connect Discord**. " +
   "It's one click — no code to type.");
 // Deep link that pre-fills the join code, so nobody has to copy it between apps.

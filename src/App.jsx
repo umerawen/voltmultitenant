@@ -8243,12 +8243,12 @@ function buildJoinGuide({ community, current, connected, origin }) {
 
   if (connected) {
     add("## Played with us before?", "");
-    add("Tap the button below. That's it — you're in the pool.", "");
+    add("Hit **Already signed up? Add me** below. That's it — you're in the pool.", "");
   }
 
   add("## First time here?", "");
   add(`**1. Make your account** — ${link}`);
-  add("> The join code is already filled in. Takes about a minute.");
+  add("> Or use the button below. The join code is already filled in.");
   add("**2. Fill in your profile** — your rank, your role, and a WhatsApp number.");
   add("> Quickest way: paste a screenshot of your tracker.gg Competitive page and it reads your stats for you.");
   add("> Your number is only ever seen by the host and mods, and only if a match is falling apart.");
@@ -8256,7 +8256,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
     add("**3. Press Connect Discord** on your profile.");
     add("> One click, no code to type. It's how you hear when the draft starts and which team picked you.");
     add("");
-    add("Then tap the button below. If you get stuck, tap it anyway — it'll tell you what's missing.");
+    add("Then hit **Already signed up? Add me**. If something's missing it'll say exactly what.");
   } else {
     add("**3. Flip “I'm playing this tournament”** on the site.");
     add("> ⚠ This league hasn't connected its Discord server yet, so sign-ups happen on the site for now.");
@@ -8358,6 +8358,9 @@ function JoinGuideCard({ community, current }) {
         // people come back to would be spam.
         body: JSON.stringify({ communityId: community?.id, message: text,
                                userIds: [], announce: true, buttons: "welcome",
+                               // Powers the link button, so a newcomer's first tap
+                               // opens the sign-up page instead of erroring.
+                               buttonUrl: `${origin}/?join=${community?.slug || ""}`,
                                embed: text.length > 1900,
                                // A dedicated channel holds this one post, so there's
                                // nothing for a pin to lift it above. Announcements
@@ -8479,6 +8482,8 @@ function DiscordArenaCard({ eventId, phase }) {
         setMsg(`${b.teams} teams — ${made} things created, ${kept} already there, ${b.assigned} players given their role.`);
       } else if (mode === "standings") {
         setMsg(b.edited ? "Standings updated in place." : "Standings posted.");
+      } else if (mode === "fixtures") {
+        setMsg(`${b.matches} fixtures ${b.edited ? "updated in place" : "posted"}.`);
       } else {
         setMsg(`${made} created, ${kept} already there.`);
       }
@@ -8506,6 +8511,7 @@ function DiscordArenaCard({ eventId, phase }) {
           <B mode="teams" label="◈ Build team rooms" on={drafted} kind={drafted ? "primary" : "ghost"}
              tip={drafted ? "A role, a private text room and a private voice room per team"
                           : "Available once the auction has run"} />
+          <B mode="fixtures" label="🗓 Post fixtures" tip="Who plays who and when, in everyone's own timezone" />
           <B mode="standings" label="⟳ Post standings" />
         </div>
         <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 11, lineHeight: 1.65 }}>
@@ -8513,6 +8519,8 @@ function DiscordArenaCard({ eventId, phase }) {
           depends on the draft. <b style={{ color: "rgba(200,215,255,0.7)" }}>Build team rooms</b> gives each
           team a role, a private text channel and its own voice room, visible only to that team and staff.
           Both are safe to re-run: existing channels are reused, never duplicated.
+          Post fixtures once the schedule is locked — re-run it after any reschedule and it edits
+          the same message rather than posting a second one.
         </div>
         {msg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {msg}</div>}
         {warn && <div style={{ fontSize: 11.5, color: "rgba(245,196,83,0.9)", marginTop: 8 }}>⚠ {warn}</div>}
@@ -10544,6 +10552,9 @@ async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
       players,
     });
     await send("standings", null);
+    // Fixtures carry a done/winner state, so a banked result makes the posted
+    // schedule wrong until it's refreshed. Same message, edited in place.
+    await send("fixtures", null);
   } catch (e) { console.error("discord result post", e); }
 }
 
