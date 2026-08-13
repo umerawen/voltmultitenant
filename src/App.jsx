@@ -7934,8 +7934,21 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
   // Where it lands. A draft reminder wants DMs; "sign-ups are open" wants the
   // channel, where people who aren't in the league yet can still see it.
   const [deliver, setDeliver] = useState("both");
+  // Pinging is opt-in per message. A role ping notifies everyone holding it, so
+  // defaulting it on would train people to mute the channel.
+  const [ping, setPing] = useState(false);
+  const [role, setRole] = useState(null);      // { id, name } once known
   const sendsDM = deliver !== "channel";
   const sendsChannel = deliver !== "dm";
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await __sb.rpc("volt_get_discord");
+        setRole({ id: data?.roleId || null, name: data?.roleName || "VOLT Player" });
+      } catch (e) { console.error("role lookup", e); }
+    })();
+  }, []);
   const regOpen = phase === "registration_open";
   const SCOPES = regOpen
     ? [["approved", "Already signed up"], ["unregistered", "Not signed up yet"], ["all", "Whole league"]]
@@ -7994,12 +8007,19 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
                                userIds: sendsDM ? (t?.userIds || []) : [],
                                announce: sendsChannel,
                                buttons: reply === "none" ? undefined : reply,
-                               dmButtons: reply === "none" || !sendsDM ? undefined : true }),
+                               dmButtons: reply === "none" || !sendsDM ? undefined : true,
+                               // Always re-sync when pinging: a stale role would
+                               // notify people who withdrew and miss people who
+                               // just joined, which is worse than not pinging.
+                               mentionRole: ping && sendsChannel,
+                               syncRole: ping && sendsChannel,
+                               roleName: role?.name || undefined }),
       });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
       // Stamp the event so "Who we can reach" starts counting replies. Without
       // this the card never appears no matter how many people answer.
+      if (body?.roleId && !role?.id) setRole((r) => ({ ...(r || {}), id: body.roleId }));
       if (reply === "availability" && sendsDM) {
         try { await __sb.rpc("volt_availability_mark_asked", { p_event: eventId }); }
         catch (e) { console.error("mark asked", e); }
@@ -8056,6 +8076,18 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
             Nobody is DM'd — it goes to everyone who can see your announcements channel, in the league or not.
           </div>
         )}
+        {sendsChannel && (
+          <label style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", marginTop: 10, flexWrap: "wrap" }}>
+            <input type="checkbox" checked={ping} onChange={(e) => setPing(e.target.checked)} />
+            <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.7)" }}>
+              Ping <b style={{ color: "#cfe0ff" }}>@{role?.name || "VOLT Player"}</b> on the channel post
+            </span>
+            <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)" }}>
+              {role?.id ? "Members are re-synced to whoever's approved before it sends."
+                        : "The bot will create the role the first time you use this."}
+            </span>
+          </label>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
           <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>Let them reply with</span>
           {REPLIES.map((r) => {
@@ -8107,6 +8139,12 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
             {result.announced && <span style={{ color: "rgba(200,215,255,0.5)" }}> · posted to the channel</span>}
             {result.blocked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.blocked.length} have DMs closed — they were @mentioned in the channel instead.</div>}
             {result.unlinked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.unlinked.length} haven't connected Discord yet — they got nothing.</div>}
+            {result.roleSynced && (result.roleSynced.added || result.roleSynced.removed) > 0 && (
+              <div style={{ color: "rgba(200,215,255,0.5)" }}>
+                Role updated — {result.roleSynced.added} added, {result.roleSynced.removed} removed.
+              </div>
+            )}
+            {result.roleError && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Role: {result.roleError}</div>}
             {!result.announced && !result.delivered && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Nothing was delivered. Check your announcements channel is set under Discord server.</div>}
           </div>
         )}
@@ -8240,6 +8278,31 @@ function JoinGuideCard({ community, current }) {
 
   const text = buildJoinGuide({ community, current, connected: !!connected, origin });
 
+  // Fix the role without sending anything. Useful after approving a batch of
+  // applications, or the first time — it's what creates the role.
+  async function syncRole() {
+    setBusy("role"); setErr(""); setRes("");
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        // announce:false and no userIds — nothing is sent, this is roles only.
+        body: JSON.stringify({ communityId: community?.id, message: "(role sync)",
+                               userIds: [], announce: false, syncRole: true }),
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
+      const c = body?.roleSynced;
+      if (body?.roleError) setErr(`Role: ${body.roleError}`);
+      else if (c) setRes(`Player role synced — ${c.added} added, ${c.removed} removed, ${c.kept} already had it.`);
+      else setRes("Player role is ready.");
+    } catch (e) { setErr(e.message || "Couldn't sync."); }
+    setBusy("");
+  }
+
   // `where` is either the announcements channel the host already set, or a
   // dedicated #sign-up-here the bot creates. A guide buried in announcements
   // scrolls away in a week, which is the whole reason for the second option.
@@ -8306,6 +8369,13 @@ function JoinGuideCard({ community, current }) {
               </button>
             )}
             <CopyButton text={text} label="Copy" style={shellBtn("ghost", { padding: "10px 16px", fontSize: 12 })} />
+            {connected && (
+              <button disabled={!!busy} onClick={syncRole}
+                title="Give the player role to everyone approved, and take it off everyone who isn't"
+                style={shellBtn("ghost", { padding: "10px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+                {busy === "role" ? "Syncing…" : "⟳ Sync player role"}
+              </button>
+            )}
             <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)" }}>
               {connected
                 ? "Posting attaches the sign-up button and pins it. A pasted copy can't have either — only the bot can."
