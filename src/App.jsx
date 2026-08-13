@@ -8239,7 +8239,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
   }
   add("");
 
-  add("**Worth knowing:**", "");
+  add("## Worth knowing", "");
   add("· Captains see your rank and stats when they bid, so put down an honest one — it gets you a fairer price.");
   add("· The day before the draft I'll ask if you're still free. **Answer it.** " +
       "Pulling out costs you nothing; going quiet and not showing up is a no-show.");
@@ -8247,8 +8247,12 @@ function buildJoinGuide({ community, current, connected, origin }) {
   add("");
 
   if (connected) {
-    add("`/me` your stats · `/roster` your team · `/leaderboard` the season · " +
-        "`/subs` who's free · `/scout` look up a player", "");
+    add("## Commands you can use here", "");
+    add("`/me` — your rank, stats and season points");
+    add("`/roster` — your team and teammates this tournament");
+    add("`/leaderboard` — the season race");
+    add("`/subs` — who's free to sub in");
+    add("`/scout` — look up any player in the league", "");
   }
 
   add("-# We store your Discord name and ID, your display name, the stats you enter, and a WhatsApp " +
@@ -8330,7 +8334,11 @@ function JoinGuideCard({ community, current }) {
         // people come back to would be spam.
         body: JSON.stringify({ communityId: community?.id, message: text,
                                userIds: [], announce: true, buttons: "welcome",
-                               embed: true, pin: true,
+                               embed: text.length > 1900,
+                               // A dedicated channel holds this one post, so there's
+                               // nothing for a pin to lift it above. Announcements
+                               // scroll, so pin there.
+                               pin: where === "announce",
                                channelName: where === "signup" ? "sign-up-here" : undefined }),
       });
       const body = await r.json().catch(() => null);
@@ -8341,10 +8349,18 @@ function JoinGuideCard({ community, current }) {
         catch (e) { console.error("save signup channel", e); }
       }
       const dest = where === "signup" ? "#sign-up-here" : "your announcements channel";
-      if (!body?.announced) setErr("Couldn't post — check your announcements channel is set under Discord server.");
-      else if (body.pinned) setRes(`Posted and pinned to ${dest}.`);
-      // Failing to pin is not failing to post, so it reads as a footnote.
-      else setRes(`Posted to ${dest}. Couldn't pin it — ` + (body.pinError || "pin it yourself") + ".");
+      if (!body?.announced) {
+        setErr("Couldn't post — check your announcements channel is set under Discord server.");
+      } else if (where === "signup") {
+        setRes(`Posted to ${dest}${body.lockError ? "" : " — read-only, so it stays the only message there"}.`);
+        // Locking is separate from posting; a failure there shouldn't read as
+        // a failed post, but the host does need to know the channel is open.
+        if (body.lockError) setErr(`Posted, but ${body.lockError}. Members can still write in that channel.`);
+      } else if (body.pinned) {
+        setRes(`Posted and pinned to ${dest}.`);
+      } else {
+        setRes(`Posted to ${dest}. Couldn't pin it — ` + (body.pinError || "pin it yourself") + ".");
+      }
     } catch (e) { setErr(e.message || "Couldn't post."); }
     setBusy("");
   }
@@ -8389,14 +8405,16 @@ function JoinGuideCard({ community, current }) {
             )}
             <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)" }}>
               {connected
-                ? "Posting attaches the sign-up button and pins it. A pasted copy can't have either — only the bot can."
+                ? "#sign-up-here is created read-only, so the post stays the only thing in it. A pasted copy can't carry the sign-up button — only the bot can add that."
                 : "Connect your Discord server above and the bot can post this itself, with a sign-up button attached."}
             </span>
           </div>
           <div style={{ fontSize: 11, color: text.length > DISCORD_MSG_LIMIT ? "#f5c453" : "rgba(200,215,255,0.3)",
             marginTop: 8, fontFamily: "'IBM Plex Mono',monospace" }}>
             {text.length} / {DISCORD_MSG_LIMIT} characters
-            {text.length > DISCORD_MSG_LIMIT && " — too long to paste by hand; use “Post it for me” instead"}
+            {text.length > DISCORD_MSG_LIMIT
+              ? " — over the limit, so it posts as a compact embed and can't be pasted by hand"
+              : " — posts at full size"}
           </div>
           {res && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {res}</div>}
           {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}

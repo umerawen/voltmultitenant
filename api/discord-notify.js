@@ -139,6 +139,7 @@ export default async function handler(req, res) {
     let pinError = null;
     let channel = community.discord_channel_id;
     let channelId = null;          // reported back so the app can remember it
+    let lockError = null;
 
     // Reuse before create: running this twice must not leave two #sign-up-here
     // channels behind, and a host who already made one by hand should keep it.
@@ -150,7 +151,7 @@ export default async function handler(req, res) {
       if (found) { channel = found.id; channelId = found.id; }
       else {
         const made = await post(token, `/guilds/${community.discord_guild_id}/channels`,
-          { name: want, type: 0, topic: `How to join ${community.name} — read the pinned post.` });
+          { name: want, type: 0, topic: `How to join ${community.name} — everything you need is in this channel.` });
         if (!made.ok) {
           return res.status(502).json({ error:
             made.reason === "dms_closed" ? "Couldn't create the channel."
@@ -158,6 +159,11 @@ export default async function handler(req, res) {
         }
         channel = made.body.id; channelId = made.body.id;
       }
+      // Read-only for members. A signup channel with one post in it is a sign;
+      // the moment people can reply it becomes a chat and the instructions
+      // scroll away, which is the whole thing this channel exists to prevent.
+      // Applied to an adopted channel too, not just a freshly created one.
+      lockError = await lockChannel(token, community.discord_guild_id, channel);
     }
     if (channel && (announce || blocked.length)) {
       let content = announce ? stamp(message) : "";
@@ -206,6 +212,7 @@ export default async function handler(req, res) {
       pinned,
       pinError,
       channelId,
+      lockError,
       roleId,
       roleSynced,
       roleError,
@@ -246,15 +253,16 @@ function buttonRow(kind) {
 }
 
 // Pinning is a PUT with no body, so it can't go through post().
-async function put(token, path) {
+async function put(token, path, body) {
   const r = await fetch(API + path, {
     method: "PUT",
     headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (r.status === 429) {
     const retry = Number(r.headers.get("retry-after") || 1);
     await sleep(retry * 1000 + 250);
-    return put(token, path);
+    return put(token, path, body);
   }
   if (!r.ok) {
     let reason = `http ${r.status}`;
@@ -268,6 +276,38 @@ async function put(token, path) {
     return { ok: false, reason };
   }
   return { ok: true };
+}
+
+// Make a channel read-only for everyone except the bot.
+//
+// The @everyone role always shares the guild's own ID, which is how you target
+// "everybody" in a permission overwrite. The bot is a member of @everyone too,
+// so denying there would silence the bot as well — hence the explicit
+// member-level allow for its own user ID.
+const PERM = {
+  SEND_MESSAGES:            1n << 11n,
+  CREATE_PUBLIC_THREADS:    1n << 35n,
+  CREATE_PRIVATE_THREADS:   1n << 36n,
+  SEND_MESSAGES_IN_THREADS: 1n << 38n,
+};
+async function lockChannel(token, guild, channel) {
+  // Reactions stay allowed — they're a harmless way to acknowledge the post,
+  // and blocking them buys nothing.
+  const deny = (PERM.SEND_MESSAGES | PERM.CREATE_PUBLIC_THREADS
+              | PERM.CREATE_PRIVATE_THREADS | PERM.SEND_MESSAGES_IN_THREADS).toString();
+
+  const everyone = await put(token, `/channels/${channel}/permissions/${guild}`,
+    { type: 0, deny, allow: "0" });          // type 0 = role
+  if (!everyone.ok) {
+    return `couldn't make the channel read-only — ${everyone.reason}`;
+  }
+  const me = await get(token, "/users/@me");
+  if (me.ok && me.body?.id) {
+    const self = await put(token, `/channels/${channel}/permissions/${me.body.id}`,
+      { type: 1, allow: PERM.SEND_MESSAGES.toString(), deny: "0" });   // type 1 = member
+    if (!self.ok) return `locked the channel but couldn't grant myself posting rights — ${self.reason}`;
+  }
+  return null;
 }
 
 // Find-or-create the league's player role. Prefers the stored ID so a host who
