@@ -8227,7 +8227,8 @@ function buildJoinGuide({ community, current, connected, origin }) {
   const add = (...xs) => L.push(...xs);
 
   add(`# ${community?.name || "Our league"}`, "");
-  add("**You don't need a team.** Sign up on your own, captains bid for you at a live auction, " +
+  add("### A weekend Valorant league — and you don't need a team.", "");
+  add("Sign up on your own, captains bid for you at a live auction, " +
       "and you play the weekend with whoever wins you.", "");
 
   if (current) {
@@ -8248,7 +8249,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
 
   add("## First time here?", "");
   add(`**1. Make your account** — ${link}`);
-  add("> Or use the button below. The join code is already filled in.");
+  add("> The join code is already filled in.");
   add("**2. Fill in your profile** — your rank, your role, and a WhatsApp number.");
   add("> Quickest way: paste a screenshot of your tracker.gg Competitive page and it reads your stats for you.");
   add("> Your number is only ever seen by the host and mods, and only if a match is falling apart.");

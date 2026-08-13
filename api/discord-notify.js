@@ -151,7 +151,7 @@ export default async function handler(req, res) {
       if (found) { channel = found.id; channelId = found.id; }
       else {
         const made = await post(token, `/guilds/${community.discord_guild_id}/channels`,
-          { name: want, type: 0, topic: `How to join ${community.name} — everything you need is in this channel.` });
+          { name: want, type: 0, topic: `How to join ${community.name} — a weekend Valorant auction-draft league. Everything you need is here.` });
         if (!made.ok) {
           return res.status(502).json({ error:
             made.reason === "dms_closed" ? "Couldn't create the channel."

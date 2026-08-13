@@ -30,7 +30,7 @@ const P = {
 // somewhere a message can be missed.
 const COMMON = [
   { ref: "results",   name: "results",    type: 0, readOnly: true,
-    topic: "Match results as they come in. Posted automatically." },
+    topic: "Valorant match results as they come in. Posted automatically." },
   { ref: "standings", name: "standings",  type: 0, readOnly: true,
     topic: "The season race. Updated after every match." },
   { ref: "fixtures",  name: "fixtures",   type: 0, readOnly: true,

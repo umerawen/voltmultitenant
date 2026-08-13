@@ -125,7 +125,10 @@ async function makeScheduledEvent(res, token, c, ev) {
 
   const made = await call(token, `/guilds/${c.discord_guild_id}/scheduled-events`, "POST", {
     name,
-    description: "The auction for this tournament. Be in voice — captains bid live for the player pool.",
+    description: "The Valorant auction draft for this tournament. Be in voice — captains bid live for the player pool.",
+    // Discord shows this on the event card, so it carries the game for anyone
+    // who finds the server through the event list rather than the guide.
+,
     scheduled_start_time: start.toISOString(),
     scheduled_end_time: end.toISOString(),
     privacy_level: 2,               // guild only — the only value Discord accepts
