@@ -18,6 +18,13 @@
 
 const API = "https://discord.com/api/v10";
 
+// Vercel kills a function at its timeout with no JSON body, which surfaces in
+// the UI as a bare "Failed (500)" — no message, nothing to act on. Asking for
+// longer, and bailing out cleanly before the limit, turns that into a partial
+// result the host can just re-run.
+export const config = { maxDuration: 60 };
+const BUDGET_MS = 45000;
+
 const P = {
   VIEW:    1n << 10n,
   SEND:    1n << 11n,
@@ -67,6 +74,17 @@ export default async function handler(req, res) {
     if (!c?.discord_guild_id) return res.status(400).json({ error: "connect your Discord server first" });
 
     const ctx = { token, guild: c.discord_guild_id, community: ev.community_id, eventId, ev, c };
+    // Preload the two things every ensureChannel() used to fetch for itself.
+    // Building seven channels meant seven full guild-channel listings and seven
+    // registry queries — enough sequential round trips to blow Vercel's function
+    // timeout, which surfaces as a bare 500 with no JSON body to explain it.
+    if (mode === "common" || mode === "teams") {
+      const list = await call(token, `/guilds/${ctx.guild}/channels`, "GET");
+      ctx.channels = Array.isArray(list.body) ? list.body : [];
+      ctx.registry = await sb(`/rest/v1/discord_objects?community_id=eq.${ctx.community}` +
+        `&or=(event_id.eq.${eventId},event_id.is.null)&select=kind,ref,discord_id,event_id`);
+      ctx.me = await selfId(token);
+    }
     if (mode === "common")    return res.status(200).json(await buildCommon(ctx));
     if (mode === "teams")     return res.status(200).json(await buildTeams(ctx));
     if (mode === "results")   return res.status(200).json(await postResult(ctx, payload));
@@ -83,6 +101,7 @@ export default async function handler(req, res) {
 
 async function buildCommon(ctx) {
   const out = { created: [], reused: [], errors: [] };
+  ctx.deadline = Date.now() + BUDGET_MS;
   // A category keeps the tournament's channels together and, more usefully,
   // lets one permission change apply to all of them at once later.
   const cat = await ensureChannel(ctx, {
@@ -91,6 +110,7 @@ async function buildCommon(ctx) {
   if (!cat) return out;
 
   for (const spec of COMMON) {
+    if (outOfTime(ctx, out)) break;
     await ensureChannel(ctx, { ...spec, parent_id: cat, eventScoped: false }, out);
   }
   return out;
@@ -100,6 +120,7 @@ async function buildCommon(ctx) {
 
 async function buildTeams(ctx) {
   const out = { created: [], reused: [], errors: [], teams: 0, assigned: 0 };
+  ctx.deadline = Date.now() + BUDGET_MS;
   const data = await rpc("volt_dc_teams", { p_event: ctx.eventId });
   if (data?.error === "noboard") throw new Error("There's no draft board yet — run the auction first.");
   const teams = (data?.teams || []).filter((t) => t.name);
@@ -112,6 +133,7 @@ async function buildTeams(ctx) {
   const existingRoles = await listRoles(ctx);
 
   for (const t of teams) {
+    if (outOfTime(ctx, out)) break;
     out.teams++;
     const roleName = `VOLT ${t.name}`;
     // Reuse by name so a role left over from a previous run is adopted rather
@@ -141,8 +163,7 @@ async function buildTeams(ctx) {
       { id: role.id, type: 0,
         allow: (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString(), deny: "0" },
     ];
-    const meId = await selfId(ctx.token);
-    if (meId) overwrites.push({ id: meId, type: 1,
+    if (ctx.me) overwrites.push({ id: ctx.me, type: 1,
       allow: (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString(), deny: "0" });
 
     await ensureChannel(ctx, { ref: `team-text:${t.name}`, name: `${slug(t.name)}-room`, type: 0,
@@ -259,17 +280,19 @@ async function postStandings(ctx) {
 // the ID either way. The registry is checked first so a rename in Discord
 // doesn't cause a duplicate.
 async function ensureChannel(ctx, spec, out) {
-  const known = await lookup(ctx, spec.type === 4 ? "category" : spec.type === 2 ? "voice" : "text", spec.ref);
-  if (known) {
-    const still = await call(ctx.token, `/channels/${known}`, "GET");
-    if (still.ok) { out.reused.push(spec.name); return known; }
-  }
-  const list = await call(ctx.token, `/guilds/${ctx.guild}/channels`, "GET");
+  const kind = kindOf(spec.type);
   const want = spec.type === 2 || spec.type === 4 ? spec.name : slug(spec.name);
-  const found = Array.isArray(list.body)
-    ? list.body.find((x) => x.type === spec.type && x.name === want) : null;
+
+  // Registry first, then the live channel list — both already in memory, so a
+  // reused channel costs zero API calls.
+  const known = fromRegistry(ctx, kind, spec.ref);
+  if (known && ctx.channels.some((x) => x.id === known)) {
+    out.reused.push(spec.name);
+    return known;
+  }
+  const found = ctx.channels.find((x) => x.type === spec.type && x.name === want);
   if (found) {
-    await remember(ctx, kindOf(spec.type), spec.ref, found.id, spec.eventScoped);
+    await remember(ctx, kind, spec.ref, found.id, spec.eventScoped);
     out.reused.push(spec.name);
     return found.id;
   }
@@ -280,15 +303,34 @@ async function ensureChannel(ctx, spec, out) {
   if (spec.permission_overwrites) body.permission_overwrites = spec.permission_overwrites;
   // Read-only commons: members can read and react, only the bot writes.
   if (spec.readOnly) {
-    const meId = await selfId(ctx.token);
     body.permission_overwrites = [{ id: ctx.guild, type: 0, deny: P.SEND.toString(), allow: "0" }];
-    if (meId) body.permission_overwrites.push({ id: meId, type: 1, allow: P.SEND.toString(), deny: "0" });
+    if (ctx.me) body.permission_overwrites.push({ id: ctx.me, type: 1, allow: P.SEND.toString(), deny: "0" });
   }
   const made = await call(ctx.token, `/guilds/${ctx.guild}/channels`, "POST", body);
   if (!made.ok) { out.errors.push(`${spec.name}: ${made.reason}`); return null; }
-  await remember(ctx, kindOf(spec.type), spec.ref, made.body.id, spec.eventScoped);
+  // Keep the in-memory list current so a later spec in the same run sees it.
+  ctx.channels.push({ id: made.body.id, type: spec.type, name: want });
+  await remember(ctx, kind, spec.ref, made.body.id, spec.eventScoped);
   out.created.push(spec.name);
   return made.body.id;
+}
+
+// Preloaded registry lookup. A row scoped to this tournament beats a
+// league-wide one, same as the query it replaces.
+function fromRegistry(ctx, kind, ref) {
+  const rows = (ctx.registry || []).filter((r) => r.kind === kind && r.ref === ref);
+  if (!rows.length) return null;
+  return (rows.find((r) => r.event_id === ctx.eventId) || rows[0]).discord_id;
+}
+
+// Everything here is idempotent, so stopping early is safe: re-running picks up
+// exactly where it left off rather than duplicating what already exists.
+function outOfTime(ctx, out) {
+  if (!ctx.deadline || Date.now() < ctx.deadline) return false;
+  if (!out.errors.some((e) => e.startsWith("Ran out"))) {
+    out.errors.push("Ran out of time — press the button again to finish the rest.");
+  }
+  return true;
 }
 
 const kindOf = (t) => (t === 4 ? "category" : t === 2 ? "voice" : "text");

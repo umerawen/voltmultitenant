@@ -8477,7 +8477,14 @@ function DiscordArenaCard({ eventId, phase }) {
         body: JSON.stringify({ eventId, mode }),
       });
       const b = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
+      if (!r.ok) {
+        if (b?.error) throw new Error(b.error);
+        if (r.status === 504 || r.status === 500) throw new Error(
+          "The server gave up part-way through. Anything it already made is kept — press the button again to finish the rest.");
+        if (r.status === 404) throw new Error(
+          "/api/discord-arena isn't deployed yet — upload it to Vercel and wait for the build.");
+        throw new Error(`Failed (${r.status})`);
+      }
       const made = b.created?.length || 0, kept = b.reused?.length || 0;
       if (mode === "teams") {
         setMsg(`${b.teams} teams — ${made} things created, ${kept} already there, ${b.assigned} players given their role.`);
