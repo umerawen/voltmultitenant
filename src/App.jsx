@@ -307,7 +307,7 @@ function regToPlayer(p, isCap) {
   return {
     id: p.userId, status: "pool", soldTo: null, soldPrice: null,
     ...(isCap ? { isCaptain: true } : {}),
-    name: p.name, rank: rankKey(p.rank), rankDiv: p.rankDiv ?? null,
+    name: p.name, ign: p.ign ?? null, rank: rankKey(p.rank), rankDiv: p.rankDiv ?? null,
     peakRank: p.peakRank ?? null, peakRankDiv: p.peakRankDiv ?? null,
     role: p.role || "Flex", agent: p.agent || "—",
     kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
@@ -8598,6 +8598,78 @@ function DiscordMomentsCard({ eventId, phase, draftAt }) {
   );
 }
 
+// ── Valorant name check ──────────────────────────────────────────────────
+// Scoreboard OCR matches stats to players by in-game name. Anyone without one
+// gets their scores dropped on the floor — silently, because a failed match
+// looks identical to a player who didn't play. Better to catch it before the
+// weekend than to reconcile it afterwards.
+function IgnCheckCard({ eventId }) {
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  async function load() {
+    try {
+      const { data } = await __sb.rpc("volt_ign_check", { p_event: eventId });
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) { console.error("ign check", e); setRows([]); }
+  }
+  useEffect(() => { load(); }, [eventId]);
+
+  async function nudge() {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      const targets = rows.filter((r) => r.discord).map((r) => r.userId);
+      if (!targets.length) { setErr("None of them have Discord connected, so I can't reach them."); setBusy(false); return; }
+      const r = await fetch("/api/discord-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({
+          communityId: window.__VOLT.communityId,
+          message: "**One thing missing from your profile.**\n" +
+            "We read match scores off the end-of-game screenshot, and we match them to you by your " +
+            "Valorant name. Yours isn't set, so right now your stats would go to nobody and you'd " +
+            "score zero season points.\n\nOpen VOLT → your profile → **Valorant name**, and put it in " +
+            "exactly as it appears in game (no #tag). Takes ten seconds.",
+          userIds: targets, announce: false,
+        }),
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || "Couldn't send.");
+      setMsg(`Asked ${b?.delivered ?? targets.length} of them to fix it.`);
+    } catch (e) { setErr(e.message || "Couldn't send."); }
+    setBusy(false);
+  }
+
+  if (rows === null || !rows.length) return null;   // nothing to fix, say nothing
+  return (
+    <div style={{ marginTop: 14 }}>
+      <SectionHead title="Valorant names missing" />
+      <div style={PANEL("rgba(245,196,83,0.45)")}>
+        <div style={{ fontSize: 13.5, color: "#ffe4a0", fontWeight: 700 }}>
+          {rows.length} player{rows.length === 1 ? " hasn't" : "s haven't"} set their Valorant name
+        </div>
+        <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginTop: 6, lineHeight: 1.6 }}>
+          Scoreboard screenshots are matched to players by in-game name. Without it their stats are
+          dropped and they score nothing — and nothing warns you at the time.
+        </div>
+        <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.75)", marginTop: 8 }}>
+          {rows.map((r) => r.name).join(", ")}
+        </div>
+        <button disabled={busy} onClick={nudge}
+          style={shellBtn("warn", { padding: "9px 16px", fontSize: 11.5, marginTop: 12, opacity: busy ? 0.5 : 1 })}>
+          {busy ? "Sending…" : "◈ Ask them to fix it"}
+        </button>
+        {msg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {msg}</div>}
+        {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
+      </div>
+    </div>
+  );
+}
+
 // ── Sub desk ─────────────────────────────────────────────────────────────
 // A captain short a player at 9pm shouldn't have to read a list and DM
 // strangers. They pick who's out, everyone eligible gets a DM with one button,
@@ -9630,6 +9702,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isTrueHost && HAS_SUPABASE && <DiscordServerCard />}
     {isHost && HAS_SUPABASE && <JoinGuideCard community={community} current={current} />}
     {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
+    {isHost && HAS_SUPABASE && current && <IgnCheckCard eventId={current.id} />}
     {isHost && HAS_SUPABASE && current && (
       <DiscordArenaCard eventId={current.id} phase={current.phase} />
     )}
@@ -9718,6 +9791,7 @@ async function fetchRosterForEvent(eventId) {
       status: r.status || "approved", available: !!r.availability_confirmed,
       noShow: !!r.no_show, noShows: noShowCounts[r.user_id] || 0,
       name: r.users?.display_name || "Player",
+      ign: p.ign ?? null,
       rank: p.rank, rankDiv: p.rank_div ?? null,
       peakRank: p.peak_rank ?? null, peakRankDiv: p.peak_rank_div ?? null,
       role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges,
@@ -10239,7 +10313,20 @@ function matchScoreboardName(raw, players) {
   const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const q = norm(raw);
   if (!q) return null;
-  const cand = players.map((p) => ({ p, n: norm(p.name) })).filter((c) => c.n);
+  // A player gets two keys: their in-game name and their league display name.
+  // Those are different identities — display_name is what captains call you,
+  // ign is what Valorant prints on the scoreboard — and matching on only one of
+  // them silently hands someone else's stats to the wrong player.
+  const cand = [];
+  for (const p of players) {
+    for (const k of [p.ign, p.name]) {
+      const n = norm(k);
+      // Skip names that normalise away entirely — non-Latin scripts leave
+      // nothing to compare, and an empty key would match everything.
+      if (n && !cand.some((c) => c.p === p && c.n === n)) cand.push({ p, n });
+    }
+  }
+  if (!cand.length) return null;
   const exact = cand.find((c) => c.n === q);
   if (exact) return exact.p;
   const pre = cand.find((c) => c.n.startsWith(q) || q.startsWith(c.n));
@@ -10286,7 +10373,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
   // the user said yes — so open straight into the form instead of showing a
   // second button that asks the same thing again.
   const [editing, setEditing] = useState(embedded);
-  const [d, setD] = useState({ rank: "", rankDiv: "", peakRank: "", peakRankDiv: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", whatsapp: "" });
+  const [d, setD] = useState({ ign: "", rank: "", rankDiv: "", peakRank: "", peakRankDiv: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", whatsapp: "" });
   // Screenshot import. Prefills the form and stops — the player still reviews
   // and saves, because captains bid real money against these numbers and an
   // auto-saved OCR result looks verified when it isn't.
@@ -10316,7 +10403,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
       c = cd || null;
     } catch (e) { console.error("contacts", e); }
     setDc({ linked: !!c?.discord_user_id, handle: data?.discord || "" });
-    if (data || c) setD({ rank: data?.rank || "", rankDiv: data?.rank_div ?? "", peakRank: data?.peak_rank || "", peakRankDiv: data?.peak_rank_div ?? "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", whatsapp: c?.whatsapp || "" });
+    if (data || c) setD({ ign: data?.ign || "", rank: data?.rank || "", rankDiv: data?.rank_div ?? "", peakRank: data?.peak_rank || "", peakRankDiv: data?.peak_rank_div ?? "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", whatsapp: c?.whatsapp || "" });
   }
   useEffect(() => { load(); }, [userId]);
 
@@ -10341,6 +10428,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
           if (val === null || val === undefined || val === "") return;
           next[key] = String(val); filled.push(label);
         };
+        put("ign", body.ign, "Valorant name");
         put("rank", body.rank, "rank");
         if (body.rank) next.rankDiv = body.rankDiv ? String(body.rankDiv) : "";
         put("peakRank", body.peakRank, "peak rank");
@@ -10380,6 +10468,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
     setBusy(true);
     const { error } = await __sb.from("player_profiles").upsert({
       user_id: userId, community_id: window.__VOLT.communityId,
+      ign: d.ign.trim() || null,
       rank: d.rank || null,
       // Radiant has no divisions, so never persist one for it.
       rank_div: hasDivisions(d.rank) && d.rankDiv ? parseInt(d.rankDiv) : null,
@@ -10462,6 +10551,18 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
           )}
           {shotErr && <div style={{ fontSize: 12, color: "#f5c453", marginTop: 8 }}>⚠ {shotErr}</div>}
         </div>
+        {/* Match reporting reads the scoreboard screenshot and looks players up
+            by this name. If it doesn't match what Valorant prints, the stats
+            land on nobody — so it sits first and on its own row. */}
+        <label style={{ display: "block", marginBottom: 14 }}>
+          <span style={labS}>Valorant name *</span>
+          <input value={d.ign} placeholder="exactly as it appears in-game"
+            onChange={(e) => setD({ ...d, ign: e.target.value })} style={fieldS} />
+          <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
+            Without the #tag. Your match stats are matched to you by this name, so it has to be exact
+            — if it's wrong, your scores go to nobody and you get no season points.
+          </span>
+        </label>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(110px,1fr))", gap: 10, marginBottom: 14 }}>
           {/* Tier and division are separate controls because the tier alone
               drives opening bids and pool filters — the number is cosmetic. */}
@@ -10515,12 +10616,13 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
             </span></label>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button disabled={busy || !d.rank || !d.role || !(dc.linked || dc.handle) || (d.whatsapp || "").replace(/[^0-9]/g, "").length < 8} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
+          <button disabled={busy || !d.ign.trim() || !d.rank || !d.role || !(dc.linked || dc.handle) || (d.whatsapp || "").replace(/[^0-9]/g, "").length < 8} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
           {saveErr && <span style={{ fontSize: 12, color: "#ff8f9a", alignSelf: "center" }}>⚠ {saveErr}</span>}
           {!saveErr && (() => {
             const need = [];
             if (!d.rank) need.push("rank");
             if (!d.role) need.push("role");
+            if (!d.ign.trim()) need.push("your Valorant name");
             if (!dc.linked && !dc.handle) need.push("Discord connection");
             if ((d.whatsapp || "").replace(/[^0-9]/g, "").length < 8) need.push("WhatsApp number");
             return need.length ? <span style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)", alignSelf: "center" }}>Still needed: {need.join(", ")}</span> : null;

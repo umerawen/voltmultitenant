@@ -30,6 +30,7 @@ const TIERS = ["Iron", "Bronze", "Silver", "Gold", "Platinum",
 const SCHEMA = {
   type: "OBJECT",
   properties: {
+    ign:           { type: "STRING", nullable: true },
     rank:          { type: "STRING", nullable: true },
     rankDiv:       { type: "INTEGER", nullable: true },
     peakRank:      { type: "STRING", nullable: true },
@@ -42,7 +43,7 @@ const SCHEMA = {
     scope:         { type: "STRING", nullable: true },
     confident:     { type: "BOOLEAN" },
   },
-  propertyOrdering: ["rank", "rankDiv", "peakRank", "peakRankDiv", "agent",
+  propertyOrdering: ["ign", "rank", "rankDiv", "peakRank", "peakRankDiv", "agent",
                      "kda", "acs", "hs", "win", "scope", "confident"],
   required: ["confident"],
 };
@@ -52,6 +53,9 @@ tracker.gg, blitz.gg, or the in-game career screen.
 
 Read these fields:
 
+- "ign": the player's in-game name, shown at the top of the page next to their
+  avatar. Give the name only, WITHOUT the #tag that follows it. For example if
+  the page shows "rumer #sea", return "rumer".
 - "rank": the player's CURRENT competitive rank tier. One of exactly:
   Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant.
 - "rankDiv": the division number shown next to that tier, 1, 2 or 3.
@@ -139,6 +143,9 @@ export default async function handler(req, res) {
     }
 
     const out = {
+      // The scoreboard reader matches players by this name, so reading it off
+      // the tracker page saves the one field a typo does the most damage to.
+      ign:         parsed.ign ? String(parsed.ign).trim().replace(/^#/, "").split("#")[0].slice(0, 24) : null,
       rank:        tier(parsed.rank),
       rankDiv:     div(parsed.rankDiv, tier(parsed.rank)),
       peakRank:    tier(parsed.peakRank),
