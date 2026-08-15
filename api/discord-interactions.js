@@ -37,40 +37,76 @@ export default async function handler(req, res) {
       return res.status(200).json({ type: AUTOCOMPLETE_RESULT, data: { choices: [] } }); }
   }
 
-  // ── Everything else is DEFERRED ────────────────────────────────────────
-  // Discord gives an endpoint 3 seconds to acknowledge an interaction, and
-  // shows "This interaction failed" if it misses. A Vercel cold start plus two
-  // Supabase round trips can exceed that, which made the sign-up button look
-  // broken even when the registration succeeded — the work completed, the
-  // acknowledgement just arrived too late to count.
+  // ── Responding ─────────────────────────────────────────────────────────
+  // Discord gives 3 seconds to acknowledge or it shows "This interaction
+  // failed". A cold start plus a Supabase round trip can exceed that.
   //
-  // Answering with type 5 acknowledges instantly and buys a 15-minute window to
-  // send the real message, so the reply can never race the timeout again.
+  // The obvious fix — acknowledge with type 5, then PATCH the real message —
+  // does NOT work on its own here: Vercel freezes the invocation as soon as the
+  // response is sent, so the PATCH never runs and the reply sits on "VOLT is
+  // thinking…" forever. Deferring is only safe when something keeps the
+  // invocation alive.
+  //
+  // So: defer when a keep-alive is available, otherwise do the work first and
+  // answer in one shot. The second path risks the 3s limit, but a late reply is
+  // recoverable where a permanently pending one is not.
   const isPublic = body.type === APP_COMMAND && body.data?.name === "rollcall";
-  res.status(200).json({ type: DEFERRED, data: isPublic ? {} : { flags: EPHEMERAL } });
-
+  const origin = `https://${req.headers.host}`;
   const out = { content: null };
-  try {
-    const origin = `https://${req.headers.host}`;
-    // Fetched alongside the handler rather than before it: the tag is only
-    // decoration, and it shouldn't add latency to the work that matters.
-    const tagP = guild ? tagFor(guild) : Promise.resolve(null);
-    if (body.type === COMPONENT) await onButton(out, body.data?.custom_id, guild, discordId, origin);
-    else if (body.type === APP_COMMAND) await onCommand(out, body, guild, discordId);
-    ctx.tag = await tagP;
-  } catch (e) {
-    console.error("interaction failed", e);
-    out.content = "Something went wrong. Try again in a moment.";
+
+  const work = (async () => {
+    try {
+      // The tag is decoration, so it runs alongside the real work rather than
+      // in front of it.
+      const tagP = guild ? tagFor(guild) : Promise.resolve(null);
+      if (body.type === COMPONENT) await onButton(out, body.data?.custom_id, guild, discordId, origin);
+      else if (body.type === APP_COMMAND) await onCommand(out, body, guild, discordId);
+      ctx.tag = await tagP;
+    } catch (e) {
+      console.error("interaction failed", e);
+      out.content = "Something went wrong. Try again in a moment.";
+    }
+  });
+
+  const keeper = keepAlive();
+  if (keeper) {
+    res.status(200).json({ type: DEFERRED, data: isPublic ? {} : { flags: EPHEMERAL } });
+    keeper(work().then(() => followUp(body, out)));
+    return;
   }
-  // Follow up on the deferred response. The interaction token is valid for 15
-  // minutes and needs no bot token of its own.
+
+  await work();
+  return res.status(200).json({
+    type: REPLY,
+    data: { content: stamp(out.content || "Done.").slice(0, 1900),
+            ...(isPublic ? {} : { flags: EPHEMERAL }) },
+  });
+}
+
+// Vercel exposes waitUntil through a request-context symbol, which keeps the
+// invocation running after the response is sent. Reached this way rather than
+// by importing @vercel/functions so there's no dependency to add and nothing
+// to break if the platform doesn't provide it.
+function keepAlive() {
   try {
-    await fetch(`https://discord.com/api/v10/webhooks/${body.application_id}/${body.token}/messages/@original`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: stamp(out.content || "Done.").slice(0, 1900) }),
-    });
-  } catch (e) { console.error("followup failed", e); }
+    const c = globalThis[Symbol.for("@vercel/request-context")]?.get?.();
+    if (typeof c?.waitUntil === "function") return (p) => c.waitUntil(p);
+  } catch { /* not on Vercel, or an older runtime */ }
+  return null;
+}
+
+// Edit the deferred placeholder into the real reply. The interaction token is
+// good for 15 minutes and needs no bot token.
+async function followUp(body, out) {
+  try {
+    const r = await fetch(
+      `https://discord.com/api/v10/webhooks/${body.application_id}/${body.token}/messages/@original`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: stamp(out.content || "Done.").slice(0, 1900) }),
+      });
+    if (!r.ok) console.error("followup failed", r.status, await r.text().catch(() => ""));
+  } catch (e) { console.error("followup threw", e); }
 }
 
 /* ── slash commands ──────────────────────────────────────────────────────── */
