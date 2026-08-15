@@ -135,6 +135,7 @@ export default async function handler(req, res) {
 
     // Announcement, plus a mention fallback for anyone the DM couldn't reach.
     let announced = false;
+    let announceError = null;
     let pinned = false;
     let pinError = null;
     let channel = community.discord_channel_id;
@@ -192,7 +193,16 @@ export default async function handler(req, res) {
       if (row) payload.components = row;
       const r = await post(token, `/channels/${channel}/messages`, payload);
       announced = r.ok;
-      if (!r.ok) console.error("announce failed", r.reason);
+      if (!r.ok) {
+        console.error("announce failed", r.reason);
+        announceError = r.reason === "Missing Access"
+          ? "the bot can't see your announcements channel — give its role View Channel and Send Messages there"
+          : r.reason === "Missing Permissions"
+          ? "the bot can't post in your announcements channel — give its role Send Messages there"
+          : /unknown channel/i.test(r.reason || "")
+          ? "that announcements channel no longer exists — pick a new one under Discord server"
+          : r.reason;
+      }
 
       // Pinning is best-effort and reported separately. It needs Manage
       // Messages, which plenty of servers won't have granted, and a failure to
@@ -209,6 +219,7 @@ export default async function handler(req, res) {
       blocked: blocked.map((b) => b.userId),
       unlinked,
       announced,
+      announceError,
       pinned,
       pinError,
       channelId,

@@ -151,7 +151,7 @@ async function buildTeams(ctx) {
       role = made.body; existingRoles.push(role);
       out.created.push(roleName);
     } else out.reused.push(roleName);
-    await remember(ctx, "role", t.name, role.id, true);
+    await remember(ctx, "role", t.name, role.id, true, null, out);
 
     for (const did of t.discordIds || []) {
       if (outOfTime(ctx, out)) break;
@@ -186,8 +186,7 @@ async function buildTeams(ctx) {
 /* ── results + standings ─────────────────────────────────────────────────── */
 
 async function postResult(ctx, payload) {
-  const ch = await lookup(ctx, "text", "results");
-  if (!ch) throw new Error("Run “Set up channels” first — there's no #results channel yet.");
+  const ch = await liveChannel(ctx, "results");
   if (!payload?.teamA) throw new Error("Nothing to post.");
 
   const rows = (payload.players || []).slice(0, 12)
@@ -209,8 +208,7 @@ async function postResult(ctx, payload) {
 // fixtures channel that grows by a post per reschedule is a changelog, not a
 // schedule — players need the current answer at a glance, not its history.
 async function postFixtures(ctx) {
-  const ch = await lookup(ctx, "text", "fixtures");
-  if (!ch) throw new Error("Run “Set up channels” first — there's no #fixtures channel yet.");
+  const ch = await liveChannel(ctx, "fixtures");
   const f = await rpc("volt_dc_fixtures", { p_event: ctx.eventId });
   if (f?.error === "noboard") throw new Error("There's no draft board yet.");
   if (f?.error === "nofixtures") throw new Error("No fixtures have been built yet — set the format and lock the schedule first.");
@@ -252,8 +250,7 @@ async function postFixtures(ctx) {
 }
 
 async function postStandings(ctx) {
-  const ch = await lookup(ctx, "text", "standings");
-  if (!ch) throw new Error("Run “Set up channels” first — there's no #standings channel yet.");
+  const ch = await liveChannel(ctx, "standings");
   const rows = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild });
   if (rows?.error) throw new Error("Couldn't read the leaderboard.");
 
@@ -297,7 +294,7 @@ async function ensureChannel(ctx, spec, out) {
   }
   const found = ctx.channels.find((x) => x.type === spec.type && x.name === want);
   if (found) {
-    await remember(ctx, kind, spec.ref, found.id, spec.eventScoped);
+    await remember(ctx, kind, spec.ref, found.id, spec.eventScoped, null, out);
     out.reused.push(spec.name);
     return found.id;
   }
@@ -315,7 +312,7 @@ async function ensureChannel(ctx, spec, out) {
   if (!made.ok) { out.errors.push(`${spec.name}: ${made.reason}`); return null; }
   // Keep the in-memory list current so a later spec in the same run sees it.
   ctx.channels.push({ id: made.body.id, type: spec.type, name: want });
-  await remember(ctx, kind, spec.ref, made.body.id, spec.eventScoped);
+  await remember(ctx, kind, spec.ref, made.body.id, spec.eventScoped, null, out);
   out.created.push(spec.name);
   return made.body.id;
 }
@@ -358,6 +355,18 @@ async function listRoles(ctx) {
   return r.ok && Array.isArray(r.body) ? r.body : [];
 }
 
+// Resolve a channel and confirm it still exists in Discord. Hosts rename and
+// delete channels freely, so a stored ID is a hint, not a guarantee.
+async function liveChannel(ctx, ref) {
+  const id = await lookup(ctx, "text", ref);
+  if (!id) throw new Error(`Run “Set up channels” first — there's no #${ref} channel yet.`);
+  const still = await call(ctx.token, `/channels/${id}`, "GET");
+  if (!still.ok) {
+    throw new Error(`#${ref} has been deleted or the bot can't see it. Press “Set up channels” to rebuild it.`);
+  }
+  return id;
+}
+
 async function lookup(ctx, kind, ref) {
   const ev = ctx.eventId;
   const rows = await sb(`/rest/v1/discord_objects?community_id=eq.${ctx.community}` +
@@ -368,19 +377,32 @@ async function lookup(ctx, kind, ref) {
   return (rows.find((r) => r.event_id === ev) || rows[0]).discord_id;
 }
 
-async function remember(ctx, kind, ref, id, eventScoped, meta) {
-  await fetch(`${process.env.SUPABASE_URL}/rest/v1/discord_objects` +
-    `?on_conflict=community_id,event_id,kind,ref`, {
-    method: "POST",
-    headers: {
-      apikey: process.env.SUPABASE_SERVICE_KEY,
-      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates,return=minimal",
-    },
-    body: JSON.stringify({ community_id: ctx.community, event_id: eventScoped ? ctx.eventId : null,
-                           kind, ref, discord_id: id, meta: meta || null }),
-  }).catch((e) => console.error("remember", e));
+// Record what we made. A silent failure here is expensive rather than
+// cosmetic: without the registry, "find or create" falls back to matching by
+// name, and posted standings/fixtures messages can never be found again to be
+// edited in place. So the error is surfaced, not swallowed.
+async function remember(ctx, kind, ref, id, eventScoped, meta, out) {
+  try {
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/discord_objects` +
+      `?on_conflict=community_id,event_id,kind,ref`, {
+      method: "POST",
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({ community_id: ctx.community, event_id: eventScoped ? ctx.eventId : null,
+                             kind, ref, discord_id: id, meta: meta || null }),
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      console.error("remember failed", kind, ref, r.status, txt);
+      if (out && !out.errors.some((e) => e.startsWith("Couldn't record"))) {
+        out.errors.push("Couldn't record what was created — re-running may duplicate channels.");
+      }
+    }
+  } catch (e) { console.error("remember", e); }
 }
 
 async function call(token, path, method, body) {

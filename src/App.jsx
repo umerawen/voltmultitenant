@@ -2029,13 +2029,12 @@ function StatRadar({ player, size = 200, hue }) {
   return (
     <svg viewBox={`${-pad} ${-pad} ${size + pad * 2} ${size + pad * 2}`} width={size} height={size}
       onPointerMove={track} onPointerDown={track} onPointerLeave={() => setHot(null)}
-      style={{ touchAction: "manipulation", cursor: "crosshair" }}>
+      style={{ touchAction: "manipulation" }}>
       <style>{`
-        .rdx{transition:stroke .22s ease,stroke-opacity .22s ease}
         .rdd{transition:transform .22s cubic-bezier(.2,.9,.3,1),opacity .22s ease;transform-box:fill-box;transform-origin:center}
         .rdl{transition:fill .22s ease,opacity .22s ease}
         .rdv{transition:opacity .26s ease,transform .26s cubic-bezier(.2,.9,.3,1);transform-box:fill-box;transform-origin:center}
-        @media (prefers-reduced-motion:reduce){.rdx,.rdd,.rdl,.rdv{transition:none}}
+        @media (prefers-reduced-motion:reduce){.rdd,.rdl,.rdv{transition:none}}
       `}</style>
 
       {[0.25, 0.5, 0.75, 1].map((f) => (
@@ -2043,8 +2042,7 @@ function StatRadar({ player, size = 200, hue }) {
       ))}
       {axes.map((_, i) => {
         const [x, y] = pt(i, R);
-        return <line key={i} className="rdx" x1={c} y1={c} x2={x} y2={y}
-          stroke={hot === i ? hue : "rgba(255,255,255,0.10)"} />;
+        return <line key={i} x1={c} y1={c} x2={x} y2={y} stroke="rgba(255,255,255,0.10)" />;
       })}
       <polygon points={shape} fill={hue + "33"} stroke={hue} strokeWidth="2"
         style={{ filter: `drop-shadow(0 0 8px ${hue}88)` }} />
@@ -7947,11 +7945,11 @@ function DiscordServerCard() {
           </p>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span style={{ display: "block", fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginBottom: 4 }}>Server ID</span>
-            <input value={guild} onChange={(e) => setGuild(e.target.value)} placeholder="1192148403031908452" style={field} />
+            <input value={guild} onChange={(e) => setGuild(e.target.value)} placeholder="e.g. 000000000000000000" style={field} />
           </label>
           <label style={{ display: "block", marginBottom: 12 }}>
             <span style={{ display: "block", fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginBottom: 4 }}>Announcements channel ID</span>
-            <input value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="1534683642415153233" style={field} />
+            <input value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="e.g. 000000000000000000" style={field} />
           </label>
           <div className="flex items-center gap-3 flex-wrap" style={{ gap: 10 }}>
             <button disabled={busy} onClick={() => save(false)} style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
@@ -8301,23 +8299,40 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
             ⚠ {counts[scope].unlinked} of them haven't connected Discord — they won't get the DM, only the channel post.
           </div>
         )}
-        {result && (
-          <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
-            {result.delivered > 0
-              ? <span style={{ color: "#9af5c2" }}>✓ DM'd {result.delivered}</span>
-              : <span style={{ color: "#9af5c2" }}>✓ Sent</span>}
-            {result.announced && <span style={{ color: "rgba(200,215,255,0.5)" }}> · posted to the channel</span>}
-            {result.blocked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.blocked.length} have DMs closed — they were @mentioned in the channel instead.</div>}
-            {result.unlinked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.unlinked.length} haven't connected Discord yet — they got nothing.</div>}
-            {result.roleSynced && (result.roleSynced.added || result.roleSynced.removed) > 0 && (
-              <div style={{ color: "rgba(200,215,255,0.5)" }}>
-                Role updated — {result.roleSynced.added} added, {result.roleSynced.removed} removed.
-              </div>
-            )}
-            {result.roleError && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Role: {result.roleError}</div>}
-            {!result.announced && !result.delivered && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Nothing was delivered. Check your announcements channel is set under Discord server.</div>}
-          </div>
-        )}
+        {result && (() => {
+          // Nothing landed at all — report only the failure. Claiming success
+          // and then contradicting it on the next line is worse than a plain
+          // error, because it leaves you unsure whether anything went out.
+          const nothing = !result.announced && !result.delivered;
+          return (
+            <div style={{ fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
+              {nothing ? (
+                <div style={{ color: "#ff8f9a" }}>
+                  ⚠ Nothing was delivered
+                  {result.announceError ? ` — ${result.announceError}.`
+                    : ". Check your announcements channel is set under Discord server."}
+                </div>
+              ) : (
+                <>
+                  {result.delivered > 0 && <span style={{ color: "#9af5c2" }}>✓ DM'd {result.delivered}</span>}
+                  {result.announced && <span style={{ color: result.delivered > 0 ? "rgba(200,215,255,0.5)" : "#9af5c2" }}>
+                    {result.delivered > 0 ? " · posted to the channel" : "✓ Posted to the channel"}</span>}
+                  {!result.announced && result.announceError && (
+                    <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Channel post failed — {result.announceError}.</div>
+                  )}
+                </>
+              )}
+              {result.blocked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.blocked.length} have DMs closed — they were @mentioned in the channel instead.</div>}
+              {result.unlinked?.length > 0 && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ {result.unlinked.length} haven't connected Discord yet — they got nothing.</div>}
+              {result.roleSynced && (result.roleSynced.added || result.roleSynced.removed) > 0 && (
+                <div style={{ color: "rgba(200,215,255,0.5)" }}>
+                  Role updated — {result.roleSynced.added} added, {result.roleSynced.removed} removed.
+                </div>
+              )}
+              {result.roleError && <div style={{ color: "rgba(245,196,83,0.9)" }}>⚠ Role: {result.roleError}</div>}
+            </div>
+          );
+        })()}
         {err && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {err}</div>}
       </div>
     </div>
