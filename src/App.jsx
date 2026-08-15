@@ -1980,85 +1980,107 @@ function Stat({ label, value, hue }) {
 
 /* ── KDA / performance radar ── */
 function StatRadar({ player, size = 200, hue }) {
-  // Each axis is normalised against a community ceiling so the shape is
-  // comparable between players — but that means the actual numbers are
-  // invisible. Hovering a corner reads the real value out in the middle,
-  // where there's empty space and nothing can clip outside the viewBox.
+  // Each axis is normalised against a community ceiling so shapes stay
+  // comparable between players — which hides the real numbers. Hovering
+  // surfaces the value at its own corner.
+  //
+  // Tracking is angular rather than per-target: one pointer handler works out
+  // which spoke the cursor is nearest, so sweeping around the radar hands off
+  // between axes continuously instead of snapping in and out of five separate
+  // hit boxes. A dead zone in the middle means resting on the shape selects
+  // nothing.
   const [hot, setHot] = useState(null);
   const axes = [
     { label: "KDA",  v: Math.min(player.kda / 1.8, 1),
-      show: player.kda != null ? Number(player.kda).toFixed(2) : "—", of: "ceiling 1.80" },
+      show: player.kda != null ? Number(player.kda).toFixed(2) : "—" },
     { label: "ACS",  v: Math.min(player.acs / 320, 1),
-      show: player.acs != null ? Math.round(player.acs) : "—", of: "ceiling 320" },
+      show: player.acs != null ? String(Math.round(player.acs)) : "—" },
     { label: "HS%",  v: Math.min(player.hs / 45, 1),
-      show: player.hs != null ? Math.round(player.hs) + "%" : "—", of: "ceiling 45%" },
+      show: player.hs != null ? Math.round(player.hs) + "%" : "—" },
     { label: "WIN%", v: Math.min((player.win || 0) / 100, 1),
-      show: player.win != null ? Math.round(player.win) + "%" : "—", of: "of 100%" },
+      show: player.win != null ? Math.round(player.win) + "%" : "—" },
     { label: "RANK", v: (RANK_LIST.indexOf(player.rank) + 1) / RANK_LIST.length,
-      show: rankLabel(player.rank, player.rankDiv), of: "of " + RANK_LIST[RANK_LIST.length - 1] },
+      show: rankLabel(player.rank, player.rankDiv) },
   ];
   const c = size / 2, R = c - 30, n = axes.length;
+  // Padding in the viewBox rather than a smaller radius, so the value can sit
+  // outside the label without clipping and the radar keeps its size.
+  const pad = 30;
   const pt = (i, rad) => {
     const a = (Math.PI * 2 * i) / n - Math.PI / 2;
     return [c + rad * Math.cos(a), c + rad * Math.sin(a)];
   };
   const ring = (f) => axes.map((_, i) => pt(i, R * f).join(",")).join(" ");
   const shape = axes.map((ax, i) => pt(i, R * Math.max(ax.v, 0.05)).join(",")).join(" ");
-  const on = hot == null ? null : axes[hot];
+
+  function track(e) {
+    const b = e.currentTarget.getBoundingClientRect();
+    // Map client pixels back into viewBox units, which the padding offsets.
+    const vb = size + pad * 2;
+    const x = ((e.clientX - b.left) / b.width) * vb - pad;
+    const y = ((e.clientY - b.top) / b.height) * vb - pad;
+    const dx = x - c, dy = y - c;
+    if (Math.hypot(dx, dy) < R * 0.3) { setHot(null); return; }   // dead centre
+    let a = Math.atan2(dy, dx) + Math.PI / 2;                     // 0 = straight up
+    if (a < 0) a += Math.PI * 2;
+    setHot(Math.round(a / (Math.PI * 2 / n)) % n);
+  }
+
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}
-      onPointerLeave={() => setHot(null)} style={{ touchAction: "manipulation" }}>
+    <svg viewBox={`${-pad} ${-pad} ${size + pad * 2} ${size + pad * 2}`} width={size} height={size}
+      onPointerMove={track} onPointerDown={track} onPointerLeave={() => setHot(null)}
+      style={{ touchAction: "manipulation", cursor: "crosshair" }}>
+      <style>{`
+        .rdx{transition:stroke .22s ease,stroke-opacity .22s ease}
+        .rdd{transition:transform .22s cubic-bezier(.2,.9,.3,1),opacity .22s ease;transform-box:fill-box;transform-origin:center}
+        .rdl{transition:fill .22s ease,opacity .22s ease}
+        .rdv{transition:opacity .26s ease,transform .26s cubic-bezier(.2,.9,.3,1);transform-box:fill-box;transform-origin:center}
+        @media (prefers-reduced-motion:reduce){.rdx,.rdd,.rdl,.rdv{transition:none}}
+      `}</style>
+
       {[0.25, 0.5, 0.75, 1].map((f) => (
         <polygon key={f} points={ring(f)} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="1" />
       ))}
       {axes.map((_, i) => {
         const [x, y] = pt(i, R);
-        return <line key={i} x1={c} y1={c} x2={x} y2={y}
-          stroke={hot === i ? hue : "rgba(255,255,255,0.10)"} strokeWidth={hot === i ? 1.5 : 1} />;
+        return <line key={i} className="rdx" x1={c} y1={c} x2={x} y2={y}
+          stroke={hot === i ? hue : "rgba(255,255,255,0.10)"} />;
       })}
       <polygon points={shape} fill={hue + "33"} stroke={hue} strokeWidth="2"
         style={{ filter: `drop-shadow(0 0 8px ${hue}88)` }} />
+
+      {/* Axis labels fade back when their value takes over. */}
       {axes.map((ax, i) => {
-        const [x, y] = pt(i, R + 18);
-        return <text key={i} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize="11"
-          fontFamily="'Rajdhani',sans-serif" fontWeight="700" letterSpacing="1"
+        const [x, y] = pt(i, R + 17);
+        return <text key={i} className="rdl" x={x} y={y} textAnchor="middle" dominantBaseline="middle"
+          fontSize="11" fontFamily="'Rajdhani',sans-serif" fontWeight="700" letterSpacing="1"
+          opacity={hot === i ? 0.45 : 1}
           fill={hot === i ? hue : "rgba(236,243,255,0.7)"}>{ax.label}</text>;
       })}
+
+      {/* Values live outside their own corner. Rendered always and faded, so
+          they ease in and out instead of popping on mount. */}
       {axes.map((ax, i) => {
-        const [x, y] = pt(i, R * Math.max(ax.v, 0.05));
-        return <circle key={i} cx={x} cy={y} r={hot === i ? 5 : 3} fill={hue}
-          style={hot === i ? { filter: `drop-shadow(0 0 6px ${hue})` } : undefined} />;
+        const [x, y] = pt(i, R + 36);
+        const live = hot === i;
+        return <text key={i} className="rdv" x={x} y={y} textAnchor="middle" dominantBaseline="middle"
+          fontSize="16" fontFamily="'IBM Plex Mono',monospace" fontWeight="700" fill={hue}
+          opacity={live ? 1 : 0} pointerEvents="none"
+          style={{ transform: live ? "scale(1)" : "scale(0.82)",
+                   filter: `drop-shadow(0 0 10px ${hue}aa)` }}>{ax.show}</text>;
       })}
 
-      {/* Centre readout. Sits above the hit areas so it never blocks them. */}
-      {on && (
-        <g pointerEvents="none">
-          <rect x={c - 46} y={c - 21} width="92" height="42" rx="3"
-            fill="rgba(6,9,18,0.92)" stroke={hue} strokeOpacity="0.5" />
-          <text x={c} y={c - 8} textAnchor="middle" fontSize="9" letterSpacing="1.6"
-            fontFamily="'Rajdhani',sans-serif" fontWeight="700" fill="rgba(236,243,255,0.55)">
-            {on.label}
-          </text>
-          <text x={c} y={c + 8} textAnchor="middle" fontSize="17"
-            fontFamily="'IBM Plex Mono',monospace" fontWeight="700" fill="#ecf3ff">
-            {on.show}
-          </text>
-          <text x={c} y={c + 17} textAnchor="middle" fontSize="7" letterSpacing="0.6"
-            fontFamily="'IBM Plex Mono',monospace" fill="rgba(236,243,255,0.35)">
-            {on.of}
-          </text>
-        </g>
-      )}
-
-      {/* Hit areas last so they sit on top, and generous enough to catch a
-          fingertip as well as a cursor. Transparent rather than none so
-          touch devices register a tap. */}
       {axes.map((ax, i) => {
-        const [x, y] = pt(i, R + 8);
-        return <circle key={i} cx={x} cy={y} r="24" fill="transparent" style={{ cursor: "pointer" }}
-          onPointerEnter={() => setHot(i)} onPointerDown={() => setHot(i)}>
-          <title>{ax.label} {ax.show}</title>
-        </circle>;
+        const [x, y] = pt(i, R * Math.max(ax.v, 0.05));
+        const live = hot === i;
+        return (
+          <g key={i}>
+            <circle className="rdd" cx={x} cy={y} r="7" fill={hue}
+              opacity={live ? 0.28 : 0} style={{ transform: live ? "scale(1)" : "scale(0.5)" }} />
+            <circle className="rdd" cx={x} cy={y} r="3.5" fill={hue}
+              style={{ transform: live ? "scale(1.25)" : "scale(1)" }} />
+          </g>
+        );
       })}
     </svg>
   );
