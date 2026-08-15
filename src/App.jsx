@@ -2210,7 +2210,7 @@ function ReelCard({ player, center, dim, idle }) {
       transition: idle ? "none" : "opacity 220ms, transform 220ms",
       zIndex: center ? 3 : 1,
     }}>
-      <div className="absolute left-1/2 top-1/2" style={{ width: 420, transform: `translate(-50%, -50%) scale(${REEL_SCALE})` }}>
+      <div className="absolute left-1/2 top-1/2 volt-reel-stage" style={{ width: 420, transform: `translate(-50%, -50%) scale(${REEL_SCALE})` }}>
         <PlayerCard player={player} lite={!center} />
       </div>
     </div>
@@ -3160,14 +3160,14 @@ function Leaderboard({ isAdmin }) {
       )}
       {rows && rows.length > 0 && (
         <div>
-          <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em]" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+          <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
             <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Avg ACS</span><span className="text-right">Points</span>
           </div>
           <div className="grid gap-1.5">
             {rows.map((r, i) => {
               const rc = (RANKS[r.rank] || {}).c || "#8d97a8";
               return (
-                <div key={i} className="grid items-center px-4 py-3" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+                <div key={i} className="grid items-center px-4 py-3 volt-lb-row" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
                   <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff" }}>{String(i + 1).padStart(2, "0")}</span>
                   <span>
                     <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.03em", fontSize: 15 }}>{r.name}</span>
@@ -6519,6 +6519,76 @@ function CollapseHead({ title, hint, open, onToggle, tone }) {
 function ShellStyles() {
   return <style>{`
     html { zoom: 1.1; }
+
+    /* ── Phones ────────────────────────────────────────────────────────────
+       Everything below is inside a max-width query, so the desktop layout is
+       untouched. These fix things that are broken rather than merely tight. */
+    /* The 1.1 page zoom costs ~33px of usable width on a 360px phone — the
+       difference between the widest rows fitting and being clipped.
+       Keyed on pointer type, NOT width, on purpose: zoom on <html> changes the
+       viewport width that media queries are measured against, so resetting it
+       inside a width query can flip a tablet back and forth between matching
+       and not matching. Pointer type doesn't move when zoom does. */
+    @media (pointer: coarse) {
+      html { zoom: 1; }
+    }
+
+    @media (max-width: 720px) {
+      /* iOS Safari zooms the whole page when a focused input's text is under
+         16px, and never zooms back out — the single worst mobile bug here,
+         because it leaves the layout shifted with controls off-screen. */
+      input, select, textarea { font-size: 16px !important; }
+
+      /* Fingers, not cursors. Small ghost buttons were ~26px tall. */
+      button, [role="button"], label > input[type="checkbox"] { min-height: 40px; }
+      button { touch-action: manipulation; }
+
+      /* The season table is 386px of fixed columns and the shell hides
+         horizontal overflow, so on a 360px phone the last columns — including
+         points — were clipped away with no way to scroll to them. Reflow to
+         rank + name + points, and drop the per-stat columns. */
+      .volt-lb-head { display: none !important; }
+      .volt-lb-row {
+        grid-template-columns: 34px minmax(0,1fr) auto !important;
+        gap: 10px; padding-left: 12px !important; padding-right: 12px !important;
+      }
+      .volt-lb-row > *:nth-child(n+4):not(:last-child) { display: none; }
+
+      /* Long unbroken strings — Discord handles, join codes, tracker URLs —
+         would otherwise force the page wider than the screen. */
+      .page-wrap { overflow-wrap: anywhere; }
+
+      /* Modals: full height minus the notch, and scrollable. Several were
+         taller than the viewport with the save button off the bottom and no
+         way to reach it. Applied to the shared overlay's child, so it covers
+         every dialog without each one needing its own class. */
+      .volt-overlay { padding: 10px !important; align-items: start !important; }
+      .volt-overlay > * {
+        max-height: calc(100dvh - 20px) !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+        width: 100% !important;
+      }
+
+      /* Anything genuinely wide — brackets — scrolls sideways on purpose
+         instead of being cut off by the shell's overflow-x: hidden. */
+      .volt-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+      /* Respect the home indicator and notch. */
+      .page-wrap { padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
+    }
+
+    /* Very narrow phones. */
+    @media (max-width: 380px) {
+      .page-wrap { padding-left: 12px !important; padding-right: 12px !important; }
+    }
+
+    /* The spin-the-wheel stage is a fixed 420px canvas. It already scales, but
+       the desktop scale overhangs a phone; shrink the stage rather than letting
+       it get clipped by the shell. */
+    @media (max-width: 480px) {
+      .volt-reel-stage { transform: translate(-50%, -50%) scale(0.62) !important; }
+    }
     .volt-expand-btn { transition: background .15s, border-color .15s, transform .15s; }
     .volt-expand-btn:hover { background: rgba(61,123,255,0.3); border-color: #6fa0ff; transform: scale(1.08); }
     /* Expandable list rows — the whole row is the control, so it has to look
@@ -6945,7 +7015,8 @@ function VoltOverlay({ onClose, zIndex = 140, children, dim = "rgba(4,6,12,0.86)
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return createPortal(
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex, background: dim, display: "grid", placeItems: "center", padding: 20 }}>
+    <div className="volt-overlay" onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex, background: dim, display: "grid", placeItems: "center", padding: 20 }}>
       {children}
     </div>,
     document.body
@@ -11140,7 +11211,7 @@ function MatchReport({ ev, onDone, prefill }) {
           )}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 20, alignItems: "start" }}>
           {rosterBlock(tA, "A")}
           {rosterBlock(tB, "B")}
         </div>
