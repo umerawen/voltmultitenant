@@ -1980,13 +1980,22 @@ function Stat({ label, value, hue }) {
 
 /* ── KDA / performance radar ── */
 function StatRadar({ player, size = 200, hue }) {
-  // normalize stats to 0..1 against sensible community ceilings
+  // Each axis is normalised against a community ceiling so the shape is
+  // comparable between players — but that means the actual numbers are
+  // invisible. Hovering a corner reads the real value out in the middle,
+  // where there's empty space and nothing can clip outside the viewBox.
+  const [hot, setHot] = useState(null);
   const axes = [
-    { label: "KDA", v: Math.min(player.kda / 1.8, 1) },
-    { label: "ACS", v: Math.min(player.acs / 320, 1) },
-    { label: "HS%", v: Math.min(player.hs / 45, 1) },
-    { label: "WIN%", v: Math.min((player.win || 0) / 100, 1) },
-    { label: "RANK", v: (RANK_LIST.indexOf(player.rank) + 1) / RANK_LIST.length },
+    { label: "KDA",  v: Math.min(player.kda / 1.8, 1),
+      show: player.kda != null ? Number(player.kda).toFixed(2) : "—", of: "ceiling 1.80" },
+    { label: "ACS",  v: Math.min(player.acs / 320, 1),
+      show: player.acs != null ? Math.round(player.acs) : "—", of: "ceiling 320" },
+    { label: "HS%",  v: Math.min(player.hs / 45, 1),
+      show: player.hs != null ? Math.round(player.hs) + "%" : "—", of: "ceiling 45%" },
+    { label: "WIN%", v: Math.min((player.win || 0) / 100, 1),
+      show: player.win != null ? Math.round(player.win) + "%" : "—", of: "of 100%" },
+    { label: "RANK", v: (RANK_LIST.indexOf(player.rank) + 1) / RANK_LIST.length,
+      show: rankLabel(player.rank, player.rankDiv), of: "of " + RANK_LIST[RANK_LIST.length - 1] },
   ];
   const c = size / 2, R = c - 30, n = axes.length;
   const pt = (i, rad) => {
@@ -1995,19 +2004,62 @@ function StatRadar({ player, size = 200, hue }) {
   };
   const ring = (f) => axes.map((_, i) => pt(i, R * f).join(",")).join(" ");
   const shape = axes.map((ax, i) => pt(i, R * Math.max(ax.v, 0.05)).join(",")).join(" ");
+  const on = hot == null ? null : axes[hot];
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}
+      onPointerLeave={() => setHot(null)} style={{ touchAction: "manipulation" }}>
       {[0.25, 0.5, 0.75, 1].map((f) => (
         <polygon key={f} points={ring(f)} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="1" />
       ))}
-      {axes.map((_, i) => { const [x, y] = pt(i, R); return <line key={i} x1={c} y1={c} x2={x} y2={y} stroke="rgba(255,255,255,0.10)" />; })}
-      <polygon points={shape} fill={hue + "33"} stroke={hue} strokeWidth="2" style={{ filter: `drop-shadow(0 0 8px ${hue}88)` }} />
+      {axes.map((_, i) => {
+        const [x, y] = pt(i, R);
+        return <line key={i} x1={c} y1={c} x2={x} y2={y}
+          stroke={hot === i ? hue : "rgba(255,255,255,0.10)"} strokeWidth={hot === i ? 1.5 : 1} />;
+      })}
+      <polygon points={shape} fill={hue + "33"} stroke={hue} strokeWidth="2"
+        style={{ filter: `drop-shadow(0 0 8px ${hue}88)` }} />
       {axes.map((ax, i) => {
         const [x, y] = pt(i, R + 18);
-        return <text key={i} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize="11" fontFamily="'Rajdhani',sans-serif"
-          fontWeight="700" letterSpacing="1" fill="rgba(236,243,255,0.7)">{ax.label}</text>;
+        return <text key={i} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize="11"
+          fontFamily="'Rajdhani',sans-serif" fontWeight="700" letterSpacing="1"
+          fill={hot === i ? hue : "rgba(236,243,255,0.7)"}>{ax.label}</text>;
       })}
-      {axes.map((ax, i) => { const [x, y] = pt(i, R * Math.max(ax.v, 0.05)); return <circle key={i} cx={x} cy={y} r="3" fill={hue} />; })}
+      {axes.map((ax, i) => {
+        const [x, y] = pt(i, R * Math.max(ax.v, 0.05));
+        return <circle key={i} cx={x} cy={y} r={hot === i ? 5 : 3} fill={hue}
+          style={hot === i ? { filter: `drop-shadow(0 0 6px ${hue})` } : undefined} />;
+      })}
+
+      {/* Centre readout. Sits above the hit areas so it never blocks them. */}
+      {on && (
+        <g pointerEvents="none">
+          <rect x={c - 46} y={c - 21} width="92" height="42" rx="3"
+            fill="rgba(6,9,18,0.92)" stroke={hue} strokeOpacity="0.5" />
+          <text x={c} y={c - 8} textAnchor="middle" fontSize="9" letterSpacing="1.6"
+            fontFamily="'Rajdhani',sans-serif" fontWeight="700" fill="rgba(236,243,255,0.55)">
+            {on.label}
+          </text>
+          <text x={c} y={c + 8} textAnchor="middle" fontSize="17"
+            fontFamily="'IBM Plex Mono',monospace" fontWeight="700" fill="#ecf3ff">
+            {on.show}
+          </text>
+          <text x={c} y={c + 17} textAnchor="middle" fontSize="7" letterSpacing="0.6"
+            fontFamily="'IBM Plex Mono',monospace" fill="rgba(236,243,255,0.35)">
+            {on.of}
+          </text>
+        </g>
+      )}
+
+      {/* Hit areas last so they sit on top, and generous enough to catch a
+          fingertip as well as a cursor. Transparent rather than none so
+          touch devices register a tap. */}
+      {axes.map((ax, i) => {
+        const [x, y] = pt(i, R + 8);
+        return <circle key={i} cx={x} cy={y} r="24" fill="transparent" style={{ cursor: "pointer" }}
+          onPointerEnter={() => setHot(i)} onPointerDown={() => setHot(i)}>
+          <title>{ax.label} {ax.show}</title>
+        </circle>;
+      })}
     </svg>
   );
 }
@@ -7513,7 +7565,8 @@ function PlayerProfile({ userId, onBack, footer }) {
   const weekendRows = Object.entries(byWeekend).sort((a, b) => new Date(evMap[a[0]]?.created_at || 0) - new Date(evMap[b[0]]?.created_at || 0));
 
   // Radar wants raw kda/acs/hs/win/rank — feed the scouting-profile numbers.
-  const radarPlayer = { kda: Number(p.kda) || 0, acs: Number(p.acs) || 0, hs: Number(p.hs) || 0, win: Number(p.win) || 0, rank };
+  // rankDiv included so the radar's RANK readout says "Gold 2", not "Gold".
+  const radarPlayer = { kda: Number(p.kda) || 0, acs: Number(p.acs) || 0, hs: Number(p.hs) || 0, win: Number(p.win) || 0, rank, rankDiv };
   const hasScout = p.kda != null || p.acs != null || p.hs != null || p.rank;
 
   const NOTCH = "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))";
