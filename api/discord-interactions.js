@@ -50,7 +50,10 @@ export default async function handler(req, res) {
   // So: defer when a keep-alive is available, otherwise do the work first and
   // answer in one shot. The second path risks the 3s limit, but a late reply is
   // recoverable where a permanently pending one is not.
-  const isPublic = body.type === APP_COMMAND && body.data?.name === "rollcall";
+  // Commands that answer in the channel rather than privately. /scout is here
+  // because the whole point is that everyone sees who's looking at whom.
+  const PUBLIC_CMDS = ["rollcall", "scout"];
+  const isPublic = body.type === APP_COMMAND && PUBLIC_CMDS.includes(body.data?.name);
   const origin = `https://${req.headers.host}`;
   const out = { content: null };
 
@@ -76,11 +79,7 @@ export default async function handler(req, res) {
   }
 
   await work();
-  return res.status(200).json({
-    type: REPLY,
-    data: { content: stamp(out.content || "Done.").slice(0, 1900),
-            ...(isPublic ? {} : { flags: EPHEMERAL }) },
-  });
+  return res.status(200).json({ type: REPLY, data: payloadFor(out, !isPublic) });
 }
 
 // Vercel exposes waitUntil through a request-context symbol, which keeps the
@@ -103,7 +102,9 @@ async function followUp(body, out) {
       `https://discord.com/api/v10/webhooks/${body.application_id}/${body.token}/messages/@original`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: stamp(out.content || "Done.").slice(0, 1900) }),
+        // Ephemerality is fixed by the deferred ACK, so the edit must not
+        // resend flags — only content, embed and mention whitelist.
+        body: JSON.stringify(payloadFor(out, false)),
       });
     if (!r.ok) console.error("followup failed", r.status, await r.text().catch(() => ""));
   } catch (e) { console.error("followup threw", e); }
@@ -220,22 +221,21 @@ async function onCommand(out, body, guild, discordId) {
       (p.signedUp ? `\nThis weekend: ${p.signedUp}` : "\nNot signed up this weekend.") +
       (flags.length ? `\n${flags.join(" · ")}` : "");
 
-    // Mirror the lookup into #scout so scouting is a shared activity rather
-    // than twenty people privately checking the same names. Credited to whoever
-    // asked — knowing who's looking at whom is half the fun before a draft.
+    // One public message, in the channel it was run in. Scouting is a shared
+    // activity — knowing who's looking at whom is half the fun before a draft —
+    // so there's no private copy to duplicate it.
     //
-    // The Discord handle is deliberately left OFF the public copy: it's contact
-    // detail, and putting it in a channel invites DMs from anyone who scrolls
-    // past. The person who ran the command still sees it privately.
-    const posted = await postToChannel(guild, "scout", {
-      content: `🔍 <@${discordId}> scouted **${p.name}**`,
+    // The handle is deliberately left out: it's a contact detail, and the
+    // scouted player is @-mentioned here anyway, which is a better way to reach
+    // them than publishing a handle into a channel.
+    //
+    // Mentions are whitelisted explicitly — without that they render as blue
+    // text and notify nobody, which looks right and does nothing.
+    const target = p.discordId ? `<@${p.discordId}>` : `**${p.name}**`;
+    return reply(out, `🔍 <@${discordId}> is scouting ${target}`, {
       embeds: [{ description: card, color: 0x3d7bff }],
-      allowed_mentions: { parse: [] },
+      allowedMentions: { users: [discordId, p.discordId].filter(Boolean) },
     });
-
-    return reply(out, card +
-      (p.discord ? `\nDiscord: ${p.discord}` : "") +
-      (posted ? "" : "\n-# Run “Set up channels” to get a #scout channel where these are shared."));
   }
 
   return reply(out, "Unknown command.");
@@ -379,27 +379,6 @@ async function setPlayerRole(guild, discordId, grant) {
   } catch (e) { console.error("setPlayerRole", e); }
 }
 
-// Post into one of the bot's own channels, resolved from the guild. Returns
-// false rather than throwing when the channel doesn't exist yet — a missing
-// #scout channel must not turn a working lookup into an error.
-async function postToChannel(guild, ref, payload) {
-  if (!guild) return false;
-  try {
-    const r = await rpc("volt_dc_channel", { p_guild: guild, p_ref: ref });
-    const ch = r?.channel;
-    if (!ch) return false;
-    const token = process.env.DISCORD_BOT_TOKEN;
-    if (!token) return false;
-    const resp = await fetch(`https://discord.com/api/v10/channels/${ch}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) { console.error("postToChannel", ref, resp.status); return false; }
-    return true;
-  } catch (e) { console.error("postToChannel", ref, e); return false; }
-}
-
 async function tagFor(guild) {
   try {
     const t = await rpc("volt_dc_tag", { p_guild: guild });
@@ -414,9 +393,23 @@ const stamp = (content) => (ctx.tag ? `-# ◈ ${ctx.tag}\n${content}` : content)
 // Records the reply rather than sending it. The deferred flow above does the
 // sending, which means every existing `return reply(...)` call site keeps
 // working with no change.
-function reply(out, content) {
-  if (out && typeof out === "object") out.content = content;
+function reply(out, content, extra) {
+  if (out && typeof out === "object") {
+    out.content = content;
+    if (extra?.embeds) out.embeds = extra.embeds;
+    if (extra?.allowedMentions) out.allowedMentions = extra.allowedMentions;
+  }
   return out;
+}
+
+// Build a reply payload the same way whether it goes out as an immediate
+// response or as a followup edit, so the two paths can't drift apart.
+function payloadFor(out, ephemeral) {
+  const d = { content: stamp(out.content || "Done.").slice(0, 1900) };
+  if (out.embeds) d.embeds = out.embeds;
+  if (out.allowedMentions) d.allowed_mentions = out.allowedMentions;
+  if (ephemeral) d.flags = EPHEMERAL;
+  return d;
 }
 const needsLink = (out) => reply(out,
   "I don't know who you are yet. Open VOLT → your account → **Connect Discord**. " +
