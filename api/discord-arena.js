@@ -47,6 +47,10 @@ const COMMON = [
     topic: "The season race. Updated after every match." },
   { ref: "fixtures",  name: "fixtures",   type: 0, readOnly: true,
     topic: "Who plays who, and when. Updated whenever the schedule changes." },
+  // Writable, not read-only: people run /scout in here, and a denied
+  // Send Messages blocks slash commands along with typing.
+  { ref: "scout",     name: "scout",      type: 0, readOnly: false,
+    topic: "Look anyone up with /scout. Everyone sees who's been scouted." },
   { ref: "general",   name: "trash-talk", type: 0, readOnly: false,
     topic: "Say something you'll regret." },
   { ref: "stage",     name: "Draft Stage", type: 2 },

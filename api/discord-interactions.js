@@ -208,17 +208,34 @@ async function onCommand(out, body, guild, discordId) {
     if (p?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
     if (p?.error === "notfound") return reply(out, `No player called **${who}** in this league.`);
     const flags = [];
-    if (p.suspended > 0) flags.push(`⛔ suspended for ${p.suspended} more weekend${p.suspended === 1 ? "" : "s"}`);
+    if (p.suspended > 0) flags.push(`⛔ suspended for ${p.suspended} more tournament${p.suspended === 1 ? "" : "s"}`);
     if (p.strikes > 0) flags.push(`⚠ ${p.strikes} no-show${p.strikes === 1 ? "" : "s"}`);
-    if (p.streak > 0) flags.push(`🏆 ${p.streak} weekend streak`);
-    return reply(out,
+    if (p.streak > 0) flags.push(`🏆 ${p.streak} tournament streak`);
+
+    const card =
       `**${p.name}** · ${p.rank} · ${p.role}${p.agent && p.agent !== "—" ? ` (${p.agent})` : ""}\n` +
       `KDA ${num(p.kda)} · ACS ${num(p.acs, 0)} · HS ${num(p.hs, 0)}%\n` +
       `Season: **${num(p.points, 0)}** points from ${p.matches} match${p.matches === 1 ? "" : "es"}` +
-      (p.wins > 0 ? ` · ${p.wins} weekend${p.wins === 1 ? "" : "s"} won` : "") +
+      (p.wins > 0 ? ` · ${p.wins} tournament${p.wins === 1 ? "" : "s"} won` : "") +
       (p.signedUp ? `\nThis weekend: ${p.signedUp}` : "\nNot signed up this weekend.") +
+      (flags.length ? `\n${flags.join(" · ")}` : "");
+
+    // Mirror the lookup into #scout so scouting is a shared activity rather
+    // than twenty people privately checking the same names. Credited to whoever
+    // asked — knowing who's looking at whom is half the fun before a draft.
+    //
+    // The Discord handle is deliberately left OFF the public copy: it's contact
+    // detail, and putting it in a channel invites DMs from anyone who scrolls
+    // past. The person who ran the command still sees it privately.
+    const posted = await postToChannel(guild, "scout", {
+      content: `🔍 <@${discordId}> scouted **${p.name}**`,
+      embeds: [{ description: card, color: 0x3d7bff }],
+      allowed_mentions: { parse: [] },
+    });
+
+    return reply(out, card +
       (p.discord ? `\nDiscord: ${p.discord}` : "") +
-      (flags.length ? `\n${flags.join(" · ")}` : ""));
+      (posted ? "" : "\n-# Run “Set up channels” to get a #scout channel where these are shared."));
   }
 
   return reply(out, "Unknown command.");
@@ -360,6 +377,27 @@ async function setPlayerRole(guild, discordId, grant) {
       { method: grant ? "PUT" : "DELETE", headers: { Authorization: `Bot ${token}` } });
     if (!resp.ok) console.error("role", grant ? "grant" : "revoke", "failed", resp.status);
   } catch (e) { console.error("setPlayerRole", e); }
+}
+
+// Post into one of the bot's own channels, resolved from the guild. Returns
+// false rather than throwing when the channel doesn't exist yet — a missing
+// #scout channel must not turn a working lookup into an error.
+async function postToChannel(guild, ref, payload) {
+  if (!guild) return false;
+  try {
+    const r = await rpc("volt_dc_channel", { p_guild: guild, p_ref: ref });
+    const ch = r?.channel;
+    if (!ch) return false;
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) return false;
+    const resp = await fetch(`https://discord.com/api/v10/channels/${ch}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) { console.error("postToChannel", ref, resp.status); return false; }
+    return true;
+  } catch (e) { console.error("postToChannel", ref, e); return false; }
 }
 
 async function tagFor(guild) {
