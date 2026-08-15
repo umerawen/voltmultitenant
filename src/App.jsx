@@ -8486,6 +8486,10 @@ function DiscordArenaCard({ eventId, phase }) {
         throw new Error(`Failed (${r.status})`);
       }
       const made = b.created?.length || 0, kept = b.reused?.length || 0;
+      if (b.partial) {
+        setMsg(`${made} created, ${kept} already there — press the button again to finish the rest.`);
+        setBusy(""); return;
+      }
       if (mode === "teams") {
         setMsg(`${b.teams} teams — ${made} things created, ${kept} already there, ${b.assigned} players given their role.`);
       } else if (mode === "standings") {

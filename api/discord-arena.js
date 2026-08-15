@@ -23,7 +23,12 @@ const API = "https://discord.com/api/v10";
 // longer, and bailing out cleanly before the limit, turns that into a partial
 // result the host can just re-run.
 export const config = { maxDuration: 60 };
-const BUDGET_MS = 45000;
+// Budget for the worst case, not the configured one. maxDuration only lifts the
+// ceiling on some Vercel plans; where it doesn't, the hard limit is 10s and a
+// 45s budget would never fire — the function just dies with no JSON body, which
+// is exactly the opaque 500 this is meant to prevent. 8s is safe on either, and
+// since every step is idempotent, finishing across two presses costs nothing.
+const BUDGET_MS = 8000;
 
 const P = {
   VIEW:    1n << 10n,
@@ -149,10 +154,13 @@ async function buildTeams(ctx) {
     await remember(ctx, "role", t.name, role.id, true);
 
     for (const did of t.discordIds || []) {
+      if (outOfTime(ctx, out)) break;
       const r = await call(ctx.token, `/guilds/${ctx.guild}/members/${did}/roles/${role.id}`, "PUT");
       if (r.ok) out.assigned++;
       else if (!out.errors.some((e) => e.startsWith("assign"))) out.errors.push(`assign: ${r.reason}`);
-      await sleep(200);
+      // 80ms is ample spacing for member-role writes and saves a lot of dead
+      // time across a full league compared with 200ms.
+      await sleep(80);
     }
 
     // Private text + voice: invisible to everyone but the team and staff. This
@@ -280,6 +288,7 @@ async function postStandings(ctx) {
 // the ID either way. The registry is checked first so a rename in Discord
 // doesn't cause a duplicate.
 async function ensureChannel(ctx, spec, out) {
+  if (outOfTime(ctx, out)) return null;
   const kind = kindOf(spec.type);
   const want = spec.type === 2 || spec.type === 4 ? spec.name : slug(spec.name);
 
@@ -327,6 +336,7 @@ function fromRegistry(ctx, kind, ref) {
 // exactly where it left off rather than duplicating what already exists.
 function outOfTime(ctx, out) {
   if (!ctx.deadline || Date.now() < ctx.deadline) return false;
+  out.partial = true;
   if (!out.errors.some((e) => e.startsWith("Ran out"))) {
     out.errors.push("Ran out of time — press the button again to finish the rest.");
   }
