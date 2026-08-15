@@ -231,12 +231,8 @@ async function postFixtures(ctx) {
       }
       return `**${m.a}** vs **${m.b}** · ${when}${m.bo ? ` · Bo${m.bo}` : ""}`;
     });
-    return `${head}
-${lines.join("
-")}`;
-  }).join("
-
-");
+    return `${head}\n${lines.join("\n")}`;
+  }).join("\n\n");
 
   const embed = { title: "Fixtures", color: 0x3d7bff,
     description: body.slice(0, 4000),
