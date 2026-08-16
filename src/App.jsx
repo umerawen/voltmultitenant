@@ -9743,8 +9743,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                         ? <span style={{ fontSize: 14.5, color: "#f5c453", fontWeight: 700, lineHeight: 1.35 }}>{live.pending} application{live.pending === 1 ? "" : "s"} awaiting your review</span>
                         : <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", lineHeight: 1.5 }}>No applications waiting. Approvals show up here.</span>}
                       <div style={{ display: "grid", gap: 8, marginTop: 2 }}>
-                        <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "primary", { padding: "11px 16px", fontSize: 12 })}>Review applications →</button>
-                        <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "9px 16px", fontSize: 11 })}>⊞ Enter the tournament →</button>
+                        <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "ghost", { padding: "11px 16px", fontSize: 12, width: "100%" })}>Review applications →</button>
+                        <button onClick={() => onEnter(current, "lobby")} style={shellBtn("primary", { padding: "11px 16px", fontSize: 12, width: "100%" })}>⊞ Enter the tournament →</button>
                       </div>
                     </div>
                   : (current.phase === "registration_open" || current.phase === "registration_closed") && HAS_SUPABASE
