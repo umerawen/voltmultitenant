@@ -4335,8 +4335,23 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         return true;
       };
 
+      // liveSync means "broadcasts are actually arriving", NOT "the socket
+      // connected". Those came apart badly: realtime.messages is partitioned by
+      // day, the partitions ran out, and every server-side broadcast failed
+      // silently — while the channel still reported SUBSCRIBED. The client
+      // trusted that, dropped its poll from 1.2s to 20s, and updates that never
+      // came were replaced by nothing. On draft night a bid would have taken up
+      // to twenty seconds to reach the other captains.
+      //
+      // So the fast poll is only surrendered once a broadcast has genuinely
+      // landed, and it is taken back the moment they stop.
+      const markLive = () => {
+        lastBcastRef.current = Date.now();
+        if (!liveSyncRef.current) setLiveSync(true);
+      };
       ch = __sb.channel(`volt:${cid}`, { config: { private: true } })
         .on("broadcast", { event: "volt" }, (msg) => {
+          markLive();
           const d = msg?.payload;
           if (!d) return;
           // Anything we can't apply exactly — a spin, a host edit, or a delta we
@@ -4344,9 +4359,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           if (!applyDelta(d)) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
         })
         .subscribe((status) => {
-          const up = status === "SUBSCRIBED";
-          setLiveSync(up);
-          if (up) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
+          // A dropped socket is still proof of nothing arriving.
+          if (status !== "SUBSCRIBED") { setLiveSync(false); return; }
+          readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
         });
     }
     return () => { alive = false; stop(); if (ch) __sb.removeChannel(ch); };
@@ -4584,6 +4599,19 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const [liveSync, setLiveSync] = useState(false);
   const liveSyncRef = useRef(false);
   useEffect(() => { liveSyncRef.current = liveSync; }, [liveSync]);
+  // Timestamp of the last broadcast that actually arrived.
+  const lastBcastRef = useRef(0);
+  // If they dry up, fall back to fast polling rather than sitting on a 20s
+  // safety poll waiting for messages that aren't coming.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (liveSyncRef.current && Date.now() - lastBcastRef.current > 45000) {
+        console.warn("[volt] no broadcasts for 45s — falling back to polling");
+        setLiveSync(false);
+      }
+    }, 10000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Adopt a board handed back by an RPC. It is by definition newer than anything
   // local, so drop the conditional-GET cache and let the next poll re-prime it.
