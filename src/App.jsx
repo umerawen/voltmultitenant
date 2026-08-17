@@ -6273,6 +6273,8 @@ function VoltGate() {
   const [activeEvent, setActiveEvent] = useState(null);
   const [targetView, setTargetView] = useState(null); // deep-link a rail view when entering a tournament
   const [pendingProfile, setPendingProfile] = useState(null); // open a player profile after routing to the hub
+  const [hostNote, setHostNote] = useState("");
+  const [noteSaved, setNoteSaved] = useState(false);
 
   // ?join=<code> lets a host post one link instead of asking people to copy a
   // code between two apps. Read once on mount and stripped from the URL, so a
@@ -6393,8 +6395,20 @@ function VoltGate() {
       if (!c) throw new Error("League was not created — try again.");
       window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
       setProfile({ id: user.id, role: "host", display_name: dn, community_id: c.id });
-      setPhase("schedule");
+      // New leagues are reviewed before they can run anything, so send the host
+      // to a waiting screen rather than a schedule they can't use.
+      setPhase(c.status === "approved" ? "schedule" : "pending");
     } catch (e) { setErr(e.message || "Could not create the league."); }
+    setBusy(false);
+  }
+
+  async function saveHostNote() {
+    setBusy(true);
+    try {
+      await __sb.from("communities").update({ requested_note: hostNote.trim() })
+        .eq("id", window.__VOLT.communityId);
+      setNoteSaved(true);
+    } catch (e) { console.error("host note", e); setNoteSaved(true); }
     setBusy(false);
   }
 
@@ -6578,6 +6592,28 @@ function VoltGate() {
     <input style={field} placeholder="Your display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
     {!session && emailPw}
     <button disabled={busy} onClick={doHost} style={btn(true)}>{busy ? "…" : "Create my league →"}</button>
+  </>);
+
+  if (phase === "pending") return wrap(<>
+    <p style={{ margin: "0 0 6px", color: "#f5c453", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Request received</p>
+    <p style={{ margin: "0 0 14px", fontSize: 22, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", textTransform: "uppercase", letterSpacing: "0.02em" }}>
+      {community?.name || "Your league"} is waiting on approval
+    </p>
+    <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.65)", fontSize: 14, lineHeight: 1.65 }}>
+      Every new league gets a quick look before it goes live — it keeps the platform
+      clean and means someone actually helps you set yours up. You'll get an email
+      the moment it's approved, usually within a day.
+    </p>
+    <p style={{ margin: "0 0 18px", color: "rgba(200,215,255,0.45)", fontSize: 13, lineHeight: 1.6 }}>
+      In the meantime, tell me about your community — where your players hang out and
+      roughly how many you expect. It speeds this up.
+    </p>
+    <textarea value={hostNote} onChange={(e) => setHostNote(e.target.value)} rows={3}
+      placeholder="e.g. ~40 players, mostly Gold–Diamond, we run scrims on Fridays"
+      style={{ ...field, height: "auto", resize: "vertical" }} />
+    <button disabled={busy || noteSaved} onClick={saveHostNote} style={btn(!noteSaved)}>
+      {noteSaved ? "✓ Sent — thanks" : busy ? "…" : "Send"}
+    </button>
   </>);
 
   // Join a league.
@@ -8896,6 +8932,108 @@ function IgnCheckCard({ eventId }) {
   );
 }
 
+// ── Operator review queue ────────────────────────────────────────────────
+// Approving leagues from the Supabase dashboard means finding a row and editing
+// a column by hand, on a phone, usually while a tournament is running. This is
+// the same job with the context needed to decide and no chance of editing the
+// wrong row. Only renders for accounts in platform_admins.
+function AdminQueue() {
+  const [rows, setRows] = useState(null);
+  const [filter, setFilter] = useState("pending");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(false);
+
+  async function load() {
+    try {
+      const { data, error } = await __sb.rpc("volt_admin_leagues",
+        { p_status: filter === "all" ? null : filter });
+      if (error) throw new Error(error.message);
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) { console.error("admin queue", e); setRows([]); }
+  }
+  useEffect(() => { if (open) load(); }, [open, filter]);
+
+  async function setStatus(id, status) {
+    setBusy(id); setErr("");
+    try {
+      const { error } = await __sb.rpc("volt_admin_set_status", { p_community: id, p_status: status });
+      if (error) throw new Error(error.message);
+      await load();
+    } catch (e) { setErr(e.message || "Couldn't update."); }
+    setBusy("");
+  }
+
+  const pending = (rows || []).filter((r) => r.status === "pending").length;
+  const TONE = { pending: "#f5c453", approved: "#9af5c2", rejected: "#ff8f9a", suspended: "#ff8f9a" };
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <CollapseHead title="League requests" open={open} onToggle={() => setOpen((o) => !o)}
+        tone={pending > 0 ? "rgba(245,196,83,0.45)" : null}
+        hint={rows === null ? "Operator only" : pending > 0
+          ? `${pending} waiting on you` : "Nothing waiting"} />
+      {open && (
+        <div style={{ marginTop: 8, ...PANEL(null, "16px 18px") }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+            {["pending", "approved", "all"].map((k) => (
+              <button key={k} onClick={() => setFilter(k)}
+                style={shellBtn(filter === k ? "primary" : "ghost", { padding: "6px 13px", fontSize: 11 })}>
+                {k}
+              </button>
+            ))}
+          </div>
+
+          {rows === null && <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.45)" }}>Loading…</div>}
+          {rows?.length === 0 && <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.45)" }}>Nothing here.</div>}
+
+          {(rows || []).map((r) => (
+            <div key={r.id} style={{ padding: "13px 0", borderTop: "1px solid rgba(120,150,220,0.12)" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#ecf3ff", textTransform: "uppercase" }}>{r.name}</span>
+                <span style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700,
+                  color: TONE[r.status] || "rgba(200,215,255,0.5)" }}>{r.status}</span>
+                <span style={{ flex: 1 }} />
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "rgba(200,215,255,0.35)" }}>
+                  {r.createdAt ? ledgerAgo(r.createdAt) : ""}
+                </span>
+              </div>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 5 }}>
+                {r.slug} · host {r.host || "—"} · {r.members} member{r.members === 1 ? "" : "s"}
+                {r.events > 0 ? ` · ${r.events} tournament${r.events === 1 ? "" : "s"}` : ""}
+                {r.discord ? " · Discord linked" : ""}
+              </div>
+              {r.note && (
+                <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginTop: 7, lineHeight: 1.55,
+                  padding: "8px 11px", background: "rgba(10,16,30,0.5)", clipPath: SHELL_NOTCH(6) }}>
+                  “{r.note}”
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                {r.status !== "approved" && (
+                  <button disabled={!!busy} onClick={() => setStatus(r.id, "approved")}
+                    style={shellBtn("primary", { padding: "7px 15px", fontSize: 11 })}>
+                    {busy === r.id ? "…" : "Approve"}
+                  </button>
+                )}
+                {r.status === "pending" && (
+                  <button disabled={!!busy} onClick={() => setStatus(r.id, "rejected")}
+                    style={shellBtn("ghost", { padding: "7px 15px", fontSize: 11 })}>Reject</button>
+                )}
+                {r.status === "approved" && (
+                  <button disabled={!!busy} onClick={() => setStatus(r.id, "suspended")}
+                    style={shellBtn("danger", { padding: "7px 15px", fontSize: 11 })}>Suspend</button>
+                )}
+              </div>
+            </div>
+          ))}
+          {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Sub desk ─────────────────────────────────────────────────────────────
 // A captain short a player at 9pm shouldn't have to read a list and DM
 // strangers. They pick who's out, everyone eligible gets a DM with one button,
@@ -9412,6 +9550,15 @@ function StaffPanel({ onOpenPlayer }) {
 
 function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, onEnter, openProfile, onProfileOpened }) {
   const [events, setEvents] = useState(null);
+  // Platform operators see the league review queue below their own league.
+  const [isOperator, setIsOperator] = useState(false);
+  useEffect(() => {
+    if (!HAS_SUPABASE) return;
+    let ok = true;
+    __sb.rpc("is_platform_admin").then(({ data }) => ok && setIsOperator(!!data))
+      .catch(() => {});
+    return () => { ok = false; };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [season, setSeason] = useState(null); // aggregated captain standings across tournaments
@@ -9945,6 +10092,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} phase={current.phase} />
     )}
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
+    {HAS_SUPABASE && isOperator && <AdminQueue />}
     {/* Public to every member, not staff-only — the feed is the league's own
         record of itself, and that only works if players can read it. */}
     {HAS_SUPABASE && <LeagueLedger onOpenPlayer={(uid) => setShowPlayer(uid)} />}
