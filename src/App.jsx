@@ -4871,6 +4871,34 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     }
   }
 
+  // ── Hooks must stay above every early return ─────────────────────────
+  // The role picker below returns early. A hook declared after it runs on some
+  // renders and not others, React throws "rendered more hooks than during the
+  // previous render", and the whole view goes black. It only bites people who
+  // see the picker — staff are auto-identified, which is why it worked on the
+  // host's machine and nowhere else.
+  // Who's holding the gavel this tournament. Null means the host, which is what
+  // every existing tournament has. A host who hands it over stops seeing SOLD
+  // and PASS and gets the bid controls instead — that's the whole point: you
+  // can't call the auction and bid in it at the same time.
+  const [auct, setAuct] = useState(null);
+  const loadAuctioneer = useCallback(() => {
+    if (!HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    __sb.rpc("volt_auctioneer", { p_event: window.__VOLT.weekendId })
+      .then(({ data }) => data && setAuct(data))
+      .catch((e) => console.error("auctioneer", e));
+  }, []);
+  useEffect(() => {
+    loadAuctioneer();
+    // The moderator receiving the gavel needs to find out without a refresh.
+    // A tiny RPC every 30s costs far less than putting it on the board poll,
+    // and only people already inside the draft room pay for it.
+    const iv = setInterval(loadAuctioneer, 30000);
+    const onFocus = () => loadAuctioneer();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(iv); window.removeEventListener("focus", onFocus); };
+  }, [loadAuctioneer]);
+
   /* ── loading ── */
   if (!state) return (
     <div className="min-h-screen grid place-items-center" style={{ background: "#0a0d18", color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif" }}>
@@ -5052,28 +5080,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // .isHost is strictly the league owner; it is undefined in the no-Supabase
   // preview, so treat undefined as allowed there.
   const isOwner = window.__VOLT?.isHost !== false;
-
-  // Who's holding the gavel this tournament. Null means the host, which is what
-  // every existing tournament has. A host who hands it over stops seeing SOLD
-  // and PASS and gets the bid controls instead — that's the whole point: you
-  // can't call the auction and bid in it at the same time.
-  const [auct, setAuct] = useState(null);
-  const loadAuctioneer = useCallback(() => {
-    if (!HAS_SUPABASE || !window.__VOLT?.weekendId) return;
-    __sb.rpc("volt_auctioneer", { p_event: window.__VOLT.weekendId })
-      .then(({ data }) => data && setAuct(data))
-      .catch((e) => console.error("auctioneer", e));
-  }, []);
-  useEffect(() => {
-    loadAuctioneer();
-    // The moderator receiving the gavel needs to find out without a refresh.
-    // A tiny RPC every 30s costs far less than putting it on the board poll,
-    // and only people already inside the draft room pay for it.
-    const iv = setInterval(loadAuctioneer, 30000);
-    const onFocus = () => loadAuctioneer();
-    window.addEventListener("focus", onFocus);
-    return () => { clearInterval(iv); window.removeEventListener("focus", onFocus); };
-  }, [loadAuctioneer]);
 
   // Until the lookup lands, fall back to the old rule so the host isn't briefly
   // locked out of their own auction on a slow connection.
