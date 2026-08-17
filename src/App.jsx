@@ -6405,8 +6405,11 @@ function VoltGate() {
   async function saveHostNote() {
     setBusy(true);
     try {
-      await __sb.from("communities").update({ requested_note: hostNote.trim() })
-        .eq("id", window.__VOLT.communityId);
+      // Via an RPC, not a table write: clients no longer have UPDATE on
+      // communities at all, because that grant was what made the approval
+      // gate bypassable from the console.
+      const { error } = await __sb.rpc("volt_set_request_note", { p_note: hostNote.trim() });
+      if (error) throw new Error(error.message);
       setNoteSaved(true);
     } catch (e) { console.error("host note", e); setNoteSaved(true); }
     setBusy(false);
