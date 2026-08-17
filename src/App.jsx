@@ -4349,15 +4349,29 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         lastBcastRef.current = Date.now();
         if (!liveSyncRef.current) setLiveSync(true);
       };
+      // Two delivery paths for the same payload.
+      //
+      // `broadcast` is realtime.send, which is the intended route but currently
+      // dead: realtime.messages is partitioned by day and the partitions ran
+      // out, and that schema can't be repaired from our side. It's kept because
+      // it costs nothing and resumes working the moment Supabase fixes it.
+      //
+      // `postgres_changes` on volt_pulse is the live path — a small table we
+      // own, in the publication, carrying the same delta rows. Whichever
+      // arrives first wins; applyDelta is idempotent and the stamp guard drops
+      // anything we've already applied, so a duplicate is harmless.
+      const onPayload = (d) => {
+        markLive();
+        if (!d) return;
+        // Anything we can't apply exactly — a spin, a host edit, or a delta we
+        // arrived too late for — falls back to one full read.
+        if (!applyDelta(d)) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
+      };
       ch = __sb.channel(`volt:${cid}`, { config: { private: true } })
-        .on("broadcast", { event: "volt" }, (msg) => {
-          markLive();
-          const d = msg?.payload;
-          if (!d) return;
-          // Anything we can't apply exactly — a spin, a host edit, or a delta we
-          // arrived too late for — falls back to one full read.
-          if (!applyDelta(d)) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
-        })
+        .on("broadcast", { event: "volt" }, (msg) => onPayload(msg?.payload))
+        .on("postgres_changes",
+            { event: "INSERT", schema: "public", table: "volt_pulse", filter: `community_id=eq.${cid}` },
+            (msg) => onPayload(msg?.new?.payload))
         .subscribe((status) => {
           // A dropped socket is still proof of nothing arriving.
           if (status !== "SUBSCRIBED") { setLiveSync(false); return; }
@@ -11229,13 +11243,20 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
     // Digits only — wa.me needs a bare international number, and normalising on
     // the way in means the host never has to clean it up by hand.
     const waDigits = (d.whatsapp || "").replace(/[^0-9]/g, "");
+    let contactErr = null;
     try {
-      await __sb.from("player_contacts").upsert({
+      const { error: ce } = await __sb.from("player_contacts").upsert({
         user_id: userId, community_id: window.__VOLT.communityId,
         whatsapp: waDigits || null,
       }, { onConflict: "user_id,community_id" });
-    } catch (e) { console.error("saveContacts:", e); }
+      contactErr = ce || null;
+    } catch (e) { contactErr = e; }
     setBusy(false);
+    if (!error && contactErr) {
+      console.error("saveContacts:", contactErr.message || contactErr);
+      setSaveErr("Your stats saved, but the WhatsApp number didn't. You need it to enter a tournament — try again.");
+      return;
+    }
     if (error) {
       // Keep the form open and say what happened — collapsing silently made it
       // look like the save "reverted".
@@ -11996,7 +12017,7 @@ function WeekendRegistration({ ev, auth, phase }) {
       const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: wantCap });
       if (error) throw error;
       await load();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
     setBusy(false);
   }
   async function withdraw() {
@@ -12005,16 +12026,18 @@ function WeekendRegistration({ ev, auth, phase }) {
     catch (e) { console.error(e); }
     setBusy(false);
   }
+  const [decideErr, setDecideErr] = useState("");
   // Host decision — the only way into the tournament pool.
   async function hostDecide(entry, status) {
-    setBusy(true);
+    setBusy(true); setDecideErr("");
     try {
-      await __sb.from("registrations").update({ status }).eq("id", entry.regId);
+      const { error } = await __sb.from("registrations").update({ status }).eq("id", entry.regId);
+      if (error) throw new Error(error.message);
       await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: status === "approved" ? "approved" : "rejected",
         title: status === "approved" ? "You're in — " + weekendName(ev) : "Application not approved",
         body: status === "approved" ? "Approved for the pool. Captains can draft you now." : "The host didn't approve this one. Reach out if that's a mistake." }]);
       await load();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
     setBusy(false);
   }
   // Player side: a quiet availability signal only — not a captain claim.
@@ -12026,13 +12049,14 @@ function WeekendRegistration({ ev, auth, phase }) {
   }
   // Host side: the actual captain decision.
   async function hostSetCaptain(entry, v) {
-    setBusy(true);
+    setBusy(true); setDecideErr("");
     try {
-      await __sb.from("registrations").update({ is_captain: v }).eq("id", entry.regId);
+      const { error } = await __sb.from("registrations").update({ is_captain: v }).eq("id", entry.regId);
+      if (error) throw new Error(error.message);
       if (v) await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: "captain",
         title: "★ You're a captain this tournament", body: "$10,000 budget in " + weekendName(ev) + ". Scout the pool and build your squad." }]);
       await load();
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
     setBusy(false);
   }
 
@@ -12088,6 +12112,12 @@ function WeekendRegistration({ ev, auth, phase }) {
           <div style={{ ...panel, order: 1, borderColor: "rgba(245,196,83,0.4)" }}>
             {corner}
             {secLabel(`Applications · ${pendingQ.length} pending`)}
+            {/* Approve and reject failures used to be console-only, because
+                supabase-js returns errors rather than throwing and the catch
+                never fired. On draft night that reads as a dead button. */}
+            {decideErr && (
+              <p style={{ color: "#ff8f9a", fontSize: 12.5, margin: "0 0 10px" }}>⚠ {decideErr}</p>
+            )}
             {pendingQ.length > 0 && (
               <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: "0 0 10px" }}>
                 Tap a row to see their full stats and history before you decide.
