@@ -8806,6 +8806,18 @@ function JoinGuideCard({ community, current }) {
       // walks away believing the role exists. Detect it by its absence.
       if (!("roleId" in (body || {}))) {
         setErr("The server is running an older version of /api/discord-notify — re-upload it to Vercel, then try again.");
+      } else if (c) {
+        // Report what happened first. A partial sync is progress, and burying
+        // it under a single Discord error makes a working run look broken.
+        const bits = [`${c.added} added`, `${c.removed} removed`, `${c.kept} already had it`];
+        setRes(`Player role synced — ${bits.join(", ")}.`);
+        const notes = [];
+        if (c.notInServer > 0) notes.push(
+          `${c.notInServer} ${c.notInServer === 1 ? "player has" : "players have"} connected Discord but ${c.notInServer === 1 ? "isn't" : "aren't"} in this server` +
+          (c.missing?.length ? ` (${c.missing.join(", ")})` : "") +
+          " — they'll still get DMs, but can't hold the role until they join.");
+        if (body.roleError) notes.push(body.roleError);
+        if (notes.length) setErr(notes.join(" "));
       } else if (body?.roleError) {
         setErr(`Role: ${body.roleError}`);
       } else if (!body?.roleId) {

@@ -126,7 +126,7 @@ export default async function handler(req, res) {
         }
         if (syncRole) {
           const want = await rpc("volt_dc_role_members", { p_guild: g });
-          const r = await syncRoleMembers(token, g, roleId, want?.members || []);
+          const r = await syncRoleMembers(token, g, roleId, want?.members || [], want?.names || {});
           roleSynced = r.counts;
           if (r.reason) roleError = r.reason;
         }
@@ -367,9 +367,9 @@ async function ensureRole(token, guild, storedId, wantName) {
 // Diff the role's current holders against who should hold it, then apply only
 // the difference. Sending every member every time would burn rate limit on a
 // 60-player league and re-notify people who already had it.
-async function syncRoleMembers(token, guild, roleId, wantIds) {
+async function syncRoleMembers(token, guild, roleId, wantIds, names) {
   const want = new Set((wantIds || []).filter(Boolean).map(String));
-  const counts = { added: 0, removed: 0, kept: 0 };
+  const counts = { added: 0, removed: 0, kept: 0, notInServer: 0 };
   let reason = null;
 
   // Paginate: /members caps at 1000 per page.
@@ -385,7 +385,20 @@ async function syncRoleMembers(token, guild, roleId, wantIds) {
 
   const holders = new Set(have.filter((m) => (m.roles || []).includes(roleId))
                               .map((m) => m.user?.id).filter(Boolean));
+  // Everyone actually in the server. A player can link Discord and then never
+  // join, or leave later — assigning a role to them returns "Unknown Member"
+  // (10007), which previously aborted the report and hid the fact that the rest
+  // of the sync had worked. The member list is already in hand, so skip them up
+  // front and count them instead of burning a failed request each.
+  const inServer = new Set(have.map((m) => m.user?.id).filter(Boolean));
   for (const id of want) {
+    if (!inServer.has(id)) {
+      counts.notInServer++;
+      // Name them: "3 players aren't in the server" is a dead end, a list is
+      // something the host can chase.
+      if (names && names[id]) counts.missing = (counts.missing || []).concat(names[id]);
+      continue;
+    }
     if (holders.has(id)) { counts.kept++; continue; }
     const r = await put(token, `/guilds/${guild}/members/${id}/roles/${roleId}`);
     if (r.ok) counts.added++; else if (!reason) reason = r.reason;
