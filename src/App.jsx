@@ -581,6 +581,7 @@ function findMatch(t, loc) {
   if (loc.kind === "group") return (t.matches?.[loc.groupId] || []).find((m) => m.id === loc.matchId) || null;
   if (loc.kind === "rr") return (t.matches || []).find((m) => m.id === loc.matchId) || null;
   if (loc.kind === "final") return t.final || null;
+  if (loc.kind === "semi") return (t.semis || []).find((m) => m.id === loc.matchId) || null;
   if (loc.kind === "elim") return t.rounds?.[loc.round]?.[loc.idx] || null;
   return null;
 }
@@ -1772,6 +1773,29 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
       {header("Live Competition", fmtName.split(" ")[0], fmtName.split(" ").slice(1).join(" ") || "")}
       <div className="flex items-center justify-center gap-3 mb-7 flex-wrap">
         <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo} default</span>
+        {isAdmin && t.format === "group" && t.groups?.length === 2 && actions.tSetPlayoff && (() => {
+          // Two explicit options rather than one toggle. The old button showed
+          // its current state, which reads as the action — pressing a button
+          // labelled "Semis + final" turned semis OFF.
+          const semis = t.playoff === "semis" || t.playoff == null;
+          const opt = (on, label, mode, tip) => (
+            <button key={mode} onClick={() => actions.tSetPlayoff(mode)} title={tip}
+              className="text-xs uppercase tracking-widest px-3 py-1.5"
+              style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+                color: on ? "#cfe0ff" : "rgba(200,215,255,0.45)",
+                border: `1px solid ${on ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.2)"}`,
+                background: on ? "rgba(61,123,255,0.18)" : "transparent" }}>
+              {label}
+            </button>
+          );
+          return (
+            <span className="inline-flex items-center gap-2">
+              <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Playoff</span>
+              {opt(semis, "Semis + final", "semis", "Top two from each group. Winner of A plays runner-up of B, and vice versa.")}
+              {opt(!semis, "Final only", "final", "Group winners go straight to the final. Runners-up are eliminated.")}
+            </span>
+          );
+        })()}
         {isAdmin && actions.tSwitchFormat && <FormatSwitcher t={t} actions={actions} />}
         {isAdmin && <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "transparent" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>}
       </div>
@@ -1799,6 +1823,26 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
               </div>
             ))}
           </div>
+          {/* semifinals, when the bracket has them */}
+          {t.playoff === "semis" && (
+            <TPanel hue="#7da6ff">
+              <p className="uppercase text-lg font-bold tracking-widest mb-1 text-center" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Semifinals</p>
+              <p className="text-center text-xs mb-3" style={{ color: "rgba(200,215,255,0.4)" }}>
+                Winner of each group meets the other group's runner-up.
+              </p>
+              {t.semis?.length ? (
+                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
+                  {t.semis.map((m) => (
+                    <TMatchRow key={m.id} match={m} locator={{ kind: "semi", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
+                  Complete every group match and the semis will seed themselves.
+                </p>
+              )}
+            </TPanel>
+          )}
           {/* the final */}
           <TPanel hue="#ffd166">
             <p className="uppercase text-lg font-bold tracking-widest mb-3 text-center" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Grand Final ★</p>
@@ -1807,7 +1851,11 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                 <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
               </div>
             ) : (
-              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>Awaiting both group winners — complete every group match to set the final.</p>
+              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
+                {t.playoff === "semis"
+                  ? "Awaiting both semifinal winners."
+                  : "Awaiting both group winners — complete every group match to set the final."}
+              </p>
             )}
           </TPanel>
         </>
@@ -4627,7 +4675,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
       t.matches = {}; // per-group matches generated when groups are locked
       t.locked = false;
-      t.final = null; // { teamA, teamB, bo, maps, done, winner } once groups complete
+      // Two groups of three go straight to a final between the winners, which
+      // means two of the six teams play a knockout and the rest go home. Semis
+      // take the top two from each group instead, so second place still has
+      // something to play for on the last group match.
+      t.playoff = g === 2 ? "semis" : "final";
+      t.semis = null; // [{id:'sf1'...},{id:'sf2'...}] once the groups finish
+      t.final = null; // { teamA, teamB, bo, maps, done, winner } once semis do
     } else if (format === "roundrobin" || format === "league") {
       t.teamIds = []; // host adds all participating teams
       t.matches = [];
@@ -4653,6 +4707,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const out = [];
     if (t.format === "group") {
       Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach((m) => out.push(m)));
+      (t.semis || []).forEach((m) => out.push(m));
       if (t.final) out.push(t.final);
     } else if (t.format === "single") {
       (t.rounds || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
@@ -4813,6 +4868,21 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
   // Host control over the Sunday final: set either side manually (locks
   // auto-seeding), or clear the lock to let the table decide again.
+  // Switch a two-group stage between semis and a straight final. Refuses once
+  // a knockout match has been played, so the shape can't change underneath a
+  // result that already counted.
+  const tSetPlayoff = (mode) => mutate((s) => {
+    const t = s.tournament;
+    if (!t || t.format !== "group") return s;
+    if (t.final?.done || (t.semis || []).some((m) => m.done)) return s;
+    t.playoff = mode === "semis" ? "semis" : "final";
+    t.semis = null; t.final = null;
+    syncFinal(s, t);
+    s.log.unshift(`Playoff set to ${t.playoff === "semis" ? "semis + final" : "straight final"}`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
   const tSetFinalTeam = (side, teamId) => mutate((s) => {
     const t = s.tournament; if (!t) return null;
     if (!t.final) t.final = { id: "final", teamA: null, teamB: null, bo: t.bo, maps: [], done: false, winner: null };
@@ -4858,17 +4928,59 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   }
 
   function syncFinal(s, t) {
-    const winners = t.groups.map((g) => {
-      const rows = computeStandings(g.teamIds, t.matches[g.id] || [], t.overrides);
-      const allDone = (t.matches[g.id] || []).every((m) => m.done);
-      return allDone && rows.length ? rows[0].teamId : null;
-    });
-    if (winners.length >= 2 && winners[0] && winners[1]) {
-      if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: t.bo, maps: [], done: false, winner: null };
-      else if (!t.final.done) { t.final.teamA = winners[0]; t.final.teamB = winners[1]; }
-    } else if (t.final && !t.final.done) {
-      t.final = null;
+    const table = (g) => {
+      const ms = t.matches[g.id] || [];
+      const done = ms.length > 0 && ms.every((m) => m.done);
+      const rows = computeStandings(g.teamIds, ms, t.overrides);
+      return { done, rows };
+    };
+    const groups = t.groups.map(table);
+    const allGroupsDone = groups.length > 0 && groups.every((g) => g.done);
+
+    // Two groups default to semis. Straight-to-final discards both runners-up,
+    // so second place in a group is worth nothing and half the teams are done
+    // after the group stage. Explicitly choosing "final" still works, and 3+
+    // groups keep the old behaviour since winners alone already fill a bracket.
+    const wantSemis = t.playoff === "semis" || (t.playoff == null && t.groups.length === 2);
+    if (!wantSemis) {
+      t.semis = null;
+      const winners = groups.map((g) => (g.done && g.rows.length ? g.rows[0].teamId : null));
+      if (winners.length >= 2 && winners[0] && winners[1]) {
+        if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: t.bo, maps: [], done: false, winner: null };
+        else if (!t.final.done) { t.final.teamA = winners[0]; t.final.teamB = winners[1]; }
+      } else if (t.final && !t.final.done) t.final = null;
+      return;
     }
+
+    // Crossover semis: winner of one group meets the runner-up of the other, so
+    // topping your group is worth something rather than just qualifying.
+    if (!allGroupsDone || groups.length < 2 || groups.some((g) => g.rows.length < 2)) {
+      if (t.semis && !t.semis.some((m) => m.done)) t.semis = null;
+      if (t.final && !t.final.done) t.final = null;
+      return;
+    }
+    const [A, B] = groups;
+    const pairs = [
+      { id: "sf1", teamA: A.rows[0].teamId, teamB: B.rows[1].teamId },
+      { id: "sf2", teamA: B.rows[0].teamId, teamB: A.rows[1].teamId },
+    ];
+    if (!t.semis) {
+      t.semis = pairs.map((x) => ({ ...x, bo: t.bo, maps: [], done: false, winner: null }));
+    } else {
+      // Re-seed only what hasn't been played, so correcting an earlier group
+      // result can't rewrite a semi that already happened.
+      t.semis = pairs.map((x) => {
+        const prev = t.semis.find((m) => m.id === x.id);
+        if (prev?.done) return prev;
+        return { ...(prev || {}), ...x, bo: prev?.bo ?? t.bo, maps: prev?.maps || [], done: false, winner: null };
+      });
+    }
+
+    const w = t.semis.map((m) => (m.done ? m.winner : null));
+    if (w[0] && w[1]) {
+      if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: t.bo, maps: [], done: false, winner: null };
+      else if (!t.final.done) { t.final.teamA = w[0]; t.final.teamB = w[1]; }
+    } else if (t.final && !t.final.done) t.final = null;
   }
 
   // ── Hooks must stay above every early return ─────────────────────────
@@ -6280,7 +6392,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       state={state}
       isAdmin={isAdmin}
       teamOf={teamOf}
-      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal }}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff }}
     />
   );
 
