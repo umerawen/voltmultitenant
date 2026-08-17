@@ -9384,16 +9384,26 @@ function BoardGapCard({ eventId }) {
   if (!gap?.onBoard) return null;
   const missing = gap.missing || [];
   const teams = gap.teams || 0;
+  // Draftable only — reserves are cover for the weekend, not auction lots, and
+  // the draw skips them. Counting them here reported a surplus that wasn't real.
   const pool = (gap.poolSize || 0) + missing.filter((m) => !m.captain).length;
+  const reserves = gap.reserves || 0;
   // Four slots a team is the roster size the auction enforces.
   const slots = teams * 4;
   const short = slots - pool;
-  if (!missing.length && short === 0) return null;
+  const allGood = !missing.length && short === 0;
 
   return (
     <div style={{ marginTop: 14 }}>
       <SectionHead title="Draft board check" />
-      <div style={PANEL(short !== 0 ? "rgba(245,196,83,0.45)" : "rgba(120,150,220,0.18)")}>
+      <div style={PANEL(short !== 0 ? "rgba(245,196,83,0.45)"
+                        : allGood ? "rgba(61,220,132,0.3)" : "rgba(120,150,220,0.18)")}>
+        {allGood && (
+          <div style={{ fontSize: 13, color: "#9af5c2" }}>
+            ✓ {pool} draftable for {teams} teams — {teams * 4} slots, an exact fit.
+            {reserves > 0 ? ` ${reserves} in reserve as cover.` : ""}
+          </div>
+        )}
         {missing.length > 0 && (
           <div style={{ fontSize: 13, color: "rgba(200,215,255,0.75)", lineHeight: 1.6 }}>
             <b style={{ color: "#cfe0ff" }}>{missing.map((m) => m.name).join(", ")}</b>{" "}
@@ -9405,13 +9415,17 @@ function BoardGapCard({ eventId }) {
           <div style={{ fontSize: 13, color: "#ffe4a0", marginTop: missing.length ? 9 : 0, lineHeight: 1.6 }}>
             ⚠ {teams} teams need <b>{slots}</b> players, and the pool has <b>{pool}</b>.
             {short > 0
-              ? ` ${short} team${short === 1 ? "" : "s"} will finish a player short — recruit ${short} more, or drop a captain.`
-              : ` ${-short} player${-short === 1 ? "" : "s"} won't be drafted — add a captain, or they sit out.`}
+              ? ` ${short} slot${short === 1 ? "" : "s"} will go unfilled.` +
+                (reserves > 0
+                  ? ` You have ${reserves} in reserve — move ${Math.min(short, reserves)} back into the draft pool to cover it.`
+                  : ` Recruit ${short} more, or drop a captain.`)
+              : ` ${-short} player${-short === 1 ? "" : "s"} won't be drafted — add a captain, or move ${-short} to reserves.`}
           </div>
         )}
         {short === 0 && missing.length > 0 && (
           <div style={{ fontSize: 12.5, color: "#9af5c2", marginTop: 9 }}>
-            ✓ {pool} players for {teams} teams — that's an exact fit.
+            ✓ {pool} draftable for {teams} teams — an exact fit.
+            {reserves > 0 ? ` ${reserves} in reserve as cover.` : ""}
           </div>
         )}
       </div>
