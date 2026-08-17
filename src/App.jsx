@@ -2885,14 +2885,18 @@ function PlayerPicker({ value, players, onChange }) {
 
 
 function WarRoom({ teamId, teamHue, players: allPlayers }) {
-  // Captains lead teams — they never enter the auction pool, so they can't be
-  // planned as picks. Mirrors the draw's `!p.isCaptain` exclusion.
-  const players = (allPlayers || []).filter((p) => !p.isCaptain);
+  // Only people who can actually be bought. Mirrors the draw's filter exactly:
+  // captains lead teams and never enter the pool, and reserves are cover for
+  // the weekend rather than auction lots. Planning around someone who can't be
+  // nominated is worse than not seeing them — the captain builds a lineup that
+  // can't happen and finds out on the night.
+  const players = (allPlayers || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
   const [plans, setPlans] = useState(() => Array.from({ length: WR_PLANS }, () => emptyLineup()));
   const [active, setActive] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [dirty, setDirty] = useState(false);
+  const [dropped, setDropped] = useState([]);
 
   // Load this captain's private plans, ONCE per team.
   //
@@ -2914,19 +2918,25 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
       if (!alive) return;
       const pool = playersRef.current || [];
       const draftable = new Set(pool.map((p) => p.id));
+      // Names of anyone dropped, so the captain is told rather than quietly
+      // finding a hole in a plan they'd already made.
+      const dropped = [];
+      const nameOf = (id) => (allPlayers || []).find((x) => x.id === id)?.name || "a player";
       if (data?.plans?.length) setPlans(data.plans.map((pl) => {
         const norm = emptyLineup();
         (pl || []).slice(0, WR_SLOTS).forEach((s, i) => {
           const pid = s?.playerId || "";
-          // Drop picks that can no longer be drafted — but only when the pool is
-          // actually known. On a cold mount the board may not have arrived yet,
-          // and an empty pool would look like "nobody is draftable" and wipe
-          // every saved pick.
+          // Drop picks that can no longer be drafted — moved to reserves, or
+          // promoted to captain. Only when the pool is actually known, though:
+          // on a cold mount the board may not have arrived, and an empty pool
+          // would read as "nobody is draftable" and wipe every saved pick.
           const keep = pool.length === 0 || (pid && draftable.has(pid));
+          if (pid && !keep) dropped.push(nameOf(pid));
           norm[i] = { playerId: keep ? pid : "", target: s?.target ?? "" };
         });
         return norm;
       }).concat(Array.from({ length: Math.max(0, WR_PLANS - data.plans.length) }, () => emptyLineup())).slice(0, WR_PLANS));
+      if (dropped.length) setDropped([...new Set(dropped)]);
       setLoaded(true);
     })();
     return () => { alive = false; };
@@ -2986,6 +2996,22 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
 
   return (
     <div className="view-in page-wrap py-6">
+      {/* A pick disappearing without explanation is the thing captains complain
+          about. Say who went and why. */}
+      {dropped.length > 0 && (
+        <div style={{ marginBottom: 14, padding: "11px 15px", fontSize: 12.5, lineHeight: 1.6,
+          color: "#ffe4a0", background: "rgba(245,196,83,0.08)",
+          border: "1px solid rgba(245,196,83,0.4)", clipPath: SHELL_NOTCH(8),
+          display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ flex: 1 }}>
+            <b>{dropped.join(", ")}</b> {dropped.length === 1 ? "is" : "are"} no longer in the
+            draft pool — moved to reserves or made a captain — so {dropped.length === 1 ? "their" : "those"} slot
+            {dropped.length === 1 ? "" : "s"} {dropped.length === 1 ? "has" : "have"} been cleared.
+          </span>
+          <button onClick={() => setDropped([])}
+            style={shellBtn("ghost", { padding: "5px 12px", fontSize: 10.5 })}>Got it</button>
+        </div>
+      )}
       <div className="flex items-start justify-between flex-wrap gap-3 mb-1">
         <h2 className="text-3xl font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}><span style={{ color: teamHue }}>//</span> War Room</h2>
         <span className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-2" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(236,243,255,0.6)" }}>
