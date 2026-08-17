@@ -2894,27 +2894,43 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
   const [savedAt, setSavedAt] = useState(null);
   const [dirty, setDirty] = useState(false);
 
-  // load this captain's private plans on mount / team change
+  // Load this captain's private plans, ONCE per team.
+  //
+  // This used to depend on `allPlayers` as well. The auction poll rebuilds the
+  // board every 1.2–2.5s and hands down a fresh array each time, so the effect
+  // refired constantly and re-read the last SAVED plans straight over whatever
+  // the captain had just typed — picks appeared to delete themselves seconds
+  // after being added. Saving is manual, so unsaved work was simply lost.
+  //
+  // `playersRef` gives the loader the current pool without making the pool a
+  // dependency.
+  const playersRef = useRef(players);
+  playersRef.current = players;
+
   useEffect(() => {
     let alive = true;
     (async () => {
       const data = await readWarRoom(teamId);
-      if (alive) {
-        const draftable = new Set(players.map((p) => p.id));
-        if (data?.plans?.length) setPlans(data.plans.map((pl) => {
-          const norm = emptyLineup();
-          (pl || []).slice(0, WR_SLOTS).forEach((s, i) => {
-            const pid = s?.playerId || "";
-            // Clear picks that aren't draftable any more (promoted to captain).
-            norm[i] = { playerId: pid && draftable.has(pid) ? pid : "", target: s?.target ?? "" };
-          });
-          return norm;
-        }).concat(Array.from({ length: Math.max(0, WR_PLANS - data.plans.length) }, () => emptyLineup())).slice(0, WR_PLANS));
-        setLoaded(true);
-      }
+      if (!alive) return;
+      const pool = playersRef.current || [];
+      const draftable = new Set(pool.map((p) => p.id));
+      if (data?.plans?.length) setPlans(data.plans.map((pl) => {
+        const norm = emptyLineup();
+        (pl || []).slice(0, WR_SLOTS).forEach((s, i) => {
+          const pid = s?.playerId || "";
+          // Drop picks that can no longer be drafted — but only when the pool is
+          // actually known. On a cold mount the board may not have arrived yet,
+          // and an empty pool would look like "nobody is draftable" and wipe
+          // every saved pick.
+          const keep = pool.length === 0 || (pid && draftable.has(pid));
+          norm[i] = { playerId: keep ? pid : "", target: s?.target ?? "" };
+        });
+        return norm;
+      }).concat(Array.from({ length: Math.max(0, WR_PLANS - data.plans.length) }, () => emptyLineup())).slice(0, WR_PLANS));
+      setLoaded(true);
     })();
     return () => { alive = false; };
-  }, [teamId, allPlayers]);
+  }, [teamId]);
 
   const lineup = plans[active];
   const setSlot = (i, patch) => {
@@ -2947,6 +2963,23 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
     await writeWarRoom(teamId, { plans, savedAt: Date.now() });
     setSavedAt(Date.now()); setDirty(false);
   };
+
+  // Autosave once the captain stops typing. Saving was manual, so a tab close,
+  // a phone locking, or navigating to the pool lost the plan — and on draft
+  // night nobody remembers to press Save. Debounced so a run of edits is one
+  // write rather than one per keystroke.
+  useEffect(() => {
+    if (!loaded || !dirty) return;
+    const t = setTimeout(() => { save(); }, 1200);
+    return () => clearTimeout(t);
+  }, [plans, dirty, loaded]);
+
+  // Belt and braces: flush on the way out, in case the debounce hasn't fired.
+  useEffect(() => {
+    const flush = () => { if (dirty) writeWarRoom(teamId, { plans, savedAt: Date.now() }); };
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); flush(); };
+  }, [plans, dirty, teamId]);
   const clearPlan = () => { setPlans((prev) => prev.map((pl, pi) => pi === active ? emptyLineup() : pl)); setDirty(true); };
 
   const chosenIds = new Set(lineup.filter((s) => s.playerId).map((s) => s.playerId));
