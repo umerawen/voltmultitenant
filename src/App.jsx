@@ -2057,15 +2057,23 @@ function StatRadar({ player, size = 200, hue }) {
       })}
 
       {/* Values live outside their own corner. Rendered always and faded, so
-          they ease in and out instead of popping on mount. */}
+          they ease in and out instead of popping on mount.
+          Every value is short except RANK, which can read "Ascendant 3" — on
+          the left-hand spoke that overran the viewBox by about 20px and got
+          clipped. Two fixes together: step the size down for long strings, then
+          clamp the centre so the text box can't cross the edge whatever it says. */}
       {axes.map((ax, i) => {
-        const [x, y] = pt(i, R + 36);
+        const [x0, y] = pt(i, R + 36);
+        const txt = String(ax.show ?? "—");
+        const fs = txt.length >= 10 ? 12.5 : txt.length >= 7 ? 14 : 16;
+        const half = (txt.length * fs * 0.6) / 2;          // monospace, so width is predictable
+        const x = Math.min(Math.max(x0, half - pad + 4), size + pad - half - 4);
         const live = hot === i;
         return <text key={i} className="rdv" x={x} y={y} textAnchor="middle" dominantBaseline="middle"
-          fontSize="16" fontFamily="'IBM Plex Mono',monospace" fontWeight="700" fill={hue}
+          fontSize={fs} fontFamily="'IBM Plex Mono',monospace" fontWeight="700" fill={hue}
           opacity={live ? 1 : 0} pointerEvents="none"
           style={{ transform: live ? "scale(1)" : "scale(0.82)",
-                   filter: `drop-shadow(0 0 10px ${hue}aa)` }}>{ax.show}</text>;
+                   filter: `drop-shadow(0 0 10px ${hue}aa)` }}>{txt}</text>;
       })}
 
       {axes.map((ax, i) => {
@@ -6181,7 +6189,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // Holding a seat is what grants the War Room — a host who captains a team gets
   // their own sandbox like anyone else. The "you can't see this" panel is only for
   // staff with no team of their own.
-  const WarRoomView = (isAdmin && !myTeam) ? (
+  //
+  // `myTeam` only exists once the auction board has been built, so before the
+  // draft nobody has one. A player flagged as captain still gets in via
+  // isCaptainElect; a host flagged as captain was being caught by this branch
+  // first and told they had no team, which is the one case where they do.
+  const hasSeat = !!myTeam || !!chrome?.isCaptainElect;
+  const WarRoomView = (isAdmin && !hasSeat) ? (
     <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
       <div className="flex items-center gap-2 mb-2">
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
@@ -6191,7 +6205,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: "#3d7bff" }}>Room</span></h2>
       <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As host you can't view captains' saved lineups — they're visible only to the captain who made them.</p>
     </div>
-  ) : (isSpectator && !chrome?.isCaptainElect) ? (
+  ) : (isSpectator && !hasSeat) ? (
     <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
       <div className="flex items-center gap-2 mb-2">
         <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
