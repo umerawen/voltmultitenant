@@ -3112,50 +3112,70 @@ function HudLabel({ children, dot = "#3d7bff" }) {
 }
 
 /* HUD coin — octagonal clip, blue HUD frame, monospace face */
-// A real flip: two faces on one solid, spun about the X axis under perspective.
+// A struck octagonal token with two faces, spun about the X axis.
 //
-// The previous version applied rotateX(180deg) with no perspective and no
-// second face, so it squashed to a flat line and popped back — and because the
-// rotation only toggled once, there was no spin at all. The tumbling effect came
-// from a 90ms interval swapping the label, which re-rendered the tree thirteen
-// times per flip to produce a flicker.
-function HudCoin({ coin, deg = 0, flipping }) {
-  const lit = !!coin;
-  const oct = "polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%)";
-  const face = (label, back) => (
-    <div className="absolute inset-0 grid place-items-center" style={{
-      clipPath: oct,
+// Two things matter here and both are easy to get wrong:
+//
+//   1. No `filter` anywhere on the rotating element. A filter forces a
+//      containing block and FLATTENS transform-style: preserve-3d, collapsing
+//      both faces into one plane — the back face then shows through mirrored,
+//      which is exactly what "HEADS" rendered backwards was.
+//   2. clip-path clips box-shadow, so depth is built from stacked octagons —
+//      rim, bevel, field, inner disc — rather than from shadows.
+const OCT = "polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%)";
+
+function CoinFace({ label, back }) {
+  const layer = (inset, style) => (
+    <div className="absolute" style={{ inset, clipPath: OCT, ...style }} />
+  );
+  return (
+    <div className="absolute inset-0" style={{
       backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
       transform: back ? "rotateX(180deg)" : "none",
-      background: "linear-gradient(150deg, rgba(61,123,255,0.34), rgba(8,12,24,0.94))",
-      border: "1px solid rgba(61,123,255,0.7)",
-      boxShadow: "inset 0 0 26px rgba(61,123,255,0.16)",
     }}>
-      {/* Inner bezel, so the solid reads as a struck coin rather than a tile. */}
-      <div className="grid place-items-center" style={{
-        width: "58%", height: "58%", clipPath: oct,
-        background: "rgba(61,123,255,0.1)", border: "1px solid rgba(120,160,255,0.4)",
+      {/* Rim, catching light from the top-left like a milled edge. */}
+      {layer(0, { background: "linear-gradient(155deg,#6f9dff 0%,#2f56a8 38%,#0d122a 100%)" })}
+      {/* Bevel — a darker step in from the rim gives the edge thickness. */}
+      {layer(3, { background: "linear-gradient(155deg,#1b2c52,#0a1020)" })}
+      {/* Field, with a soft highlight where the light lands. */}
+      {layer(5, {
+        background: "radial-gradient(120% 100% at 28% 22%, rgba(120,165,255,0.34), rgba(10,16,32,0.96) 62%)",
+      })}
+      {/* Inner disc the legend sits on. */}
+      <div className="absolute grid place-items-center" style={{
+        inset: "22%", clipPath: OCT,
+        background: "linear-gradient(155deg,rgba(61,123,255,0.22),rgba(8,12,24,0.5))",
+        border: "1px solid rgba(140,180,255,0.45)",
       }}>
-        <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15,
-          letterSpacing: "0.14em", color: "#dce8ff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>
+        <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14,
+          letterSpacing: "0.16em", color: "#e8f0ff", textShadow: "0 0 10px rgba(120,170,255,0.9)" }}>
           {label}
         </span>
       </div>
     </div>
   );
+}
+
+function HudCoin({ coin, deg = 0, flipping }) {
+  const lit = !!coin || flipping;
   return (
-    <div style={{ width: 108, height: 108, perspective: 700 }}>
+    <div className="relative" style={{ width: 112, height: 112, perspective: 760 }}>
+      {/* Glow sits behind and never rotates — putting it on the coin would
+          flatten the 3D and mirror the far face. */}
+      <div className="absolute" style={{
+        inset: -18, borderRadius: "50%", pointerEvents: "none",
+        background: "radial-gradient(circle, rgba(61,123,255,0.34), rgba(61,123,255,0) 68%)",
+        opacity: lit ? 1 : 0.25, transition: "opacity .4s ease",
+      }} />
       <div className="relative" style={{
         width: "100%", height: "100%",
         transformStyle: "preserve-3d", WebkitTransformStyle: "preserve-3d",
         transform: `rotateX(${deg}deg)`,
-        // Long ease-out so it decelerates into place instead of stopping dead.
-        transition: "transform 1.15s cubic-bezier(.16,.84,.24,1)",
-        filter: lit ? "drop-shadow(0 0 26px rgba(61,123,255,0.45))" : "none",
-        opacity: lit || flipping ? 1 : 0.5,
+        // Slow enough to read as a coin settling rather than a blur.
+        transition: "transform 1.9s cubic-bezier(.12,.78,.16,1)",
       }}>
-        {face("HEADS", false)}
-        {face("TAILS", true)}
+        <CoinFace label="HEADS" />
+        <CoinFace label="TAILS" back />
       </div>
     </div>
   );
@@ -3333,14 +3353,14 @@ function MapVeto({ teams }) {
 
     setFlipping(true); setCoin(null);
     setCoinDeg((d) => {
-      // Five full turns, then however much more is needed to finish with the
+      // Three full turns, then however much more is needed to finish with the
       // right face toward the viewer. Always forward, so it never rewinds.
-      const base = d + 1800;
+      const base = d + 1080;
       const want = result === "HEADS" ? 0 : 180;
       return base + (((want - (base % 360)) % 360) + 360) % 360;
     });
-    // Matches the CSS transition, so the label appears exactly as it settles.
-    coinTimer.current = setTimeout(() => { setCoin(result); setFlipping(false); }, 1150);
+    // Matches the CSS transition, so the result registers exactly as it settles.
+    coinTimer.current = setTimeout(() => { setCoin(result); setFlipping(false); }, 1900);
   };
 
   const banMap = (m) => {
