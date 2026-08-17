@@ -5052,7 +5052,32 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // .isHost is strictly the league owner; it is undefined in the no-Supabase
   // preview, so treat undefined as allowed there.
   const isOwner = window.__VOLT?.isHost !== false;
-  const canRunAuction = isAdmin && isOwner;
+
+  // Who's holding the gavel this tournament. Null means the host, which is what
+  // every existing tournament has. A host who hands it over stops seeing SOLD
+  // and PASS and gets the bid controls instead — that's the whole point: you
+  // can't call the auction and bid in it at the same time.
+  const [auct, setAuct] = useState(null);
+  const loadAuctioneer = useCallback(() => {
+    if (!HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    __sb.rpc("volt_auctioneer", { p_event: window.__VOLT.weekendId })
+      .then(({ data }) => data && setAuct(data))
+      .catch((e) => console.error("auctioneer", e));
+  }, []);
+  useEffect(() => {
+    loadAuctioneer();
+    // The moderator receiving the gavel needs to find out without a refresh.
+    // A tiny RPC every 30s costs far less than putting it on the board poll,
+    // and only people already inside the draft room pay for it.
+    const iv = setInterval(loadAuctioneer, 30000);
+    const onFocus = () => loadAuctioneer();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(iv); window.removeEventListener("focus", onFocus); };
+  }, [loadAuctioneer]);
+
+  // Until the lookup lands, fall back to the old rule so the host isn't briefly
+  // locked out of their own auction on a slow connection.
+  const canRunAuction = isAdmin && (auct ? !!auct.canRun : isOwner);
   const isSpectator = identity === "spectator";
   const myTeam = state.teams.find((t) => t.id === identity) || null;  // "admin"/"spectator" match nothing
   const block = state.block;
@@ -5916,6 +5941,29 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <p className="text-xs uppercase tracking-widest" style={{ color: editingPlayer ? "#3ddc84" : "#7da6ff" }}>
               {editingPlayer ? `Host · editing ${editingPlayer.name}` : "Host · add player"}
             </p>
+            {/* Hand the gavel to a moderator so the host can captain and bid.
+                Host-only, and it resets with each tournament rather than being
+                a standing grant someone forgets about. */}
+            {auct?.isHost && (auct.staff || []).length > 1 && (
+              <select value={auct.auctioneer || ""} onChange={async (e) => {
+                const v = e.target.value || null;
+                try {
+                  const { error } = await __sb.rpc("volt_set_auctioneer",
+                    { p_event: window.__VOLT.weekendId, p_user: v });
+                  if (error) throw new Error(error.message);
+                  loadAuctioneer();
+                } catch (err) { alert(err.message || "Couldn't hand over the auction."); }
+              }} className="text-xs uppercase tracking-widest px-2 py-1.5"
+                title="Who calls SOLD this tournament"
+                style={{ background: "rgba(10,16,30,0.8)", border: "1px solid rgba(120,150,220,0.3)",
+                  color: auct.auctioneer ? "#f5c453" : "rgba(200,215,255,0.6)",
+                  fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+                <option value="">Auctioneer: me (host)</option>
+                {(auct.staff || []).filter((x) => x.id !== auct.myId).map((x) => (
+                  <option key={x.id} value={x.id}>Auctioneer: {x.name}</option>
+                ))}
+              </select>
+            )}
             {isOwner && <button onClick={resetAll} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ border: `1px solid ${resetArmed ? "#ff4655" : "rgba(255,70,85,0.5)"}`, background: resetArmed ? "rgba(255,70,85,0.2)" : "transparent", color: resetArmed ? "#ffd2d7" : "#ff8a94" }}>{resetArmed ? "Click again to confirm" : "Reset auction"}</button>}
           </div>
           <AddPlayerForm onAdd={addPlayer} editing={editingPlayer} onSave={(p) => { editPlayer(p); setEditingPlayer(null); }} onCancel={() => setEditingPlayer(null)} />
@@ -6027,6 +6075,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 </div>
               )}
 
+              {/* Handing the gavel away is what unlocks bidding for a
+                  host who's also captaining. */}
               {canRunAuction && (
                 <div className="flex gap-3 w-full max-w-md">
                   <button onClick={sell} disabled={!block.leaderId || bidPending} className="flex-1 py-4 text-2xl font-bold uppercase tracking-widest active:scale-95 transition-all"
