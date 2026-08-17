@@ -250,9 +250,15 @@ function buttonRow(kind, url) {
     { type: 2, style: 1, label: "Register", custom_id: "volt_register" },
     { type: 2, style: 2, label: "Register + captain", custom_id: "volt_register_captain" },
   ] }];
+  // Labels name the matches, not the draft. "I'm in" was ambiguous once the
+  // question became "are you free to play the weekend" — people read it as
+  // "I'll be at the draft" and withdrew over a night they needn't attend.
+  // The second label says what actually happens rather than sounding final —
+  // "can't play" reads as leaving the tournament, when it only moves you to
+  // reserve and you can still be subbed in.
   if (kind === "availability") return [{ type: 1, components: [
-    { type: 2, style: 3, label: "I'm in", custom_id: "volt_confirm" },
-    { type: 2, style: 4, label: "Can't make it", custom_id: "volt_withdraw" },
+    { type: 2, style: 3, label: "I can play the matches", custom_id: "volt_confirm" },
+    { type: 2, style: 2, label: "I might not be available, move me to reserve", custom_id: "volt_withdraw" },
   ] }];
   // For the pinned welcome post. Same register action, but labelled to read
   // right under a guide rather than under a one-off announcement.

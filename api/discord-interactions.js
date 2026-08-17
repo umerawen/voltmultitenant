@@ -312,7 +312,19 @@ async function onButton(out, customId, guild, discordId, origin) {
     if (r?.error === "link") return needsLink(out);
     if (r?.error === "noweekend") return reply(out, "No weekend is running.");
     if (r?.error === "notin") return reply(out, "You're not signed up for this weekend.");
-    return reply(out, `Thanks — you're confirmed for **${r.weekend}**. See you at the draft.`);
+    // A reserve confirming stays a reserve — pool membership is the host's
+    // call. Saying "locked in" to them would be a lie.
+    if (r.inPool === false) {
+      return reply(out,
+        `Noted for **${r.weekend}** — thanks for confirming you're around.\n` +
+        `You're currently on the **reserve list**, so you won't be in the auction. ` +
+        `If a team needs someone you'll be first asked, so keep 7PM–2AM free if you can.\n\n` +
+        `-# Want back in the draft? Message the host.`);
+    }
+    return reply(out,
+      `Locked in for **${r.weekend}** — you're free to play the matches.\n` +
+      `Keep 7PM–2AM clear on match days — your team could be called at any point in that window.\n\n` +
+      `-# You don't need to be at the draft. I'll DM you your team and captain as soon as you're picked.`);
   }
 
   if (customId === "volt_withdraw") {
@@ -326,9 +338,9 @@ async function onButton(out, customId, guild, discordId, origin) {
     // who already said they can't make it.
     await setPlayerRole(guild, discordId, false);
     return reply(out,
-      `Thanks for telling us — you're out of the draft for **${r.weekend}**. No strike.\n` +
-      `You're on the reserve list, so if you free up you can still be subbed into a match. ` +
-      `Changed your mind? Tick "I'm available" again in VOLT.`);
+      `Thanks for telling us — you're out of **${r.weekend}**. No strike, and no hard feelings.\n` +
+      `You're on the reserve list, so if your weekend frees up you can still be subbed into a match.\n\n` +
+      `-# Changed your mind? Flip "I'm playing this tournament" back on in VOLT.`);
   }
 
   // Offering to sub. The rank rule is enforced in volt_sub_offer, not here —

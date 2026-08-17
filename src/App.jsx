@@ -8389,8 +8389,12 @@ function DiscordServerCard() {
 function AvailabilityCard({ eventId }) {
   const [d, setD] = useState(null);
   const [unlinked, setUnlinked] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [sendMsg, setSendMsg] = useState("");
+  const [sendErr, setSendErr] = useState("");
   const dcLinked = useDiscordLinked();
-  useEffect(() => { (async () => {
+
+  const load = async () => {
     try {
       const { data } = await __sb.rpc("volt_availability_summary", { p_event: eventId });
       setD(data || null);
@@ -8401,19 +8405,84 @@ function AvailabilityCard({ eventId }) {
       const { data: u } = await __sb.rpc("volt_unlinked", { p_event: eventId });
       setUnlinked(Array.isArray(u) ? u : []);
     } catch { setUnlinked([]); }
-  })(); }, [eventId]);
+  };
+  useEffect(() => { load(); }, [eventId]);
+
+  // Send it now rather than waiting for the automatic window ~24h before the
+  // draft. Once registration is closed there's nothing left to wait for, and an
+  // extra day to chase silence is worth more than the tidiness of a schedule.
+  //
+  // The text is built server-side by the same function the cron uses, so the
+  // two can't drift into saying different things.
+  async function sendNow() {
+    setBusy(true); setSendErr(""); setSendMsg("");
+    try {
+      const { data: p, error } = await __sb.rpc("volt_availability_payload", { p_event: eventId });
+      if (error) throw new Error(error.message);
+      if (p?.error === "nodraft") throw new Error("Set a draft time first — the message references it.");
+      if (!p?.userIds?.length) throw new Error("Nobody is approved yet.");
+
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ communityId: p.communityId, message: p.message,
+                               userIds: p.userIds, announce: false,
+                               buttons: "availability", dmButtons: true }),
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
+
+      // Stamp the event so the cron doesn't send it a second time, and so
+      // replies start being counted.
+      await __sb.rpc("volt_availability_mark_asked", { p_event: eventId });
+      setSendMsg(`Asked ${b?.delivered ?? 0} player${b?.delivered === 1 ? "" : "s"}.` +
+        // Say what was deliberately left out, so a smaller number than expected
+        // doesn't look like a delivery failure.
+        (p.skippedReserves > 0 ? ` ${p.skippedReserves} in reserve were skipped.` : "") +
+        (b?.blocked?.length ? ` ${b.blocked.length} have DMs closed.` : ""));
+      await load();
+    } catch (e) { setSendErr(e.message || "Couldn't send."); }
+    setBusy(false);
+  }
 
   const silent = d?.silent || [];
-  if (!d?.asked && !unlinked.length) return null;
+  const asked = !!d?.asked;
+  // Before it's been sent the card used to hide entirely, which left nowhere to
+  // put the button and no sign the check existed.
+  if (!asked && !unlinked.length && !sendMsg && !sendErr) {
+    return (
+      <div style={{ marginTop: 14 }}>
+        <SectionHead title="Availability check" hint="Ask everyone if they're free to play" />
+        <div style={PANEL()}>
+          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", margin: "0 0 12px", lineHeight: 1.6 }}>
+            DMs everyone in the draft pool asking if they're free for the match window, with buttons
+            to confirm or move themselves to reserve. Reserves aren't asked — they're already set
+            aside. Sends automatically about a day before the draft, or send it now if registration
+            is already closed.
+          </p>
+          <button disabled={busy} onClick={sendNow}
+            style={shellBtn("primary", { padding: "10px 18px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+            {busy ? "Sending…" : "◈ Send availability check now"}
+          </button>
+          {sendErr && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {sendErr}</div>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ marginTop: 14 }}>
       <SectionHead title="Who we can reach" />
       <div style={PANEL((silent.length || unlinked.length) ? "rgba(245,196,83,0.4)" : "rgba(61,220,132,0.3)")}>
         {d?.asked && (
           <div style={{ fontSize: 13.5, color: "#9af5c2", fontWeight: 700 }}>
-            ✓ {d.confirmed} confirmed for the draft
+            ✓ {d.confirmed} confirmed they can play
           </div>
         )}
+        {sendMsg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 6 }}>✓ {sendMsg}</div>}
+        {sendErr && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 6 }}>⚠ {sendErr}</div>}
         {unlinked.length > 0 && (
           <div style={{ fontSize: 12.5, color: "rgba(245,196,83,0.9)", marginTop: 10, lineHeight: 1.65 }}>
             ⚠ {unlinked.length} haven't connected Discord: {unlinked.join(", ")}
@@ -8434,6 +8503,11 @@ function AvailabilityCard({ eventId }) {
         {d?.asked && silent.length > 0 ? (
           <div style={{ fontSize: 12.5, color: "rgba(245,196,83,0.9)", marginTop: 10, lineHeight: 1.65 }}>
             ⚠ {silent.length} haven't answered: {silent.join(", ")}
+            {/* Chasing silence is the whole point of asking early. */}
+            <button disabled={busy} onClick={sendNow}
+              style={shellBtn("ghost", { padding: "6px 13px", fontSize: 10.5, marginTop: 8, marginBottom: 2 })}>
+              {busy ? "Sending…" : "◈ Ask again"}
+            </button>
             <div style={{ color: "rgba(200,215,255,0.42)", marginTop: 4 }}>
               Worth chasing before the draft — these are the likely no-shows.
             </div>
