@@ -3112,27 +3112,50 @@ function HudLabel({ children, dot = "#3d7bff" }) {
 }
 
 /* HUD coin — octagonal clip, blue HUD frame, monospace face */
-function HudCoin({ coin, flipping }) {
+// A real flip: two faces on one solid, spun about the X axis under perspective.
+//
+// The previous version applied rotateX(180deg) with no perspective and no
+// second face, so it squashed to a flat line and popped back — and because the
+// rotation only toggled once, there was no spin at all. The tumbling effect came
+// from a 90ms interval swapping the label, which re-rendered the tree thirteen
+// times per flip to produce a flicker.
+function HudCoin({ coin, deg = 0, flipping }) {
   const lit = !!coin;
   const oct = "polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%)";
+  const face = (label, back) => (
+    <div className="absolute inset-0 grid place-items-center" style={{
+      clipPath: oct,
+      backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
+      transform: back ? "rotateX(180deg)" : "none",
+      background: "linear-gradient(150deg, rgba(61,123,255,0.34), rgba(8,12,24,0.94))",
+      border: "1px solid rgba(61,123,255,0.7)",
+      boxShadow: "inset 0 0 26px rgba(61,123,255,0.16)",
+    }}>
+      {/* Inner bezel, so the solid reads as a struck coin rather than a tile. */}
+      <div className="grid place-items-center" style={{
+        width: "58%", height: "58%", clipPath: oct,
+        background: "rgba(61,123,255,0.1)", border: "1px solid rgba(120,160,255,0.4)",
+      }}>
+        <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15,
+          letterSpacing: "0.14em", color: "#dce8ff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>
+          {label}
+        </span>
+      </div>
+    </div>
+  );
   return (
-    <div className="relative" style={{ width: 108, height: 108 }}>
-      <div className="absolute inset-0" style={{
-        clipPath: oct,
-        background: lit ? "linear-gradient(150deg, rgba(61,123,255,0.35), rgba(8,12,24,0.9))" : "rgba(255,255,255,0.04)",
-        border: `1px solid ${lit ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.25)"}`,
-        boxShadow: lit ? "0 0 30px rgba(61,123,255,0.4), inset 0 0 22px rgba(61,123,255,0.12)" : "none",
-        transform: flipping ? "rotateX(180deg)" : "none",
-        transition: "transform .09s linear, box-shadow .3s ease",
-      }} />
-      <div className="absolute inset-0 grid place-items-center">
-        <div className="grid place-items-center" style={{
-          width: 64, height: 64, clipPath: oct,
-          background: lit ? "rgba(61,123,255,0.12)" : "transparent",
-          border: `1px solid ${lit ? "rgba(120,160,255,0.4)" : "rgba(120,150,220,0.18)"}`,
-        }}>
-          <span className="font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: coin ? 13 : 22, letterSpacing: "0.08em", color: lit ? "#cfe0ff" : "rgba(236,243,255,0.3)", textShadow: lit ? "0 0 12px rgba(61,123,255,0.7)" : "none" }}>{coin ? coin : "?"}</span>
-        </div>
+    <div style={{ width: 108, height: 108, perspective: 700 }}>
+      <div className="relative" style={{
+        width: "100%", height: "100%",
+        transformStyle: "preserve-3d", WebkitTransformStyle: "preserve-3d",
+        transform: `rotateX(${deg}deg)`,
+        // Long ease-out so it decelerates into place instead of stopping dead.
+        transition: "transform 1.15s cubic-bezier(.16,.84,.24,1)",
+        filter: lit ? "drop-shadow(0 0 26px rgba(61,123,255,0.45))" : "none",
+        opacity: lit || flipping ? 1 : 0.5,
+      }}>
+        {face("HEADS", false)}
+        {face("TAILS", true)}
       </div>
     </div>
   );
@@ -3271,7 +3294,11 @@ function MapVeto({ teams }) {
   const [decider, setDecider] = useState(null);                // final map name
   const [sidePick, setSidePick] = useState(null);              // { teamId, side }
   const [coin, setCoin] = useState(null);                      // "HEADS" | "TAILS"
+  const [coinDeg, setCoinDeg] = useState(0);                   // accumulated rotation
   const [flipping, setFlipping] = useState(false);
+  const coinTimer = useRef(null);
+  // A flip left running when the panel closes would set state on a gone tree.
+  useEffect(() => () => clearTimeout(coinTimer.current), []);
   const [coinTeam, setCoinTeam] = useState(null);              // teamId assigned the coin result
   const [turn, setTurn] = useState(null);                      // teamId whose ban turn it is
   const [setup, setSetup] = useState(true);                    // setup vs running
@@ -3292,14 +3319,28 @@ function MapVeto({ teams }) {
   };
 
 
+  // The result is decided immediately, then the coin is spun to land on the
+  // face that shows it. Two state updates per flip instead of fourteen — the
+  // deceleration is the browser's job, not a JavaScript interval's.
   const flip = () => {
     if (flipping) return;
-    setFlipping(true); setCoin(null); setCoinTeam(null);
-    let n = 0;
-    const iv = setInterval(() => {
-      setCoin(Math.random() < 0.5 ? "HEADS" : "TAILS"); n++;
-      if (n > 12) { clearInterval(iv); setFlipping(false); }
-    }, 90);
+    const result = Math.random() < 0.5 ? "HEADS" : "TAILS";
+    setCoinTeam(null);
+
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setCoin(result); setCoinDeg((d) => d + (result === "HEADS" ? 0 : 180)); return;
+    }
+
+    setFlipping(true); setCoin(null);
+    setCoinDeg((d) => {
+      // Five full turns, then however much more is needed to finish with the
+      // right face toward the viewer. Always forward, so it never rewinds.
+      const base = d + 1800;
+      const want = result === "HEADS" ? 0 : 180;
+      return base + (((want - (base % 360)) % 360) + 360) % 360;
+    });
+    // Matches the CSS transition, so the label appears exactly as it settles.
+    coinTimer.current = setTimeout(() => { setCoin(result); setFlipping(false); }, 1150);
   };
 
   const banMap = (m) => {
@@ -3412,7 +3453,7 @@ function MapVeto({ teams }) {
           <HudPanel pad="px-5 py-5">
             <HudLabel dot="#3ddc84">Coin Toss</HudLabel>
             <div className="flex flex-col items-center gap-3">
-              <HudCoin coin={coin} flipping={flipping} />
+              <HudCoin coin={coin} deg={coinDeg} flipping={flipping} />
               <button onClick={flip} disabled={flipping} className="ea-btn relative" style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "11px 30px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.85rem", letterSpacing: "0.28em", textTransform: "uppercase", color: "#cfe0ff", background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))", border: "1px solid rgba(61,123,255,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)", opacity: flipping ? 0.5 : 1 }}>
                 <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
                 <span className="absolute right-0 top-0" style={{ width: 10, height: 10, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
