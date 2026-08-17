@@ -4180,6 +4180,36 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         }
         s = await writeState(freshState(captains));
       }
+
+      // Fold in anyone approved since the board was built, ONCE, on open.
+      //
+      // Browse mode shows a live merged view but deliberately never writes it,
+      // because a periodic rebuild during registration used to clobber the
+      // host's edits. The consequence was that a board built at 21:05 and a
+      // player approved at 21:07 left that player invisible to the auction —
+      // present on screen in browse, absent from the board that volt_sell
+      // actually reads.
+      //
+      // This runs at draft-open rather than on a timer, and is strictly
+      // additive: it appends missing pool players and touches nothing else —
+      // no teams, budgets, sold rows, block or tournament.
+      if (alive && s && HAS_SUPABASE && window.__VOLT.weekendId) {
+        try {
+          const { captains: cs, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
+          const known = new Set((s.players || []).map((p) => p.id));
+          const late = [
+            ...(cs || []).filter((c) => !known.has(c.userId)).map((c) => regToPlayer(c, true)),
+            ...(pool || []).filter((p) => !known.has(p.userId)).map((p) => regToPlayer(p, false)),
+          ];
+          if (late.length) {
+            s = await writeState({ ...s, players: [...(s.players || []), ...late],
+              log: [`${late.length} late registration${late.length === 1 ? "" : "s"} added to the pool`,
+                    ...(s.log || [])].slice(0, 8) });
+            console.info("[volt] merged late registrations:", late.map((x) => x.name).join(", "));
+          }
+        } catch (e) { console.error("late merge", e); }
+      }
+
       if (alive) setState(s);
     };
     load();
@@ -9264,6 +9294,63 @@ function AdminQueue() {
   );
 }
 
+// ── Board gap warning ────────────────────────────────────────────────────
+// The auction board is a snapshot. Anyone approved after it was built is
+// invisible to the auction, and the only symptom is a pool count being one
+// short — which nobody notices at a glance. Say it out loud instead.
+//
+// The board now merges late registrations when the draft opens, so this is a
+// heads-up rather than a chore. It also catches the case that merge can't fix:
+// a roster that no longer divides evenly into teams.
+function BoardGapCard({ eventId }) {
+  const [gap, setGap] = useState(null);
+  useEffect(() => {
+    let ok = true;
+    const load = () => __sb.rpc("volt_board_gap", { p_event: eventId })
+      .then(({ data }) => ok && setGap(data)).catch((e) => console.error("board gap", e));
+    load();
+    const iv = setInterval(load, 30000);
+    return () => { ok = false; clearInterval(iv); };
+  }, [eventId]);
+
+  if (!gap?.onBoard) return null;
+  const missing = gap.missing || [];
+  const teams = gap.teams || 0;
+  const pool = (gap.poolSize || 0) + missing.filter((m) => !m.captain).length;
+  // Four slots a team is the roster size the auction enforces.
+  const slots = teams * 4;
+  const short = slots - pool;
+  if (!missing.length && short === 0) return null;
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <SectionHead title="Draft board check" />
+      <div style={PANEL(short !== 0 ? "rgba(245,196,83,0.45)" : "rgba(120,150,220,0.18)")}>
+        {missing.length > 0 && (
+          <div style={{ fontSize: 13, color: "rgba(200,215,255,0.75)", lineHeight: 1.6 }}>
+            <b style={{ color: "#cfe0ff" }}>{missing.map((m) => m.name).join(", ")}</b>{" "}
+            {missing.length === 1 ? "was" : "were"} approved after the board was built.
+            They'll be added automatically when you open the draft.
+          </div>
+        )}
+        {short !== 0 && (
+          <div style={{ fontSize: 13, color: "#ffe4a0", marginTop: missing.length ? 9 : 0, lineHeight: 1.6 }}>
+            ⚠ {teams} teams need <b>{slots}</b> players, and the pool has <b>{pool}</b>.
+            {short > 0
+              ? ` ${short} team${short === 1 ? "" : "s"} will finish a player short — recruit ${short} more, or drop a captain.`
+              : ` ${-short} player${-short === 1 ? "" : "s"} won't be drafted — add a captain, or they sit out.`}
+          </div>
+        )}
+        {short === 0 && missing.length > 0 && (
+          <div style={{ fontSize: 12.5, color: "#9af5c2", marginTop: 9 }}>
+            ✓ {pool} players for {teams} teams — that's an exact fit.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Sub desk ─────────────────────────────────────────────────────────────
 // A captain short a player at 9pm shouldn't have to read a list and DM
 // strangers. They pick who's out, everyone eligible gets a DM with one button,
@@ -10306,6 +10393,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isHost && HAS_SUPABASE && <JoinGuideCard community={community} current={current} />}
     {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
     {isHost && HAS_SUPABASE && current && <IgnCheckCard eventId={current.id} />}
+    {isHost && HAS_SUPABASE && current && <BoardGapCard eventId={current.id} />}
     {isHost && HAS_SUPABASE && current && (
       <DiscordArenaCard eventId={current.id} phase={current.phase} />
     )}
