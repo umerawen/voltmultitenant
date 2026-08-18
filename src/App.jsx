@@ -6066,7 +6066,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             : "No reserves yet. Late sign-ups land here, and so does anyone you move out of the draft pool."}
         </p>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
           {rFiltered.map((p) => {
             const r = rankOf(p.rank) || RANKS.Silver;
             const ok = eligible(p);
@@ -6080,7 +6080,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xl font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
-                    <p className="text-xs uppercase tracking-widest mt-1.5" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
+                    <p className="text-xs uppercase tracking-widest mt-1.5 truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
@@ -6156,7 +6156,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         {ROLES.map((r) => <button key={r} onClick={() => setFilterRole(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === r)}>{ROLE_GLYPH[r]} {r}</button>)}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
         {filtered.map((p) => { const r = rankOf(p.rank); const tm = p.soldTo ? teamOf(p.soldTo) : null; return (
           <button key={p.id} onClick={() => setScouted(p.id)} className="relative text-left p-4 transition-all hover:scale-[1.03] overflow-hidden"
             style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${r.c}44`, boxShadow: "0 12px 28px rgba(0,0,0,0.35)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
@@ -6164,7 +6164,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xl font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
-                <p className="text-xs uppercase tracking-widest mt-1.5" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
+                <p className="text-xs uppercase tracking-widest mt-1.5 truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
@@ -6176,9 +6176,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               <span style={{ color: "#ff4655" }}>ACS {p.acs == null ? "—" : p.acs}</span>
               <span style={{ color: "#9d6bff" }}>HS {p.hs == null ? "—" : p.hs + "%"}</span>
             </div>
-            {p.isCaptain ? <p className="mt-2 text-xs uppercase tracking-widest font-bold" style={{ color: "#f5c453" }}>★ Captain · not in draw</p>
-              : tm ? <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: tm.hue }}>◆ {tm.name} · {fmt(p.soldPrice)}</p>
-              : <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.4)" }}>Available · opens {fmt(r.bid)}</p>}
+            {p.isCaptain ? <p className="mt-2 text-xs uppercase tracking-widest font-bold truncate" style={{ color: "#f5c453" }}>★ Captain · not in draw</p>
+              : tm ? <p className="mt-2 text-xs uppercase tracking-widest truncate" style={{ color: tm.hue }}>◆ {tm.name} · {fmt(p.soldPrice)}</p>
+              : <p className="mt-2 text-xs uppercase tracking-widest truncate" style={{ color: "rgba(236,243,255,0.4)" }}>Available · opens {fmt(r.bid)}</p>}
           </button>
         ); })}
         {filtered.length === 0 && <p className="col-span-full text-sm py-10 text-center" style={{ color: "rgba(236,243,255,0.4)" }}>No players match those filters.</p>}
