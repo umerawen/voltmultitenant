@@ -317,14 +317,25 @@ async function onButton(out, customId, guild, discordId, origin) {
     if (r.inPool === false) {
       return reply(out,
         `Noted for **${r.weekend}** — thanks for confirming you're around.\n` +
-        `You're currently on the **reserve list**, so you won't be in the auction. ` +
-        `If a team needs someone you'll be first asked, so keep 7PM–2AM free if you can.\n\n` +
-        `-# Want back in the draft? Message the host.`);
+        `You're on the **reserve list**, so you won't be in the auction. If a team needs someone ` +
+        `you'll be first asked, so keep 7PM–2AM free if you can.\n\n` +
+        `Still worth coming to the draft${r.draftAt ? ` <t:${r.draftAt}:R>` : ""} — captains bid ` +
+        `live in voice, and being around is how you get pulled in when a spot opens.\n\n` +
+        `-# Want back in the draft pool? Message the host.`);
     }
+    // The availability DM has to say the draft is optional, or people withdraw
+    // over a night they needn't attend. But that leaves it sounding like
+    // something to avoid. This is the moment they've just said yes, so it's the
+    // right place to sell it — an auction is the best night of the weekend and
+    // hearing yourself bid on is most of the fun.
+    const when = r.draftAt ? ` <t:${r.draftAt}:R>` : "";
     return reply(out,
-      `Locked in for **${r.weekend}** — you're free to play the matches.\n` +
-      `Keep 7PM–2AM clear on match days — your team could be called at any point in that window.\n\n` +
-      `-# You don't need to be at the draft. I'll DM you your team and captain as soon as you're picked.`);
+      `Locked in for **${r.weekend}** — you're free to play the matches. 🔥\n` +
+      `Keep 7PM–2AM clear on match days; your team could be called at any point in that window.\n\n` +
+      `**Come to the draft${when} if you can.** Captains bid live in voice and it's the best part of ` +
+      `the weekend — you get to hear what you went for, who fought over you, and meet your team ` +
+      `the moment it happens.\n\n` +
+      `-# Can't make it? No problem, you'll still be drafted and I'll DM you your team.`);
   }
 
   if (customId === "volt_withdraw") {
