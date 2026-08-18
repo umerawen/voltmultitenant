@@ -8438,6 +8438,12 @@ function AvailabilityCard({ eventId }) {
       // Stamp the event so the cron doesn't send it a second time, and so
       // replies start being counted.
       await __sb.rpc("volt_availability_mark_asked", { p_event: eventId });
+      // Remember who couldn't be reached. The count alone told the host a
+      // problem existed without saying who to chase.
+      try {
+        await __sb.rpc("volt_set_availability_blocked",
+          { p_event: eventId, p_ids: b?.blocked || [] });
+      } catch (e) { console.error("save blocked", e); }
       setSendMsg(`Asked ${b?.delivered ?? 0} player${b?.delivered === 1 ? "" : "s"}.` +
         // Say what was deliberately left out, so a smaller number than expected
         // doesn't look like a delivery failure.
@@ -8481,8 +8487,29 @@ function AvailabilityCard({ eventId }) {
             ✓ {d.confirmed} confirmed they can play
           </div>
         )}
+        {/* Naming the confirmed matters as much as naming the silent: it's how
+            you tell a real roster from a hoped-for one, and newest-first
+            answers "who's come in since I last looked". */}
+        {d?.confirmedNames?.length > 0 && (
+          <div style={{ fontSize: 12.5, color: "rgba(154,245,194,0.85)", marginTop: 5, lineHeight: 1.65 }}>
+            {d.confirmedNames.join(", ")}
+          </div>
+        )}
+        {d?.declined?.length > 0 && (
+          <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginTop: 10, lineHeight: 1.65 }}>
+            ✗ {d.declined.length} moved themselves to reserve: <b style={{ color: "#cfe0ff" }}>{d.declined.join(", ")}</b>
+          </div>
+        )}
         {sendMsg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 6 }}>✓ {sendMsg}</div>}
         {sendErr && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 6 }}>⚠ {sendErr}</div>}
+        {d?.blocked?.length > 0 && (
+          <div style={{ fontSize: 12.5, color: "rgba(245,196,83,0.9)", marginTop: 10, lineHeight: 1.65 }}>
+            ⚠ {d.blocked.length} have DMs closed and never got the message: <b>{d.blocked.join(", ")}</b>
+            <div style={{ color: "rgba(200,215,255,0.42)", marginTop: 4 }}>
+              They need to allow DMs from server members, or you'll have to ask them in a channel.
+            </div>
+          </div>
+        )}
         {unlinked.length > 0 && (
           <div style={{ fontSize: 12.5, color: "rgba(245,196,83,0.9)", marginTop: 10, lineHeight: 1.65 }}>
             ⚠ {unlinked.length} haven't connected Discord: {unlinked.join(", ")}
