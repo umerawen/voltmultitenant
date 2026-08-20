@@ -141,49 +141,78 @@ async function buildTeams(ctx) {
 
   const existingRoles = await listRoles(ctx);
 
-  for (const t of teams) {
-    if (outOfTime(ctx, out)) break;
-    out.teams++;
+  // Done in three parallel phases rather than team-by-team.
+  //
+  // Sequentially this was a role POST, then a PUT per member with an 80ms
+  // sleep, then two channel POSTs — about 1.8s per team, so six teams needed
+  // ~11s against an 8s budget and only the first few ever got built. Discord
+  // rate-limits per route and call() already backs off on 429, so a bounded
+  // pool is both faster and safe.
+  const pool = async (items, n, fn) => {
+    const queue = items.slice();
+    await Promise.all(Array.from({ length: Math.min(n, queue.length) }, async () => {
+      while (queue.length) {
+        if (outOfTime(ctx, out)) return;
+        await fn(queue.shift());
+      }
+    }));
+  };
+
+  // 1. Roles. Reused by name so a previous run's roles are adopted, never doubled.
+  const roleOf = new Map();
+  await pool(teams, 3, async (t) => {
     const roleName = `VOLT ${t.name}`;
-    // Reuse by name so a role left over from a previous run is adopted rather
-    // than duplicated — Discord happily allows two roles with the same name.
-    let role = existingRoles.find((r) => r.name === roleName);
-    if (!role) {
-      const made = await call(ctx.token, `/guilds/${ctx.guild}/roles`, "POST",
-        { name: roleName, color: hexToInt(t.hue) ?? 0x3d7bff, mentionable: true, hoist: false });
-      if (!made.ok) { out.errors.push(`role ${t.name}: ${made.reason}`); continue; }
-      role = made.body; existingRoles.push(role);
-      out.created.push(roleName);
-    } else out.reused.push(roleName);
-    await remember(ctx, "role", t.name, role.id, true, null, out);
+    const found = existingRoles.find((r) => r.name === roleName);
+    if (found) { roleOf.set(t.name, found.id); out.reused.push(roleName); return; }
+    const made = await call(ctx.token, `/guilds/${ctx.guild}/roles`, "POST",
+      { name: roleName, color: hexToInt(t.hue) ?? 0x3d7bff, mentionable: true, hoist: false });
+    if (!made.ok) { out.errors.push(`role ${t.name}: ${made.reason}`); return; }
+    roleOf.set(t.name, made.body.id);
+    out.created.push(roleName);
+  });
+  for (const t of teams) {
+    const id = roleOf.get(t.name);
+    if (id) await remember(ctx, "role", t.name, id, true, null, out);
+  }
+  out.teams = roleOf.size;
 
-    for (const did of t.discordIds || []) {
-      if (outOfTime(ctx, out)) break;
-      const r = await call(ctx.token, `/guilds/${ctx.guild}/members/${did}/roles/${role.id}`, "PUT");
-      if (r.ok) out.assigned++;
-      else if (!out.errors.some((e) => e.startsWith("assign"))) out.errors.push(`assign: ${r.reason}`);
-      // 80ms is ample spacing for member-role writes and saves a lot of dead
-      // time across a full league compared with 200ms.
-      await sleep(80);
-    }
-
-    // Private text + voice: invisible to everyone but the team and staff. This
-    // is the part that makes a drafted team feel like a team rather than a row
-    // on a website.
+  // 2. Channels. ensureChannel mutates ctx.channels, so these stay sequential —
+  //    two teams racing could otherwise both decide a channel is missing.
+  for (const t of teams) {
+    const roleId = roleOf.get(t.name);
+    if (!roleId || outOfTime(ctx, out)) continue;
     const overwrites = [
       { id: ctx.guild, type: 0, deny: P.VIEW.toString(), allow: "0" },
-      { id: role.id, type: 0,
-        allow: (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString(), deny: "0" },
+      { id: roleId, type: 0, allow: (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString(), deny: "0" },
     ];
     if (ctx.me) overwrites.push({ id: ctx.me, type: 1,
       allow: (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString(), deny: "0" });
-
     await ensureChannel(ctx, { ref: `team-text:${t.name}`, name: `${slug(t.name)}-room`, type: 0,
       parent_id: cat, eventScoped: true, permission_overwrites: overwrites,
       topic: `${t.name} only. Captain: ${t.captain || "—"}` }, out);
     await ensureChannel(ctx, { ref: `team-vc:${t.name}`, name: t.name, type: 2,
       parent_id: cat, eventScoped: true, permission_overwrites: overwrites }, out);
   }
+
+  // 3. Member roles — the bulk of the calls, and fully independent of each other.
+  const grants = [];
+  for (const t of teams) {
+    const roleId = roleOf.get(t.name);
+    if (!roleId) continue;
+    for (const did of t.discordIds || []) grants.push({ did, roleId, team: t.name });
+  }
+  await pool(grants, 5, async (g) => {
+    const r = await call(ctx.token, `/guilds/${ctx.guild}/members/${g.did}/roles/${g.roleId}`, "PUT");
+    if (r.ok) out.assigned++;
+    else if (/unknown member/i.test(r.reason || "")) {
+      if (!out.errors.some((e) => e.startsWith("Some players aren't"))) {
+        out.errors.push("Some players aren't in this Discord server, so they couldn't be given their team role.");
+      }
+    } else if (!out.errors.some((e) => e.startsWith("assign"))) {
+      out.errors.push(`assign: ${r.reason}`);
+    }
+  });
+
   return out;
 }
 
