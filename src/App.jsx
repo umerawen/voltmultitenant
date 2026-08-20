@@ -3977,7 +3977,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // A moderator lands in the same "admin" identity as the host — they run the
   // same operational screens. The narrower powers are gated separately below by
   // isTrueHost, not by hiding whole surfaces from them.
-  const [identity, setIdentity] = useState((auth?.role === "host" || auth?.role === "moderator") ? "admin" : null);
+  const [identity, setIdentity] = useState(null);
   const [view, setView] = useState(initialView || "lobby");
   const [tourneyOpen, setTourneyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -4118,7 +4118,15 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // Once the board loads, map a logged-in captain to their own seat automatically
   // (matched by captainUserId). Host stays "admin"; others can still pick/spectate.
   useEffect(() => {
-    if (identity || !state || !auth) return;
+    if (!state || !auth) return;
+    // "admin" is a fallback, not a choice — if a seat exists for this account,
+    // take it. Anything the user picked deliberately is left alone.
+    if (identity && identity !== "admin") return;
+    if (identity === "admin") {
+      const seat = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
+      if (seat) setIdentity(seat.id);
+      return;
+    }
     // Owning a seat wins over being staff. A host or moderator who captains a
     // team needs their seat (budget, roster, War Room, bidding) — they keep their
     // admin powers regardless, because isAdmin is derived from their role below,
