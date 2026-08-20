@@ -4582,7 +4582,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       } catch (e) { console.error("pool_eligible write failed", e); }
     }
   };
-  const spinNominate = () => { if (!isLeagueOwner()) return; return mutate((s) => {
+  // Whoever is allowed to run the auction right now — the host, or the
+  // moderator holding the gavel. Read through a ref because the handlers below
+  // are defined before canRunAuction is computed.
+  const canRunRef = useRef(true);
+  const spinNominate = () => { if (!canRunRef.current) return; return mutate((s) => {
     if (s.block || (s.spin && Date.now() < s.spin.startTs + SPIN_MS + REVEAL_MS)) return null;
     const poolIds = s.players.filter((p) => p.status === "pool" && !p.isCaptain).map((p) => p.id);
     if (!poolIds.length) return null;
@@ -4660,7 +4664,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   };
 
   const sell = async () => {
-    if (!isLeagueOwner() || !HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    if (!canRunRef.current || !HAS_SUPABASE || !window.__VOLT?.weekendId) return;
     setBidPending(true); setSaveErr(null);
     try {
       const { data, error } = await __sb.rpc("volt_sell", { p_event: window.__VOLT.weekendId });
@@ -4672,7 +4676,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     setBidPending(false);
   };
 
-  const passPlayer = () => { if (!isLeagueOwner()) return; return mutate((s) => {
+  const passPlayer = () => { if (!canRunRef.current) return; return mutate((s) => {
     const b = s.block; if (!b) return null;
     const p = s.players.find((x) => x.id === b.playerId);
     if (p) { p.status = "pool"; s.log.unshift(`${p.name} passed — back to the pool`); s.log = s.log.slice(0, 8); }
@@ -5327,6 +5331,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // Until the lookup lands, fall back to the old rule so the host isn't briefly
   // locked out of their own auction on a slow connection.
   const canRunAuction = isAdmin && (auct ? !!auct.canRun : isOwner);
+  canRunRef.current = canRunAuction;
   const isSpectator = identity === "spectator";
   const myTeam = state.teams.find((t) => t.id === identity) || null;  // "admin"/"spectator" match nothing
   const block = state.block;
