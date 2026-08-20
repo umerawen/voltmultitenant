@@ -9204,18 +9204,20 @@ function DiscordArenaCard({ eventId, phase }) {
         throw new Error(`Failed (${r.status})`);
       }
       const made = b.created?.length || 0, kept = b.reused?.length || 0;
+      const label = mode === "teams" ? "Team rooms" : mode === "common" ? "Channels" : "";
       if (b.partial) {
-        setMsg(`${made} created, ${kept} already there — press the button again to finish the rest.`);
+        setMsg(`${label}: ${made} created, ${kept} already there — ran out of time, press again to finish the rest.`);
         setBusy(""); return;
       }
       if (mode === "teams") {
-        setMsg(`${b.teams} teams — ${made} things created, ${kept} already there, ${b.assigned} players given their role.`);
+        setMsg(`Team rooms: ${b.teams} teams — ${made} created, ${kept} already there, ` +
+               `${b.assigned} players given their role.`);
       } else if (mode === "standings") {
         setMsg(b.edited ? "Standings updated in place." : "Standings posted.");
       } else if (mode === "fixtures") {
         setMsg(`${b.matches} fixtures ${b.edited ? "updated in place" : "posted"}.`);
       } else {
-        setMsg(`${made} created, ${kept} already there.`);
+        setMsg(`${label || "Done"}: ${made} created, ${kept} already there.`);
       }
       // Partial success is the normal outcome when a permission is missing, so
       // errors surface alongside the result rather than replacing it.
