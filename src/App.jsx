@@ -2620,7 +2620,7 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
           </div>
           <div className="px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.04)" }}>
             <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Max bid</p>
-            <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#5b8dff" }}>{fmt(Math.max(maxAllowedBid(team, players.filter((p) => p.status === "pool")), 0))}</p>
+            <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#5b8dff" }}>{fmt(Math.max(maxAllowedBid(team, players.filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false)), 0))}</p>
           </div>
         </div>
         <div className="flex flex-col gap-1.5">
@@ -4596,7 +4596,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const canRunRef = useRef(true);
   const spinNominate = () => { if (!canRunRef.current) return; return mutate((s) => {
     if (s.block || (s.spin && Date.now() < s.spin.startTs + SPIN_MS + REVEAL_MS)) return null;
-    const poolIds = s.players.filter((p) => p.status === "pool" && !p.isCaptain).map((p) => p.id);
+    // Reserves are cover for the weekend, not auction lots. Every other view
+    // filters them out — the pool page, the War Room, the board-gap count — but
+    // the draw itself did not, so a reserve could be nominated and bid on.
+    const poolIds = s.players
+      .filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false)
+      .map((p) => p.id);
     if (!poolIds.length) return null;
     for (let i = poolIds.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [poolIds[i], poolIds[j]] = [poolIds[j], poolIds[i]]; }
     const winnerId = poolIds[Math.floor(Math.random() * poolIds.length)];
