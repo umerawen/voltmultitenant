@@ -980,6 +980,16 @@ function MatchSchedule({ match, locator, isAdmin, onSetTime }) {
 //    see who backed which side. Locks once the match is played. ──
 function MatchPrediction({ match, locator, a, b, onVote }) {
   const [open, setOpen] = useState(false);
+  // Re-render on a timer so voting closes the moment kick-off passes, rather
+  // than whenever something else happens to re-render the page.
+  const [, tick] = useState(0);
+  const started = !!(match.scheduledAt && Date.now() >= new Date(match.scheduledAt).getTime());
+  useEffect(() => {
+    if (match.done || !match.scheduledAt || started) return;
+    const ms = new Date(match.scheduledAt).getTime() - Date.now();
+    const t = setTimeout(() => tick((n) => n + 1), Math.min(Math.max(ms, 0) + 500, 2147483000));
+    return () => clearTimeout(t);
+  }, [match.scheduledAt, match.done, started]);
   const votes = match.votes && typeof match.votes === "object" ? match.votes : {};
   const list = Object.entries(votes);
   const aV = list.filter(([, v]) => v.side === "a");
@@ -987,7 +997,7 @@ function MatchPrediction({ match, locator, a, b, onVote }) {
   const total = list.length;
   const uid = window.__VOLT?.userId;
   const mine = uid ? votes[uid]?.side : null;
-  const canVote = !!(onVote && uid && !match.done && a && b);
+  const canVote = !!(onVote && uid && !match.done && !started && a && b);
   if (!a || !b) return null;
   if (match.done && total === 0) return null;
   const aPct = total ? (aV.length / total) * 100 : 50;
@@ -1005,6 +1015,9 @@ function MatchPrediction({ match, locator, a, b, onVote }) {
       <div className="flex items-center justify-between gap-2">
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(160,185,235,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>
           Final prediction{mine ? <span style={{ color: "#7da6ff" }}> · you picked {mine === "a" ? a.name : b.name}</span> : null}
+          {/* Say why the buttons are gone. A control that silently disappears
+              reads as a bug rather than a deadline. */}
+          {started && !match.done && <span style={{ color: "rgba(245,196,83,0.85)" }}> · closed at kick-off</span>}
         </span>
         <button onClick={() => setOpen(o => !o)} disabled={!total}
           style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: total ? "rgba(200,215,255,0.55)" : "rgba(200,215,255,0.25)", background: "none", border: "none", cursor: total ? "pointer" : "default", fontFamily: "'Rajdhani',sans-serif" }}>
@@ -5006,6 +5019,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const t = s.tournament; if (!t) return null;
     const m = findMatch(t, locator); if (!m) return null;
     if (m.done) return null;                       // locked once played
+    // Locked at kick-off. Enforced here as well as in the UI: the button is
+    // hidden, but a stale tab could still fire this.
+    if (m.scheduledAt && Date.now() >= new Date(m.scheduledAt).getTime()) return null;
     const uid = window.__VOLT?.userId; if (!uid) return null;
     if (!m.votes || typeof m.votes !== "object") m.votes = {};
     const name = window.__VOLT?.userName || "Player";

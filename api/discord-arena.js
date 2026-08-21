@@ -49,6 +49,9 @@ const COMMON = [
     topic: "Who plays who, and when. Updated whenever the schedule changes." },
   // Writable, not read-only: people run /scout in here, and a denied
   // Send Messages blocks slash commands along with typing.
+  // Read-only: the bot posts the fixture, everyone answers with the buttons.
+  { ref: "predictions", name: "predictions", type: 0, readOnly: true,
+    topic: "Call the winner before each match. Closes at kick-off." },
   { ref: "scout",     name: "scout",      type: 0, readOnly: false,
     topic: "Look anyone up with /scout. Everyone sees who's been scouted." },
   { ref: "general",   name: "trash-talk", type: 0, readOnly: false,

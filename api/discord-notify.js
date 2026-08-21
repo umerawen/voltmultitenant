@@ -264,6 +264,15 @@ function buttonRow(kind, url) {
   // right under a guide rather than under a one-off announcement.
   // custom_id carries the request id so the handler knows which vacancy the
   // tap refers to — a player can be asked about two at once on a bad night.
+  // Prediction buttons carry the match id and the side, so one handler serves
+  // every fixture without any per-match state on the bot.
+  if (String(kind).startsWith("pred:")) {
+    const [, id, a, b] = String(kind).split("|");
+    return [{ type: 1, components: [
+      { type: 2, style: 1, label: (a || "A").slice(0, 60), custom_id: `volt_pred:${id}:a` },
+      { type: 2, style: 1, label: (b || "B").slice(0, 60), custom_id: `volt_pred:${id}:b` },
+    ] }];
+  }
   if (String(kind).startsWith("sub:")) {
     const id = String(kind).slice(4);
     return [{ type: 1, components: [

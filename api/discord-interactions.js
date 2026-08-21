@@ -354,6 +354,24 @@ async function onButton(out, customId, guild, discordId, origin) {
       `-# Changed your mind? Flip "I'm playing this tournament" back on in VOLT.`);
   }
 
+  // A prediction. The kick-off cutoff is enforced in volt_dc_predict rather
+  // than here: the message stays in the channel indefinitely, so someone can
+  // always tap it after the match has started.
+  if (customId.startsWith("volt_pred:")) {
+    const [, matchId, side] = customId.split(":");
+    const r = await rpc("volt_dc_predict",
+      { p_guild: guild || null, p_discord_id: discordId, p_match: matchId, p_side: side });
+    if (r?.error === "link") return needsLink(out);
+    if (r?.error === "started") return reply(out,
+      "That match has already started — predictions close at kick-off.");
+    if (r?.error === "done") return reply(out, "That one's already been played.");
+    if (r?.error === "nomatch") return reply(out, "I can't find that match any more.");
+    if (!r?.ok) return reply(out, "Couldn't record that. Try again in a moment.");
+    return reply(out,
+      `Locked in: you're backing **${r.picked}** over **${r.other}**.\n` +
+      `-# Tap the other button any time before kick-off to switch.`);
+  }
+
   // Offering to sub. The rank rule is enforced in volt_sub_offer, not here —
   // the DM went out minutes ago and the situation may have moved since.
   if (customId.startsWith("volt_sub_yes:")) {
