@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     }
 
     const [community] = await sb(
-      `/rest/v1/communities?id=eq.${ev.community_id}&select=discord_guild_id`);
+      `/rest/v1/communities?id=eq.${ev.community_id}&select=discord_guild_id,discord_role_id`);
     const guild = community?.discord_guild_id;
 
     // Same tournament stamp the rest of the bot uses, so a team DM read later
@@ -61,7 +61,12 @@ export default async function handler(req, res) {
 
     const existingRoles = guild && assignRoles ? await listRoles(token, guild) : [];
     // Every role this bot manages, so last weekend's team roles can be stripped.
-    const voltRoleIds = new Set(existingRoles.filter((r) => r.name.startsWith(ROLE_PREFIX)).map((r) => r.id));
+    // The league-wide player role also begins with "VOLT ", but it is not a
+    // team role and must survive a team assignment.
+    const keepRoleId = community?.discord_role_id || null;
+    const voltRoleIds = new Set(existingRoles
+      .filter((r) => r.name.startsWith(ROLE_PREFIX) && r.id !== keepRoleId)
+      .map((r) => r.id));
     const out = { dmed: 0, unlinked: 0, blocked: 0, rolesCreated: 0, rolesAssigned: 0, roleErrors: [] };
 
     for (const team of board.teams || []) {
