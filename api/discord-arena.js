@@ -248,35 +248,71 @@ async function postFixtures(ctx) {
   const list = f.matches || [];
   if (!list.length) throw new Error("The schedule is empty.");
 
-  const rounds = {};
-  for (const m of list) (rounds[m.round || 1] ||= []).push(m);
+  // Group by the day a match is actually played, not by round.
+  //
+  // Rounds are a bracket concept: "Matchday 1" happily contained both Saturday
+  // and Sunday games, which is exactly the thing a player scanning for their
+  // own fixture gets wrong. Unscheduled matches fall into their own group at
+  // the end rather than being silently attached to a day.
+  const dayKey = (m) => (m.at ? new Date(m.at).toISOString().slice(0, 10) : "tba");
+  const groups = new Map();
+  for (const m of list) {
+    const k = dayKey(m);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(m);
+  }
+  const keys = [...groups.keys()].sort((a, b) => (a === "tba" ? 1 : b === "tba" ? -1 : a < b ? -1 : 1));
 
-  const body = Object.keys(rounds).sort((a, b) => a - b).map((r) => {
-    const head = f.format === "single" ? `**Round ${r}**` : `**Matchday ${r}**`;
-    const lines = rounds[r].map((m) => {
-      // <t:unix:f> renders in each reader's own timezone, which is the whole
-      // reason for posting this in Discord rather than linking to the site.
-      const when = m.at ? `<t:${Math.floor(new Date(m.at).getTime() / 1000)}:f>` : "_time TBA_";
-      if (m.done) {
-        return `~~${m.a} vs ${m.b}~~ — **${m.winner || "done"}** won`;
-      }
-      return `**${m.a}** vs **${m.b}** · ${when}${m.bo ? ` · Bo${m.bo}` : ""}`;
-    });
-    return `${head}\n${lines.join("\n")}`;
-  }).join("\n\n");
+  const dayName = (k) => {
+    if (k === "tba") return "Time to be confirmed";
+    const d = new Date(k + "T12:00:00Z");
+    return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+  };
 
-  const embed = { title: "Fixtures", color: 0x3d7bff,
-    description: body.slice(0, 4000),
-    footer: { text: f.tag || ctx.ev.weekend_label || "" },
-    timestamp: new Date().toISOString() };
+  const blocks = keys.map((k) => {
+    const rows = groups.get(k)
+      .sort((a, b) => (a.at || "").localeCompare(b.at || ""))
+      .map((m) => {
+        if (m.done) {
+          return `~~${m.a}  vs  ${m.b}~~\n**${m.winner || "Result in"}** won`;
+        }
+        // <t:unix:t> is the local clock time for each reader — the whole reason
+        // this lives in Discord rather than on the site.
+        const when = m.at ? `<t:${Math.floor(new Date(m.at).getTime() / 1000)}:t>` : "time TBA";
+        return `**${m.a}**  vs  **${m.b}**\n${when}${m.bo ? `  ·  Bo${m.bo}` : ""}`;
+      });
+    return `### ${dayName(k)}\n\n${rows.join("\n\n")}`;
+  });
+
+  const header = `# Fixtures — ${f.tag || ctx.ev.weekend_label || "Tournament"}`;
+  const body = [header, "", blocks.join("\n\n"), "",
+    "-# Times shown in your own timezone. Be in voice ten minutes before yours."].join("\n");
+
+  // Plain content, not an embed: Discord renders embed text a size smaller and
+  // shrinks the headings with it, which is what made this cramped. Fall back to
+  // an embed only if a long schedule would breach the 2000-character limit.
+  const useEmbed = body.length > 1900;
+  const payload = useEmbed
+    ? { embeds: [{ description: body.slice(0, 4000), color: 0x3d7bff }] }
+    : { content: body };
+
+  // Ping the player role so the schedule actually reaches people.
+  if (ctx.c.discord_role_id) {
+    const ping = `<@&${ctx.c.discord_role_id}>`;
+    if (useEmbed) payload.content = ping;
+    else payload.content = `${ping}\n\n${body}`.slice(0, 1990);
+    payload.allowed_mentions = { parse: [], roles: [ctx.c.discord_role_id] };
+  } else {
+    payload.allowed_mentions = { parse: [] };
+  }
 
   const prior = await lookup(ctx, "message", "fixtures");
   if (prior) {
-    const upd = await call(ctx.token, `/channels/${ch}/messages/${prior}`, "PATCH", { embeds: [embed] });
+    const upd = await call(ctx.token, `/channels/${ch}/messages/${prior}`, "PATCH", payload);
     if (upd.ok) return { ok: true, edited: true, matches: list.length };
     // Deleted by hand — fall through and post a fresh one.
   }
-  const r = await call(ctx.token, `/channels/${ch}/messages`, "POST", { embeds: [embed] });
+  const r = await call(ctx.token, `/channels/${ch}/messages`, "POST", payload);
   if (!r.ok) throw new Error(`Couldn't post fixtures — ${r.reason}`);
   await remember(ctx, "message", "fixtures", r.body.id, false, { channel: ch });
   return { ok: true, edited: false, matches: list.length };
