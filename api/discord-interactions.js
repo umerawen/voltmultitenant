@@ -62,7 +62,7 @@ export default async function handler(req, res) {
       // The tag is decoration, so it runs alongside the real work rather than
       // in front of it.
       const tagP = guild ? tagFor(guild) : Promise.resolve(null);
-      if (body.type === COMPONENT) await onButton(out, body.data?.custom_id, guild, discordId, origin);
+      if (body.type === COMPONENT) await onButton(out, body.data?.custom_id, guild, discordId, origin, body);
       else if (body.type === APP_COMMAND) await onCommand(out, body, guild, discordId);
       ctx.tag = await tagP;
     } catch (e) {
@@ -171,13 +171,28 @@ async function onCommand(out, body, guild, discordId) {
       (r.budget ? `\n\nBudget left: $${Number(r.budget).toLocaleString()}` : ""));
   }
 
+  // Who is calling matches best. Deliberately separate from /leaderboard: one
+  // is the players' season, this is open to everyone in the league.
+  if (name === "predictions") {
+    const rows = await rpc("volt_dc_pred_standings", { p_guild: guild || null });
+    if (rows?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
+    if (!rows?.length) return reply(out, "No matches have finished yet, so nothing to score.");
+    const medal = ["🥇", "🥈", "🥉"];
+    return reply(out, "**Prediction standings** · correct calls\n" +
+      rows.slice(0, 10).map((r, i) =>
+        `${medal[i] || `${i + 1}.`} **${r.name}** — ${r.hit}/${r.total} (${r.pct}%)`).join("\n"));
+  }
+
   if (name === "leaderboard") {
     const rows = await rpc("volt_dc_leaderboard", { p_guild: guild || null });
     if (rows?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
-    if (!rows?.length) return reply(out, "No points banked yet this season.");
+    if (!rows?.length) return reply(out, "No matches recorded yet this season.");
     const medal = ["🥇", "🥈", "🥉"];
-    return reply(out, "**Season leaderboard**\n" + rows.map((r, i) =>
-      `${medal[i] || `${i + 1}.`} **${r.name}** — ${num(r.pts, 0)} pts (${r.played})`).join("\n"));
+    const line = (r, i) =>
+      `${medal[i] || `${i + 1}.`} **${r.name}** — ${num(r.avgAcs, 0)} ACS` +
+      ` (${r.played} match${r.played === 1 ? "" : "es"})`;
+    return reply(out, "**Season leaderboard** · average combat score\n" +
+      rows.slice(0, 10).map(line).join("\n"));
   }
 
   if (name === "subs") {
@@ -257,7 +272,7 @@ async function onAutocomplete(res, body, guild) {
 
 /* ── buttons ─────────────────────────────────────────────────────────────── */
 
-async function onButton(out, customId, guild, discordId, origin) {
+async function onButton(out, customId, guild, discordId, origin, body) {
   // The whole point: registering is one tap, with no link to follow and nothing
   // to log into. Every failure says exactly what to do next.
   if (customId === "volt_register" || customId === "volt_register_captain") {
@@ -359,9 +374,12 @@ async function onButton(out, customId, guild, discordId, origin) {
   // always tap it after the match has started.
   if (customId.startsWith("volt_pred:")) {
     const [, matchId, side] = customId.split(":");
+    const who = body.member?.user?.global_name || body.member?.user?.username
+             || body.user?.global_name || body.user?.username || null;
     const r = await rpc("volt_dc_predict",
-      { p_guild: guild || null, p_discord_id: discordId, p_match: matchId, p_side: side });
-    if (r?.error === "link") return needsLink(out);
+      { p_guild: guild || null, p_discord_id: discordId, p_match: matchId,
+        p_side: side, p_guest_name: who });
+    if (r?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
     if (r?.error === "started") return reply(out,
       "That match has already started — predictions close at kick-off.");
     if (r?.error === "done") return reply(out, "That one's already been played.");
@@ -369,7 +387,10 @@ async function onButton(out, customId, guild, discordId, origin) {
     if (!r?.ok) return reply(out, "Couldn't record that. Try again in a moment.");
     return reply(out,
       `Locked in: you're backing **${r.picked}** over **${r.other}**.\n` +
-      `-# Tap the other button any time before kick-off to switch.`);
+      `-# Tap the other button any time before kick-off to switch.` +
+      // A guest gets one nudge toward an account, attached to something they
+      // already did rather than a cold pitch.
+      (r.guest ? `\n-# You're predicting as a guest — make a VOLT account and you can play too.` : ""));
   }
 
   // Offering to sub. The rank rule is enforced in volt_sub_offer, not here —

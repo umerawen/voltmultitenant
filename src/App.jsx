@@ -3355,8 +3355,12 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
 /* ════════════════ LEADERBOARD (tournament stats, sorted by avg ACS) ══════════ */
 
 // SEASON LEADERBOARD — the league's single source of truth for player points.
-// Reads match_results (host's Report Match): +50 win · ACS÷4 · K+⅓A, summed
-// across every match of every tournament in the community.
+// Reads match_results (host's Report Match) and ranks by AVERAGE ACS across
+// every match of every tournament.
+//
+// Average rather than total, so someone who plays six matches isn't ahead of
+// someone who played three and outperformed them. No qualifying minimum: one
+// strong game can top the table, and that's the intended behaviour.
 function Leaderboard({ isAdmin }) {
   const [rows, setRows] = useState(null);
   useEffect(() => {
@@ -3378,7 +3382,10 @@ function Leaderboard({ isAdmin }) {
           a.pts += Number(r.points_computed || 0); a.m++; if (r.team_won) a.w++;
           const sp = r.stat_payload || {}; a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
         });
-        setRows(Object.values(agg).map(a => ({ ...a, avgAcs: a.m ? Math.round(a.acsSum / a.m) : 0 })).sort((x, y) => y.pts - x.pts || y.avgAcs - x.avgAcs));
+        setRows(Object.values(agg)
+          .map(a => ({ ...a, avgAcs: a.m ? Math.round(a.acsSum / a.m) : 0 }))
+          // Straight average. Ties break on matches played, then wins.
+          .sort((x, y) => y.avgAcs - x.avgAcs || y.m - x.m || y.w - x.w));
       } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
     }
     load();
@@ -3393,7 +3400,7 @@ function Leaderboard({ isAdmin }) {
         <span className="uppercase text-xs tracking-[0.3em]" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>Season standings · every match counts</span>
       </div>
       <h1 className="text-5xl font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.02em" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
-      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>+50 win · ACS÷4 · K+⅓A — summed across all tournaments.{isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}</p>
+      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>Ranked by average combat score across all tournaments.{isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}</p>
 
       {rows === null && <p style={{ color: "rgba(200,215,255,0.5)" }}>Loading…</p>}
       {rows && rows.length === 0 && (
@@ -3404,7 +3411,7 @@ function Leaderboard({ isAdmin }) {
       {rows && rows.length > 0 && (
         <div>
           <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
-            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Avg ACS</span><span className="text-right">Points</span>
+            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg ACS</span>
           </div>
           <div className="grid gap-1.5">
             {rows.map((r, i) => {
@@ -3420,8 +3427,9 @@ function Leaderboard({ isAdmin }) {
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84" }}>{r.w}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.k}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.as}</span>
-                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#00e5ff" }}>{r.avgAcs}</span>
-                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#ecf3ff", fontSize: 15 }}>{r.pts}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>{r.pts}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
+                    fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#00e5ff" }}>{r.avgAcs}</span>
                 </div>
               );
             })}
@@ -9743,6 +9751,85 @@ function SubDesk({ eventId, onChanged }) {
   );
 }
 
+// ── Predictions leaderboard ──────────────────────────────────────────────
+// Who calls matches best. Open to the whole league, not just whoever got
+// drafted — predicting is how people sitting out a weekend stay in it, and the
+// season race already belongs to the players.
+//
+// Ranked on correct calls rather than accuracy, so it rewards turning up to
+// every match; accuracy breaks ties, so someone who called 8 of 10 edges
+// someone who called 8 of 20.
+function PredictionBoard() {
+  const [rows, setRows] = useState(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    let ok = true;
+    const load = () => __sb.rpc("volt_pred_standings", { p_community: window.__VOLT.communityId })
+      .then(({ data }) => ok && setRows(Array.isArray(data) ? data : []))
+      .catch((e) => { console.error("pred standings", e); if (ok) setRows([]); });
+    load();
+    const stop = visInterval(load, 30000);
+    return () => { ok = false; stop(); };
+  }, []);
+
+  // Nothing to show until a match has actually finished — an empty table before
+  // the first result reads as broken.
+  if (!rows?.length) return null;
+  const shown = all ? rows : rows.slice(0, 5);
+  const me = window.__VOLT?.userId;
+
+  return (
+    <div style={{ marginTop: 42 }}>
+      <div style={{ textAlign: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Predictions</div>
+        <div style={{ fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 2, fontFamily: "'Rajdhani',sans-serif" }}>
+          Crystal <span style={{ color: "#3d7bff" }}>Ball</span>
+        </div>
+        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 5 }}>
+          Call the winner before kick-off — anyone in the league can play
+        </div>
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {shown.map((r, i) => {
+          const mine = r.userId === me;
+          return (
+            <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px",
+              background: i === 0 ? "rgba(245,196,83,0.08)" : mine ? "rgba(61,123,255,0.08)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${i === 0 ? "rgba(245,196,83,0.35)" : mine ? "rgba(61,123,255,0.35)" : "rgba(120,150,220,0.15)"}`,
+              clipPath: SHELL_NOTCH(8) }}>
+              <span style={{ width: 24, fontFamily: "'IBM Plex Mono',monospace", fontSize: 13,
+                color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.4)" }}>{i + 1}</span>
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase",
+                fontFamily: "'Rajdhani',sans-serif", fontSize: 15,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.name}
+                {/* Predicting is open to the whole Discord, account or not. The
+                    badge is a nudge, not a demotion — they're on the board. */}
+                {r.guest && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", marginLeft: 8,
+                  color: "rgba(200,215,255,0.35)" }}>GUEST</span>}
+              </span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
+                {r.pct}%
+              </span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 700,
+                color: i === 0 ? "#f5c453" : "#00e5ff", minWidth: 54, textAlign: "right" }}>
+                {r.hit}/{r.total}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {rows.length > 5 && (
+        <div style={{ textAlign: "center", marginTop: 10 }}>
+          <button onClick={() => setAll((a) => !a)} style={shellBtn("ghost", { padding: "7px 16px", fontSize: 11 })}>
+            {all ? "Show top 5" : `Show all ${rows.length}`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Transactions ledger ──────────────────────────────────────────────────
 // A public feed of every roster change. All of this already happened somewhere
 // in the app, but scattered across the auction board, the roster page and the
@@ -10645,6 +10732,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {HAS_SUPABASE && isOperator && <AdminQueue />}
     {/* Public to every member, not staff-only — the feed is the league's own
         record of itself, and that only works if players can read it. */}
+    {HAS_SUPABASE && <PredictionBoard />}
     {HAS_SUPABASE && <LeagueLedger onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {board && <div style={{ marginTop: 42 }}>
       <div style={{ textAlign: "center", marginBottom: 16 }}>
