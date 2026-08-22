@@ -9250,6 +9250,30 @@ function DiscordArenaCard({ eventId, phase }) {
     setBusy("");
   }
 
+  // Opens voting for the whole schedule at once. Separate endpoint from the
+  // channel builder because it posts as the host — the RPC checks staff against
+  // their own token rather than trusting the client.
+  async function openPredictions() {
+    setBusy("predictions"); setErr(""); setMsg("");
+    try {
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch("/api/discord-predictions?mode=open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ eventId }),
+      });
+      const b = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
+      setMsg(b.posted
+        ? `Predictions open for ${b.posted} match${b.posted === 1 ? "" : "es"}. A reminder pings the role an hour before each.`
+        : "Nothing to open — every upcoming match already has a card.");
+      if (b.errors?.length) setErr(b.errors.slice(0, 3).join(" · "));
+    } catch (e) { setErr(e.message || "Couldn't post."); }
+    setBusy("");
+  }
+
   const B = ({ mode, label, on = true, kind = "ghost", tip }) => (
     <button disabled={!!busy || !on} onClick={() => run(mode, label)} title={tip}
       style={shellBtn(kind, { padding: "10px 16px", fontSize: 12, opacity: (!on || busy) ? 0.5 : 1 })}>
@@ -9268,6 +9292,11 @@ function DiscordArenaCard({ eventId, phase }) {
              tip={drafted ? "A role, a private text room and a private voice room per team"
                           : "Available once the auction has run"} />
           <B mode="fixtures" label="🗓 Post fixtures" tip="Who plays who and when, in everyone's own timezone" />
+          <button disabled={!!busy} onClick={openPredictions}
+            title="Posts a prediction card for every upcoming match. A reminder pings the role an hour before each one."
+            style={shellBtn("ghost", { padding: "10px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+            {busy === "predictions" ? "Posting…" : "◈ Open predictions"}
+          </button>
           <B mode="standings" label="⟳ Post standings" />
         </div>
         <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 11, lineHeight: 1.65 }}>
