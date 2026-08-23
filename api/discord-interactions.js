@@ -184,15 +184,26 @@ async function onCommand(out, body, guild, discordId) {
   }
 
   if (name === "leaderboard") {
-    const rows = await rpc("volt_dc_leaderboard", { p_guild: guild || null });
+    // `sort` comes from the slash-command option; defaults to ACS. The printed
+    // number MUST be the one being ranked on — showing points while ordering by
+    // ACS is what made this list look scrambled.
+    const sort = String(opt("sort") || "acs").toLowerCase() === "points" ? "pts" : "acs";
+    const rows = await rpc("volt_dc_leaderboard", { p_guild: guild || null, p_sort: sort });
     if (rows?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
     if (!rows?.length) return reply(out, "No matches recorded yet this season.");
     const medal = ["🥇", "🥈", "🥉"];
     const line = (r, i) =>
-      `${medal[i] || `${i + 1}.`} **${r.name}** — ${num(r.avgAcs, 0)} ACS` +
+      `${medal[i] || `${i + 1}.`} **${r.name}** — ` +
+      (sort === "pts"
+        ? `${num(r.pts, 0)} pts · ${num(r.avgAcs, 0)} ACS`
+        : `${num(r.avgAcs, 0)} ACS · ${num(r.pts, 0)} pts`) +
       ` (${r.played} match${r.played === 1 ? "" : "es"})`;
-    return reply(out, "**Season leaderboard** · average combat score\n" +
-      rows.slice(0, 10).map(line).join("\n"));
+    return reply(out,
+      (sort === "pts"
+        ? "**Season leaderboard** · points\n-# 50 a win, plus ACS÷4 and kills"
+        : "**Season leaderboard** · average combat score\n-# Output per game, wins aside") +
+      "\n" + rows.slice(0, 10).map(line).join("\n") +
+      `\n-# \`/leaderboard sort:${sort === "pts" ? "acs" : "points"}\` for the other ranking`);
   }
 
   if (name === "subs") {
