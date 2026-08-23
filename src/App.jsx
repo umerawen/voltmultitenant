@@ -3362,6 +3362,19 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
 // someone who played three and outperformed them. No qualifying minimum: one
 // strong game can top the table, and that's the intended behaviour.
 function Leaderboard({ isAdmin }) {
+  // Two honest answers to "who's best".
+  //
+  // Average ACS is pure output per game — it doesn't care whether you won or
+  // how many you played. Points reward turning up and winning: 50 a win, plus
+  // ACS÷4 and kills. Someone can lead one and not the other, and that gap is
+  // interesting rather than a bug, so both are one tap away.
+  const [sortBy, setSortBy] = useState("acs");
+  // Ties fall back to the other metric, so equal ACS is settled by the better
+  // season and vice versa — never by whatever order the rows arrived in.
+  const sorted = [...(rows || [])].sort((x, y) =>
+    sortBy === "acs"
+      ? y.avgAcs - x.avgAcs || y.pts - x.pts || y.m - x.m
+      : y.pts - x.pts || y.avgAcs - x.avgAcs || y.m - x.m);
   const [rows, setRows] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -3391,11 +3404,11 @@ function Leaderboard({ isAdmin }) {
           a.m++; if (r.team_won) a.w++;
           a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
         });
+        // Unsorted here — the view sorts, so switching between ACS and points
+        // is instant instead of a refetch.
         setRows(Object.values(agg)
           .filter(a => a.m > 0)                     // nobody ranks off zero appearances
-          .map(a => ({ ...a, avgAcs: Math.round(a.acsSum / a.m) }))
-          // Straight average. Ties break on matches played, then wins.
-          .sort((x, y) => y.avgAcs - x.avgAcs || y.m - x.m || y.w - x.w));
+          .map(a => ({ ...a, avgAcs: Math.round(a.acsSum / a.m) })));
       } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
     }
     load();
@@ -3410,7 +3423,25 @@ function Leaderboard({ isAdmin }) {
         <span className="uppercase text-xs tracking-[0.3em]" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>Season standings · every match counts</span>
       </div>
       <h1 className="text-5xl font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.02em" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
-      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>Ranked by average combat score across all tournaments.{isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}</p>
+      <p className="text-sm mb-4" style={{ color: "rgba(200,215,255,0.5)" }}>
+        {sortBy === "acs"
+          ? "Ranked by average combat score — output per game, wins aside."
+          : "Ranked by season points — 50 a win, plus ACS÷4 and kills."}
+        {isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}
+      </p>
+      <div className="flex gap-2 mb-6">
+        {[["acs", "Top ACS"], ["pts", "Top points"]].map(([k, label]) => (
+          <button key={k} onClick={() => setSortBy(k)}
+            className="text-xs uppercase tracking-widest px-4 py-2"
+            style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+              clipPath: SHELL_NOTCH(7),
+              color: sortBy === k ? "#cfe0ff" : "rgba(200,215,255,0.45)",
+              border: `1px solid ${sortBy === k ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.2)"}`,
+              background: sortBy === k ? "rgba(61,123,255,0.18)" : "transparent" }}>
+            {label}
+          </button>
+        ))}
+      </div>
 
       {rows === null && <p style={{ color: "rgba(200,215,255,0.5)" }}>Loading…</p>}
       {rows && rows.length === 0 && (
@@ -3424,7 +3455,7 @@ function Leaderboard({ isAdmin }) {
             <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg ACS</span>
           </div>
           <div className="grid gap-1.5">
-            {rows.map((r, i) => {
+            {sorted.map((r, i) => {
               const rc = (RANKS[r.rank] || {}).c || "#8d97a8";
               return (
                 <div key={i} className="grid items-center px-4 py-3 volt-lb-row" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
@@ -3437,9 +3468,14 @@ function Leaderboard({ isAdmin }) {
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84" }}>{r.w}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.k}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.as}</span>
-                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>{r.pts}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
-                    fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#00e5ff" }}>{r.avgAcs}</span>
+                    fontWeight: sortBy === "pts" ? 700 : 400,
+                    fontSize: sortBy === "pts" ? 15 : 13,
+                    color: sortBy === "pts" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.pts}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
+                    fontWeight: sortBy === "acs" ? 700 : 400,
+                    fontSize: sortBy === "acs" ? 15 : 13,
+                    color: sortBy === "acs" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.avgAcs}</span>
                 </div>
               );
             })}
