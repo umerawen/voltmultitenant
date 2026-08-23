@@ -3369,13 +3369,13 @@ function Leaderboard({ isAdmin }) {
   // ACS÷4 and kills. Someone can lead one and not the other, and that gap is
   // interesting rather than a bug, so both are one tap away.
   const [sortBy, setSortBy] = useState("acs");
+  const [rows, setRows] = useState(null);
   // Ties fall back to the other metric, so equal ACS is settled by the better
   // season and vice versa — never by whatever order the rows arrived in.
   const sorted = [...(rows || [])].sort((x, y) =>
     sortBy === "acs"
       ? y.avgAcs - x.avgAcs || y.pts - x.pts || y.m - x.m
       : y.pts - x.pts || y.avgAcs - x.avgAcs || y.m - x.m);
-  const [rows, setRows] = useState(null);
   useEffect(() => {
     let alive = true;
     async function load() {
