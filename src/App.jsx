@@ -3376,14 +3376,24 @@ function Leaderboard({ isAdmin }) {
         if (!alive) return;
         const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
         const profs = {}; (pp || []).forEach(p => { profs[p.user_id] = p; });
+        // A row of all zeros is someone rostered who didn't take the server —
+        // subbed out, or replaced by a stand-in. Averaging those in halves a
+        // real score, so they're counted as "not played" rather than as a
+        // zero-scoring game.
+        const didPlay = (sp) => Number(sp?.acs || 0) > 0 || Number(sp?.k || 0) > 0
+                             || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
         const agg = {};
         (mrs || []).forEach(r => {
           const a = (agg[r.user_id] = agg[r.user_id] || { name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, acsSum: 0 });
-          a.pts += Number(r.points_computed || 0); a.m++; if (r.team_won) a.w++;
-          const sp = r.stat_payload || {}; a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
+          a.pts += Number(r.points_computed || 0);
+          const sp = r.stat_payload || {};
+          if (!didPlay(sp)) return;                 // rostered, didn't play
+          a.m++; if (r.team_won) a.w++;
+          a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
         });
         setRows(Object.values(agg)
-          .map(a => ({ ...a, avgAcs: a.m ? Math.round(a.acsSum / a.m) : 0 }))
+          .filter(a => a.m > 0)                     // nobody ranks off zero appearances
+          .map(a => ({ ...a, avgAcs: Math.round(a.acsSum / a.m) }))
           // Straight average. Ties break on matches played, then wins.
           .sort((x, y) => y.avgAcs - x.avgAcs || y.m - x.m || y.w - x.w));
       } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
