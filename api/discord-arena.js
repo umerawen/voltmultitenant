@@ -323,25 +323,52 @@ async function postFixtures(ctx) {
 
 async function postStandings(ctx) {
   const ch = await liveChannel(ctx, "standings");
-  const rows = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild });
-  if (rows?.error) throw new Error("Couldn't read the leaderboard.");
+  // Two rankings of the same players, fetched separately so each is sorted and
+  // cut by its own metric — taking one list and re-sorting it in JS would show
+  // the top 25 by ACS re-ordered by points, which isn't the top 25 by points.
+  const byAcs = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "acs" });
+  const byPts = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "pts" });
+  if (byAcs?.error || byPts?.error) throw new Error("Couldn't read the leaderboard.");
+  if (!byAcs?.length) throw new Error("No matches recorded yet.");
 
   const medal = ["🥇", "🥈", "🥉"];
-  const body = (rows || []).slice(0, 20).map((r, i) =>
-    `${medal[i] || `\`${String(i + 1).padStart(2)}\``} **${r.name}** — ${Math.round(r.pts)} pts (${r.played})`)
-    .join("\n") || "_Nobody has banked points yet._";
-  const embed = { title: "Season standings", color: 0xf5c453, description: body,
-    footer: { text: "+50 win · ACS÷4 · K+⅓A" }, timestamp: new Date().toISOString() };
+  // Whichever metric a section ranks by is printed first — showing points under
+  // an ACS-ordered list is what made the old post look unsorted.
+  const list = (rows, key) => rows.slice(0, 10).map((r, i) =>
+    `${medal[i] || `\`${String(i + 1).padStart(2)}\``} **${r.name}** — ` +
+    (key === "pts"
+      ? `${Math.round(r.pts)} pts · ${Math.round(r.avgAcs)} ACS`
+      : `${Math.round(r.avgAcs)} ACS · ${Math.round(r.pts)} pts`) +
+    ` (${r.played})`).join("\n");
+
+  const body = [
+    "### ◈ Top average combat score",
+    "-# Output per game — wins aside",
+    list(byAcs, "acs"),
+    "",
+    "### ◈ Top season points",
+    "-# 50 a win, plus ACS÷4 and kills",
+    list(byPts, "pts"),
+  ].join("\n");
+
+  // Plain text, not an embed: embeds render a size down and shrink the section
+  // headings with them. Falls back only if it would breach the 2000 limit.
+  const header = `# Season standings — ${ctx.ev.weekend_label || ctx.c.name}`;
+  const full = `${header}\n\n${body}\n\n-# Matches played in brackets. Updates after every reported result.`;
+  const payload = full.length > 1900
+    ? { content: header, embeds: [{ description: body.slice(0, 4000), color: 0xf5c453 }],
+        allowed_mentions: { parse: [] } }
+    : { content: full, allowed_mentions: { parse: [] } };
 
   // Edit the same message rather than posting a new one each time: a standings
   // channel that grows by one post per match becomes a scroll, not a scoreboard.
   const prior = await lookup(ctx, "message", "standings");
   if (prior) {
-    const upd = await call(ctx.token, `/channels/${ch}/messages/${prior}`, "PATCH", { embeds: [embed] });
+    const upd = await call(ctx.token, `/channels/${ch}/messages/${prior}`, "PATCH", payload);
     if (upd.ok) return { ok: true, edited: true };
     // Message was deleted by hand — fall through and post a fresh one.
   }
-  const r = await call(ctx.token, `/channels/${ch}/messages`, "POST", { embeds: [embed] });
+  const r = await call(ctx.token, `/channels/${ch}/messages`, "POST", payload);
   if (!r.ok) throw new Error(`Couldn't post standings — ${r.reason}`);
   await remember(ctx, "message", "standings", r.body.id, false, { channel: ch });
   return { ok: true, edited: false };
