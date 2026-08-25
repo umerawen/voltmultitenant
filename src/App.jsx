@@ -8714,7 +8714,10 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
   // Who this goes to. It used to be hardcoded to people already registered,
   // which made the sign-up buttons useless — every recipient was already in.
   // "Not signed up yet" is the audience that actually needs a Register button.
-  const [scope, setScope] = useState("approved");
+  // "Approved" means approved for a specific tournament, which is meaningless
+  // once that tournament is over — so between weekends the default audience is
+  // the whole league.
+  const [scope, setScope] = useState(phase === "settled" ? "all" : "approved");
   const [counts, setCounts] = useState({});          // scope → how many that reaches
   // What the recipient can tap. Explicit rather than inferred from the audience,
   // because "who gets it" and "what can they do about it" are separate decisions.
@@ -8735,6 +8738,7 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
     return () => { ok = false; };
   }, []);
   const regOpen = phase === "registration_open";
+  const settled = phase === "settled";
   const SCOPES = regOpen
     ? [["approved", "Already signed up"], ["unregistered", "Not signed up yet"], ["all", "Whole league"]]
     : [["approved", "Already signed up"], ["all", "Whole league"]];
@@ -8814,7 +8818,9 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
 
   return (
     <div style={{ marginTop: 14 }}>
-      <SectionHead title="Message the league" hint="DMs the audience you pick, and posts to your channel" />
+      <SectionHead title="Message the league"
+        hint={settled ? "Between tournaments — goes to the whole league"
+                      : "DMs the audience you pick, and posts to your channel"} />
       <div style={PANEL()}>
         <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3}
           placeholder="e.g. Draft starts in 30 minutes — be in the voice channel."
@@ -10576,6 +10582,9 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   const current = pickCurrent(events);
   const upcoming = events.filter(e => e.phase !== "settled" && e.id !== current?.id);
   const past = events.filter(e => e.phase === "settled");
+  // Falls back to the most recent finished tournament so league-wide tools keep
+  // working between weekends. `past` is newest-first, matching the query order.
+  const lastSettled = past[0] || null;
 
   const heroCTA = !current ? "" :
     current.phase === "registration_open" ? (live?.mineStatus === "approved" ? "Enter tournament →" : live?.mineStatus ? "View application →" : "Apply now →") :
@@ -10800,8 +10809,11 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
       <DiscordTeamsCard eventId={current.id} />
     )}
-    {isHost && HAS_SUPABASE && current && (
-      <DiscordAnnounce eventId={current.id} communityId={window.__VOLT.communityId} phase={current.phase} />
+    {isHost && HAS_SUPABASE && (
+      <DiscordAnnounce
+        eventId={(current || lastSettled)?.id || null}
+        communityId={window.__VOLT.communityId}
+        phase={(current || lastSettled)?.phase || "settled"} />
     )}
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {HAS_SUPABASE && isOperator && <AdminQueue />}
@@ -11152,10 +11164,16 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       if (next === "drafting") await buildBoardFromRegistrations();
       // Settling the tournament: snapshot standings, crown champions (trophy streak),
       // build the recap card, and notify players.
+      // Settling runs FIRST and is allowed to abort the phase change. A
+      // tournament marked settled without trophies looks finished but isn't,
+      // and nothing on screen says so.
       if (next === "settled") { await snapshotStandings(); await settleTrophiesAndRecap(); }
       const { data } = await __sb.from("events").update({ phase: next }).eq("id", ev.id).select().maybeSingle();
       if (data) setEv(data);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      alert(e.message || "Couldn't move the tournament on. Nothing was changed.");
+    }
     setBusy(false);
   }
 
@@ -11218,8 +11236,12 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         if (champ) {
           const ct = s.teams.find(x => x.id === champ.teamId);
           team = ct?.name || null;
-          // Drafted roster userIds (pool player ids are their userIds).
-          const rosterIds = new Set((ct?.roster || []).map(p => p.id).filter(Boolean));
+          // The board stores roster as an array of id STRINGS, not objects, so
+          // `.map(p => p.id)` produced undefined for every drafted player and
+          // only the captain survived. Accept either shape.
+          const rosterIds = new Set((ct?.roster || [])
+            .map(p => (typeof p === "string" ? p : p?.id))
+            .filter(Boolean));
           if (ct?.captainUserId) rosterIds.add(ct.captainUserId);
           championIds = [...rosterIds];
         }
@@ -11238,7 +11260,17 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.pts + " pts" : null, topFrag: topFrag ? topFrag[0] : null, decidedBy: decidedByFinal ? "final" : "table" };
       } catch (e) { console.error("recap stats", e); }
       // Fire the security-definer RPC: streak +1 for champions, reset for the rest.
-      await __sb.rpc("volt_settle_trophies", { p_event: ev.id, p_team: team, p_champions: championIds, p_recap: recap, p_kind: kind });
+      //
+      // The error MUST be checked. supabase-js returns failures as a value
+      // rather than throwing, so this call failing silently let the tournament
+      // flip to 'settled' with no trophies awarded and no recap written — the
+      // caller had no idea anything had gone wrong.
+      if (!championIds.length) {
+        throw new Error("Couldn't work out who won — no champion team on the board.");
+      }
+      const { error: settleErr } = await __sb.rpc("volt_settle_trophies",
+        { p_event: ev.id, p_team: team, p_champions: championIds, p_recap: recap, p_kind: kind });
+      if (settleErr) throw new Error(settleErr.message || "Couldn't award trophies.");
       // Notify every approved player the tournament settled (+ champions get the crown).
       try {
         const r = await fetchRosterForEvent(ev.id);
