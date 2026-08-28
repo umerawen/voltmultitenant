@@ -9832,6 +9832,97 @@ function SubDesk({ eventId, onChanged }) {
   );
 }
 
+// ── Host console ─────────────────────────────────────────────────────────
+// The host page had grown to eleven cards, eight of them always open, all
+// shouting equally. Two ideas fix that:
+//
+//   1. Anything that NEEDS the host floats to the top and is loud. Each of
+//      those cards already renders null when there's nothing wrong, so a
+//      healthy league shows an empty section and it disappears entirely.
+//   2. Everything the bot can do is one context, not six, so it becomes a
+//      single panel with tabs instead of six stacked cards.
+//
+// Tabs are right here and wrong for the alerts: switching between equal tools
+// is exactly what tabs are for, but hiding a warning behind one means finding
+// it too late.
+
+function HostAlerts({ children }) {
+  // Each child hides itself when there's nothing to report, so the heading has
+  // to disappear with them. Counting the children doesn't work — an element
+  // that renders null is still an element — so measure what actually landed in
+  // the DOM and hide the heading when nothing did.
+  const body = useRef(null);
+  const [any, setAny] = useState(false);
+  useEffect(() => {
+    const check = () => setAny(!!body.current && body.current.childElementCount > 0);
+    check();
+    // The cards fetch after mount, so their content appears later.
+    const mo = new MutationObserver(check);
+    if (body.current) mo.observe(body.current, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [children]);
+
+  return (
+    <div style={{ marginTop: any ? 26 : 0 }}>
+      {any && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+          <span style={{ ...SEC_LABEL, color: "#f5c453" }}>// Needs you</span>
+          <span style={{ flex: 1, height: 1,
+            background: "linear-gradient(90deg, rgba(245,196,83,0.35), rgba(245,196,83,0))" }} />
+        </div>
+      )}
+      <div ref={body}>{children}</div>
+    </div>
+  );
+}
+
+function DiscordConsole({ tabs }) {
+  const live = tabs.filter((t) => t && t.node);
+  const [active, setActive] = useState(live[0]?.key || null);
+  if (!live.length) return null;
+  const current = live.find((t) => t.key === active) || live[0];
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+        <span style={SEC_LABEL}>// Discord bot</span>
+        <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", fontWeight: 500 }}>
+          {current.hint}
+        </span>
+        <span style={SEC_RULE} />
+      </div>
+
+      {/* One row of tabs, wrapping on narrow screens rather than scrolling
+          sideways — a hidden tab is a feature nobody finds. */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: -1 }}>
+        {live.map((t) => {
+          const on = t.key === current.key;
+          return (
+            <button key={t.key} onClick={() => setActive(t.key)}
+              style={{ padding: "9px 16px", fontSize: 11, letterSpacing: "0.16em",
+                textTransform: "uppercase", fontWeight: 700,
+                fontFamily: "'Rajdhani',sans-serif", cursor: "pointer",
+                clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%)",
+                color: on ? "#cfe0ff" : "rgba(200,215,255,0.45)",
+                background: on ? "linear-gradient(160deg, rgba(23,32,56,0.95), rgba(12,17,30,0.95))"
+                               : "transparent",
+                border: `1px solid ${on ? "rgba(61,123,255,0.5)" : "rgba(120,150,220,0.14)"}`,
+                borderBottom: on ? "1px solid transparent" : "1px solid rgba(120,150,220,0.14)" }}>
+              {t.label}{t.badge ? ` · ${t.badge}` : ""}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ padding: "4px 18px 18px",
+        background: "linear-gradient(160deg, rgba(17,23,40,0.72), rgba(10,13,22,0.72))",
+        border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(12) }}>
+        {current.node}
+      </div>
+    </div>
+  );
+}
+
 // ── Predictions leaderboard ──────────────────────────────────────────────
 // Who calls matches best. Open to the whole league, not just whoever got
 // drafted — predicting is how people sitting out a weekend stay in it, and the
@@ -10786,34 +10877,53 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     </div>}
     {/* Everything below is host machinery. One quiet divider separates it from
         the league itself, so players' eyes stop here and hosts' don't. */}
+    {/* Anything that needs the host, first and loud. Every card in here hides
+        itself when there's nothing to report, and the section hides with them —
+        so a healthy league shows nothing at all. */}
+    {isHost && HAS_SUPABASE && current && (
+      <HostAlerts>
+        <BoardGapCard eventId={current.id} />
+        <IgnCheckCard eventId={current.id} />
+        <AvailabilityCard eventId={current.id} />
+        {["drafting","matches_live"].includes(current.phase)
+          ? <SubDesk eventId={current.id} onChanged={load} /> : null}
+      </HostAlerts>
+    )}
+
+    {/* Everything the bot does is one job with several tools, so it's one panel
+        with tabs rather than six stacked cards. Tabs suit this and not the
+        alerts above: switching between equal tools is what they're for. */}
+    {isHost && HAS_SUPABASE && (
+      <DiscordConsole tabs={[
+        { key: "server", label: "Server", hint: "Connection, channels and the player role",
+          node: (
+            <>
+              {isTrueHost && <DiscordServerCard />}
+              <JoinGuideCard community={community} current={current} />
+            </>
+          ) },
+        { key: "announce", label: "Announce", hint: "Message the league",
+          node: (
+            <DiscordAnnounce
+              eventId={(current || lastSettled)?.id || null}
+              communityId={window.__VOLT.communityId}
+              phase={(current || lastSettled)?.phase || "settled"} />
+          ) },
+        current && { key: "arena", label: "Channels", hint: "Build the tournament's home in Discord",
+          node: <DiscordArenaCard eventId={current.id} phase={current.phase} /> },
+        current && ["drafting","matches_live"].includes(current.phase) && {
+          key: "teams", label: "Teams", hint: "Tell every player who they're with",
+          node: <DiscordTeamsCard eventId={current.id} /> },
+        current && { key: "moments", label: "Moments", hint: "Draft recap and the server event",
+          node: <DiscordMomentsCard eventId={current.id} phase={current.phase} draftAt={current.draft_at} /> },
+      ].filter(Boolean)} />
+    )}
+
     {isHost && HAS_SUPABASE && (
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 38, marginBottom: 2 }}>
         <span style={{ ...SEC_LABEL, color: "rgba(200,215,255,0.32)", letterSpacing: "0.34em" }}>// Running the league</span>
         <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(120,150,220,0.22), rgba(120,150,220,0))" }} />
       </div>
-    )}
-    {isTrueHost && HAS_SUPABASE && <DiscordServerCard />}
-    {isHost && HAS_SUPABASE && <JoinGuideCard community={community} current={current} />}
-    {isHost && HAS_SUPABASE && current && <AvailabilityCard eventId={current.id} />}
-    {isHost && HAS_SUPABASE && current && <IgnCheckCard eventId={current.id} />}
-    {isHost && HAS_SUPABASE && current && <BoardGapCard eventId={current.id} />}
-    {isHost && HAS_SUPABASE && current && (
-      <DiscordArenaCard eventId={current.id} phase={current.phase} />
-    )}
-    {isHost && HAS_SUPABASE && current && (
-      <DiscordMomentsCard eventId={current.id} phase={current.phase} draftAt={current.draft_at} />
-    )}
-    {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
-      <SubDesk eventId={current.id} onChanged={load} />
-    )}
-    {isHost && HAS_SUPABASE && current && ["drafting","matches_live"].includes(current.phase) && (
-      <DiscordTeamsCard eventId={current.id} />
-    )}
-    {isHost && HAS_SUPABASE && (
-      <DiscordAnnounce
-        eventId={(current || lastSettled)?.id || null}
-        communityId={window.__VOLT.communityId}
-        phase={(current || lastSettled)?.phase || "settled"} />
     )}
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {HAS_SUPABASE && isOperator && <AdminQueue />}
