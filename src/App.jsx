@@ -9876,25 +9876,30 @@ function HostAlerts({ children }) {
   );
 }
 
-function DiscordConsole({ tabs }) {
+// One tab shell, used by the host console and the league boards. Written once
+// so the two can't drift into looking like different products.
+function TabPanel({ label, tabs, center = false }) {
   const live = tabs.filter((t) => t && t.node);
   const [active, setActive] = useState(live[0]?.key || null);
   if (!live.length) return null;
   const current = live.find((t) => t.key === active) || live[0];
 
   return (
-    <div style={{ marginTop: 26 }}>
+    <div style={{ marginTop: 30 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
-        <span style={SEC_LABEL}>// Discord bot</span>
-        <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", fontWeight: 500 }}>
-          {current.hint}
-        </span>
+        <span style={SEC_LABEL}>// {label}</span>
+        {current.hint && (
+          <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", fontWeight: 500 }}>
+            {current.hint}
+          </span>
+        )}
         <span style={SEC_RULE} />
       </div>
 
-      {/* One row of tabs, wrapping on narrow screens rather than scrolling
-          sideways — a hidden tab is a feature nobody finds. */}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: -1 }}>
+      {/* Tabs wrap on narrow screens rather than scrolling sideways — a tab you
+          have to discover by swiping is a tab nobody finds. */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: -1,
+        justifyContent: center ? "center" : "flex-start" }}>
         {live.map((t) => {
           const on = t.key === current.key;
           return (
@@ -9914,7 +9919,7 @@ function DiscordConsole({ tabs }) {
         })}
       </div>
 
-      <div style={{ padding: "4px 18px 18px",
+      <div style={{ padding: "10px 18px 18px",
         background: "linear-gradient(160deg, rgba(17,23,40,0.72), rgba(10,13,22,0.72))",
         border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(12) }}>
         {current.node}
@@ -9922,6 +9927,8 @@ function DiscordConsole({ tabs }) {
     </div>
   );
 }
+
+const DiscordConsole = ({ tabs }) => <TabPanel label="Discord bot" tabs={tabs} />;
 
 // ── Predictions leaderboard ──────────────────────────────────────────────
 // Who calls matches best. Open to the whole league, not just whoever got
@@ -9931,7 +9938,7 @@ function DiscordConsole({ tabs }) {
 // Ranked on correct calls rather than accuracy, so it rewards turning up to
 // every match; accuracy breaks ties, so someone who called 8 of 10 edges
 // someone who called 8 of 20.
-function PredictionBoard() {
+function PredictionBoard({ bare = false }) {
   const [rows, setRows] = useState(null);
   const [all, setAll] = useState(false);
   useEffect(() => {
@@ -9951,16 +9958,18 @@ function PredictionBoard() {
   const me = window.__VOLT?.userId;
 
   return (
-    <div style={{ marginTop: 42 }}>
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Predictions</div>
-        <div style={{ fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 2, fontFamily: "'Rajdhani',sans-serif" }}>
-          Crystal <span style={{ color: "#3d7bff" }}>Ball</span>
+    <div style={{ marginTop: bare ? 0 : 42 }}>
+      {!bare && (
+        <div style={{ textAlign: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Predictions</div>
+          <div style={{ fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 2, fontFamily: "'Rajdhani',sans-serif" }}>
+            Crystal <span style={{ color: "#3d7bff" }}>Ball</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 5 }}>
+            Call the winner before kick-off — anyone in the league can play
+          </div>
         </div>
-        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 5 }}>
-          Call the winner before kick-off — anyone in the league can play
-        </div>
-      </div>
+      )}
       <div style={{ display: "grid", gap: 6 }}>
         {shown.map((r, i) => {
           const mine = r.userId === me;
@@ -10035,7 +10044,7 @@ function ledgerAgo(d) {
   if (s < 86400) return Math.floor(s / 3600) + "h";
   return Math.floor(s / 86400) + "d";
 }
-function LeagueLedger({ onOpenPlayer }) {
+function LeagueLedger({ onOpenPlayer, bare = false }) {
   const PAGE = 8;
   const [rows, setRows] = useState(null);
   const [more, setMore] = useState(false);
@@ -10060,8 +10069,8 @@ function LeagueLedger({ onOpenPlayer }) {
   if (!rows.length) return null;            // a brand-new league has no history
 
   return (
-    <div style={{ marginTop: 42 }}>
-      <SectionHead title="Transactions" hint="Every roster move, newest first" />
+    <div style={{ marginTop: bare ? 0 : 42 }}>
+      {!bare && <SectionHead title="Transactions" hint="Every roster move, newest first" />}
       <div style={PANEL(null, "6px 4px")}>
         {rows.map((e, i) => {
           const k = LEDGER_KINDS[e.kind] || LEDGER_KINDS.NOTE;
@@ -10929,46 +10938,52 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     {HAS_SUPABASE && isOperator && <AdminQueue />}
     {/* Public to every member, not staff-only — the feed is the league's own
         record of itself, and that only works if players can read it. */}
-    {HAS_SUPABASE && <PredictionBoard />}
-    {HAS_SUPABASE && <LeagueLedger onOpenPlayer={(uid) => setShowPlayer(uid)} />}
-    {board && <div style={{ marginTop: 42 }}>
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
-        <div style={{ fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 2 }}>Season <span style={{ color: "#3d7bff" }}>Race</span></div>
-        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 5 }}>+50 win · ACS÷4 · K+⅓A — every match counts, subs included</div>
-      </div>
-      <div style={{ display: "grid", gap: 6 }}>
-        {board.map((r, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
+    {/* Four league boards that used to stack into an endless scroll. They're
+        alternative views of the same season, which is what tabs are for —
+        unlike the host alerts above, where hiding something is the failure. */}
+    {HAS_SUPABASE && (
+      <TabPanel label="League" center tabs={[
+        { key: "race", label: "Season race",
+          hint: "+50 win \u00b7 ACS\u00f74 \u00b7 K+\u2153A \u2014 every match counts, subs included",
+          node: board ? (
+            <div style={{ display: "grid", gap: 6 }}>
+            {board.map((r, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
             <span onClick={() => r.uid && setShowPlayer(r.uid)} title="View player profile" style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", cursor: r.uid ? "pointer" : "default", display: "inline-flex", alignItems: "center" }}>{r.name}
-              <TrophyChip n={r.trophies} />
-              {r.move === "new" && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "#7da6ff", fontWeight: 700, marginLeft: 8, border: "1px solid rgba(61,123,255,0.4)", padding: "1px 6px", clipPath: SHELL_NOTCH(4) }}>NEW</span>}
-              {typeof r.move === "number" && r.move > 0 && <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▲{r.move}</span>}
-              {typeof r.move === "number" && r.move < 0 && <span style={{ fontSize: 11.5, color: "#ff8f9a", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▼{-r.move}</span>}
+            <TrophyChip n={r.trophies} />
+            {r.move === "new" && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "#7da6ff", fontWeight: 700, marginLeft: 8, border: "1px solid rgba(61,123,255,0.4)", padding: "1px 6px", clipPath: SHELL_NOTCH(4) }}>NEW</span>}
+            {typeof r.move === "number" && r.move > 0 && <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▲{r.move}</span>}
+            {typeof r.move === "number" && r.move < 0 && <span style={{ fontSize: 11.5, color: "#ff8f9a", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▼{-r.move}</span>}
             </span>
             <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>{r.matches}m · {r.wins}w</span>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 66, textAlign: "right" }}>{r.pts} pts</span>
-          </div>
-        ))}
-      </div>
-    </div>}
-    {season && <div style={{ marginTop: 42 }}>
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 10, letterSpacing: "0.38em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase" }}>// Season</div>
-        <div style={{ fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginTop: 2 }}>Captain <span style={{ color: "#3d7bff" }}>Standings</span></div>
-      </div>
-      <div style={{ display: "grid", gap: 6 }}>
-        {season.map((r, i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
+            </div>
+            ))}
+            </div>
+          ) : null },
+        { key: "captains", label: "Captains",
+          hint: "How each captain's roster has performed",
+          node: season ? (
+            <div style={{ display: "grid", gap: 6 }}>
+            {season.map((r, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
             <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}<span style={{ color: "rgba(200,215,255,0.45)", fontWeight: 500, textTransform: "none", marginLeft: 8, fontSize: 13 }}>· {r.captain}</span></span>
             <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{r.tournaments}w · {r.won}-{r.lost}</span>
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 46, textAlign: "right" }}>{r.pts} pts</span>
-          </div>
-        ))}
-      </div>
-    </div>}
+            </div>
+            ))}
+            </div>
+          ) : null },
+        { key: "crystal", label: "Crystal ball",
+          hint: "Call the winner before kick-off \u2014 anyone in the league can play",
+          node: <PredictionBoard bare /> },
+        { key: "ledger", label: "Transactions",
+          hint: "Every roster move, newest first",
+          node: <LeagueLedger bare onOpenPlayer={(uid) => setShowPlayer(uid)} /> },
+      ]} />
+    )}
   </>);
 }
 
