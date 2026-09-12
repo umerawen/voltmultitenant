@@ -9878,7 +9878,7 @@ function HostAlerts({ children }) {
 
 // One tab shell, used by the host console and the league boards. Written once
 // so the two can't drift into looking like different products.
-function TabPanel({ label, tabs, center = false }) {
+function TabPanel({ label, tabs }) {
   const live = tabs.filter((t) => t && t.node);
   const [active, setActive] = useState(live[0]?.key || null);
   if (!live.length) return null;
@@ -9899,7 +9899,10 @@ function TabPanel({ label, tabs, center = false }) {
       {/* Tabs wrap on narrow screens rather than scrolling sideways — a tab you
           have to discover by swiping is a tab nobody finds. */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: -1,
-        justifyContent: center ? "center" : "flex-start" }}>
+        // Explicit rather than relying on the default: the surrounding column is
+        // centred, and a stray text-align or align-items above would otherwise
+        // pull the row back to the middle.
+        justifyContent: "flex-start", textAlign: "left" }}>
         {live.map((t) => {
           const on = t.key === current.key;
           return (
@@ -10942,7 +10945,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         alternative views of the same season, which is what tabs are for —
         unlike the host alerts above, where hiding something is the failure. */}
     {HAS_SUPABASE && (
-      <TabPanel label="League" center tabs={[
+      <TabPanel label="League" tabs={[
         { key: "race", label: "Season race",
           hint: "+50 win \u00b7 ACS\u00f74 \u00b7 K+\u2153A \u2014 every match counts, subs included",
           node: board ? (
