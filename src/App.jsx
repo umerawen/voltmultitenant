@@ -5877,9 +5877,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         )}
 
         {/* Match-time cells. */}
-        {["matches_live", "settled"].includes(ph) && (
+        {/* Only while there is something still to play — "all matches played"
+            is a cell that occupies space to say nothing. */}
+        {ph === "matches_live" && (
           <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
             <FixtureGlance state={state} />
+          </Cell>
+        )}
+        {ph === "settled" && (
+          <Cell title="Results" action="All fixtures" onGo={goto("bracket")}>
+            <ResultsGlance state={state} />
           </Cell>
         )}
         {["matches_live", "settled"].includes(ph) && (
@@ -9677,30 +9684,49 @@ function SubDesk({ eventId, onChanged }) {
 function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin }) {
   const draftAt = ev?.draft_at ? new Date(ev.draft_at) : null;
   const soon = draftAt && draftAt > new Date();
+  // A finished tournament has a winner, and "this tournament is done" throws
+  // that away. The champion IS the headline.
+  const champ = ev?.recap?.team || null;
   const copy = {
     registration_open:   { head: "Sign-ups are open",      sub: "Put your name in and captains can bid for you." },
     registration_closed: { head: "Roster locked",          sub: "The draft is next. Nothing to do until then." },
     drafting:            { head: "The auction is live",    sub: "Captains are bidding now." },
     matches_live:        { head: "Matches are running",    sub: "Check your fixture and be in voice ten minutes before." },
-    settled:             { head: "This tournament is done", sub: "Final standings below." },
+    settled: champ
+      ? { head: `${champ} win it`, sub: "Champions of " + (ev?.weekend_label || "the tournament") + "." }
+      : { head: "This tournament is done", sub: "Final standings below." },
   }[phase] || { head: "Tournament", sub: "" };
+  const gold = phase === "settled" && champ;
 
   return (
     <div style={{
-      ...PANEL(phase === "drafting" ? "rgba(61,123,255,0.55)" : "rgba(120,150,220,0.2)", "20px 22px"),
-      position: "relative", clipPath: SHELL_NOTCH(16),
-      boxShadow: phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
+      ...PANEL(gold ? "rgba(245,196,83,0.5)"
+              : phase === "drafting" ? "rgba(61,123,255,0.55)" : "rgba(120,150,220,0.2)", "22px 24px"),
+      position: "relative", clipPath: SHELL_NOTCH(16), overflow: "hidden",
+      boxShadow: gold ? "0 0 60px rgba(245,196,83,0.14)"
+               : phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
+      {gold && (
+        <span aria-hidden style={{ position: "absolute", right: -30, top: "50%",
+          transform: "translateY(-50%)", fontSize: 150, lineHeight: 1, opacity: 0.07,
+          pointerEvents: "none" }}>🏆</span>
+      )}
       {/* Both brackets, matching the auction block — one alone reads as a
           rendering glitch rather than a deliberate frame. */}
       <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
-        borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        borderLeft: `2px solid ${gold ? "#f5c453" : "#3d7bff"}`,
+        borderTop: `2px solid ${gold ? "#f5c453" : "#3d7bff"}` }} />
       <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
-        borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+        borderRight: `2px solid ${gold ? "#f5c453" : "#3d7bff"}`,
+        borderBottom: `2px solid ${gold ? "#f5c453" : "#3d7bff"}` }} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ ...SEC_LABEL, fontSize: 10 }}>// {PHASE_LABEL[phase] || phase}</div>
-          <div style={{ fontSize: "clamp(20px, 2.6vw, 28px)", fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.02em", lineHeight: 1.1, marginTop: 3 }}>{copy.head}</div>
+          <div style={{ fontSize: "clamp(22px, 3.2vw, 34px)", fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.02em", lineHeight: 1.05, marginTop: 4,
+            color: gold ? "#f5c453" : "#ecf3ff",
+            textShadow: gold ? "0 0 34px rgba(245,196,83,0.45)" : "0 0 40px rgba(61,123,255,0.25)" }}>
+            {copy.head}
+          </div>
           <div style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", marginTop: 5 }}>{copy.sub}</div>
           {draftAt && soon && (
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5,
@@ -9865,8 +9891,14 @@ function TeamGlance({ team, players }) {
     .filter(Boolean);
   return (
     <div>
-      <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase", color: team.hue }}>
-        {team.name}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase", color: team.hue }}>
+          {team.name}
+        </span>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5,
+          color: "rgba(200,215,255,0.35)" }}>
+          {fmt(team.budget || 0)} left
+        </span>
       </div>
       <div style={{ display: "grid", gap: 3, marginTop: 8 }}>
         {roster.slice(0, 4).map((p) => (
@@ -9913,6 +9945,36 @@ function FixtureGlance({ state }) {
   );
 }
 
+// What actually happened, newest first. A settled tournament's fixtures cell
+// otherwise reads "all matches played", which is true and useless.
+function ResultsGlance({ state }) {
+  const t = state?.tournament;
+  const all = !t ? [] : t.format === "group"
+    ? Object.values(t.matches || {}).flat().concat(t.final ? [t.final] : [])
+    : t.format === "single" ? (t.rounds || []).flat() : (t.matches || []);
+  const nameOf = (id) => state.teams.find((x) => x.id === id)?.name || "TBD";
+  const hueOf = (id) => state.teams.find((x) => x.id === id)?.hue || "#7da6ff";
+  const done = all.filter((m) => m?.done && m.winner).slice(-4).reverse();
+  if (!done.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>No results yet.</div>;
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      {done.map((m, i) => {
+        const loser = m.winner === m.teamA ? m.teamB : m.teamA;
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5 }}>
+            <span style={{ color: hueOf(m.winner), fontWeight: 700, textTransform: "uppercase",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(m.winner)}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+              color: "rgba(200,215,255,0.3)" }}>beat</span>
+            <span style={{ color: "rgba(200,215,255,0.45)", overflow: "hidden",
+              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(loser)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function StandingsGlance({ state }) {
   const t = state?.tournament;
   const all = !t ? [] : t.format === "group"
@@ -9926,15 +9988,25 @@ function StandingsGlance({ state }) {
     .map((x) => ({ name: x.name, hue: x.hue, w: tally[x.id] || 0 }))
     .sort((a, b) => b.w - a.w).slice(0, 4);
   if (!rows.length) return null;
+  const top = Math.max(1, ...rows.map((r) => r.w));
   return (
-    <div style={{ display: "grid", gap: 5 }}>
+    <div style={{ display: "grid", gap: 8 }}>
       {rows.map((r, i) => (
-        <div key={r.name} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
-          <span style={{ width: 14, fontFamily: "'IBM Plex Mono',monospace",
-            color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.35)" }}>{i + 1}</span>
-          <span style={{ flex: 1, color: r.hue, fontWeight: 700, textTransform: "uppercase",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
-          <span style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#00e5ff" }}>{r.w}W</span>
+        <div key={r.name}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
+            <span style={{ width: 13, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+              color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.3)" }}>{i + 1}</span>
+            <span style={{ flex: 1, color: r.hue, fontWeight: 700, textTransform: "uppercase",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12,
+              color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.55)" }}>{r.w}W</span>
+          </div>
+          {/* The bar carries the gap; the number alone makes you do the maths. */}
+          <div style={{ height: 3, marginTop: 4, marginLeft: 22,
+            background: "rgba(255,255,255,0.05)" }}>
+            <div style={{ width: `${(r.w / top) * 100}%`, height: "100%",
+              background: r.hue, opacity: i === 0 ? 1 : 0.55 }} />
+          </div>
         </div>
       ))}
     </div>
@@ -11189,7 +11261,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       setMyStrikes2((ns || []).length);
     } catch (e) { console.error(e); }
   }
-  useEffect(() => { if (phase === "registration_open" || phase === "registration_closed") loadMyReg(); }, [phase, ev?.id]);
+  useEffect(() => { loadMyReg(); }, [phase, ev?.id]);
   // Host-only: how many applications are waiting for review this tournament.
   // Powers the header Approvals pill + its live count. Cheap: probes ids only,
   // and pauses on hidden tabs via visInterval (egress-friendly).
