@@ -5503,6 +5503,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <style>{`
         .volt-expand-btn { transition: background .15s, border-color .15s, transform .15s; }
         .volt-expand-btn:hover { background: rgba(61,123,255,0.3); border-color: #6fa0ff; transform: scale(1.08); }
+        /* Dashboard cells. A clickable panel has to say so before it's clicked —
+           the rest of the product lifts and brightens on hover, so these do too. */
+        .volt-cell { transition: transform .16s cubic-bezier(.2,.8,.3,1), border-color .16s, box-shadow .16s; }
+        .volt-cell[style*="cursor: pointer"]:hover,
+        .volt-cell[style*="cursor:pointer"]:hover {
+          transform: translateY(-2px);
+          border-color: rgba(61,123,255,0.45) !important;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.45), 0 0 26px rgba(61,123,255,0.12);
+        }
+        @media (prefers-reduced-motion: reduce) { .volt-cell { transition: none; } }
         .volt-expand-btn { animation: voltExpandHint 2.4s ease-in-out 3; }
         @keyframes voltExpandHint {
           0%, 100% { box-shadow: 0 0 0 0 rgba(61,123,255,0); }
@@ -5792,266 +5802,92 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   /* ════════ VIEW: LOBBY ════════ */
+  // ── Tournament dashboard ──────────────────────────────────────────────
+  // Replaces a full-bleed hero image that said nothing about the tournament.
+  //
+  // Two rules shape it:
+  //   1. The dominant cell is the viewer's own card. It's the one thing Discord
+  //      can't do better, and the only reason a player opens the app twice.
+  //   2. The rest of the grid is chosen by PHASE. "Your team" is meaningless
+  //      before the draft, fixtures don't exist during registration, and a
+  //      champion only exists at the end — showing those as empty states is
+  //      worse than not showing them.
+  //
+  // Every cell summarises and links into its rail page. None of them
+  // reimplement one: that way there's a single copy of each screen to fix.
+  const ph = chrome?.phase || "registration_open";
+  const goto = (id) => () => setView(id);
+
+  // Built on the shared PANEL so a change to the app's surface reaches the
+  // dashboard too, with the corner bracket and hover lift the rest of the
+  // product already uses on interactive panels.
+  const Cell = ({ title, action, onGo, span = 1, tall = false, tone, children }) => (
+    <div className="volt-cell" style={{
+      ...PANEL(tone, "15px 17px"),
+      position: "relative",
+      gridColumn: `span ${span}`,
+      display: "flex", flexDirection: "column",
+      minHeight: tall ? 260 : 156,
+      cursor: onGo ? "pointer" : "default",
+    }} onClick={onGo || undefined}>
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9,
+        borderLeft: `2px solid ${tone || "rgba(61,123,255,0.5)"}`,
+        borderTop: `2px solid ${tone || "rgba(61,123,255,0.5)"}` }} />
+      <SectionHead title={title} right={onGo ? (
+        <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 10,
+          letterSpacing: "0.16em", textTransform: "uppercase", color: "#7da6ff", whiteSpace: "nowrap" }}>
+          {action || "Open"} →
+        </span>
+      ) : null} />
+      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+    </div>
+  );
+
   const LobbyView = (
-    <div className="view-in">
-      <div className="relative overflow-hidden volt-hero-bleed" style={{ height: "clamp(520px, 78vh, 900px)", background: "#05070e" }}>
-        {/* Figma hero art (Neon + watermark baked in) */}
-        <img src={IMG_HERO} alt="" className="absolute inset-0 w-full h-full" style={{ objectFit: "cover", objectPosition: "right 30%" }} />
-        {/* left-side legibility scrim so live text stays crisp over the art */}
-        <div className="absolute inset-0" style={{ background: "linear-gradient(90deg, rgba(5,7,14,0.92) 0%, rgba(5,7,14,0.78) 30%, rgba(5,7,14,0.28) 50%, transparent 66%)" }} />
+    <div className="view-in page-wrap py-6">
+      <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={chrome?.regToggle}
+        onGo={goto} myTeam={myTeam} isAdmin={isAdmin} />
 
-        {/* HUD rails + live text, all anchored inside the shared page-wrap inset so they align with the nav and cards */}
-        <div className="page-wrap absolute inset-0">
-          <div className="relative h-full">
+      <div style={{ display: "grid", gap: 12, marginTop: 14,
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(270px, 100%), 1fr))" }}>
 
-            {/* live text + buttons — centered in the upper band, clear of the baked-in
-                top rail (~12%) above and the status panel / bottom rail below */}
-            <div className="absolute flex flex-col justify-center items-start text-left volt-hero-copy"
-              style={{ left: "clamp(20px, 5%, 72px)", right: "auto", top: "17%", bottom: "16%", width: "min(820px, 64%)", maxWidth: "calc(100% - clamp(40px, 10%, 144px))" }}>
-              <h1 className="font-bold uppercase volt-hero-title" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,7.5vw,9.4rem)", lineHeight: 0.82, letterSpacing: "0.04em", textShadow: "0 0 50px rgba(61,123,255,0.25)", overflowWrap: "break-word" }}>
-                <span className="shine-text shine-white" style={{ animationDelay: "0s" }}>Initiation</span><br />
-                <span className="shine-text shine-blue" style={{ animationDelay: "0s" }}>Protocol</span><br />
-                <span className="shine-text shine-white" style={{ animationDelay: "0s" }}>// Draft</span>
-              </h1>
+        {/* The viewer's own card, always first and always present. Built from
+            their scouting profile, so it's populated from signup rather than
+            waiting on a played match. */}
+        <YourCard profile={chrome?.myProfile} viewerId={chrome?.viewerId}
+          myTeam={myTeam} onGo={goto} />
 
-              {/* DEFY THE LIMITS tagline */}
-              <p className="uppercase mt-4" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 600, fontSize: "clamp(0.85rem,1.5vw,1.15rem)", letterSpacing: "0.5em", color: "#5b8dff", textShadow: "0 0 18px rgba(61,123,255,0.5)" }}>Defy the Limits</p>
+        {/* Draft-time cells. */}
+        {["registration_open", "registration_closed"].includes(ph) && (
+          <Cell title="Player pool" action="Scout" onGo={goto("scout")}>
+            <PoolGlance players={state.players} />
+          </Cell>
+        )}
+        {ph === "drafting" && (
+          <Cell title="The auction" action="Enter" onGo={goto("block")} tone="rgba(61,123,255,0.5)">
+            <PoolGlance players={state.players} live />
+          </Cell>
+        )}
 
-              {/* ENTER AUCTION button — outlined HUD frame, only bottom-right notched,
-                  with card-style corner brackets on the three square corners */}
-              {(() => {
-                // Registration open → the toggle IS the primary action (flipping it applies).
-                if (chrome?.regToggle) {
-                  return (
-                    <div className="mt-7" style={{ maxWidth: 380, padding: "18px 20px", background: "linear-gradient(180deg, rgba(13,22,42,0.72), rgba(7,13,24,0.6))", border: "1px solid rgba(61,220,132,0.4)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)", backdropFilter: "blur(3px)", boxShadow: "0 0 26px rgba(61,220,132,0.12)" }}>
-                      <div style={{ fontSize: "0.72rem", letterSpacing: "0.3em", textTransform: "uppercase", color: "#3ddc84", fontWeight: 700, marginBottom: 12, fontFamily: "'Rajdhani',sans-serif" }}>// Registration open</div>
-                      {chrome.regToggle}
-                    </div>
-                  );
-                }
-                const cta = identity === "admin"
-                  ? { label: "Run the Draft", view: "block" }
-                  : (identity && identity !== "spectator")
-                    ? { label: "Enter Auction", view: "block" }
-                    : { label: "Watch the Draft", view: "block" };
-                return (
-                  <div className="mt-7">
-                    <button onClick={() => setView(cta.view)} className="ea-btn hero-cta relative group"
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 18,
-                        padding: "18px 44px",
-                        fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
-                        fontSize: "clamp(0.85rem,1.3vw,1.05rem)", letterSpacing: "0.34em",
-                        textTransform: "uppercase", color: "#cfe0ff",
-                        background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))",
-                        border: "1px solid rgba(61,123,255,0.5)",
-                        clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%)",
-                        backdropFilter: "blur(2px)",
-                        boxShadow: "0 0 24px rgba(61,123,255,0.18), inset 0 0 18px rgba(61,123,255,0.06)",
-                      }}>
-                      <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                      <span className="absolute right-0 top-0" style={{ width: 12, height: 12, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                      <span className="absolute left-0 bottom-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-                      <span>{cta.label}</span>
-                      <span className="ea-arrow" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400, fontSize: "1.15em" }}>→</span>
-                    </button>
-                    {/* your locked-in status for THIS live tournament — the registration decision is already closed */}
-                    <div className="mt-4" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.9rem", letterSpacing: "0.04em" }}>
-                      {identity === "admin"
-                        ? <span style={{ color: "#7da6ff" }}>◈ You're running this tournament as host.</span>
-                        : (identity && identity !== "spectator")
-                          ? <span style={{ color: "#3ddc84" }}>✓ You're a captain this tournament — {(state.teams.find(t => t.id === identity)?.name) || "your squad"}.</span>
-                          : <span style={{ color: "rgba(200,215,255,0.6)" }}>● You're spectating this tournament's draft.</span>}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
+        {/* After the draft there is a team to care about. */}
+        {["drafting", "matches_live", "settled"].includes(ph) && myTeam && (
+          <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
+            <TeamGlance team={myTeam} players={state.players} />
+          </Cell>
+        )}
 
-            {/* command-center system status — bottom-RIGHT corner, framed with its own
-                HUD brackets; keeps the left column (headline + CTA) completely clear */}
-            <div className="hidden md:block absolute select-none" style={{ right: 0, bottom: "12%", width: 272, zIndex: 5 }}>
-              <div
-                className="relative px-5 py-4"
-                style={{
-                  background: "linear-gradient(180deg, rgba(11,16,28,0.82), rgba(8,11,20,0.62))",
-                  border: "1px solid rgba(61,123,255,0.28)",
-                  clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))",
-                  backdropFilter: "blur(4px)",
-                  boxShadow: "0 8px 40px rgba(0,0,0,0.45)",
-                }}
-              >
-                {/* full corner bracket frame */}
-                <span className="absolute left-0 top-0" style={{ width: 16, height: 16, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                <span className="absolute right-0 top-0" style={{ width: 16, height: 16, borderRight: "2px solid rgba(61,123,255,0.55)", borderTop: "2px solid rgba(61,123,255,0.55)" }} />
-                <span className="absolute left-0 bottom-0" style={{ width: 16, height: 16, borderLeft: "2px solid rgba(61,123,255,0.55)", borderBottom: "2px solid rgba(61,123,255,0.55)" }} />
-                <span className="absolute right-0 bottom-0" style={{ width: 16, height: 16, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-
-                <div className="flex items-center gap-2 mb-1">
-                  <span style={{ width: 6, height: 6, background: "#3ddc84", boxShadow: "0 0 8px #3ddc84", borderRadius: 1 }} />
-                  <p className="uppercase text-xs" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.34em" }}>System Status</p>
-                </div>
-                <div className="mb-3" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
-
-                {/* total players on the board */}
-                <div className="flex items-baseline justify-between gap-3 py-1">
-                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Total Players</span>
-                  <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", letterSpacing: "0.04em" }}>{state.players.length}</span>
-                </div>
-
-                {/* devices live — real-time presence */}
-                <div className="flex items-baseline justify-between gap-3 py-1">
-                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Devices Live</span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="cd-pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: "#3ddc84", color: "#3ddc84" }} />
-                    <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", letterSpacing: "0.04em" }}>{liveCount}</span>
-                  </span>
-                </div>
-
-                {/* sync — makes a dead websocket visible instead of silent */}
-                <div className="flex items-baseline justify-between gap-3 py-1">
-                  <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em", whiteSpace: "nowrap" }}>Sync</span>
-                  <span className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: liveSync ? "#3ddc84" : "#f5c453", letterSpacing: "0.04em" }}>
-                    {liveSync ? "Live" : "Polling"}
-                  </span>
-                </div>
-
-                {/* auction phase — live countdown */}
-                <div className="mt-2 pt-3" style={{ borderTop: "1px solid rgba(61,123,255,0.16)" }}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="uppercase text-xs" style={{ color: "rgba(220,230,255,0.5)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.12em" }}>Auction Phase</span>
-                    <span className="flex items-center gap-1 ml-auto">
-                      <span className="cd-pulse" style={{ width: 5, height: 5, borderRadius: "50%", background: !hasDraftTime ? "rgba(200,215,255,0.35)" : cd.live ? "#3ddc84" : "#3d7bff", color: !hasDraftTime ? "rgba(200,215,255,0.35)" : cd.live ? "#3ddc84" : "#3d7bff" }} />
-                      <span className="uppercase" style={{ fontSize: 9, letterSpacing: "0.18em", color: !hasDraftTime ? "rgba(200,215,255,0.45)" : cd.live ? "#3ddc84" : "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{!hasDraftTime ? "Not scheduled" : cd.live ? "Live" : "Starts in"}</span>
-                    </span>
-                  </div>
-
-                  {!hasDraftTime ? (
-                    <div style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", lineHeight: 1.5, color: "rgba(200,215,255,0.5)" }}>
-                      No auction time set yet.{isAdmin ? " Set one in Manage." : " Your host will announce it."}
-                    </div>
-                  ) : cd.live ? (
-                    <div className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "1.9rem", lineHeight: 1, letterSpacing: "0.04em", color: "#3ddc84", textShadow: "0 0 18px rgba(61,220,132,0.45)" }}>
-                      Underway
-                    </div>
-                  ) : (
-                    <div className="flex items-end gap-1" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
-                      {(cd.d > 0
-                        ? [["D", cd.d], ["H", cd.h], ["M", cd.m]]
-                        : [["H", cd.h], ["M", cd.m], ["S", cd.s]]
-                      ).map(([unit, val], i, arr) => (
-                        <span key={unit} className="flex items-end">
-                          <span className="flex flex-col items-center">
-                            <span style={{ fontSize: "2rem", lineHeight: 0.95, fontWeight: 700, color: "#eaf2ff", textShadow: "0 0 16px rgba(61,123,255,0.55)", letterSpacing: "0.01em" }}>
-                              {String(val).padStart(2, "0")}
-                            </span>
-                            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.22em", color: "rgba(170,198,255,0.92)", marginTop: 4, fontFamily: "'Rajdhani',sans-serif" }}>{unit}</span>
-                          </span>
-                          {i < arr.length - 1 && (
-                            <span style={{ fontSize: "1.7rem", lineHeight: 0.95, color: "rgba(61,123,255,0.55)", margin: "0 3px", alignSelf: "flex-start" }}>:</span>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        {/* Match-time cells. */}
+        {["matches_live", "settled"].includes(ph) && (
+          <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
+            <FixtureGlance state={state} />
+          </Cell>
+        )}
+        {["matches_live", "settled"].includes(ph) && (
+          <Cell title="Standings" action="Leaderboard" onGo={goto("leaderboard")}>
+            <StandingsGlance state={state} />
+          </Cell>
+        )}
       </div>
-
-      {TickerTape}
-
-      {/* what's next + where everyone stands — both self-hiding until the
-          tournament actually has a tournament built, so the Lobby stays clean
-          through registration and the auction. */}
-      {(upcoming.length > 0 || standings.length > 0) && (
-        <div className="page-wrap pt-8">
-          <div className="grid lg:grid-cols-2 gap-4">
-
-            {upcoming.length > 0 && (
-              <div className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
-                <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="uppercase text-xs font-bold" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.28em" }}>Upcoming Matches</p>
-                  <button onClick={() => setView("bracket")} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>All →</button>
-                </div>
-                <div className="flex flex-col gap-2">
-                  {upcoming.map((m, i) => { const A = teamOf(m.teamA), B = teamOf(m.teamB); return (
-                    <div key={m.id ?? i} className="flex items-center gap-3 py-2" style={{ borderTop: i ? "1px solid rgba(61,123,255,0.14)" : "none" }}>
-                      <span className="text-xs shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.45)", minWidth: 58 }}>{fmtKickoff(m.scheduledAt)}</span>
-                      <span className="font-bold uppercase truncate text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: A?.hue || "#ecf3ff" }}>{A?.name || "TBD"}</span>
-                      <span className="text-xs shrink-0" style={{ color: "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace" }}>vs</span>
-                      <span className="font-bold uppercase truncate text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: B?.hue || "#ecf3ff" }}>{B?.name || "TBD"}</span>
-                    </div>
-                  ); })}
-                </div>
-              </div>
-            )}
-
-            {standings.length > 0 && (
-              <div className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
-                <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="uppercase text-xs font-bold" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.28em" }}>Standings</p>
-                  <button onClick={() => setView("bracket")} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>Full table →</button>
-                </div>
-                <div className="flex flex-col">
-                  {standings.map((r, i) => { const t = teamOf(r.teamId); return (
-                    <div key={r.teamId} className="flex items-center gap-3 py-2" style={{ borderTop: i ? "1px solid rgba(61,123,255,0.14)" : "none" }}>
-                      <span className="text-xs shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.4)", width: 16 }}>{i + 1}</span>
-                      <span className="font-bold uppercase truncate text-sm flex-1" style={{ fontFamily: "'Rajdhani',sans-serif", color: t?.hue || "#ecf3ff" }}>{t?.name || "—"}</span>
-                      <span className="text-xs shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>{r.won}–{r.lost}</span>
-                      <span className="text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84", minWidth: 26, textAlign: "right" }}>{r.pts}</span>
-                    </div>
-                  ); })}
-                </div>
-              </div>
-            )}
-
-          </div>
-        </div>
-      )}
-
-      {/* rule summary */}
-      <div className="page-wrap py-8">
-        <div className="grid md:grid-cols-3 gap-4">
-        {[
-          { t: "The Budget", b: "$10,000 per team, 4 slots to fill. Captains are already seated." },
-          { t: "The Wheel", b: "No hand-picking — the host spins and a random name hits the block." },
-          { t: "The Bidding", b: "Bids rise in $100 steps. Your ceiling adjusts live so you can always fill your slots." },
-        ].map((r, i) => (
-          <div key={i} className="relative p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.07), rgba(10,15,28,0.5))", border: "1px solid rgba(61,123,255,0.22)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(10px)" }}>
-            <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: "rgba(61,123,255,0.16)", color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace" }}>{String(i + 1).padStart(2, "0")}</span>
-              <h3 className="font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{r.t}</h3>
-            </div>
-            <p className="text-sm leading-relaxed" style={{ color: "rgba(220,230,255,0.62)" }}>{r.b}</p>
-          </div>
-        ))}
-        </div>
-      </div>
-
-      {/* top sales strip */}
-      {sold.length > 0 && (
-        <div className="page-wrap pb-10">
-          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: "#7da6ff" }}>Biggest signings so far</p>
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {sold.slice(0, 6).map((p) => { const r = rankOf(p.rank), tm = teamOf(p.soldTo); return (
-              <div key={p.id} className="shrink-0 flex items-center gap-3 p-3 rounded-xl" style={{ minWidth: 230, background: `linear-gradient(135deg, ${r.c}1f, rgba(255,255,255,0.03))`, border: `1px solid ${r.c}44` }}>
-                <RankBadge rank={p.rank} div={p.rankDiv} />
-                <div className="min-w-0">
-                  <p className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
-                  <p className="text-xs truncate" style={{ color: tm?.hue }}>{tm?.name}</p>
-                  <p className="text-sm font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(p.soldPrice)}</p>
-                </div>
-              </div>
-            ); })}
-          </div>
-        </div>
-      )}
     </div>
   );
 
@@ -9832,6 +9668,279 @@ function SubDesk({ eventId, onChanged }) {
   );
 }
 
+// ── Dashboard cells ──────────────────────────────────────────────────────
+// Each one summarises a rail page in a glance and links into it. They read
+// from data the tournament shell already has, so none of them fetch.
+
+// The phase banner. This is the "what's happening and what do I do" line, and
+// it is the only part of the page that changes wholesale between phases.
+function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin }) {
+  const draftAt = ev?.draft_at ? new Date(ev.draft_at) : null;
+  const soon = draftAt && draftAt > new Date();
+  const copy = {
+    registration_open:   { head: "Sign-ups are open",      sub: "Put your name in and captains can bid for you." },
+    registration_closed: { head: "Roster locked",          sub: "The draft is next. Nothing to do until then." },
+    drafting:            { head: "The auction is live",    sub: "Captains are bidding now." },
+    matches_live:        { head: "Matches are running",    sub: "Check your fixture and be in voice ten minutes before." },
+    settled:             { head: "This tournament is done", sub: "Final standings below." },
+  }[phase] || { head: "Tournament", sub: "" };
+
+  return (
+    <div style={{
+      ...PANEL(phase === "drafting" ? "rgba(61,123,255,0.55)" : "rgba(120,150,220,0.2)", "20px 22px"),
+      position: "relative", clipPath: SHELL_NOTCH(16),
+      boxShadow: phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
+      {/* Both brackets, matching the auction block — one alone reads as a
+          rendering glitch rather than a deliberate frame. */}
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
+        borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+      <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
+        borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ ...SEC_LABEL, fontSize: 10 }}>// {PHASE_LABEL[phase] || phase}</div>
+          <div style={{ fontSize: "clamp(20px, 2.6vw, 28px)", fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.02em", lineHeight: 1.1, marginTop: 3 }}>{copy.head}</div>
+          <div style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", marginTop: 5 }}>{copy.sub}</div>
+          {draftAt && soon && (
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5,
+              color: "#7da6ff", marginTop: 8 }}>
+              Draft {draftAt.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+          {regToggle}
+          {phase === "drafting" && (
+            <button onClick={onGo("block")} style={shellBtn("primary", { padding: "12px 20px", fontSize: 12 })}>
+              ⟁ Enter the auction →
+            </button>
+          )}
+          {phase === "matches_live" && (
+            <button onClick={onGo("bracket")} style={shellBtn("primary", { padding: "12px 20px", fontSize: 12 })}>
+              ◈ Fixtures →
+            </button>
+          )}
+          {phase === "settled" && (
+            <button onClick={onGo("leaderboard")} style={shellBtn("ghost", { padding: "12px 20px", fontSize: 12 })}>
+              ≣ Final standings →
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The viewer's own card — the dominant cell, and the reason to open the app
+// rather than read a DM. Built from the scouting profile, so it's populated
+// from signup rather than waiting on a played match.
+function YourCard({ profile, viewerId, myTeam, onGo }) {
+  if (!profile) return null;
+  const hue = RANKS[profile.rank]?.c || "#5b8dff";
+  const stat = (v, label, col) => (
+    <div style={{ flex: 1, minWidth: 64, textAlign: "center", padding: "9px 4px",
+      background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.15)",
+      clipPath: SHELL_NOTCH(7) }}>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 16, color: col }}>{v}</div>
+      <div style={{ fontSize: 8.5, letterSpacing: "0.18em", textTransform: "uppercase",
+        color: "rgba(200,215,255,0.4)", marginTop: 3 }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <div className="volt-cell" style={{
+      ...PANEL(`${hue}55`, "16px 18px"),
+      position: "relative", overflow: "hidden",
+      gridColumn: "1 / -1", display: "flex", flexDirection: "column", minHeight: 262,
+      clipPath: SHELL_NOTCH(14),
+      boxShadow: `0 0 54px ${RANKS[profile.rank]?.glow || "rgba(61,123,255,0.22)"}` }}>
+      {/* The holo sweep from the trading card — this is the hero cell, so it
+          gets the product's signature treatment rather than a plain surface. */}
+      <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
+        pointerEvents: "none", opacity: 0.55 }} />
+      <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
+        borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <span style={{ ...SEC_LABEL, fontSize: 9.5 }}>// Your card</span>
+        <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(120,150,220,0.2), rgba(120,150,220,0))" }} />
+        <button onClick={onGo("scout")} style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+          fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "#7da6ff",
+          background: "none", border: "none", cursor: "pointer", padding: 0 }}>Scout hub →</button>
+      </div>
+
+      <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ flex: "0 0 auto" }}>
+          <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
+            win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={190} hue={hue} />
+        </div>
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.01em", lineHeight: 1 }}>{profile.display_name || "You"}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em",
+            textTransform: "uppercase", color: hue, marginTop: 6 }}>
+            {rankLabel(profile.rank, profile.rank_div)}{profile.role ? ` · ${profile.role}` : ""}
+          </div>
+          {profile.peak_rank && (
+            <div style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase",
+              color: "rgba(200,215,255,0.35)", marginTop: 4 }}>
+              Peak <span style={{ color: RANKS[profile.peak_rank]?.c || "#9af5c2" }}>
+                {rankLabel(profile.peak_rank, profile.peak_rank_div)}</span>
+            </div>
+          )}
+          <TrophyRow streak={profile.trophy_streak || 0} total={profile.weekends_won || 0} />
+          {myTeam && (
+            <div style={{ fontSize: 11.5, marginTop: 9, color: myTeam.hue }}>
+              ◆ {myTeam.name}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        {stat(profile.kda ?? "—", "KDA", "#00e5ff")}
+        {stat(profile.acs ?? "—", "ACS", "#ff4655")}
+        {stat(profile.hs != null ? profile.hs + "%" : "—", "HS", "#af9aec")}
+      </div>
+    </div>
+  );
+}
+
+// Trophies as a row for the current streak, with the lifetime total beside it.
+// A broken streak empties the row but never the number — losing the streak
+// shouldn't read as losing the wins.
+function TrophyRow({ streak, total }) {
+  if (!total) return null;
+  const shown = Math.min(streak, 6);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 9, flexWrap: "wrap" }}>
+      {shown > 0 && (
+        <span style={{ display: "flex", gap: 2 }}>
+          {Array.from({ length: shown }, (_, i) => (
+            <span key={i} style={{ fontSize: 15, filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
+          ))}
+          {streak > 6 && (
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+              color: "#f5c453", alignSelf: "center", marginLeft: 3 }}>+{streak - 6}</span>
+          )}
+        </span>
+      )}
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+        color: "rgba(200,215,255,0.45)" }}>
+        {total} total{streak > 1 ? ` · ${streak} in a row` : ""}
+      </span>
+    </div>
+  );
+}
+
+function PoolGlance({ players, live }) {
+  const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
+  const left = pool.filter((p) => p.status === "pool").length;
+  const sold = pool.length - left;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 30, fontWeight: 700,
+          color: live ? "#3ddc84" : "#7da6ff" }}>{left}</span>
+        <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>
+          still {live ? "on the board" : "in the pool"}
+        </span>
+      </div>
+      {sold > 0 && (
+        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 4 }}>
+          {sold} drafted
+        </div>
+      )}
+      <div style={{ height: 4, marginTop: 11, background: "rgba(255,255,255,0.06)" }}>
+        <div style={{ width: `${pool.length ? (sold / pool.length) * 100 : 0}%`, height: "100%",
+          background: "linear-gradient(90deg,#3d7bff,#00e5ff)" }} />
+      </div>
+    </div>
+  );
+}
+
+function TeamGlance({ team, players }) {
+  const roster = (team.roster || [])
+    .map((id) => (players || []).find((p) => p.id === (typeof id === "string" ? id : id?.id)))
+    .filter(Boolean);
+  return (
+    <div>
+      <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase", color: team.hue }}>
+        {team.name}
+      </div>
+      <div style={{ display: "grid", gap: 3, marginTop: 8 }}>
+        {roster.slice(0, 4).map((p) => (
+          <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+            <span style={{ color: "rgba(236,243,255,0.8)", overflow: "hidden",
+              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace",
+              color: "rgba(200,215,255,0.4)" }}>{p.soldPrice ? fmt(p.soldPrice) : ""}</span>
+          </div>
+        ))}
+        {!roster.length && (
+          <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>Nobody drafted yet.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FixtureGlance({ state }) {
+  const t = state?.tournament;
+  const all = !t ? [] : t.format === "group"
+    ? Object.values(t.matches || {}).flat().concat(t.final ? [t.final] : [])
+    : t.format === "single" ? (t.rounds || []).flat() : (t.matches || []);
+  const teamName = (id) => state.teams.find((x) => x.id === id)?.name || "TBD";
+  const next = all.filter((m) => m && !m.done && m.teamA && m.teamB)
+    .sort((a, b) => (a.scheduledAt || "").localeCompare(b.scheduledAt || "")).slice(0, 3);
+  if (!next.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>All matches played.</div>;
+  return (
+    <div style={{ display: "grid", gap: 7 }}>
+      {next.map((m, i) => (
+        <div key={i} style={{ fontSize: 12.5 }}>
+          <div style={{ color: "rgba(236,243,255,0.85)", fontWeight: 600 }}>
+            {teamName(m.teamA)} <span style={{ color: "rgba(200,215,255,0.3)" }}>vs</span> {teamName(m.teamB)}
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5,
+            color: "rgba(200,215,255,0.4)" }}>
+            {m.scheduledAt
+              ? new Date(m.scheduledAt).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })
+              : "time TBA"}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StandingsGlance({ state }) {
+  const t = state?.tournament;
+  const all = !t ? [] : t.format === "group"
+    ? Object.values(t.matches || {}).flat() : (t.matches || []);
+  const tally = {};
+  for (const m of all) {
+    if (!m?.done || !m.winner) continue;
+    tally[m.winner] = (tally[m.winner] || 0) + 1;
+  }
+  const rows = (state?.teams || [])
+    .map((x) => ({ name: x.name, hue: x.hue, w: tally[x.id] || 0 }))
+    .sort((a, b) => b.w - a.w).slice(0, 4);
+  if (!rows.length) return null;
+  return (
+    <div style={{ display: "grid", gap: 5 }}>
+      {rows.map((r, i) => (
+        <div key={r.name} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
+          <span style={{ width: 14, fontFamily: "'IBM Plex Mono',monospace",
+            color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.35)" }}>{i + 1}</span>
+          <span style={{ flex: 1, color: r.hue, fontWeight: 700, textTransform: "uppercase",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#00e5ff" }}>{r.w}W</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Host console ─────────────────────────────────────────────────────────
 // The host page had grown to eleven cards, eight of them always open, all
 // shouting equally. Two ideas fix that:
@@ -11485,6 +11594,14 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     </> : null;
     const chrome = {
       backLabel: inReg ? "Registration" : "Schedule",
+      // For the dashboard: it chooses its cells by phase, and shows the viewer
+      // their own card, so it needs both rather than deriving them from the board.
+      phase,
+      ev,
+      myProfile,
+      myReg,
+      viewerId: auth?.userId || null,
+      isHost,
       portalLabel: inReg ? "Registration" : "League hub",
       onBack: inReg ? () => setRegView("gate") : onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
@@ -11530,9 +11647,15 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
 async function loadProfileGate(userId) {
   const out = { rank: null, role: null, discord: null, whatsapp: null, linked: false };
   try {
-    const { data: p } = await __sb.from("player_profiles").select("rank, role, discord").eq("user_id", userId).maybeSingle();
-    if (p) { out.rank = p.rank; out.role = p.role; out.discord = p.discord; }
+    const { data: p } = await __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle();
+    if (p) Object.assign(out, p);
   } catch (e) { console.error("profile gate", e); }
+  try {
+    // Trophies and the display name live on users, not the profile.
+    const { data: u } = await __sb.from("users")
+      .select("display_name, weekends_won, trophy_streak").eq("id", userId).maybeSingle();
+    if (u) Object.assign(out, u);
+  } catch (e) { console.error("profile user", e); }
   try {
     const { data: c } = await __sb.from("player_contacts").select("whatsapp, discord_user_id")
       .eq("user_id", userId).eq("community_id", window.__VOLT.communityId).maybeSingle();
