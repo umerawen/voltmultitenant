@@ -5508,13 +5508,21 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         .volt-cell { transition: transform .16s cubic-bezier(.2,.8,.3,1), border-color .16s, box-shadow .16s; }
         /* Hero card two columns wide and two rows tall; the glance cells fill
            the third column beside it, then wrap underneath. */
-        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(148px, auto); }
-        .volt-bento > *:first-child { grid-column: span 2; grid-row: span 2; }
-        /* The hero fills cols 1-2 across two rows, so exactly two glance cells
-           sit beside it. A third would otherwise orphan on its own row with two
-           empty tracks; let it run the full width instead so the row reads as
-           deliberate rather than broken. */
-        .volt-bento > *:nth-child(4):last-child { grid-column: 1 / -1; }
+        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(132px, 1fr); }
+        .volt-bento > *:first-child { grid-column: span 2; grid-row: span 3; }
+        /* Glance cells stretch to share the height of the hero rather than
+           sitting short with dead space under them. */
+        .volt-bento > * { min-height: 0; }
+        /* The hero is only ever as tall as the column beside it: three glances
+           make a square block, two make a shorter one, one shouldn't leave the
+           hero towering over a single small cell. */
+        .volt-bento:has(> :nth-child(3):last-child) > *:first-child { grid-row: span 2; }
+        .volt-bento:has(> :nth-child(2):last-child) > *:first-child { grid-row: span 1; }
+        /* Four glances: widen to four columns so the hero keeps its 2x2 block
+           and the cells fill a 2x2 beside it, instead of three stacking and one
+           orphaning onto a row of its own. */
+        .volt-bento:has(> :nth-child(5):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:has(> :nth-child(5):last-child) > *:first-child { grid-row: span 2; }
         @media (max-width: 1100px) {
           .volt-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; }
           .volt-bento > *:first-child { grid-column: 1 / -1; grid-row: auto; }
@@ -5918,8 +5926,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           </Cell>
         )}
         {["matches_live", "settled"].includes(ph) && (
-          <Cell title="Standings" action="Leaderboard" onGo={goto("leaderboard")}>
+          <Cell title="Team standings" action="All" onGo={goto("leaderboard")}>
             <StandingsGlance state={state} />
+          </Cell>
+        )}
+        {["matches_live", "settled"].includes(ph) && (
+          <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+            <LeaderGlance viewerId={chrome?.viewerId} />
           </Cell>
         )}
       </div>
@@ -9763,6 +9776,34 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin }) {
               Draft {draftAt.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}
             </div>
           )}
+          {/* A champion banner with nothing but a name is mostly air. The MVP
+              and the decider are the two facts people actually repeat. */}
+          {gold && (ev?.recap?.mvp || ev?.recap?.decidedBy) && (
+            <div style={{ display: "flex", gap: 20, marginTop: 14, flexWrap: "wrap" }}>
+              {ev.recap.mvp && (
+                <div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase",
+                    color: "rgba(200,215,255,0.35)" }}>Most valuable</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase",
+                    color: "#ecf3ff", marginTop: 2 }}>
+                    {ev.recap.mvp}
+                    {ev.recap.mvpPts && (
+                      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                        color: "rgba(200,215,255,0.4)", marginLeft: 8 }}>{ev.recap.mvpPts}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {ev.recap.decidedBy && (
+                <div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase",
+                    color: "rgba(200,215,255,0.35)" }}>Decided by</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase",
+                    color: "#ecf3ff", marginTop: 2 }}>the {ev.recap.decidedBy}</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
           {regToggle}
@@ -9815,21 +9856,21 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           part of the panel rather than a photo pasted into it. */}
       <img src={IMG_HERO} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0,
         height: "100%", width: "58%", objectFit: "cover", objectPosition: "right 22%",
-        opacity: 0.4, pointerEvents: "none",
+        opacity: 0.46, pointerEvents: "none",
         clipPath: "polygon(22% 0, 100% 0, 100% 100%, 0 100%)",
         maskImage: "linear-gradient(90deg, transparent, #000 45%)",
         WebkitMaskImage: "linear-gradient(90deg, transparent, #000 45%)" }} />
       <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none",
         background: `linear-gradient(100deg, rgba(10,13,22,0.96) 38%, rgba(10,13,22,0.55) 62%, ${hue}22)` }} />
       {/* The oversized stat as a graphic, the way the scout card does it. */}
+      {/* Hard against the right edge and low-contrast: at centre-right it sat
+          over the artwork's face and both turned to mush. */}
       {profile.acs != null && (
-        <span aria-hidden style={{ position: "absolute", right: 22, top: 6, lineHeight: 0.8,
+        <span aria-hidden style={{ position: "absolute", right: -8, bottom: -14, lineHeight: 0.78,
           fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
-          fontSize: "clamp(90px, 13vw, 190px)", color: "rgba(236,243,255,0.07)",
-          letterSpacing: "-0.03em", pointerEvents: "none" }}>
+          fontSize: "clamp(76px, 9vw, 150px)", color: "rgba(236,243,255,0.05)",
+          letterSpacing: "-0.04em", pointerEvents: "none" }}>
           {profile.acs}
-          <span style={{ display: "block", fontSize: 12, letterSpacing: "0.4em",
-            textAlign: "right", color: "rgba(236,243,255,0.1)", marginTop: 6 }}>ACS</span>
         </span>
       )}
       <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
@@ -10024,6 +10065,71 @@ function ResultsGlance({ state }) {
               color: "rgba(200,215,255,0.3)" }}>beat</span>
             <span style={{ color: "rgba(200,215,255,0.45)", overflow: "hidden",
               textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(loser)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Top players by average combat score, matching the Leaderboard page's default
+// ranking so the summary and the full table can never disagree.
+function LeaderGlance({ viewerId }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let ok = true;
+    (async () => {
+      try {
+        const { data: mrs } = await __sb.from("match_results")
+          .select("user_id, stat_payload").eq("community_id", window.__VOLT.communityId);
+        const ids = [...new Set((mrs || []).map((r) => r.user_id))];
+        if (!ids.length) { if (ok) setRows([]); return; }
+        const { data: us } = await __sb.from("users").select("id, display_name").in("id", ids);
+        const name = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
+        // Same rule as the Leaderboard page: a row of all zeros is someone who
+        // was rostered but didn't play, and averaging it in halves their score.
+        const agg = {};
+        for (const r of mrs || []) {
+          const sp = r.stat_payload || {};
+          const played = Number(sp.acs || 0) > 0 || Number(sp.k || 0) > 0
+                      || Number(sp.a || 0) > 0 || Number(sp.d || 0) > 0;
+          if (!played) continue;
+          const a = (agg[r.user_id] ||= { sum: 0, n: 0 });
+          a.sum += Number(sp.acs || 0); a.n++;
+        }
+        const out = Object.entries(agg)
+          .map(([id, a]) => ({ id, name: name[id] || "Player", acs: Math.round(a.sum / a.n), n: a.n }))
+          .sort((x, y) => y.acs - x.acs).slice(0, 6);
+        if (ok) setRows(out);
+      } catch (e) { console.error("leader glance", e); if (ok) setRows([]); }
+    })();
+    return () => { ok = false; };
+  }, []);
+
+  if (!rows) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.3)" }}>Loading…</div>;
+  if (!rows.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>No matches recorded yet.</div>;
+  const top = rows[0].acs || 1;
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      {rows.map((r, i) => {
+        const me = r.id === viewerId;
+        return (
+          <div key={r.id}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
+              <span style={{ width: 13, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.3)" }}>{i + 1}</span>
+              <span style={{ flex: 1, fontWeight: me ? 700 : 600, textTransform: "uppercase",
+                color: me ? "#7da6ff" : "rgba(236,243,255,0.82)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.name}{me ? " ·" : ""}
+              </span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12,
+                color: i === 0 ? "#f5c453" : "#00e5ff" }}>{r.acs}</span>
+            </div>
+            <div style={{ height: 3, marginTop: 3, marginLeft: 22, background: "rgba(255,255,255,0.05)" }}>
+              <div style={{ width: `${(r.acs / top) * 100}%`, height: "100%",
+                background: me ? "#7da6ff" : "#00e5ff", opacity: i === 0 ? 1 : 0.5 }} />
+            </div>
           </div>
         );
       })}
