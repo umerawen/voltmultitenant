@@ -5506,6 +5506,23 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         /* Dashboard cells. A clickable panel has to say so before it's clicked —
            the rest of the product lifts and brightens on hover, so these do too. */
         .volt-cell { transition: transform .16s cubic-bezier(.2,.8,.3,1), border-color .16s, box-shadow .16s; }
+        /* Hero card two columns wide and two rows tall; the glance cells fill
+           the third column beside it, then wrap underneath. */
+        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(148px, auto); }
+        .volt-bento > *:first-child { grid-column: span 2; grid-row: span 2; }
+        /* The hero fills cols 1-2 across two rows, so exactly two glance cells
+           sit beside it. A third would otherwise orphan on its own row with two
+           empty tracks; let it run the full width instead so the row reads as
+           deliberate rather than broken. */
+        .volt-bento > *:nth-child(4):last-child { grid-column: 1 / -1; }
+        @media (max-width: 1100px) {
+          .volt-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; }
+          .volt-bento > *:first-child { grid-column: 1 / -1; grid-row: auto; }
+        }
+        @media (max-width: 700px) {
+          .volt-bento { grid-template-columns: minmax(0, 1fr); }
+          .volt-bento > *:first-child { grid-column: auto; }
+        }
         .volt-cell[style*="cursor: pointer"]:hover,
         .volt-cell[style*="cursor:pointer"]:hover {
           transform: translateY(-2px);
@@ -5848,8 +5865,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={chrome?.regToggle}
         onGo={goto} myTeam={myTeam} isAdmin={isAdmin} />
 
-      <div style={{ display: "grid", gap: 12, marginTop: 14,
-        gridTemplateColumns: "repeat(auto-fit, minmax(min(270px, 100%), 1fr))" }}>
+      <div className="volt-bento" style={{ display: "grid", gap: 12, marginTop: 14 }}>
 
         {/* The viewer's own card, always first and always present. Built from
             their scouting profile, so it's populated from signup rather than
@@ -9765,20 +9781,21 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
   if (!profile) return null;
   const hue = RANKS[profile.rank]?.c || "#5b8dff";
   const stat = (v, label, col) => (
-    <div style={{ flex: 1, minWidth: 64, textAlign: "center", padding: "9px 4px",
+    <div style={{ minWidth: 62, padding: "7px 11px",
       background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.15)",
-      clipPath: SHELL_NOTCH(7) }}>
-      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 16, color: col }}>{v}</div>
+      clipPath: SHELL_NOTCH(6) }}>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 17, color: col,
+        lineHeight: 1 }}>{v}</div>
       <div style={{ fontSize: 8.5, letterSpacing: "0.18em", textTransform: "uppercase",
-        color: "rgba(200,215,255,0.4)", marginTop: 3 }}>{label}</div>
+        color: "rgba(200,215,255,0.4)", marginTop: 4 }}>{label}</div>
     </div>
   );
 
   return (
     <div className="volt-cell" style={{
-      ...PANEL(`${hue}55`, "16px 18px"),
+      ...PANEL(`${hue}55`, "18px 20px"),
       position: "relative", overflow: "hidden",
-      gridColumn: "1 / -1", display: "flex", flexDirection: "column", minHeight: 262,
+      display: "flex", flexDirection: "column", minHeight: 300,
       clipPath: SHELL_NOTCH(14),
       boxShadow: `0 0 54px ${RANKS[profile.rank]?.glow || "rgba(61,123,255,0.22)"}` }}>
       {/* The holo sweep from the trading card — this is the hero cell, so it
@@ -9795,12 +9812,12 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           background: "none", border: "none", cursor: "pointer", padding: 0 }}>Scout hub →</button>
       </div>
 
-      <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ flex: "0 0 auto" }}>
+      <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap", flex: 1 }}>
+        <div style={{ flex: "0 0 auto", marginLeft: -6 }}>
           <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
-            win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={190} hue={hue} />
+            win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={236} hue={hue} />
         </div>
-        <div style={{ flex: 1, minWidth: 150 }}>
+        <div style={{ flex: 1, minWidth: 140 }}>
           <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase",
             letterSpacing: "0.01em", lineHeight: 1 }}>{profile.display_name || "You"}</div>
           <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em",
@@ -9820,13 +9837,14 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
               ◆ {myTeam.name}
             </div>
           )}
-        </div>
-      </div>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-        {stat(profile.kda ?? "—", "KDA", "#00e5ff")}
-        {stat(profile.acs ?? "—", "ACS", "#ff4655")}
-        {stat(profile.hs != null ? profile.hs + "%" : "—", "HS", "#af9aec")}
+          <div style={{ display: "flex", gap: 7, marginTop: 13, flexWrap: "wrap" }}>
+            {stat(profile.kda ?? "—", "KDA", "#00e5ff")}
+            {stat(profile.acs ?? "—", "ACS", "#ff4655")}
+            {stat(profile.hs != null ? profile.hs + "%" : "—", "HS", "#af9aec")}
+            {profile.win != null && stat(profile.win + "%", "WIN", "#3ddc84")}
+          </div>
+        </div>
       </div>
     </div>
   );
