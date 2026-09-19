@@ -5861,7 +5861,19 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   const LobbyView = (
-    <div className="view-in page-wrap py-6">
+    <div className="view-in page-wrap py-6" style={{ position: "relative" }}>
+      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }}>
+        <img src={IMG_HERO} alt="" style={{ width: "100%", height: "100%", objectFit: "cover",
+          objectPosition: "right 25%", opacity: 0.22, filter: "blur(2px) saturate(1.1)" }} />
+        {/* Two washes: a vertical fade so the top keeps the art and the bottom
+            returns to the app's ground, and a blue flood to pull the photo into
+            the palette instead of sitting beside it. */}
+        <div style={{ position: "absolute", inset: 0,
+          background: "linear-gradient(180deg, rgba(10,13,24,0.55) 0%, rgba(10,13,24,0.88) 45%, #0a0d18 78%)" }} />
+        <div style={{ position: "absolute", inset: 0,
+          background: "radial-gradient(ellipse 120% 80% at 70% 0%, rgba(61,123,255,0.18), transparent 60%)" }} />
+      </div>
+      <div style={{ position: "relative", zIndex: 1 }}>
       <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={chrome?.regToggle}
         onGo={goto} myTeam={myTeam} isAdmin={isAdmin} />
 
@@ -5910,6 +5922,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <StandingsGlance state={state} />
           </Cell>
         )}
+      </div>
       </div>
     </div>
   );
@@ -9798,13 +9811,32 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
       display: "flex", flexDirection: "column", minHeight: 300,
       clipPath: SHELL_NOTCH(14),
       boxShadow: `0 0 54px ${RANKS[profile.rank]?.glow || "rgba(61,123,255,0.22)"}` }}>
-      {/* The holo sweep from the trading card — this is the hero cell, so it
-          gets the product's signature treatment rather than a plain surface. */}
+      {/* Art bleeding off the right edge, clipped on a diagonal so it reads as
+          part of the panel rather than a photo pasted into it. */}
+      <img src={IMG_HERO} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0,
+        height: "100%", width: "58%", objectFit: "cover", objectPosition: "right 22%",
+        opacity: 0.4, pointerEvents: "none",
+        clipPath: "polygon(22% 0, 100% 0, 100% 100%, 0 100%)",
+        maskImage: "linear-gradient(90deg, transparent, #000 45%)",
+        WebkitMaskImage: "linear-gradient(90deg, transparent, #000 45%)" }} />
+      <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none",
+        background: `linear-gradient(100deg, rgba(10,13,22,0.96) 38%, rgba(10,13,22,0.55) 62%, ${hue}22)` }} />
+      {/* The oversized stat as a graphic, the way the scout card does it. */}
+      {profile.acs != null && (
+        <span aria-hidden style={{ position: "absolute", right: 22, top: 6, lineHeight: 0.8,
+          fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+          fontSize: "clamp(90px, 13vw, 190px)", color: "rgba(236,243,255,0.07)",
+          letterSpacing: "-0.03em", pointerEvents: "none" }}>
+          {profile.acs}
+          <span style={{ display: "block", fontSize: 12, letterSpacing: "0.4em",
+            textAlign: "right", color: "rgba(236,243,255,0.1)", marginTop: 6 }}>ACS</span>
+        </span>
+      )}
       <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
-        pointerEvents: "none", opacity: 0.55 }} />
+        pointerEvents: "none", opacity: 0.4 }} />
       <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
         borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
         <span style={{ ...SEC_LABEL, fontSize: 9.5 }}>// Your card</span>
         <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(120,150,220,0.2), rgba(120,150,220,0))" }} />
         <button onClick={onGo("scout")} style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
@@ -9812,14 +9844,20 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           background: "none", border: "none", cursor: "pointer", padding: 0 }}>Scout hub →</button>
       </div>
 
-      <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap", flex: 1 }}>
-        <div style={{ flex: "0 0 auto", marginLeft: -6 }}>
+      <div style={{ position: "relative", display: "flex", gap: 20, alignItems: "center",
+        flexWrap: "wrap", flex: 1 }}>
+        {/* A ring behind the radar so it sits in a frame rather than floating. */}
+        <div style={{ flex: "0 0 auto", position: "relative", display: "grid", placeItems: "center" }}>
+          <span aria-hidden style={{ position: "absolute", width: 250, height: 250,
+            borderRadius: "50%", border: `1px solid ${hue}33`,
+            background: `radial-gradient(circle, ${hue}14, transparent 68%)` }} />
           <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
             win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={236} hue={hue} />
         </div>
         <div style={{ flex: 1, minWidth: 140 }}>
-          <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.01em", lineHeight: 1 }}>{profile.display_name || "You"}</div>
+          <div style={{ fontSize: "clamp(30px, 3.4vw, 44px)", fontWeight: 700,
+            textTransform: "uppercase", letterSpacing: "0.005em", lineHeight: 0.95,
+            textShadow: `0 0 40px ${hue}55` }}>{profile.display_name || "You"}</div>
           <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em",
             textTransform: "uppercase", color: hue, marginTop: 6 }}>
             {rankLabel(profile.rank, profile.rank_div)}{profile.role ? ` · ${profile.role}` : ""}
