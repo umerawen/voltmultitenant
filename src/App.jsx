@@ -9739,6 +9739,34 @@ function Cell({ title, action, onGo, span = 1, tall = false, tone, children }) {
 }
 
 // ── Dashboard cells ──────────────────────────────────────────────────────
+
+// A numbered pip. Gold and filled for the leader, hollow for everyone else —
+// so the eye lands on first place before it reads a single word.
+function Pip({ i, hue }) {
+  const lead = i === 0;
+  return (
+    <span style={{ flex: "0 0 auto", width: 19, height: 19, display: "grid", placeItems: "center",
+      fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, fontWeight: 700,
+      clipPath: "polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%)",
+      background: lead ? (hue || "#f5c453") : "rgba(255,255,255,0.06)",
+      color: lead ? "#0a0d18" : "rgba(200,215,255,0.5)" }}>{i + 1}</span>
+  );
+}
+
+// A team tag that carries the team's own colour, so colour does the work a
+// second line of text would otherwise have to.
+function TeamTag({ name, hue }) {
+  if (!name) return null;
+  return (
+    <span style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase",
+      fontWeight: 700, padding: "2px 6px", whiteSpace: "nowrap",
+      color: hue, background: `${hue}1f`, border: `1px solid ${hue}44`,
+      clipPath: "polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px))" }}>
+      {name}
+    </span>
+  );
+}
+
 // Each one summarises a rail page in a glance and links into it. They read
 // from data the tournament shell already has, so none of them fetch.
 
@@ -10001,6 +10029,7 @@ function TeamGlance({ team, players }) {
   const roster = (team.roster || [])
     .map((id) => (players || []).find((p) => p.id === (typeof id === "string" ? id : id?.id)))
     .filter(Boolean);
+  const spent = roster.reduce((n, p) => n + Number(p.soldPrice || 0), 0);
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
@@ -10012,13 +10041,21 @@ function TeamGlance({ team, players }) {
           {fmt(team.budget || 0)} left
         </span>
       </div>
-      <div style={{ display: "grid", gap: 3, marginTop: 8 }}>
+      {/* How much of the budget went on this squad, as a bar — the number on
+          its own doesn't say whether that was a lot. */}
+      <div style={{ height: 3, marginTop: 9, background: "rgba(255,255,255,0.05)" }}>
+        <div style={{ width: `${Math.min(100, (spent / 10000) * 100)}%`, height: "100%",
+          background: `linear-gradient(90deg, ${team.hue}, ${team.hue}77)` }} />
+      </div>
+      <div style={{ display: "grid", gap: 4, marginTop: 10 }}>
         {roster.slice(0, 4).map((p) => (
-          <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-            <span style={{ color: "rgba(236,243,255,0.8)", overflow: "hidden",
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <span style={{ flex: "0 0 auto", width: 12, textAlign: "center",
+              color: `${team.hue}cc`, fontSize: 10 }}>{ROLE_GLYPH[p.role] || "◆"}</span>
+            <span style={{ flex: 1, minWidth: 0, color: "rgba(236,243,255,0.82)", overflow: "hidden",
               textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace",
-              color: "rgba(200,215,255,0.4)" }}>{p.soldPrice ? fmt(p.soldPrice) : ""}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
+              color: "rgba(200,215,255,0.45)" }}>{p.soldPrice ? fmt(p.soldPrice) : ""}</span>
           </div>
         ))}
         {!roster.length && (
@@ -10073,13 +10110,16 @@ function ResultsGlance({ state }) {
       {done.map((m, i) => {
         const loser = m.winner === m.teamA ? m.teamB : m.teamA;
         return (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5 }}>
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5,
+            padding: "5px 8px", borderLeft: `2px solid ${hueOf(m.winner)}`,
+            background: `linear-gradient(90deg, ${hueOf(m.winner)}14, transparent 75%)` }}>
             <span style={{ color: hueOf(m.winner), fontWeight: 700, textTransform: "uppercase",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(m.winner)}</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
-              color: "rgba(200,215,255,0.3)" }}>beat</span>
-            <span style={{ color: "rgba(200,215,255,0.45)", overflow: "hidden",
-              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(loser)}</span>
+            <span style={{ flex: 1, fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase",
+              color: "rgba(200,215,255,0.25)" }}>def.</span>
+            <span style={{ color: "rgba(200,215,255,0.4)", textDecoration: "line-through",
+              textDecorationColor: "rgba(200,215,255,0.2)",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(loser)}</span>
           </div>
         );
       })}
@@ -10125,25 +10165,36 @@ function LeaderGlance({ viewerId }) {
   if (!rows.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>No matches recorded yet.</div>;
   const top = rows[0].acs || 1;
   return (
-    <div style={{ display: "grid", gap: 6 }}>
+    <div style={{ display: "grid", gap: 7 }}>
       {rows.map((r, i) => {
         const me = r.id === viewerId;
+        const lead = i === 0;
         return (
-          <div key={r.id}>
-            <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
-              <span style={{ width: 13, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
-                color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.3)" }}>{i + 1}</span>
-              <span style={{ flex: 1, fontWeight: me ? 700 : 600, textTransform: "uppercase",
-                color: me ? "#7da6ff" : "rgba(236,243,255,0.82)",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {r.name}{me ? " ·" : ""}
-              </span>
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12,
-                color: i === 0 ? "#f5c453" : "#00e5ff" }}>{r.acs}</span>
+          <div key={r.id} style={{
+            display: "flex", alignItems: "center", gap: 9,
+            padding: lead ? "7px 9px" : "1px 9px",
+            background: lead ? "linear-gradient(90deg, rgba(245,196,83,0.13), transparent 70%)"
+                      : me ? "linear-gradient(90deg, rgba(61,123,255,0.14), transparent 70%)" : "none",
+            borderLeft: lead ? "2px solid #f5c453" : me ? "2px solid #7da6ff" : "2px solid transparent" }}>
+            <Pip i={i} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, textTransform: "uppercase",
+                fontSize: lead ? 15 : 12.5, lineHeight: 1.15,
+                color: lead ? "#f5c453" : me ? "#7da6ff" : "rgba(236,243,255,0.8)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+              {/* The bar is the comparison; the number is the detail. */}
+              <div style={{ height: lead ? 4 : 2.5, marginTop: 4, background: "rgba(255,255,255,0.05)" }}>
+                <div style={{ width: `${(r.acs / top) * 100}%`, height: "100%",
+                  background: lead ? "linear-gradient(90deg,#f5c453,#ffdf9a)" : me ? "#7da6ff" : "#00e5ff",
+                  opacity: lead || me ? 1 : 0.45 }} />
+              </div>
             </div>
-            <div style={{ height: 3, marginTop: 3, marginLeft: 22, background: "rgba(255,255,255,0.05)" }}>
-              <div style={{ width: `${(r.acs / top) * 100}%`, height: "100%",
-                background: me ? "#7da6ff" : "#00e5ff", opacity: i === 0 ? 1 : 0.5 }} />
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+                fontSize: lead ? 19 : 13, lineHeight: 1,
+                color: lead ? "#f5c453" : "#00e5ff" }}>{r.acs}</div>
+              {lead && <div style={{ fontSize: 8, letterSpacing: "0.2em",
+                color: "rgba(200,215,255,0.35)", marginTop: 3 }}>AVG ACS</div>}
             </div>
           </div>
         );
@@ -10165,22 +10216,50 @@ function PredictGlance({ viewerId }) {
   }, []);
   if (!rows) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.3)" }}>Loading…</div>;
   if (!rows.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>No predictions scored yet.</div>;
+  const podium = rows.slice(0, 3), pack = rows.slice(3);
   return (
-    <div style={{ display: "grid", gap: 7, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-      {rows.map((r, i) => {
-        const me = r.userId === viewerId;
-        return (
-          <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-            <span style={{ width: 13, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
-              color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.3)" }}>{i + 1}</span>
-            <span style={{ flex: 1, fontWeight: me ? 700 : 600, textTransform: "uppercase",
-              color: me ? "#7da6ff" : "rgba(236,243,255,0.8)",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
-              color: "rgba(200,215,255,0.45)" }}>{r.hit}/{r.total}</span>
-          </div>
-        );
-      })}
+    <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
+      {/* Three tiles instead of six rows: the top of a prediction table is the
+          only part anyone reads, so give it the space. */}
+      <div style={{ flex: "2 1 300px", display: "grid", gap: 8, alignContent: "center",
+        gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))" }}>
+        {podium.map((r, i) => {
+          const me = r.userId === viewerId;
+          const col = ["#f5c453", "#cfe0ff", "#c08a52"][i];
+          return (
+            <div key={r.userId} style={{ padding: "10px 11px", textAlign: "center",
+              background: i === 0 ? "rgba(245,196,83,0.12)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.16)"}`,
+              clipPath: SHELL_NOTCH(8) }}>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+                fontSize: i === 0 ? 24 : 19, lineHeight: 1, color: col }}>{r.pct}%</div>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", marginTop: 6,
+                color: me ? "#7da6ff" : "rgba(236,243,255,0.8)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9.5,
+                color: "rgba(200,215,255,0.35)", marginTop: 3 }}>{r.hit}/{r.total}</div>
+            </div>
+          );
+        })}
+      </div>
+      {pack.length > 0 && (
+        <div style={{ flex: "1 1 160px", display: "grid", gap: 5, alignContent: "center" }}>
+          {pack.map((r, i) => {
+            const me = r.userId === viewerId;
+            return (
+              <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span style={{ width: 13, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+                  color: "rgba(200,215,255,0.3)" }}>{i + 4}</span>
+                <span style={{ flex: 1, minWidth: 0, textTransform: "uppercase",
+                  color: me ? "#7da6ff" : "rgba(236,243,255,0.7)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace",
+                  color: "rgba(200,215,255,0.4)" }}>{r.hit}/{r.total}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -10192,23 +10271,42 @@ function BuysGlance({ state }) {
     .filter((p) => p.status === "sold" && p.soldPrice)
     .sort((a, b) => b.soldPrice - a.soldPrice).slice(0, 6);
   if (!sold.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>Nobody sold yet.</div>;
-  const top = sold[0].soldPrice || 1;
   const teamOf = (p) => (state.teams || []).find((t) => (t.roster || []).includes(p.id));
+  const [first, ...rest] = sold;
+  const ft = teamOf(first);
   return (
-    <div style={{ display: "grid", gap: 7, gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
-      {sold.map((p) => {
-        const t = teamOf(p);
-        return (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
-              whiteSpace: "nowrap", color: "rgba(236,243,255,0.82)" }}>{p.name}</span>
-            {t && <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase",
-              color: t.hue, whiteSpace: "nowrap" }}>{t.name}</span>}
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12,
-              color: p.soldPrice === top ? "#f5c453" : "#3ddc84" }}>{fmt(p.soldPrice)}</span>
-          </div>
-        );
-      })}
+    <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
+      {/* The record sale, at the size a record deserves. */}
+      <div style={{ flex: "1 1 200px", minWidth: 180, display: "flex", flexDirection: "column",
+        justifyContent: "center", padding: "12px 14px", position: "relative", overflow: "hidden",
+        background: `linear-gradient(135deg, ${ft ? ft.hue + "22" : "rgba(245,196,83,0.14)"}, transparent 70%)`,
+        border: `1px solid ${ft ? ft.hue + "44" : "rgba(245,196,83,0.3)"}`,
+        clipPath: SHELL_NOTCH(9) }}>
+        <div style={{ fontSize: 8.5, letterSpacing: "0.24em", textTransform: "uppercase",
+          color: "rgba(200,215,255,0.4)" }}>Record sale</div>
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+          fontSize: "clamp(26px, 3vw, 38px)", lineHeight: 1, color: "#f5c453", marginTop: 6 }}>
+          {fmt(first.soldPrice)}
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 7,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{first.name}</div>
+        <div style={{ marginTop: 6 }}><TeamTag name={ft?.name} hue={ft?.hue} /></div>
+      </div>
+      {/* Everything else, ranked, so the cell reads as a chart not a receipt. */}
+      <div style={{ flex: "2 1 260px", display: "grid", gap: 6, alignContent: "center" }}>
+        {rest.map((p) => {
+          const t = teamOf(p);
+          return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+                whiteSpace: "nowrap", color: "rgba(236,243,255,0.78)" }}>{p.name}</span>
+              <TeamTag name={t?.name} hue={t?.hue} />
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5,
+                color: "#3ddc84", minWidth: 54, textAlign: "right" }}>{fmt(p.soldPrice)}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -10231,19 +10329,22 @@ function StandingsGlance({ state }) {
     <div style={{ display: "grid", gap: 8 }}>
       {rows.map((r, i) => (
         <div key={r.name}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
-            <span style={{ width: 13, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
-              color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.3)" }}>{i + 1}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 9,
+            fontSize: i === 0 ? 14 : 12.5, padding: i === 0 ? "5px 8px" : "0 8px",
+            background: i === 0 ? `linear-gradient(90deg, ${r.hue}22, transparent 75%)` : "none",
+            borderLeft: `2px solid ${i === 0 ? r.hue : "transparent"}` }}>
+            <Pip i={i} hue={r.hue} />
             <span style={{ flex: 1, color: r.hue, fontWeight: 700, textTransform: "uppercase",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12,
-              color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.55)" }}>{r.w}W</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace",
+              fontSize: i === 0 ? 15 : 12, fontWeight: 700,
+              color: i === 0 ? r.hue : "rgba(200,215,255,0.5)" }}>{r.w}W</span>
           </div>
           {/* The bar carries the gap; the number alone makes you do the maths. */}
-          <div style={{ height: 3, marginTop: 4, marginLeft: 22,
+          <div style={{ height: i === 0 ? 4 : 2.5, marginTop: 4, marginLeft: 29, marginRight: 8,
             background: "rgba(255,255,255,0.05)" }}>
             <div style={{ width: `${(r.w / top) * 100}%`, height: "100%",
-              background: r.hue, opacity: i === 0 ? 1 : 0.55 }} />
+              background: r.hue, opacity: i === 0 ? 1 : 0.45 }} />
           </div>
         </div>
       ))}
