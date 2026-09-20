@@ -9841,13 +9841,13 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
   if (!profile) return null;
   const hue = RANKS[profile.rank]?.c || "#5b8dff";
   const stat = (v, label, col) => (
-    <div style={{ minWidth: 62, padding: "7px 11px",
-      background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.15)",
-      clipPath: SHELL_NOTCH(6) }}>
-      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 17, color: col,
+    <div style={{ flex: "1 1 76px", minWidth: 76, padding: "11px 13px",
+      background: "rgba(255,255,255,0.035)", border: "1px solid rgba(120,150,220,0.16)",
+      clipPath: SHELL_NOTCH(8) }}>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 23, color: col,
         lineHeight: 1 }}>{v}</div>
-      <div style={{ fontSize: 8.5, letterSpacing: "0.18em", textTransform: "uppercase",
-        color: "rgba(200,215,255,0.4)", marginTop: 4 }}>{label}</div>
+      <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
+        color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{label}</div>
     </div>
   );
 
@@ -9855,7 +9855,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
     <div className="volt-cell" style={{
       ...PANEL(`${hue}55`, "18px 20px"),
       position: "relative", overflow: "hidden",
-      display: "flex", flexDirection: "column", minHeight: 300,
+      display: "flex", flexDirection: "column", minHeight: 348,
       clipPath: SHELL_NOTCH(14),
       boxShadow: `0 0 54px ${RANKS[profile.rank]?.glow || "rgba(61,123,255,0.22)"}` }}>
       {/* Art bleeding off the right edge, clipped on a diagonal so it reads as
@@ -9869,16 +9869,6 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
       <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none",
         background: `linear-gradient(100deg, rgba(10,13,22,0.96) 38%, rgba(10,13,22,0.55) 62%, ${hue}22)` }} />
       {/* The oversized stat as a graphic, the way the scout card does it. */}
-      {/* Hard against the right edge and low-contrast: at centre-right it sat
-          over the artwork's face and both turned to mush. */}
-      {profile.acs != null && (
-        <span aria-hidden style={{ position: "absolute", right: -8, bottom: -14, lineHeight: 0.78,
-          fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
-          fontSize: "clamp(76px, 9vw, 150px)", color: "rgba(236,243,255,0.05)",
-          letterSpacing: "-0.04em", pointerEvents: "none" }}>
-          {profile.acs}
-        </span>
-      )}
       <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
         pointerEvents: "none", opacity: 0.4 }} />
       <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
@@ -9893,13 +9883,9 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
 
       <div style={{ position: "relative", display: "flex", gap: 20, alignItems: "center",
         flexWrap: "wrap", flex: 1 }}>
-        {/* A ring behind the radar so it sits in a frame rather than floating. */}
-        <div style={{ flex: "0 0 auto", position: "relative", display: "grid", placeItems: "center" }}>
-          <span aria-hidden style={{ position: "absolute", width: 250, height: 250,
-            borderRadius: "50%", border: `1px solid ${hue}33`,
-            background: `radial-gradient(circle, ${hue}14, transparent 68%)` }} />
+        <div style={{ flex: "0 0 auto", marginLeft: -10, marginTop: -4 }}>
           <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
-            win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={236} hue={hue} />
+            win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={300} hue={hue} />
         </div>
         <div style={{ flex: 1, minWidth: 140 }}>
           <div style={{ fontSize: "clamp(30px, 3.4vw, 44px)", fontWeight: 700,
@@ -9923,7 +9909,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 7, marginTop: 13, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", maxWidth: 420 }}>
             {stat(profile.kda ?? "—", "KDA", "#00e5ff")}
             {stat(profile.acs ?? "—", "ACS", "#ff4655")}
             {stat(profile.hs != null ? profile.hs + "%" : "—", "HS", "#af9aec")}
