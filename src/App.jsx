@@ -5843,31 +5843,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const ph = chrome?.phase || "registration_open";
   const goto = (id) => () => setView(id);
 
-  // Built on the shared PANEL so a change to the app's surface reaches the
-  // dashboard too, with the corner bracket and hover lift the rest of the
-  // product already uses on interactive panels.
-  const Cell = ({ title, action, onGo, span = 1, tall = false, tone, children }) => (
-    <div className="volt-cell" style={{
-      ...PANEL(tone, "15px 17px"),
-      position: "relative",
-      gridColumn: `span ${span}`,
-      display: "flex", flexDirection: "column",
-      minHeight: tall ? 260 : 156,
-      cursor: onGo ? "pointer" : "default",
-    }} onClick={onGo || undefined}>
-      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9,
-        borderLeft: `2px solid ${tone || "rgba(61,123,255,0.5)"}`,
-        borderTop: `2px solid ${tone || "rgba(61,123,255,0.5)"}` }} />
-      <SectionHead title={title} right={onGo ? (
-        <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 10,
-          letterSpacing: "0.16em", textTransform: "uppercase", color: "#7da6ff", whiteSpace: "nowrap" }}>
-          {action || "Open"} →
-        </span>
-      ) : null} />
-      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
-    </div>
-  );
-
   const LobbyView = (
     <div className="view-in page-wrap py-6" style={{ position: "relative" }}>
       <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }}>
@@ -9713,6 +9688,37 @@ function SubDesk({ eventId, onChanged }) {
           {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+// Defined inside DraftApp, this was a NEW component type on every render,
+// and the board polls every 1.2s. React sees a different type, unmounts the
+// old subtree and mounts a fresh one, so any cell that fetches restarts for
+// ever. It closes over nothing, so it belongs at module scope.
+// Built on the shared PANEL so a change to the app's surface reaches the
+// dashboard too, with the corner bracket and hover lift the rest of the
+// product already uses on interactive panels.
+function Cell({ title, action, onGo, span = 1, tall = false, tone, children }) {
+  return (
+    <div className="volt-cell" style={{
+      ...PANEL(tone, "15px 17px"),
+      position: "relative",
+      gridColumn: `span ${span}`,
+      display: "flex", flexDirection: "column",
+      minHeight: tall ? 260 : 156,
+      cursor: onGo ? "pointer" : "default",
+    }} onClick={onGo || undefined}>
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9,
+        borderLeft: `2px solid ${tone || "rgba(61,123,255,0.5)"}`,
+        borderTop: `2px solid ${tone || "rgba(61,123,255,0.5)"}` }} />
+      <SectionHead title={title} right={onGo ? (
+        <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 10,
+          letterSpacing: "0.16em", textTransform: "uppercase", color: "#7da6ff", whiteSpace: "nowrap" }}>
+          {action || "Open"} →
+        </span>
+      ) : null} />
+      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
     </div>
   );
 }
