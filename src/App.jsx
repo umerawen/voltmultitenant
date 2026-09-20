@@ -5523,6 +5523,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
            orphaning onto a row of its own. */
         .volt-bento:has(> :nth-child(5):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
         .volt-bento:has(> :nth-child(5):last-child) > *:first-child { grid-row: span 2; }
+        /* Six glances: four small ones stack beside the hero, then two
+           double-width cells close the row underneath so the block ends as a
+           rectangle rather than trailing off. */
+        .volt-bento:has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:has(> :nth-child(7):last-child) > *:first-child { grid-row: span 2; }
         @media (max-width: 1100px) {
           .volt-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; }
           .volt-bento > *:first-child { grid-column: 1 / -1; grid-row: auto; }
@@ -5908,6 +5913,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         {["matches_live", "settled"].includes(ph) && (
           <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
             <LeaderGlance viewerId={chrome?.viewerId} />
+          </Cell>
+        )}
+        {["matches_live", "settled"].includes(ph) && (
+          <Cell title="Crystal ball" action="Predictions" span={2} onGo={goto("bracket")}>
+            <PredictGlance viewerId={chrome?.viewerId} />
+          </Cell>
+        )}
+        {["drafting", "matches_live", "settled"].includes(ph) && (
+          <Cell title="Biggest buys" action="Rosters" span={2} onGo={goto("locker")}>
+            <BuysGlance state={state} />
           </Cell>
         )}
       </div>
@@ -9888,9 +9903,17 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={300} hue={hue} />
         </div>
         <div style={{ flex: 1, minWidth: 140 }}>
-          <div style={{ fontSize: "clamp(30px, 3.4vw, 44px)", fontWeight: 700,
-            textTransform: "uppercase", letterSpacing: "0.005em", lineHeight: 0.95,
-            textShadow: `0 0 40px ${hue}55` }}>{profile.display_name || "You"}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {profile.rank && (
+              <div style={{ flex: "0 0 auto", transform: "scale(0.68)",
+                transformOrigin: "left center", marginRight: -30, marginLeft: -8 }}>
+                <RankCrest rank={profile.rank} div={profile.rank_div} />
+              </div>
+            )}
+            <div style={{ fontSize: "clamp(30px, 3.4vw, 44px)", fontWeight: 700,
+              textTransform: "uppercase", letterSpacing: "0.005em", lineHeight: 0.95,
+              textShadow: `0 0 40px ${hue}55` }}>{profile.display_name || "You"}</div>
+          </div>
           <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em",
             textTransform: "uppercase", color: hue, marginTop: 6 }}>
             {rankLabel(profile.rank, profile.rank_div)}{profile.role ? ` · ${profile.role}` : ""}
@@ -10122,6 +10145,67 @@ function LeaderGlance({ viewerId }) {
               <div style={{ width: `${(r.acs / top) * 100}%`, height: "100%",
                 background: me ? "#7da6ff" : "#00e5ff", opacity: i === 0 ? 1 : 0.5 }} />
             </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Who calls matches best. Laid out in columns rather than rows: a two-column
+// cell with a single-column list inside it wastes the width it was given.
+function PredictGlance({ viewerId }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let ok = true;
+    __sb.rpc("volt_pred_standings", { p_community: window.__VOLT.communityId })
+      .then(({ data }) => ok && setRows(Array.isArray(data) ? data.slice(0, 6) : []))
+      .catch(() => ok && setRows([]));
+    return () => { ok = false; };
+  }, []);
+  if (!rows) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.3)" }}>Loading…</div>;
+  if (!rows.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>No predictions scored yet.</div>;
+  return (
+    <div style={{ display: "grid", gap: 7, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+      {rows.map((r, i) => {
+        const me = r.userId === viewerId;
+        return (
+          <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+            <span style={{ width: 13, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+              color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.3)" }}>{i + 1}</span>
+            <span style={{ flex: 1, fontWeight: me ? 700 : 600, textTransform: "uppercase",
+              color: me ? "#7da6ff" : "rgba(236,243,255,0.8)",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
+              color: "rgba(200,215,255,0.45)" }}>{r.hit}/{r.total}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// The auction's own headline: who cost the most. It's the number people quote
+// at each other all weekend, and it lives nowhere else on this page.
+function BuysGlance({ state }) {
+  const sold = (state?.players || [])
+    .filter((p) => p.status === "sold" && p.soldPrice)
+    .sort((a, b) => b.soldPrice - a.soldPrice).slice(0, 6);
+  if (!sold.length) return <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>Nobody sold yet.</div>;
+  const top = sold[0].soldPrice || 1;
+  const teamOf = (p) => (state.teams || []).find((t) => (t.roster || []).includes(p.id));
+  return (
+    <div style={{ display: "grid", gap: 7, gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
+      {sold.map((p) => {
+        const t = teamOf(p);
+        return (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+              whiteSpace: "nowrap", color: "rgba(236,243,255,0.82)" }}>{p.name}</span>
+            {t && <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase",
+              color: t.hue, whiteSpace: "nowrap" }}>{t.name}</span>}
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12,
+              color: p.soldPrice === top ? "#f5c453" : "#3ddc84" }}>{fmt(p.soldPrice)}</span>
           </div>
         );
       })}
