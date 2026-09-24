@@ -5509,7 +5509,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         .volt-cell { transition: transform .16s cubic-bezier(.2,.8,.3,1), border-color .16s, box-shadow .16s; }
         /* Hero card two columns wide and two rows tall; the glance cells fill
            the third column beside it, then wrap underneath. */
-        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(132px, 1fr); }
+        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(132px, auto); }
         .volt-bento > *:first-child { grid-column: span 2; grid-row: span 3; }
         /* Glance cells stretch to share the height of the hero rather than
            sitting short with dead space under them. */
@@ -5853,18 +5853,18 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     <div className="view-in page-wrap py-6" style={{ position: "relative" }}>
       <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }}>
         <img src={IMG_HERO} alt="" style={{ width: "100%", height: "100%", objectFit: "cover",
-          objectPosition: "right 25%", opacity: 0.22, filter: "blur(2px) saturate(1.1)" }} />
+          objectPosition: "right 25%", opacity: 0.38, filter: "blur(1px) saturate(1.15)" }} />
         {/* Two washes: a vertical fade so the top keeps the art and the bottom
             returns to the app's ground, and a blue flood to pull the photo into
             the palette instead of sitting beside it. */}
         <div style={{ position: "absolute", inset: 0,
-          background: "linear-gradient(180deg, rgba(10,13,24,0.55) 0%, rgba(10,13,24,0.88) 45%, #0a0d18 78%)" }} />
+          background: "linear-gradient(180deg, rgba(10,13,24,0.35) 0%, rgba(10,13,24,0.74) 42%, rgba(10,13,24,0.95) 68%, #0a0d18 88%)" }} />
         <div style={{ position: "absolute", inset: 0,
           background: "radial-gradient(ellipse 120% 80% at 70% 0%, rgba(61,123,255,0.18), transparent 60%)" }} />
       </div>
       <div style={{ position: "relative", zIndex: 1 }}>
       <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={chrome?.regToggle}
-        onGo={goto} myTeam={myTeam} isAdmin={isAdmin} />
+        onGo={goto} myTeam={myTeam} isAdmin={isAdmin} state={state} />
 
       <div className="volt-bento" style={{ display: "grid", gap: 12, marginTop: 14 }}>
 
@@ -9758,8 +9758,9 @@ function Pip({ i, hue }) {
 // visibly the same component rather than two takes on the same idea.
 function FeatureTile({ label, value, name, sub, tag, hue = "#f5c453" }) {
   return (
-    <div style={{ flex: "1 1 210px", minWidth: 190, display: "flex", flexDirection: "column",
-      justifyContent: "center", padding: "14px 16px", position: "relative", overflow: "hidden",
+    <div style={{ flex: "0 1 220px", minWidth: 190, alignSelf: "center",
+      display: "flex", flexDirection: "column",
+      justifyContent: "center", padding: "16px 18px", position: "relative", overflow: "hidden",
       background: `linear-gradient(135deg, ${hue}26, transparent 72%)`,
       border: `1px solid ${hue}44`, clipPath: SHELL_NOTCH(9) }}>
       <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9,
@@ -9797,7 +9798,7 @@ function TeamTag({ name, hue }) {
 
 // The phase banner. This is the "what's happening and what do I do" line, and
 // it is the only part of the page that changes wholesale between phases.
-function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin }) {
+function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
   const draftAt = ev?.draft_at ? new Date(ev.draft_at) : null;
   const soon = draftAt && draftAt > new Date();
   // A finished tournament has a winner, and "this tournament is done" throws
@@ -9879,6 +9880,30 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin }) {
             </div>
           )}
         </div>
+        {/* The winning five, beside the headline that names them. */}
+        {gold && (() => {
+          const t = (state?.teams || []).find((x) => x.name === champ);
+          if (!t) return null;
+          const names = [
+            ...(t.captainUserId ? [(state.players || []).find((p) => p.id === t.captainUserId)] : []),
+            ...(t.roster || []).map((id) => (state.players || []).find((p) => p.id === id)),
+          ].filter(Boolean);
+          if (!names.length) return null;
+          return (
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+              {names.slice(0, 5).map((p, i) => (
+                <span key={p.id} style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase",
+                  padding: "6px 11px", whiteSpace: "nowrap",
+                  color: i === 0 ? "#f5c453" : "rgba(236,243,255,0.82)",
+                  background: i === 0 ? "rgba(245,196,83,0.14)" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${i === 0 ? "rgba(245,196,83,0.4)" : "rgba(120,150,220,0.18)"}`,
+                  clipPath: SHELL_NOTCH(7) }}>
+                  {i === 0 ? "★ " : ""}{p.name}
+                </span>
+              ))}
+            </div>
+          );
+        })()}
         <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
           {regToggle}
           {phase === "drafting" && (
@@ -9909,7 +9934,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
   if (!profile) return null;
   const hue = RANKS[profile.rank]?.c || "#5b8dff";
   const stat = (v, label, col) => (
-    <div style={{ flex: "1 1 76px", minWidth: 76, padding: "11px 13px",
+    <div style={{ flex: "1 1 0", minWidth: 78, padding: "12px 14px",
       background: "rgba(255,255,255,0.035)", border: "1px solid rgba(120,150,220,0.16)",
       clipPath: SHELL_NOTCH(8) }}>
       <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 23, color: col,
@@ -9923,7 +9948,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
     <div className="volt-cell" style={{
       ...PANEL(`${hue}55`, "18px 20px"),
       position: "relative", overflow: "hidden",
-      display: "flex", flexDirection: "column", minHeight: 348,
+      display: "flex", flexDirection: "column", minHeight: 320,
       clipPath: SHELL_NOTCH(14),
       boxShadow: `0 0 54px ${RANKS[profile.rank]?.glow || "rgba(61,123,255,0.22)"}` }}>
       {/* Art bleeding off the right edge, clipped on a diagonal so it reads as
@@ -9955,7 +9980,8 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
             win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={300} hue={hue} />
         </div>
-        <div style={{ flex: 1, minWidth: 140 }}>
+        <div style={{ flex: 1, minWidth: 140, alignSelf: "stretch",
+          display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             {profile.rank && (
               <div style={{ flex: "0 0 auto", transform: "scale(0.68)",
@@ -9967,25 +9993,39 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
               textTransform: "uppercase", letterSpacing: "0.005em", lineHeight: 0.95,
               textShadow: `0 0 40px ${hue}55` }}>{profile.display_name || "You"}</div>
           </div>
-          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em",
-            textTransform: "uppercase", color: hue, marginTop: 6 }}>
-            {rankLabel(profile.rank, profile.rank_div)}{profile.role ? ` · ${profile.role}` : ""}
+          {/* Role and agent — the crest has already said the rank. */}
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.12em",
+            textTransform: "uppercase", color: hue, marginTop: 8 }}>
+            {profile.role || "Player"}
+            {profile.agent && (
+              <span style={{ color: "rgba(236,243,255,0.55)", fontWeight: 400 }}>
+                {"  ·  "}{profile.agent}
+              </span>
+            )}
           </div>
-          {profile.peak_rank && (
-            <div style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase",
-              color: "rgba(200,215,255,0.35)", marginTop: 4 }}>
-              Peak <span style={{ color: RANKS[profile.peak_rank]?.c || "#9af5c2" }}>
-                {rankLabel(profile.peak_rank, profile.peak_rank_div)}</span>
-            </div>
-          )}
-          <TrophyRow streak={profile.trophy_streak || 0} total={profile.weekends_won || 0} />
-          {myTeam && (
-            <div style={{ fontSize: 11.5, marginTop: 9, color: myTeam.hue }}>
-              ◆ {myTeam.name}
-            </div>
-          )}
 
-          <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", maxWidth: 420 }}>
+          {/* One meta line, all of it secondary, so nothing competes with the
+              name or the stats. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 9,
+            flexWrap: "wrap", fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase",
+            color: "rgba(200,215,255,0.38)" }}>
+            {profile.peak_rank && (
+              <span>Peak <span style={{ color: RANKS[profile.peak_rank]?.c || "#9af5c2" }}>
+                {rankLabel(profile.peak_rank, profile.peak_rank_div)}</span></span>
+            )}
+            {profile.weekends_won > 0 && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ fontSize: 12, filter: "drop-shadow(0 0 5px rgba(245,196,83,0.55))" }}>🏆</span>
+                <span style={{ color: "#f5c453" }}>
+                  {profile.weekends_won}{profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
+                </span>
+              </span>
+            )}
+            {myTeam && <span style={{ color: myTeam.hue }}>◆ {myTeam.name}</span>}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: "auto", paddingTop: 20,
+            flexWrap: "wrap", maxWidth: 440 }}>
             {stat(profile.kda ?? "—", "KDA", "#00e5ff")}
             {stat(profile.acs ?? "—", "ACS", "#ff4655")}
             {stat(profile.hs != null ? profile.hs + "%" : "—", "HS", "#af9aec")}
@@ -10155,10 +10195,10 @@ function ResultsGlance({ state }) {
             background: `linear-gradient(90deg, ${hueOf(m.winner)}14, transparent 75%)` }}>
             <span style={{ color: hueOf(m.winner), fontWeight: 700, textTransform: "uppercase",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(m.winner)}</span>
-            <span style={{ flex: 1, fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase",
+            <span style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase",
               color: "rgba(200,215,255,0.25)" }}>def.</span>
-            <span style={{ color: "rgba(200,215,255,0.4)", textDecoration: "line-through",
-              textDecorationColor: "rgba(200,215,255,0.2)",
+            <span style={{ flex: 1, minWidth: 0, color: "rgba(200,215,255,0.4)",
+              textDecoration: "line-through", textDecorationColor: "rgba(200,215,255,0.2)",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(loser)}</span>
           </div>
         );
@@ -10229,12 +10269,12 @@ function LeaderGlance({ viewerId }) {
                   opacity: lead || me ? 1 : 0.45 }} />
               </div>
             </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+            <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
                 fontSize: lead ? 19 : 13, lineHeight: 1,
-                color: lead ? "#f5c453" : "#00e5ff" }}>{r.acs}</div>
-              {lead && <div style={{ fontSize: 8, letterSpacing: "0.2em",
-                color: "rgba(200,215,255,0.35)", marginTop: 3 }}>AVG ACS</div>}
+                color: lead ? "#f5c453" : "#00e5ff" }}>{r.acs}</span>
+              <span style={{ fontSize: 8, letterSpacing: "0.16em",
+                color: "rgba(200,215,255,0.28)" }}>ACS</span>
             </div>
           </div>
         );
