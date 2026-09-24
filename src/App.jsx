@@ -131,33 +131,33 @@ if (typeof window !== "undefined") {
 // Landing/auth background — user-supplied art, embedded WebP (2000w, q72).
 const IMG_GATE_BG = "/img/gate-bg.webp";
 // Full-body agent cutouts for the player card (transparent WebP, in
-// public/img/agents/). Reyna stands in for anyone whose main has no art yet —
+// public/img/). Reyna stands in for anyone whose main has no art yet —
 // dropping in another file and adding a line here is all a new agent needs.
 const AGENT_ART = {
-  Reyna: "/img/agents/reyna.webp",
-  Jett: "/img/agents/jett.webp",
-  Raze: "/img/agents/raze.webp",
-  Neon: "/img/agents/neon.webp",
-  Yoru: "/img/agents/yoru.webp",
-  Brimstone: "/img/agents/brimstone.webp",
-  Viper: "/img/agents/viper.webp",
-  Sova: "/img/agents/sova.webp",
-  Breach: "/img/agents/breach.webp",
-  Fade: "/img/agents/fade.webp",
-  Gekko: "/img/agents/gekko.webp",
-  Killjoy: "/img/agents/killjoy.webp",
-  Cypher: "/img/agents/cypher.webp",
-  Sage: "/img/agents/sage.webp",
-  Chamber: "/img/agents/chamber.webp",
-  Deadlock: "/img/agents/deadlock.webp",
-  Phoenix: "/img/agents/phoenix.webp",
-  Astra: "/img/agents/astra.webp",
-  Harbor: "/img/agents/harbor.webp",
-  "KAY/O": "/img/agents/kayo.webp",
-  Iso: "/img/agents/iso.webp",
-  Omen: "/img/agents/omen.webp",
-  Vyse: "/img/agents/vyse.webp",
-  Tejo: "/img/agents/tejo.webp",
+  Reyna: "/img/reyna.webp",
+  Jett: "/img/jett.webp",
+  Raze: "/img/raze.webp",
+  Neon: "/img/neon.webp",
+  Yoru: "/img/yoru.webp",
+  Brimstone: "/img/brimstone.webp",
+  Viper: "/img/viper.webp",
+  Sova: "/img/sova.webp",
+  Breach: "/img/breach.webp",
+  Fade: "/img/fade.webp",
+  Gekko: "/img/gekko.webp",
+  Killjoy: "/img/killjoy.webp",
+  Cypher: "/img/cypher.webp",
+  Sage: "/img/sage.webp",
+  Chamber: "/img/chamber.webp",
+  Deadlock: "/img/deadlock.webp",
+  Phoenix: "/img/phoenix.webp",
+  Astra: "/img/astra.webp",
+  Harbor: "/img/harbor.webp",
+  "KAY/O": "/img/kayo.webp",
+  Iso: "/img/iso.webp",
+  Omen: "/img/omen.webp",
+  Vyse: "/img/vyse.webp",
+  Tejo: "/img/tejo.webp",
 };
 const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 const IMG_HERO = "/img/hero.webp";
