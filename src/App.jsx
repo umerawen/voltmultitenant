@@ -135,6 +135,29 @@ const IMG_GATE_BG = "/img/gate-bg.webp";
 // dropping in another file and adding a line here is all a new agent needs.
 const AGENT_ART = {
   Reyna: "/img/agents/reyna.webp",
+  Jett: "/img/agents/jett.webp",
+  Raze: "/img/agents/raze.webp",
+  Neon: "/img/agents/neon.webp",
+  Yoru: "/img/agents/yoru.webp",
+  Brimstone: "/img/agents/brimstone.webp",
+  Viper: "/img/agents/viper.webp",
+  Sova: "/img/agents/sova.webp",
+  Breach: "/img/agents/breach.webp",
+  Fade: "/img/agents/fade.webp",
+  Gekko: "/img/agents/gekko.webp",
+  Killjoy: "/img/agents/killjoy.webp",
+  Cypher: "/img/agents/cypher.webp",
+  Sage: "/img/agents/sage.webp",
+  Chamber: "/img/agents/chamber.webp",
+  Deadlock: "/img/agents/deadlock.webp",
+  Phoenix: "/img/agents/phoenix.webp",
+  Astra: "/img/agents/astra.webp",
+  Harbor: "/img/agents/harbor.webp",
+  "KAY/O": "/img/agents/kayo.webp",
+  Iso: "/img/agents/iso.webp",
+  Omen: "/img/agents/omen.webp",
+  Vyse: "/img/agents/vyse.webp",
+  Tejo: "/img/agents/tejo.webp",
 };
 const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 const IMG_HERO = "/img/hero.webp";
@@ -216,7 +239,7 @@ const rankLabel = (r, div) => (r ? r + (hasDivisions(r) && div ? ` ${div}` : "")
 const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
 const ROLE_GLYPH = { Duelist: "◆", Initiator: "▲", Controller: "●", Sentinel: "■", Flex: "✦" };
 const ROLE_ABBR  = { Duelist: "DUE", Initiator: "INI", Controller: "CON", Sentinel: "SEN", Flex: "FLX" };
-const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brimstone","Viper","Astra","Harbor","Clove","Sova","Skye","Breach","Fade","KAY/O","Gekko","Killjoy","Cypher","Sage","Chamber","Deadlock","Vyse"];
+const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brimstone","Viper","Astra","Harbor","Clove","Sova","Skye","Breach","Fade","KAY/O","Gekko","Killjoy","Cypher","Sage","Chamber","Deadlock","Vyse","Tejo","Waylay","Veto"];
 
 const TEAM_HUES = ["#ff4655", "#00e5ff", "#9d6bff", "#5ad1ff", "#ff8a3d", "#e35cff", "#3ddc84", "#f5c453", "#ff6fae", "#7c9cff", "#ffd24a", "#4dd6c1"];
 const MIN_TEAMS = 2;   // no maximum — a league runs as many teams as it has captains
@@ -10148,7 +10171,7 @@ function CardArt({ hue, agent }) {
               faded into the panel on the left and at the bottom so it sits in
               the card rather than on it. */}
           <img src={agentArt(agent)} alt="" style={{ position: "absolute", right: "1%", top: "-6%",
-            height: "158%", width: "auto", maxWidth: "none", opacity: 0.92,
+            height: "158%", width: "auto", maxWidth: "44%", objectFit: "contain", objectPosition: "right top", opacity: 0.92,
             filter: `drop-shadow(0 0 28px ${hue}55) saturate(1.05)`,
             maskImage: "linear-gradient(180deg, #000 33%, transparent 50%)",
             WebkitMaskImage: "linear-gradient(180deg, #000 33%, transparent 50%)" }} />
