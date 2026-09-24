@@ -130,6 +130,13 @@ if (typeof window !== "undefined") {
 /* ── embedded agent artwork (data URIs, self-contained) ── */
 // Landing/auth background — user-supplied art, embedded WebP (2000w, q72).
 const IMG_GATE_BG = "/img/gate-bg.webp";
+// Full-body agent cutouts for the player card (transparent WebP, in
+// public/img/agents/). Reyna stands in for anyone whose main has no art yet —
+// dropping in another file and adding a line here is all a new agent needs.
+const AGENT_ART = {
+  Reyna: "/img/agents/reyna.webp",
+};
+const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 const IMG_HERO = "/img/hero.webp";
 
 
@@ -10104,7 +10111,7 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
 // player saw whatever they main. This is built from the player's rank colour
 // alone — light, a grid, and the crest's hexagon as a watermark — so it fits
 // anyone and still changes from card to card.
-function CardArt({ hue }) {
+function CardArt({ hue, agent }) {
   const hex = (r) => {
     const pts = [0, 1, 2, 3, 4, 5].map((i) => {
       const a = (Math.PI / 3) * i - Math.PI / 2;
@@ -10127,13 +10134,30 @@ function CardArt({ hue }) {
         maskImage: "linear-gradient(100deg, transparent 38%, #000 88%)",
         WebkitMaskImage: "linear-gradient(100deg, transparent 38%, #000 88%)" }} />
       <svg viewBox="0 0 200 200" style={{ position: "absolute", right: "-9%", top: "50%",
-        transform: "translateY(-50%)", width: "58%", maxWidth: 520, opacity: 0.5 }}>
+        transform: "translateY(-50%)", width: "58%", maxWidth: 520, opacity: agent !== undefined ? 0.35 : 0.5 }}>
         {[92, 72, 52].map((r, i) => (
           <polygon key={r} points={hex(r)} fill="none" stroke={hue}
             strokeOpacity={[0.14, 0.1, 0.07][i]} strokeWidth={i === 0 ? 1.4 : 1} />
         ))}
         <polygon points={hex(52)} fill={hue} fillOpacity="0.04" />
       </svg>
+      {agent !== undefined && (
+        <>
+          {/* Cut to the upper body: the card is wider than it is tall, and a
+              full-length figure would shrink her to a sliver. Anchored right,
+              faded into the panel on the left and at the bottom so it sits in
+              the card rather than on it. */}
+          <img src={agentArt(agent)} alt="" style={{ position: "absolute", right: "1%", top: "-6%",
+            height: "158%", width: "auto", maxWidth: "none", opacity: 0.92,
+            filter: `drop-shadow(0 0 28px ${hue}55) saturate(1.05)`,
+            maskImage: "linear-gradient(180deg, #000 33%, transparent 50%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 33%, transparent 50%)" }} />
+          {/* Darken toward the text side so the name and chips stay legible
+              wherever the figure's arm or weapon falls behind them. */}
+          <div style={{ position: "absolute", inset: 0,
+            background: "linear-gradient(90deg, rgba(10,13,22,0.94) 34%, rgba(10,13,22,0.62) 55%, rgba(10,13,22,0.08) 78%, transparent)" }} />
+        </>
+      )}
     </div>
   );
 }
@@ -10288,7 +10312,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
   const peakCol = RANKS[profile.peak_rank]?.c || "#9af5c2";
 
   return shell(hue, <>
-    <CardArt hue={hue} />
+    <CardArt hue={hue} agent={profile.agent || null} />
     <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
       pointerEvents: "none", opacity: 0.35 }} />
     <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
