@@ -2041,7 +2041,7 @@ function Stat({ label, value, hue }) {
 }
 
 /* ── KDA / performance radar ── */
-function StatRadar({ player, size = 200, hue }) {
+function StatRadar({ player, size = 200, hue, compare = null }) {
   // Each axis is normalised against a community ceiling so shapes stay
   // comparable between players — which hides the real numbers. Hovering
   // surfaces the value at its own corner.
@@ -2074,6 +2074,15 @@ function StatRadar({ player, size = 200, hue }) {
   };
   const ring = (f) => axes.map((_, i) => pt(i, R * f).join(",")).join(" ");
   const shape = axes.map((ax, i) => pt(i, R * Math.max(ax.v, 0.05)).join(",")).join(" ");
+  // Same normalisation as the player's shape, so the two are directly
+  // comparable — the point of drawing a league average at all.
+  const ghost = compare ? [
+    Math.min((compare.kda || 0) / 1.8, 1),
+    Math.min((compare.acs || 0) / 320, 1),
+    Math.min((compare.hs || 0) / 45, 1),
+    Math.min((compare.win || 0) / 100, 1),
+    (RANK_LIST.indexOf(compare.rank) + 1) / RANK_LIST.length,
+  ].map((v, i) => pt(i, R * Math.max(v, 0.05)).join(",")).join(" ") : null;
 
   function track(e) {
     const b = e.currentTarget.getBoundingClientRect();
@@ -2108,6 +2117,8 @@ function StatRadar({ player, size = 200, hue }) {
         const [x, y] = pt(i, R);
         return <line key={i} x1={c} y1={c} x2={x} y2={y} stroke="rgba(255,255,255,0.10)" />;
       })}
+      {ghost && <polygon points={ghost} fill="rgba(236,243,255,0.05)" stroke="rgba(236,243,255,0.5)"
+        strokeWidth="1.2" strokeDasharray="4 3" />}
       <polygon className="volt-radar-shape" pathLength="1" points={shape} fill={hue + "33"} stroke={hue} strokeWidth="2"
         style={{ filter: `drop-shadow(0 0 8px ${hue}88)` }} />
 
@@ -5880,7 +5891,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         {/* The viewer's own card, always first and always present. Built from
             their scouting profile, so it's populated from signup rather than
             waiting on a played match. */}
-        <YourCard profile={chrome?.myProfile} myTeam={myTeam} onGo={goto} />
+        <YourCard profile={chrome?.myProfile} viewerId={chrome?.viewerId} myTeam={myTeam} onGo={goto} />
 
         {/* Draft-time cells. */}
         {["registration_open", "registration_closed"].includes(ph) && (
@@ -10089,14 +10100,136 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
   );
 }
 
+// Neutral art for the player card. It used to be a Neon splash, which every
+// player saw whatever they main. This is built from the player's rank colour
+// alone — light, a grid, and the crest's hexagon as a watermark — so it fits
+// anyone and still changes from card to card.
+function CardArt({ hue }) {
+  const hex = (r) => {
+    const pts = [0, 1, 2, 3, 4, 5].map((i) => {
+      const a = (Math.PI / 3) * i - Math.PI / 2;
+      return `${100 + r * Math.cos(a)},${100 + r * Math.sin(a)}`;
+    });
+    return pts.join(" ");
+  };
+  return (
+    <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0,
+        background: `radial-gradient(ellipse 55% 75% at 84% 22%, ${hue}33, transparent 70%),
+                     radial-gradient(ellipse 45% 55% at 100% 100%, rgba(61,123,255,0.16), transparent 70%)` }} />
+      {/* Two light beams on the diagonal the notches use. */}
+      <div style={{ position: "absolute", inset: 0,
+        background: `linear-gradient(115deg, transparent 50%, ${hue}16 56%, transparent 62%),
+                     linear-gradient(115deg, transparent 64%, ${hue}0e 68%, transparent 72%)` }} />
+      <div style={{ position: "absolute", inset: 0,
+        backgroundImage: "linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)",
+        backgroundSize: "26px 26px",
+        maskImage: "linear-gradient(100deg, transparent 38%, #000 88%)",
+        WebkitMaskImage: "linear-gradient(100deg, transparent 38%, #000 88%)" }} />
+      <svg viewBox="0 0 200 200" style={{ position: "absolute", right: "-9%", top: "50%",
+        transform: "translateY(-50%)", width: "58%", maxWidth: 520, opacity: 0.5 }}>
+        {[92, 72, 52].map((r, i) => (
+          <polygon key={r} points={hex(r)} fill="none" stroke={hue}
+            strokeOpacity={[0.14, 0.1, 0.07][i]} strokeWidth={i === 0 ? 1.4 : 1} />
+        ))}
+        <polygon points={hex(52)} fill={hue} fillOpacity="0.04" />
+      </svg>
+    </div>
+  );
+}
+
+// Your form, oldest to newest: a line of ACS per match with each point
+// coloured by result. The chips underneath say W/L without needing the key.
+function FormStrip({ games }) {
+  if (!games.length) return null;
+  const w = 150, h = 34, pad = 4;
+  const vals = games.map((g) => g.acs);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const x = (i) => games.length === 1 ? w / 2 : pad + (i * (w - pad * 2)) / (games.length - 1);
+  const y = (v) => hi === lo ? h / 2 : h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
+  const line = games.map((g, i) => `${x(i)},${y(g.acs)}`).join(" ");
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
+        <polyline points={line} fill="none" stroke="rgba(125,166,255,0.6)" strokeWidth="1.5"
+          strokeLinejoin="round" className="volt-radar-shape" pathLength="1" />
+        {games.map((g, i) => (
+          <circle key={i} cx={x(i)} cy={y(g.acs)} r={i === games.length - 1 ? 3.6 : 2.6}
+            fill={g.won ? "#3ddc84" : "#ff4655"}>
+            <title>{`${g.acs} ACS · ${g.won ? "won" : "lost"}`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div style={{ display: "flex", gap: 4 }}>
+        {games.slice(-5).map((g, i) => (
+          <span key={i} style={{ width: 20, height: 20, display: "grid", placeItems: "center",
+            fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, fontWeight: 700,
+            color: g.won ? "#3ddc84" : "#ff6b78",
+            background: g.won ? "rgba(61,220,132,0.12)" : "rgba(255,70,85,0.12)",
+            border: `1px solid ${g.won ? "rgba(61,220,132,0.35)" : "rgba(255,70,85,0.35)"}` }}>
+            {g.won ? "W" : "L"}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // The viewer's own card — the dominant cell, and the reason to open the app
-// rather than read a DM. Built from the scouting profile, so it's populated
-// from signup rather than waiting on a played match.
+// rather than read a DM.
 //
-// Two rows: identity (radar + name) and a full-width stat base. Stats used to
-// sit under the name only, which left the lower-left quadrant under the radar
-// empty; spanning the width gives the card a foot and closes that hole.
-function YourCard({ profile, myTeam, onGo }) {
+// Two sources, kept visibly apart: the scouting profile (tracker numbers,
+// there from signup) and this league's own match results (what the leaderboard
+// actually ranks on). The radar compares you with the league average, so it no
+// longer repeats the tiles underneath it.
+function YourCard({ profile, viewerId, myTeam, onGo }) {
+  const [lg, setLg] = useState(null);
+  useEffect(() => {
+    if (!viewerId || !HAS_SUPABASE) return;
+    let ok = true;
+    (async () => {
+      try {
+        const cid = window.__VOLT.communityId;
+        const [{ data: mrs }, { data: pp }] = await Promise.all([
+          __sb.from("match_results").select("user_id, stat_payload, team_won, created_at").eq("community_id", cid),
+          __sb.from("player_profiles").select("kda, acs, hs, win, rank").eq("community_id", cid),
+        ]);
+        // Same "didn't actually play" rule as the leaderboard.
+        const played = (sp) => Number(sp?.acs || 0) > 0 || Number(sp?.k || 0) > 0
+                             || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
+        const agg = {};
+        for (const r of mrs || []) {
+          if (!played(r.stat_payload)) continue;
+          const a = (agg[r.user_id] ||= { sum: 0, n: 0 });
+          a.sum += Number(r.stat_payload.acs || 0); a.n++;
+        }
+        const table = Object.entries(agg).map(([id, a]) => ({ id, acs: a.sum / a.n, n: a.n }))
+          .sort((x, y) => y.acs - x.acs || y.n - x.n);
+        const pos = table.findIndex((r) => r.id === viewerId);
+        const mine = (mrs || []).filter((r) => r.user_id === viewerId && played(r.stat_payload))
+          .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+          .map((r) => ({ acs: Math.round(Number(r.stat_payload.acs || 0)), won: !!r.team_won }));
+        // League average of the same tracker stats the radar plots, so the two
+        // shapes are like for like.
+        const mean = (k) => {
+          const v = (pp || []).map((p) => Number(p[k])).filter((n) => Number.isFinite(n) && n > 0);
+          return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+        };
+        const ranks = (pp || []).map((p) => RANK_LIST.indexOf(p.rank)).filter((i) => i >= 0);
+        const avgRank = ranks.length ? RANK_LIST[Math.round(ranks.reduce((a, b) => a + b, 0) / ranks.length)] : null;
+        if (ok) setLg({
+          pos: pos >= 0 ? pos + 1 : null, of: table.length,
+          avg: pos >= 0 ? Math.round(table[pos].acs) : null,
+          played: mine.length, wins: mine.filter((g) => g.won).length,
+          recent: mine.slice(-8),
+          compare: (pp || []).length > 2
+            ? { kda: mean("kda"), acs: mean("acs"), hs: mean("hs"), win: mean("win"), rank: avgRank } : null,
+        });
+      } catch (e) { console.error("card league stats", e); if (ok) setLg({ failed: true }); }
+    })();
+    return () => { ok = false; };
+  }, [viewerId]);
+
   const shell = (hue, children) => (
     <div className="volt-cell" style={{
       ...PANEL(`${hue}55`, "18px 20px"),
@@ -10107,7 +10240,7 @@ function YourCard({ profile, myTeam, onGo }) {
     </div>
   );
   const head = (
-    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
       <span style={{ ...SEC_LABEL, fontSize: 9.5 }}>// Your card</span>
       <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(120,150,220,0.2), rgba(120,150,220,0))" }} />
       <button onClick={onGo("scout")} style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
@@ -10115,15 +10248,21 @@ function YourCard({ profile, myTeam, onGo }) {
         background: "none", border: "none", cursor: "pointer", padding: 0 }}>Scout hub →</button>
     </div>
   );
+  const sub = (text) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 8px",
+      fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)",
+      fontWeight: 700 }}>
+      {text}<span style={{ flex: 1, height: 1, background: "rgba(120,150,220,0.12)" }} />
+    </div>
+  );
 
-  // Still loading: hold the space so the grid doesn't jump when it arrives.
   if (!profile) return shell("#5b8dff", <>{head}<div style={{ flex: 1, display: "flex", alignItems: "center" }}><Skeleton rows={5} /></div></>);
 
-  // No rank yet: this is what every brand-new player sees first, so it says
-  // what the card is and how to fill it rather than rendering an empty radar.
   if (!profile.rank) return shell("#5b8dff", <>
+    <CardArt hue="#5b8dff" />
     {head}
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14 }}>
+    <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", gap: 14 }}>
       <Empty icon="◉" title="Your card is waiting"
         hint="Add your rank and paste a tracker screenshot — your radar, stats and trophies build themselves from it." />
       <button onClick={onGo("account")} style={shellBtn("primary", { padding: "11px 20px", fontSize: 12 })}>
@@ -10134,47 +10273,53 @@ function YourCard({ profile, myTeam, onGo }) {
 
   const hue = RANKS[profile.rank]?.c || "#5b8dff";
   const num = (v) => (v == null || v === "" ? null : Number(v));
-  const stats = [
+  const tiles = [
     { v: num(profile.kda), f: (x) => String(+x.toFixed(2)), label: "KDA", col: "#00e5ff" },
     { v: num(profile.acs), f: (x) => String(Math.round(x)), label: "ACS", col: "#ff4655" },
     { v: num(profile.hs),  f: (x) => Math.round(x) + "%",   label: "HS",  col: "#af9aec" },
     { v: num(profile.win), f: (x) => Math.round(x) + "%",   label: "WIN", col: "#3ddc84" },
-  ];
+  ].filter((t) => t.v != null);
+  const chip = (children, col, key) => (
+    <span key={key} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px",
+      fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
+      color: col, background: `${col}14`, border: `1px solid ${col}40`, clipPath: SHELL_NOTCH(6),
+      whiteSpace: "nowrap" }}>{children}</span>
+  );
+  const peakCol = RANKS[profile.peak_rank]?.c || "#9af5c2";
 
   return shell(hue, <>
-    {/* Art off the right edge — the same piece the rest of the page is built
-        around, clipped on a diagonal so it belongs to the panel. */}
-    <img src={IMG_HERO} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0,
-      height: "100%", width: "58%", objectFit: "cover", objectPosition: "right 22%",
-      opacity: 0.46, pointerEvents: "none",
-      clipPath: "polygon(22% 0, 100% 0, 100% 100%, 0 100%)",
-      maskImage: "linear-gradient(90deg, transparent, #000 45%)",
-      WebkitMaskImage: "linear-gradient(90deg, transparent, #000 45%)" }} />
-    <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none",
-      background: `linear-gradient(100deg, rgba(10,13,22,0.96) 38%, rgba(10,13,22,0.55) 62%, ${hue}22)` }} />
+    <CardArt hue={hue} />
     <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
-      pointerEvents: "none", opacity: 0.4 }} />
+      pointerEvents: "none", opacity: 0.35 }} />
     <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
       borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
     {head}
 
-    <div style={{ position: "relative", flex: 1, display: "flex", alignItems: "center",
-      gap: 22, flexWrap: "wrap" }}>
-      <div style={{ flex: "0 0 auto", marginLeft: -12 }}>
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+      <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
         <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
-          win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }} size={250} hue={hue} />
+          win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
+          compare={lg?.compare || null} size={270} hue={hue} />
+        {lg?.compare && (
+          <div style={{ display: "flex", gap: 14, marginTop: 2, fontSize: 9.5, letterSpacing: "0.16em",
+            textTransform: "uppercase", color: "rgba(200,215,255,0.45)" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 14, height: 2, background: hue }} />You</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 14, height: 0, borderTop: "1.5px dashed rgba(236,243,255,0.5)" }} />League avg</span>
+          </div>
+        )}
       </div>
-      <div style={{ flex: 1, minWidth: 170 }}>
+      <div style={{ flex: 1, minWidth: 200 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ flex: "0 0 auto", transform: "scale(0.68)",
             transformOrigin: "left center", marginRight: -30, marginLeft: -8 }}>
             <RankCrest rank={profile.rank} div={profile.rank_div} />
           </div>
-          <div style={{ fontSize: "clamp(30px, 3.4vw, 44px)", fontWeight: 700,
+          <div style={{ fontSize: "clamp(30px, 3.4vw, 46px)", fontWeight: 700,
             textTransform: "uppercase", letterSpacing: "0.005em", lineHeight: 0.95,
             textShadow: `0 0 40px ${hue}55` }}>{profile.display_name || "You"}</div>
         </div>
-        {/* Role and agent — the crest has already said the rank. */}
         <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.12em",
           textTransform: "uppercase", color: hue, marginTop: 8 }}>
           {profile.role || "Player"}
@@ -10182,47 +10327,84 @@ function YourCard({ profile, myTeam, onGo }) {
             <span style={{ color: "rgba(236,243,255,0.55)", fontWeight: 400 }}>{"  ·  "}{profile.agent}</span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 10,
-          flexWrap: "wrap", fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase",
-          color: "rgba(200,215,255,0.38)" }}>
-          {profile.peak_rank && (
-            <span>Peak <span style={{ color: RANKS[profile.peak_rank]?.c || "#9af5c2" }}>
-              {rankLabel(profile.peak_rank, profile.peak_rank_div)}</span></span>
-          )}
-          {profile.weekends_won > 0 && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span style={{ fontSize: 12, filter: "drop-shadow(0 0 5px rgba(245,196,83,0.55))" }}>🏆</span>
-              <span style={{ color: "#f5c453" }}>
-                {profile.weekends_won}{profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
-              </span>
-            </span>
-          )}
-          {myTeam && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: myTeam.hue }}>
-              <TeamMono name={myTeam.name} hue={myTeam.hue} size={13} />{myTeam.name}
-            </span>
-          )}
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 12 }}>
+          {profile.peak_rank && chip(<>Peak {rankLabel(profile.peak_rank, profile.peak_rank_div)}</>, peakCol, "peak")}
+          {profile.weekends_won > 0 && chip(<>
+            <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
+            {profile.weekends_won} {profile.weekends_won === 1 ? "title" : "titles"}
+            {profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
+          </>, "#f5c453", "trophy")}
+          {myTeam && chip(<><TeamMono name={myTeam.name} hue={myTeam.hue} size={12} />{myTeam.name}</>, myTeam.hue, "team")}
         </div>
       </div>
     </div>
 
-    {/* The base: four equal tiles across the full width. */}
-    <div style={{ position: "relative", display: "grid", gap: 8, marginTop: 14,
-      gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))" }}>
-      {stats.filter((s) => s.v != null).map((s, i) => (
-        <div key={s.label} style={{ padding: "12px 14px", position: "relative", overflow: "hidden",
-          background: "rgba(10,13,22,0.55)", border: "1px solid rgba(120,150,220,0.16)",
-          clipPath: SHELL_NOTCH(8) }}>
-          <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2,
-            background: s.col, opacity: 0.7 }} />
-          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 24,
-            color: s.col, lineHeight: 1 }}>
-            <CountUp to={s.v} format={s.f} delay={i * 90} />
+    <div style={{ position: "relative" }}>
+      {sub("From tracker")}
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))" }}>
+        {tiles.map((s, i) => (
+          <div key={s.label} style={{ padding: "11px 14px", position: "relative", overflow: "hidden",
+            background: "rgba(10,13,22,0.6)", border: "1px solid rgba(120,150,220,0.16)",
+            clipPath: SHELL_NOTCH(8) }}>
+            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2,
+              background: s.col, opacity: 0.7 }} />
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 23,
+              color: s.col, lineHeight: 1 }}>
+              <CountUp to={s.v} format={s.f} delay={i * 90} />
+            </div>
+            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
+              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{s.label}</div>
           </div>
-          <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
-            color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{s.label}</div>
+        ))}
+      </div>
+
+      {sub("In this league")}
+      {!lg && <Skeleton rows={2} />}
+      {lg && !lg.failed && !lg.played && (
+        <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", padding: "4px 0" }}>
+          No league matches yet — your first reported result starts your form line here.
         </div>
-      ))}
+      )}
+      {lg && lg.played > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26,
+              lineHeight: 1, color: lg.pos === 1 ? "#f5c453" : "#ecf3ff" }}>
+              #<CountUp to={lg.pos} />
+              <span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> / {lg.of}</span>
+            </div>
+            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
+              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>League rank</div>
+          </div>
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26,
+              lineHeight: 1, color: "#00e5ff" }}>
+              <CountUp to={lg.avg} />
+              {profile.acs != null && (
+                <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 7,
+                  color: lg.avg >= Number(profile.acs) ? "#3ddc84" : "#ff8f9a" }}>
+                  {lg.avg >= Number(profile.acs) ? "▲" : "▼"} {Math.abs(lg.avg - Math.round(Number(profile.acs)))}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
+              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>ACS here · vs tracker</div>
+          </div>
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26,
+              lineHeight: 1, color: "#3ddc84" }}>
+              {lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}
+            </div>
+            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
+              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>Won–lost</div>
+          </div>
+          <div style={{ marginLeft: "auto" }}>
+            <FormStrip games={lg.recent} />
+            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
+              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>Form · ACS per match</div>
+          </div>
+        </div>
+      )}
     </div>
   </>);
 }
