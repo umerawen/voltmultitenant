@@ -10288,9 +10288,9 @@ function CardArt({ hue, agent, bare = false }) {
 
 // Your form, oldest to newest: a line of ACS per match with each point
 // coloured by result. The chips underneath say W/L without needing the key.
-function FormStrip({ games }) {
+function FormStrip({ games, part = "both", w = 150 }) {
   if (!games.length) return null;
-  const w = 150, h = 34, pad = 4;
+  const h = 34, pad = 4;
   const vals = games.map((g) => g.acs);
   const lo = Math.min(...vals), hi = Math.max(...vals);
   const x = (i) => games.length === 1 ? w / 2 : pad + (i * (w - pad * 2)) / (games.length - 1);
@@ -10298,7 +10298,7 @@ function FormStrip({ games }) {
   const line = games.map((g, i) => `${x(i)},${y(g.acs)}`).join(" ");
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
+      {part !== "chips" && <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
         <polyline points={line} fill="none" stroke="rgba(125,166,255,0.6)" strokeWidth="1.5"
           strokeLinejoin="round" className="volt-radar-shape" pathLength="1" />
         {games.map((g, i) => (
@@ -10307,8 +10307,8 @@ function FormStrip({ games }) {
             <title>{`${g.acs} ACS · ${g.won ? "won" : "lost"}`}</title>
           </circle>
         ))}
-      </svg>
-      <div style={{ display: "flex", gap: 4 }}>
+      </svg>}
+      {part !== "line" && <div style={{ display: "flex", gap: 4 }}>
         {games.slice(-5).map((g, i) => (
           <span key={i} style={{ width: 20, height: 20, display: "grid", placeItems: "center",
             fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, fontWeight: 700,
@@ -10318,7 +10318,7 @@ function FormStrip({ games }) {
             {g.won ? "W" : "L"}
           </span>
         ))}
-      </div>
+      </div>}
     </div>
   );
 }
@@ -10448,117 +10448,108 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
       pointerEvents: "none", opacity: 0.35 }} />
     <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
       borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
+    {/* The agent's name as a huge outline behind the figure: it ties the
+        art column to the card instead of leaving the figure on a flat panel. */}
+    {profile.agent && (
+      <span aria-hidden className="volt-yc-floor" style={{ position: "absolute", right: "1%", top: "9%", width: "40%",
+        textAlign: "center", pointerEvents: "none", fontWeight: 800, textTransform: "uppercase", lineHeight: 0.85,
+        fontSize: Math.min(112, Math.round(460 / Math.max(4, profile.agent.length))),
+        color: "transparent", WebkitTextStroke: `1.5px ${hue}40`, letterSpacing: "0.02em",
+        maskImage: "linear-gradient(180deg, #000 30%, transparent 95%)",
+        WebkitMaskImage: "linear-gradient(180deg, #000 30%, transparent 95%)" }}>{profile.agent}</span>
+    )}
     <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
     {head}
 
-    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+    {/* 1 — Identity, top left: the first thing read. */}
+    <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 10 }}>
+      <div style={{ flex: "0 0 auto", width: 74, display: "flex", justifyContent: "center" }}>
+        <div style={{ transform: "scale(0.8)" }}><RankCrest rank={profile.rank} div={profile.rank_div} /></div>
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: "clamp(34px, 3.8vw, 54px)", fontWeight: 700, textTransform: "uppercase",
+          lineHeight: 0.9, letterSpacing: "0.01em", textShadow: `0 0 40px ${hue}55`,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.display_name || "You"}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase",
+          color: hue, marginTop: 8 }}>
+          {profile.role || "Player"}
+          {profile.agent && <span style={{ color: "rgba(236,243,255,0.5)", fontWeight: 400 }}>{"  ·  "}{profile.agent}</span>}
+        </div>
+      </div>
+    </div>
+    <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 14 }}>
+      {profile.peak_rank && chip(<>Peak {rankLabel(profile.peak_rank, profile.peak_rank_div)}</>, peakCol, "peak")}
+      {profile.weekends_won > 0 && chip(<>
+        <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
+        {profile.weekends_won} {profile.weekends_won === 1 ? "title" : "titles"}
+        {profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
+      </>, "#f5c453", "trophy")}
+      {myTeam && chip(<><TeamMono name={myTeam.name} hue={myTeam.hue} size={12} />{myTeam.name}</>, myTeam.hue, "team")}
+    </div>
+
+    {/* 2 — Tracker profile: the radar and the four numbers it's drawn from,
+        side by side, filling the middle of the card. */}
+    <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap", margin: "14px 0" }}>
       <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
         <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
           win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
-          compare={lg?.compare || null} size={228} hue={hue} />
+          compare={lg?.compare || null} size={206} hue={hue} />
         {lg?.compare && (
-          <div style={{ display: "flex", gap: 14, marginTop: 2, fontSize: 9.5, letterSpacing: "0.16em",
+          <div style={{ display: "flex", gap: 12, fontSize: 9, letterSpacing: "0.16em",
             textTransform: "uppercase", color: "rgba(200,215,255,0.45)" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 14, height: 2, background: hue }} />You</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 14, height: 0, borderTop: "1.5px dashed rgba(236,243,255,0.5)" }} />League avg</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 12, height: 2, background: hue }} />You</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 12, height: 0, borderTop: "1.5px dashed rgba(236,243,255,0.5)" }} />League avg</span>
           </div>
         )}
       </div>
-      <div style={{ flex: 1, minWidth: 200 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ flex: "0 0 auto", transform: "scale(0.68)",
-            transformOrigin: "left center", marginRight: -30, marginLeft: -8 }}>
-            <RankCrest rank={profile.rank} div={profile.rank_div} />
-          </div>
-          <div style={{ fontSize: "clamp(26px, 2.8vw, 40px)", fontWeight: 700,
-            textTransform: "uppercase", letterSpacing: "0.005em", lineHeight: 0.95,
-            textShadow: `0 0 40px ${hue}55` }}>{profile.display_name || "You"}</div>
-        </div>
-        <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.12em",
-          textTransform: "uppercase", color: hue, marginTop: 8 }}>
-          {profile.role || "Player"}
-          {profile.agent && (
-            <span style={{ color: "rgba(236,243,255,0.55)", fontWeight: 400 }}>{"  ·  "}{profile.agent}</span>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 12 }}>
-          {profile.peak_rank && chip(<>Peak {rankLabel(profile.peak_rank, profile.peak_rank_div)}</>, peakCol, "peak")}
-          {profile.weekends_won > 0 && chip(<>
-            <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
-            {profile.weekends_won} {profile.weekends_won === 1 ? "title" : "titles"}
-            {profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
-          </>, "#f5c453", "trophy")}
-          {myTeam && chip(<><TeamMono name={myTeam.name} hue={myTeam.hue} size={12} />{myTeam.name}</>, myTeam.hue, "team")}
+      <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+        <div style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)",
+          fontWeight: 700, marginBottom: 12 }}>From tracker</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 18, columnGap: 16 }}>
+          {tiles.map((t, i) => (
+            <div key={t.label} style={{ paddingLeft: 12, borderLeft: `2px solid ${t.col}` }}>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 28, lineHeight: 1, color: t.col }}>
+                <CountUp to={t.v} format={t.f} delay={i * 90} /></div>
+              <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
+                color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{t.label}</div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
 
-    <div style={{ position: "relative" }}>
-      {sub("From tracker")}
-      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))" }}>
-        {tiles.map((s, i) => (
-          <div key={s.label} style={{ padding: "11px 14px", position: "relative", overflow: "hidden",
-            background: "rgba(10,13,22,0.6)", border: "1px solid rgba(120,150,220,0.16)",
-            clipPath: SHELL_NOTCH(8) }}>
-            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2,
-              background: s.col, opacity: 0.7 }} />
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 23,
-              color: s.col, lineHeight: 1 }}>
-              <CountUp to={s.v} format={s.f} delay={i * 90} />
-            </div>
-            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
-              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{s.label}</div>
-          </div>
-        ))}
+    {/* 3 — This league, pinned to the bottom edge as one strip. */}
+    <div style={{ marginTop: "auto", padding: "13px 16px", background: "rgba(8,11,20,0.62)",
+      borderTop: `1px solid ${hue}55`, clipPath: SHELL_NOTCH(8) }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <span style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)",
+          fontWeight: 700 }}>In this league</span>
+        {lg && lg.played > 0 && <span title="Form: ACS per match, oldest to newest"><FormStrip games={lg.recent} w={96} /></span>}
       </div>
-
-      {sub("In this league")}
       {!lg && <Skeleton rows={2} />}
       {lg && !lg.failed && !lg.played && (
-        <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", padding: "4px 0" }}>
-          No league matches yet — your first reported result starts your form line here.
+        <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
+          No league matches yet. Your first reported result starts your form line here.
         </div>
       )}
       {lg && lg.played > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26,
-              lineHeight: 1, color: lg.pos === 1 ? "#f5c453" : "#ecf3ff" }}>
-              #<CountUp to={lg.pos} />
-              <span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> / {lg.of}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+          {[
+            { v: <>#<CountUp to={lg.pos} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> / {lg.of}</span></>,
+              c: lg.pos === 1 ? "#f5c453" : "#ecf3ff", k: "League rank" },
+            { v: <><CountUp to={lg.avg} />{profile.acs != null && (
+                <span style={{ fontSize: 11, marginLeft: 6, color: lg.avg >= Number(profile.acs) ? "#3ddc84" : "#ff8f9a" }}>
+                  {lg.avg >= Number(profile.acs) ? "▲" : "▼"}{Math.abs(lg.avg - Math.round(Number(profile.acs)))}</span>)}</>,
+              c: "#00e5ff", k: "ACS · vs tracker" },
+            { v: <>{lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}</>, c: "#3ddc84", k: "Won–lost" },
+          ].map((x, i) => (
+            <div key={x.k} style={{ paddingRight: 18, borderRight: i < 2 ? "1px solid rgba(120,150,220,0.14)" : "none" }}>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 24, lineHeight: 1, color: x.c }}>{x.v}</div>
+              <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{x.k}</div>
             </div>
-            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
-              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>League rank</div>
-          </div>
-          <div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26,
-              lineHeight: 1, color: "#00e5ff" }}>
-              <CountUp to={lg.avg} />
-              {profile.acs != null && (
-                <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 7,
-                  color: lg.avg >= Number(profile.acs) ? "#3ddc84" : "#ff8f9a" }}>
-                  {lg.avg >= Number(profile.acs) ? "▲" : "▼"} {Math.abs(lg.avg - Math.round(Number(profile.acs)))}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
-              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>ACS here · vs tracker</div>
-          </div>
-          <div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26,
-              lineHeight: 1, color: "#3ddc84" }}>
-              {lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}
-            </div>
-            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
-              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>Won–lost</div>
-          </div>
-          <div style={{ marginLeft: "auto" }}>
-            <FormStrip games={lg.recent} />
-            <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
-              color: "rgba(200,215,255,0.42)", marginTop: 6 }}>Form · ACS per match</div>
-          </div>
+          ))}
         </div>
       )}
     </div>
@@ -10829,19 +10820,19 @@ function LeaderGlance({ viewerId, onOpen }) {
   if (!rows.length) return <Empty icon="≣" title="No matches yet" hint="Once a result is reported, the best performers rank here." />;
   const top = rows[0].acs || 1;
   const pos = rows.findIndex((r) => r.id === viewerId);
-  const shown = rows.slice(0, 6).map((r, i) => ({ ...r, i }));
-  if (pos >= 6) shown.push({ ...rows[pos], i: pos, pinned: true });
+  const shown = rows.slice(0, 5).map((r, i) => ({ ...r, i }));
+  if (pos >= 5) shown.push({ ...rows[pos], i: pos, pinned: true });
 
   return (
-    <div style={{ display: "grid", gap: 7 }}>
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, height: "100%", paddingTop: 6 }}>
       {shown.map((r) => {
         const me = r.id === viewerId;
         const lead = r.i === 0;
         return (
           <div key={r.id} style={{
             display: "flex", alignItems: "center", gap: 9,
-            padding: lead ? "7px 9px" : "1px 9px",
-            marginTop: r.pinned ? 4 : 0,
+            padding: lead || r.pinned ? "7px 9px" : "1px 9px",
+            marginTop: r.pinned ? 2 : 0,
             borderTop: r.pinned ? "1px dashed rgba(125,166,255,0.25)" : "none",
             paddingTop: r.pinned ? 8 : undefined,
             background: lead ? "linear-gradient(90deg, rgba(245,196,83,0.13), transparent 70%)"
@@ -10859,7 +10850,7 @@ function LeaderGlance({ viewerId, onOpen }) {
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {r.name}{r.pinned ? "  · you" : ""}
               </PName>
-              <Bar pct={(r.acs / top) * 100} h={lead ? 4 : 2.5} i={r.pinned ? 6 : r.i}
+              <Bar pct={(r.acs / top) * 100} h={lead ? 4 : 2.5} i={r.pinned ? 5 : r.i}
                 color={lead ? "linear-gradient(90deg,#f5c453,#ffdf9a)" : me ? "#7da6ff" : "#00e5ff"}
                 opacity={lead || me ? 1 : 0.45} style={{ marginTop: 4 }} />
             </div>
@@ -10902,7 +10893,7 @@ function PredictGlance({ viewerId, onOpen }) {
         sub={`${first.hit} of ${first.total} called`}
         hue={meFirst ? "#7da6ff" : "#f5c453"} />
       <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column",
-        justifyContent: "space-between", gap: 4, minWidth: 0 }}>
+        justifyContent: "center", gap: 13, minWidth: 0 }}>
         {rest.map((r, i) => {
           const me = r.userId === viewerId;
           return (
@@ -11249,7 +11240,7 @@ function ScoutGlance({ players, onOpen }) {
         name={<PName uid={first.id} onOpen={onOpen}>{first.name}</PName>}
         sub={[first.role, first.agent !== "—" && first.agent, first.acs && `${first.acs} ACS`].filter(Boolean).join(" · ")}
         hue={RANKS[first.rank]?.c || "#7da6ff"} />
-      <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4, minWidth: 0 }}>
+      <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 13, minWidth: 0 }}>
         {rest.map((p, i) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
             <Pip i={i + 1} />
@@ -11487,7 +11478,7 @@ function BuysGlance({ state, onOpen }) {
         tag={ft}
         hue={ft?.hue || "#f5c453"} />
       <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column",
-        justifyContent: "space-between", gap: 4, minWidth: 0 }}>
+        justifyContent: "center", gap: 13, minWidth: 0 }}>
         {rest.map((p, i) => {
           const t = teamOf(p);
           return (
