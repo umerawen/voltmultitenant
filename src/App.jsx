@@ -9902,11 +9902,14 @@ const DASH_CSS = `
   .volt-spin { animation: voltSpin 1.1s linear infinite; }
   @keyframes voltColGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
   .volt-col { transform-origin: bottom center; animation: voltColGrow .7s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: var(--d, 0ms); }
-  @media (prefers-reduced-motion: reduce) { .volt-live-dot, .volt-spin, .volt-col { animation: none !important; } }
+  @media (prefers-reduced-motion: reduce) { .volt-live-dot, .volt-spin, .volt-col, .volt-rays { animation: none !important; } }
   .volt-yc > .volt-cell { flex: 1; }
-  .volt-yc-body { padding-right: 41%; }
+  .volt-yc-body > :not(:last-child) { margin-right: 44%; }
+  @keyframes voltRays { from { background-position: 0 0; } to { background-position: 280px 0; } }
+  .volt-rays { animation: voltRays 14s linear infinite; }
   @media (max-width: 760px) {
-    .volt-yc-body { padding-right: 0; }
+    .volt-yc-body > :not(:last-child) { margin-right: 0; }
+    .volt-yc-form { margin-left: 0 !important; }
     .volt-yc-fig, .volt-yc-floor { display: none; }
   }
   @keyframes voltGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
@@ -10339,7 +10342,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
       try {
         const cid = window.__VOLT.communityId;
         const [{ data: mrs }, { data: pp }] = await Promise.all([
-          __sb.from("match_results").select("user_id, stat_payload, team_won, created_at").eq("community_id", cid),
+          __sb.from("match_results").select("user_id, stat_payload, team_won, created_at, points_computed").eq("community_id", cid),
           __sb.from("player_profiles").select("kda, acs, hs, win, rank").eq("community_id", cid),
         ]);
         // Same "didn't actually play" rule as the leaderboard.
@@ -10369,6 +10372,8 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           pos: pos >= 0 ? pos + 1 : null, of: table.length,
           avg: pos >= 0 ? Math.round(table[pos].acs) : null,
           played: mine.length, wins: mine.filter((g) => g.won).length,
+          points: Math.round((mrs || []).filter((r) => r.user_id === viewerId)
+            .reduce((n, r) => n + Number(r.points_computed || 0), 0)),
           recent: mine.slice(-8),
           compare: (pp || []).length > 2
             ? { kda: mean("kda"), acs: mean("acs"), hs: mean("hs"), win: mean("win"), rank: avgRank } : null,
@@ -10435,130 +10440,139 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
   );
   const peakCol = RANKS[profile.peak_rank]?.c || "#9af5c2";
 
-  // The agent stands in their own column, full length and uncropped, drawn
-  // OUTSIDE the clipped panel so the head can rise above the card's top edge.
+  // Layout from the Figma pass: identity top-left, radar beside league rank
+  // and season points, a baseline row of ACS / record, and the agent standing
+  // in the right half with the head breaking out above the card. The figure
+  // is drawn OUTSIDE the clipped panel so it can do that.
   const art = agentArt(profile.agent);
+  // Sized by HEIGHT, so wide poses (Neon's lightning) don't shrink the body.
+  const FIG_RISE = 46;
+  const figStyle = { position: "absolute", left: "79%", transform: "translateX(-50%)", top: -FIG_RISE,
+    height: "calc(100% + 40px)", width: "auto", maxWidth: "none", pointerEvents: "none", zIndex: 2,
+    filter: `drop-shadow(0 10px 26px rgba(0,0,0,0.5)) drop-shadow(0 0 22px ${hue}40)`,
+    maskImage: "linear-gradient(180deg, #000 55%, transparent 76%)",
+    WebkitMaskImage: "linear-gradient(180deg, #000 55%, transparent 76%)" };
+  const LBL = { fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 8 };
+  const BIG = (c) => ({ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 30, lineHeight: 1, color: c });
   return <div className="volt-yc" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
-    {shell(hue, <>
-    <CardArt hue={hue} bare />
-    {/* Floor light the figure stands on. */}
-    <span aria-hidden className="volt-yc-floor" style={{ position: "absolute", right: "1%", bottom: -30, width: "40%", height: 120,
-      background: `radial-gradient(ellipse 50% 40% at 50% 55%, ${hue}55, transparent 70%)`, pointerEvents: "none" }} />
-    <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
-      pointerEvents: "none", opacity: 0.35 }} />
-    <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
-      borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
-    {/* The agent's name as a huge outline behind the figure: it ties the
-        art column to the card instead of leaving the figure on a flat panel. */}
-    {profile.agent && (
-      <span aria-hidden className="volt-yc-floor" style={{ position: "absolute", right: "1%", top: "9%", width: "40%",
-        textAlign: "center", pointerEvents: "none", fontWeight: 800, textTransform: "uppercase", lineHeight: 0.85,
-        fontSize: Math.min(112, Math.round(460 / Math.max(4, profile.agent.length))),
-        color: "transparent", WebkitTextStroke: `1.5px ${hue}40`, letterSpacing: "0.02em",
-        maskImage: "linear-gradient(180deg, #000 30%, transparent 95%)",
-        WebkitMaskImage: "linear-gradient(180deg, #000 30%, transparent 95%)" }}>{profile.agent}</span>
-    )}
-    <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
-    {head}
+    <div className="volt-cell" style={{ ...PANEL(`${hue}55`, "30px 34px 26px"), position: "relative", overflow: "hidden",
+      display: "flex", flexDirection: "column", flex: 1, minHeight: 460, clipPath: SHELL_NOTCH(18) }}>
+      <CardArt hue={hue} bare />
+      {/* Slow light rays sweeping behind the figure. */}
+      <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%",
+        pointerEvents: "none",
+        background: `repeating-linear-gradient(105deg, transparent 0 46px, ${hue}14 46px 52px, transparent 52px 110px, ${hue}0c 110px 140px)`,
+        maskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)",
+        WebkitMaskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)" }} />
+      <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.3 }} />
+      <img className="volt-yc-fig" src={art} alt="" aria-hidden style={{ ...figStyle, zIndex: 0 }} />
+      {/* Notch accents: the chamfered corners get a bright edge, the square ones a bracket. */}
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12,
+        borderLeft: `2px solid ${hue}`, borderTop: `2px solid ${hue}` }} />
+      <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12,
+        borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
+      <span aria-hidden style={{ position: "absolute", right: -1, top: 0, width: 26, height: 2, background: hue,
+        transform: "rotate(45deg)", transformOrigin: "right top", opacity: 0.8 }} />
 
-    {/* 1 — Identity, top left: the first thing read. */}
-    <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 10 }}>
-      <div style={{ flex: "0 0 auto", width: 74, display: "flex", justifyContent: "center" }}>
-        <div style={{ transform: "scale(0.8)" }}><RankCrest rank={profile.rank} div={profile.rank_div} /></div>
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "clamp(34px, 3.8vw, 54px)", fontWeight: 700, textTransform: "uppercase",
-          lineHeight: 0.9, letterSpacing: "0.01em", textShadow: `0 0 40px ${hue}55`,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.display_name || "You"}</div>
-        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase",
-          color: hue, marginTop: 8 }}>
-          {profile.role || "Player"}
-          {profile.agent && <span style={{ color: "rgba(236,243,255,0.5)", fontWeight: 400 }}>{"  ·  "}{profile.agent}</span>}
-        </div>
-      </div>
-    </div>
-    <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 14 }}>
-      {profile.peak_rank && chip(<>Peak {rankLabel(profile.peak_rank, profile.peak_rank_div)}</>, peakCol, "peak")}
-      {profile.weekends_won > 0 && chip(<>
-        <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
-        {profile.weekends_won} {profile.weekends_won === 1 ? "title" : "titles"}
-        {profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
-      </>, "#f5c453", "trophy")}
-      {myTeam && chip(<><TeamMono name={myTeam.name} hue={myTeam.hue} size={12} />{myTeam.name}</>, myTeam.hue, "team")}
-    </div>
-
-    {/* 2 — Tracker profile: the radar and the four numbers it's drawn from,
-        side by side, filling the middle of the card. */}
-    <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap", margin: "14px 0" }}>
-      <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
-          win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
-          compare={lg?.compare || null} size={206} hue={hue} />
-        {lg?.compare && (
-          <div style={{ display: "flex", gap: 12, fontSize: 9, letterSpacing: "0.16em",
-            textTransform: "uppercase", color: "rgba(200,215,255,0.45)" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 12, height: 2, background: hue }} />You</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 12, height: 0, borderTop: "1.5px dashed rgba(236,243,255,0.5)" }} />League avg</span>
+      <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
+        {/* Identity */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: "0 0 auto" }}><RankBadge rank={profile.rank} div={profile.rank_div} size="lg" /></div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: "clamp(26px, 2.6vw, 36px)", fontWeight: 700, textTransform: "uppercase",
+              lineHeight: 0.95, textShadow: `0 0 30px ${hue}44`,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.display_name || "You"}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: hue, marginTop: 4 }}>
+              {profile.role || "Player"}
+              {profile.agent && <span style={{ color: "rgba(236,243,255,0.5)", fontWeight: 400 }}>{" · "}{profile.agent}</span>}
+            </div>
           </div>
-        )}
-      </div>
-      <div style={{ flex: "1 1 180px", minWidth: 0 }}>
-        <div style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)",
-          fontWeight: 700, marginBottom: 12 }}>From tracker</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 18, columnGap: 16 }}>
-          {tiles.map((t, i) => (
-            <div key={t.label} style={{ paddingLeft: 12, borderLeft: `2px solid ${t.col}` }}>
-              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 28, lineHeight: 1, color: t.col }}>
-                <CountUp to={t.v} format={t.f} delay={i * 90} /></div>
-              <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase",
-                color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{t.label}</div>
-            </div>
-          ))}
         </div>
-      </div>
-    </div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 18 }}>
+          {profile.peak_rank && chip(<>Peak {rankLabel(profile.peak_rank, profile.peak_rank_div)}</>, peakCol, "peak")}
+          {profile.weekends_won > 0 && chip(<>
+            <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
+            {profile.weekends_won} {profile.weekends_won === 1 ? "title" : "titles"}
+            {profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
+          </>, "#f5c453", "trophy")}
+          {myTeam && chip(<><TeamMono name={myTeam.name} hue={myTeam.hue} size={12} />{myTeam.name}</>, myTeam.hue, "team")}
+        </div>
 
-    {/* 3 — This league, pinned to the bottom edge as one strip. */}
-    <div style={{ marginTop: "auto", padding: "13px 16px", background: "rgba(8,11,20,0.62)",
-      borderTop: `1px solid ${hue}55`, clipPath: SHELL_NOTCH(8) }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)",
-          fontWeight: 700 }}>In this league</span>
-        {lg && lg.played > 0 && <span title="Form: ACS per match, oldest to newest"><FormStrip games={lg.recent} w={96} /></span>}
-      </div>
-      {!lg && <Skeleton rows={2} />}
-      {lg && !lg.failed && !lg.played && (
-        <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
-          No league matches yet. Your first reported result starts your form line here.
+        {/* Radar | league rank + season points */}
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 26, flexWrap: "wrap", margin: "18px 0 10px" }}>
+          <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
+              win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
+              compare={lg?.compare || null} size={214} hue={hue} />
+            {lg?.compare && (
+              <div style={{ display: "flex", gap: 14, fontSize: 9.5, letterSpacing: "0.2em",
+                textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginTop: 2 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 14, height: 2, background: hue }} />You</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 14, height: 0, borderTop: "1.5px dashed rgba(236,243,255,0.5)" }} />League avg</span>
+              </div>
+            )}
+          </div>
+          <div style={{ alignSelf: "stretch", width: 1, margin: "18px 0",
+            background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.28), transparent)" }} />
+          <div style={{ display: "grid", gap: 30 }}>
+            {!lg && <Skeleton rows={3} />}
+            {lg && (
+              <div>
+                <div style={BIG(lg.pos === 1 ? "#f5c453" : "#ecf3ff")}>
+                  {lg.pos ? <>#<CountUp to={lg.pos} /></> : "—"}
+                  {lg.pos && <span style={{ fontSize: 14, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> / {lg.of}</span>}
+                </div>
+                <div style={LBL}>League rank</div>
+              </div>
+            )}
+            {lg && (
+              <div>
+                <div style={BIG("#ecf3ff")}><CountUp to={lg.points || 0} dur={1100} /></div>
+                <div style={LBL}>Season points</div>
+              </div>
+            )}
+          </div>
         </div>
-      )}
-      {lg && lg.played > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-          {[
-            { v: <>#<CountUp to={lg.pos} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> / {lg.of}</span></>,
-              c: lg.pos === 1 ? "#f5c453" : "#ecf3ff", k: "League rank" },
-            { v: <><CountUp to={lg.avg} />{profile.acs != null && (
-                <span style={{ fontSize: 11, marginLeft: 6, color: lg.avg >= Number(profile.acs) ? "#3ddc84" : "#ff8f9a" }}>
-                  {lg.avg >= Number(profile.acs) ? "▲" : "▼"}{Math.abs(lg.avg - Math.round(Number(profile.acs)))}</span>)}</>,
-              c: "#00e5ff", k: "ACS · vs tracker" },
-            { v: <>{lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}</>, c: "#3ddc84", k: "Won–lost" },
-          ].map((x, i) => (
-            <div key={x.k} style={{ paddingRight: 18, borderRight: i < 2 ? "1px solid rgba(120,150,220,0.14)" : "none" }}>
-              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 24, lineHeight: 1, color: x.c }}>{x.v}</div>
-              <div style={{ fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{x.k}</div>
+
+        {/* Baseline: this league's ACS and record, form under the figure. */}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 40, flexWrap: "wrap" }}>
+          {lg && lg.played > 0 ? <>
+            <div>
+              <div style={BIG("#00e5ff")}>
+                <CountUp to={lg.avg} />
+                {profile.acs != null && (
+                  <span style={{ fontSize: 12, marginLeft: 10, color: lg.avg >= Number(profile.acs) ? "#3ddc84" : "#ff8f9a" }}>
+                    {lg.avg >= Number(profile.acs) ? "▲" : "▼"} {Math.abs(lg.avg - Math.round(Number(profile.acs)))}</span>
+                )}
+              </div>
+              <div style={LBL}>ACS here · vs tracker</div>
             </div>
-          ))}
+            <div>
+              <div style={BIG("#3ddc84")}>{lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}</div>
+              <div style={LBL}>Won–lost</div>
+            </div>
+            <div className="volt-yc-form" style={{ marginLeft: "auto" }}>
+              <FormStrip games={lg.recent} part="line" w={160} />
+              <div style={LBL}>Form · ACS per match</div>
+            </div>
+          </> : lg && !lg.failed ? (
+            <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
+              No league matches yet. Your first reported result starts your record here.
+            </div>
+          ) : null}
         </div>
-      )}
+      </div>
     </div>
+    {/* Head only: the slice of the figure that rises above the card. The
+        body is drawn inside the panel, behind the text. */}
+    {/* Cropped at the card's right edge, like the body inside the panel. */}
+    <div aria-hidden className="volt-yc-fig" style={{ position: "absolute", top: -FIG_RISE, left: 0, right: 0, bottom: 0,
+      overflow: "hidden", pointerEvents: "none", zIndex: 2 }}>
+      <img src={art} alt="" style={{ ...figStyle, top: 0, height: `calc(100% - ${FIG_RISE - 40}px)`,
+        clipPath: `inset(0 0 calc(100% - ${FIG_RISE}px) 0)` }} />
     </div>
-  </>)}
-    <img className="volt-yc-fig" src={art} alt="" aria-hidden style={{ position: "absolute",
-      right: "-3%", bottom: 10, width: "45%", height: "calc(100% + 40px)",
-      objectFit: "contain", objectPosition: "center bottom", pointerEvents: "none", zIndex: 2,
-      filter: `drop-shadow(0 12px 28px rgba(0,0,0,0.55)) drop-shadow(0 0 22px ${hue}40)` }} />
   </div>;
 }
 
