@@ -2015,7 +2015,7 @@ function RankBadge({ rank, div, size = "md", solidDiv = false }) {
           minWidth: dim * 0.38, height: dim * 0.38, display: "grid", placeItems: "center",
           fontSize: dim * 0.28, lineHeight: 1, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif",
           color: solidDiv ? "#0a0d18" : r.c, background: solidDiv ? r.c : "#0a0d18",
-          border: `1px solid ${solidDiv ? "#0a0d18" : r.c}`, borderRadius: dim * 0.1,
+          border: solidDiv ? "none" : `1px solid ${r.c}`, borderRadius: dim * 0.1,
           padding: `0 ${dim * 0.06}px` }}>{div}</span>
       )}
     </div>
@@ -10130,11 +10130,6 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
                : phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
       {phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
       {gold && <span aria-hidden className="volt-shimmer" />}
-      {gold && (
-        <span aria-hidden style={{ position: "absolute", right: -30, top: "50%",
-          transform: "translateY(-50%)", fontSize: 150, lineHeight: 1, opacity: 0.07,
-          pointerEvents: "none" }}>🏆</span>
-      )}
       {/* Both brackets, matching the auction block — one alone reads as a
           rendering glitch rather than a deliberate frame. */}
       <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
@@ -10198,14 +10193,15 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
           ].filter(Boolean);
           if (!names.length) return null;
           return (
-            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <span aria-hidden style={{ fontSize: 30, lineHeight: 1, marginRight: 4,
+                filter: "drop-shadow(0 0 10px rgba(245,196,83,0.45))" }}>🏆</span>
               {names.slice(0, 5).map((p, i) => (
                 <span key={p.id} style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase",
                   padding: "6px 11px", whiteSpace: "nowrap",
                   color: i === 0 ? "#f5c453" : "rgba(236,243,255,0.82)",
                   background: i === 0 ? "rgba(245,196,83,0.14)" : "rgba(255,255,255,0.04)",
-                  border: `1px solid ${i === 0 ? "rgba(245,196,83,0.4)" : "rgba(120,150,220,0.18)"}`,
-                  clipPath: SHELL_NOTCH(7) }}>
+                  border: `1px solid ${i === 0 ? "rgba(245,196,83,0.45)" : "rgba(120,150,220,0.22)"}` }}>
                   {i === 0 ? "★ " : ""}{p.name}
                 </span>
               ))}
