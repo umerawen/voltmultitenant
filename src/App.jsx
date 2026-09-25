@@ -1994,7 +1994,7 @@ function TOverrideEditor({ state, t, teamOf, onOverride }) {
     </div>
   );
 }
-function RankBadge({ rank, div, size = "md" }) {
+function RankBadge({ rank, div, size = "md", solidDiv = false }) {
   const r = RANKS[rank] || RANKS.Iron;
   const dim = size === "xl" ? 80 : size === "lg" ? 64 : size === "md" ? 34 : 24;
   const showDiv = hasDivisions(rank) && !!div;
@@ -2014,7 +2014,8 @@ function RankBadge({ rank, div, size = "md" }) {
         <span style={{ position: "absolute", right: dim * -0.06, bottom: dim * -0.04,
           minWidth: dim * 0.38, height: dim * 0.38, display: "grid", placeItems: "center",
           fontSize: dim * 0.28, lineHeight: 1, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif",
-          color: r.c, background: "#0a0d18", border: `1px solid ${r.c}`, borderRadius: dim * 0.1,
+          color: solidDiv ? "#0a0d18" : r.c, background: solidDiv ? r.c : "#0a0d18",
+          border: `1px solid ${solidDiv ? "#0a0d18" : r.c}`, borderRadius: dim * 0.1,
           padding: `0 ${dim * 0.06}px` }}>{div}</span>
       )}
     </div>
@@ -10372,6 +10373,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           pos: pos >= 0 ? pos + 1 : null, of: table.length,
           avg: pos >= 0 ? Math.round(table[pos].acs) : null,
           played: mine.length, wins: mine.filter((g) => g.won).length,
+          best: mine.reduce((m, g) => Math.max(m, g.acs), 0),
           points: Math.round((mrs || []).filter((r) => r.user_id === viewerId)
             .reduce((n, r) => n + Number(r.points_computed || 0), 0)),
           recent: mine.slice(-8),
@@ -10453,7 +10455,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
     maskImage: "linear-gradient(180deg, #000 55%, transparent 76%)",
     WebkitMaskImage: "linear-gradient(180deg, #000 55%, transparent 76%)" };
   const LBL = { fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 8 };
-  const BIG = (c) => ({ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 30, lineHeight: 1, color: c });
+  const BIG = (c) => ({ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 38, lineHeight: 1, color: c });
   return <div className="volt-yc" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
     <div className="volt-cell" style={{ ...PANEL(`${hue}55`, "30px 34px 26px"), position: "relative", overflow: "hidden",
       display: "flex", flexDirection: "column", flex: 1, minHeight: 460, clipPath: SHELL_NOTCH(18) }}>
@@ -10477,12 +10479,12 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
       <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
         {/* Identity */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ flex: "0 0 auto" }}><RankBadge rank={profile.rank} div={profile.rank_div} size="lg" /></div>
+          <div style={{ flex: "0 0 auto" }}><RankBadge rank={profile.rank} div={profile.rank_div} size="xl" solidDiv /></div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: "clamp(26px, 2.6vw, 36px)", fontWeight: 700, textTransform: "uppercase",
+            <div style={{ fontSize: "clamp(32px, 3.4vw, 48px)", fontWeight: 700, textTransform: "uppercase",
               lineHeight: 0.95, textShadow: `0 0 30px ${hue}44`,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.display_name || "You"}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: hue, marginTop: 4 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: hue, marginTop: 6 }}>
               {profile.role || "Player"}
               {profile.agent && <span style={{ color: "rgba(236,243,255,0.5)", fontWeight: 400 }}>{" · "}{profile.agent}</span>}
             </div>
@@ -10503,7 +10505,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
               win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
-              compare={lg?.compare || null} size={214} hue={hue} />
+              compare={lg?.compare || null} size={300} hue={hue} />
             {lg?.compare && (
               <div style={{ display: "flex", gap: 14, fontSize: 9.5, letterSpacing: "0.2em",
                 textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginTop: 2 }}>
@@ -10516,7 +10518,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           </div>
           <div style={{ alignSelf: "stretch", width: 1, margin: "18px 0",
             background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.28), transparent)" }} />
-          <div style={{ display: "grid", gap: 30 }}>
+          <div style={{ display: "grid", gap: 28 }}>
             {!lg && <Skeleton rows={3} />}
             {lg && (
               <div>
@@ -10531,6 +10533,12 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
               <div>
                 <div style={BIG("#ecf3ff")}><CountUp to={lg.points || 0} dur={1100} /></div>
                 <div style={LBL}>Season points</div>
+              </div>
+            )}
+            {lg?.best > 0 && (
+              <div>
+                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> ACS</span></div>
+                <div style={LBL}>Best game</div>
               </div>
             )}
           </div>
@@ -10565,13 +10573,15 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
         </div>
       </div>
     </div>
-    {/* Head only: the slice of the figure that rises above the card. The
-        body is drawn inside the panel, behind the text. */}
+    {/* The head: the slice that rises above the card. It overlaps the panel
+        by 3px so the top border and the seam between the two copies never
+        show as a line through the figure. The body is drawn inside the
+        panel, behind the text. */}
     {/* Cropped at the card's right edge, like the body inside the panel. */}
     <div aria-hidden className="volt-yc-fig" style={{ position: "absolute", top: -FIG_RISE, left: 0, right: 0, bottom: 0,
       overflow: "hidden", pointerEvents: "none", zIndex: 2 }}>
       <img src={art} alt="" style={{ ...figStyle, top: 0, height: `calc(100% - ${FIG_RISE - 40}px)`,
-        clipPath: `inset(0 0 calc(100% - ${FIG_RISE}px) 0)` }} />
+        clipPath: `inset(0 0 calc(100% - ${FIG_RISE + 3}px) 0)` }} />
     </div>
   </div>;
 }
