@@ -2011,12 +2011,12 @@ function RankBadge({ rank, div, size = "md", solidDiv = false }) {
       {/* Division rides in the corner rather than inside the crest — at 24px the
           hexagon has no room for two glyphs without both becoming unreadable. */}
       {showDiv && (
-        <span style={{ position: "absolute", right: dim * -0.06, bottom: dim * -0.04,
-          minWidth: dim * 0.38, height: dim * 0.38, display: "grid", placeItems: "center",
-          fontSize: dim * 0.28, lineHeight: 1, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif",
+        <span style={{ position: "absolute", right: dim * (solidDiv ? 0.02 : -0.06), bottom: dim * (solidDiv ? 0.06 : -0.04),
+          minWidth: dim * (solidDiv ? 0.27 : 0.38), height: dim * (solidDiv ? 0.27 : 0.38), display: "grid", placeItems: "center",
+          fontSize: dim * (solidDiv ? 0.2 : 0.28), lineHeight: 1, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif",
           color: solidDiv ? "#0a0d18" : r.c, background: solidDiv ? r.c : "#0a0d18",
-          border: solidDiv ? "none" : `1px solid ${r.c}`, borderRadius: dim * 0.1,
-          padding: `0 ${dim * 0.06}px` }}>{div}</span>
+          border: solidDiv ? "none" : `1px solid ${r.c}`, borderRadius: dim * (solidDiv ? 0.06 : 0.1),
+          padding: `0 ${dim * 0.05}px`, boxShadow: solidDiv ? `0 0 10px ${r.glow}` : "none" }}>{div}</span>
       )}
     </div>
   );
