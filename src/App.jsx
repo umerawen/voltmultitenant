@@ -5560,25 +5560,25 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         /* The hero is only ever as tall as the column beside it: three glances
            make a square block, two make a shorter one, one shouldn't leave the
            hero towering over a single small cell. */
-        .volt-bento:has(> :nth-child(3):last-child) > *:first-child { grid-row: span 2; }
-        .volt-bento:has(> :nth-child(2):last-child) > *:first-child { grid-row: span 1; }
+        .volt-bento:not(.volt-3col):has(> :nth-child(3):last-child) > *:first-child { grid-row: span 2; }
+        .volt-bento:not(.volt-3col):has(> :nth-child(2):last-child) > *:first-child { grid-row: span 1; }
         /* Four glances: widen to four columns so the hero keeps its 2x2 block
            and the cells fill a 2x2 beside it, instead of three stacking and one
            orphaning onto a row of its own. */
-        .volt-bento:has(> :nth-child(5):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-        .volt-bento:has(> :nth-child(5):last-child) > *:first-child { grid-row: span 2; }
+        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) > *:first-child { grid-row: span 2; }
         /* Six glances: four small ones stack beside the hero, then two
            double-width cells close the row underneath so the block ends as a
            rectangle rather than trailing off. */
-        .volt-bento:has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-        .volt-bento:has(> :nth-child(7):last-child) > *:first-child { grid-row: span 2; }
+        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) > *:first-child { grid-row: span 2; }
         @media (max-width: 1100px) {
           .volt-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; }
           .volt-bento > *:first-child { grid-column: 1 / -1; grid-row: auto; }
         }
         @media (max-width: 700px) {
           .volt-bento { grid-template-columns: minmax(0, 1fr); }
-          .volt-bento > *:first-child { grid-column: auto; }
+          .volt-bento > * { grid-column: 1 / -1 !important; }
         }
         .volt-cell[style*="cursor: pointer"]:hover,
         .volt-cell[style*="cursor:pointer"]:hover {
@@ -5893,6 +5893,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const goto = (id) => () => setView(id);
   // Any player name on the dashboard opens their player file.
   const openPlayer = (uid) => { if (!uid) return; setProfileFrom(view); setProfileUser(uid); setView("profile"); };
+  // The viewer's team for the dashboard: the seat they captain, or the team
+  // that bought them. \`myTeam\` alone is captains only, so a drafted player
+  // never saw their own squad here.
+  const dashTeam = myTeam || (state.teams || []).find((t) =>
+    t.captainUserId === chrome?.viewerId || (t.roster || []).includes(chrome?.viewerId)) || null;
 
   const LobbyView = (
     <div className="view-in page-wrap py-6" style={{ position: "relative" }}>
@@ -5916,65 +5921,148 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={chrome?.regToggle}
         onGo={goto} myTeam={myTeam} isAdmin={isAdmin} state={state} />
 
-      <div className="volt-bento" style={{ display: "grid", gap: 12, marginTop: 14 }}>
+      <div className="volt-bento volt-3col" style={{ display: "grid", gap: 12, marginTop: 14 }}>
 
         {/* The viewer's own card, always first and always present. Built from
             their scouting profile, so it's populated from signup rather than
             waiting on a played match. */}
-        <YourCard profile={chrome?.myProfile} viewerId={chrome?.viewerId} myTeam={myTeam} onGo={goto} />
+        <YourCard profile={chrome?.myProfile} viewerId={chrome?.viewerId} myTeam={dashTeam} onGo={goto} />
 
-        {/* Draft-time cells. */}
-        {["registration_open", "registration_closed"].includes(ph) && (
-          <Cell title="Player pool" action="Scout" onGo={goto("scout")}>
-            <PoolGlance players={state.players} />
+        {/* ── Registration ─────────────────────────────────────────────── */}
+        {ph === "registration_open" && <>
+          {chrome?.isHost
+            ? <Cell title="Applications" action="Review" onGo={chrome?.onBack}>
+                <HostQueueGlance pending={chrome?.pendingCount} players={state.players} />
+              </Cell>
+            : <Cell title="Your entry">
+                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto} />
+              </Cell>}
+          <Cell title="Draft clock"><DraftClock ev={chrome?.ev} phase={ph} /></Cell>
+          <Cell title="Last champions"><LastChampGlance currentId={chrome?.ev?.id} /></Cell>
+          <Cell title="The pool" action="Scout" span={2} onGo={goto("scout")}>
+            <PoolBreakdown players={state.players} />
           </Cell>
-        )}
-        {ph === "drafting" && (
-          <Cell title="The auction" action="Enter" onGo={goto("block")} tone="rgba(61,123,255,0.5)">
-            <PoolGlance players={state.players} live />
+          <Cell title="Captains" action="Scout" onGo={goto("scout")}>
+            <CaptainsGlance players={state.players} teams={state.teams} onOpen={openPlayer} />
           </Cell>
-        )}
+        </>}
+        {ph === "registration_closed" && <>
+          <Cell title="Draft clock" tone="rgba(61,123,255,0.5)"><DraftClock ev={chrome?.ev} phase={ph} /></Cell>
+          {chrome?.isHost
+            ? <Cell title="Applications" action="Review" onGo={chrome?.onBack}>
+                <HostQueueGlance pending={chrome?.pendingCount} players={state.players} />
+              </Cell>
+            : <Cell title="Your entry">
+                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto} />
+              </Cell>}
+          <Cell title="Captains" action="Scout" onGo={goto("scout")}>
+            <CaptainsGlance players={state.players} teams={state.teams} onOpen={openPlayer} />
+          </Cell>
+          <Cell title="Scout list" action="Scout hub" span={2} onGo={goto("scout")}>
+            <ScoutGlance players={state.players} onOpen={openPlayer} />
+          </Cell>
+          <Cell title="Last champions"><LastChampGlance currentId={chrome?.ev?.id} /></Cell>
+        </>}
 
-        {/* After the draft there is a team to care about. */}
-        {["drafting", "matches_live", "settled"].includes(ph) && myTeam && (
-          <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
-            <TeamGlance team={myTeam} players={state.players} onOpen={openPlayer} />
+        {/* ── Draft ────────────────────────────────────────────────────── */}
+        {ph === "drafting" && <>
+          <Cell title="On the block" action="Enter" onGo={goto("block")} tone="rgba(61,220,132,0.5)">
+            <BlockGlance state={state} onOpen={openPlayer} />
           </Cell>
-        )}
-
-        {/* Match-time cells. */}
-        {/* Only while there is something still to play — "all matches played"
-            is a cell that occupies space to say nothing. */}
-        {ph === "matches_live" && (
-          <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
-            <FixtureGlance state={state} />
+          {dashTeam && (
+            <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
+              <TeamGlance team={dashTeam} players={state.players} onOpen={openPlayer} slots={4} />
+            </Cell>
+          )}
+          <Cell title="Latest sales" action="Auction" onGo={goto("block")}>
+            <SalesGlance state={state} onOpen={openPlayer} />
           </Cell>
-        )}
-        {ph === "settled" && (
-          <Cell title="Results" action="All fixtures" onGo={goto("bracket")} art={MAP_IMG.Ascent}>
-            <ResultsGlance state={state} />
+          <Cell title="Captains' purses" action="Rosters" onGo={goto("locker")}>
+            <PursesGlance state={state} />
           </Cell>
-        )}
-        {["matches_live", "settled"].includes(ph) && (
-          <Cell title="Team standings" action="All" onGo={goto("leaderboard")}>
-            <StandingsGlance state={state} />
-          </Cell>
-        )}
-        {["matches_live", "settled"].includes(ph) && (
-          <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
-            <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
-          </Cell>
-        )}
-        {["matches_live", "settled"].includes(ph) && (
-          <Cell title="Crystal ball" action="Predictions" span={2} onGo={goto("bracket")}>
-            <PredictGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
-          </Cell>
-        )}
-        {["drafting", "matches_live", "settled"].includes(ph) && (
           <Cell title="Biggest buys" action="Rosters" span={2} onGo={goto("locker")}>
             <BuysGlance state={state} onOpen={openPlayer} />
           </Cell>
-        )}
+          {!dashTeam && (
+            <Cell title="Draft progress" action="Scout" onGo={goto("scout")}>
+              <PoolGlance players={state.players} live />
+            </Cell>
+          )}
+        </>}
+
+        {/* ── Match days ───────────────────────────────────────────────── */}
+        {ph === "matches_live" && <>
+          <Cell title={dashTeam ? "Your next match" : "Next match"} action="Fixtures" onGo={goto("bracket")}
+            tone="rgba(175,154,236,0.5)">
+            <NextMatchGlance state={state} team={dashTeam} />
+          </Cell>
+          {dashTeam && (
+            <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
+              <TeamGlance team={dashTeam} players={state.players} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Team standings" action="All" onGo={goto("leaderboard")}>
+            <StandingsGlance state={state} />
+          </Cell>
+          {/* Rows under the card always add up to three columns: with a team,
+              Fixtures sits beside the Crystal Ball; without one it moves up into
+              the column the team cell would have taken. */}
+          {!dashTeam && (
+            <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
+              <FixtureGlance state={state} />
+            </Cell>
+          )}
+          <Cell title="Crystal ball" action="Predictions" span={2} onGo={goto("bracket")}>
+            <PredictLock state={state} />
+            <PredictGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+          </Cell>
+          {dashTeam
+            ? <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
+                <FixtureGlance state={state} />
+              </Cell>
+            : <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+                <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+              </Cell>}
+          <Cell title="Biggest buys" action="Rosters" span={dashTeam ? 2 : "full"} onGo={goto("locker")}>
+            <BuysGlance state={state} onOpen={openPlayer} />
+          </Cell>
+          {dashTeam && (
+            <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+              <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+            </Cell>
+          )}
+        </>}
+
+        {/* ── Settled ──────────────────────────────────────────────────── */}
+        {ph === "settled" && <>
+          {dashTeam && (
+            <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
+              <TeamGlance team={dashTeam} players={state.players} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Results" action="All fixtures" onGo={goto("bracket")} art={MAP_IMG.Ascent}>
+            <ResultsGlance state={state} />
+          </Cell>
+          <Cell title="Team standings" action="All" onGo={goto("leaderboard")}>
+            <StandingsGlance state={state} />
+          </Cell>
+          {!dashTeam && (
+            <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+              <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Crystal ball" action="Predictions" span={dashTeam ? 2 : "full"} onGo={goto("bracket")}>
+            <PredictGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+          </Cell>
+          {dashTeam && (
+            <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+              <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Biggest buys" action="Rosters" span="full" onGo={goto("locker")}>
+            <BuysGlance state={state} onOpen={openPlayer} />
+          </Cell>
+        </>}
       </div>
       </div>
     </div>
@@ -9769,7 +9857,7 @@ function Cell({ title, action, onGo, span = 1, tall = false, tone, art, children
     <div className="volt-cell" style={{
       ...PANEL(tone, "15px 17px"),
       position: "relative", overflow: "hidden",
-      gridColumn: `span ${span}`,
+      gridColumn: span === "full" ? "1 / -1" : `span ${span}`,
       display: "flex", flexDirection: "column",
       minHeight: tall ? 260 : 156,
       cursor: onGo ? "pointer" : "default",
@@ -9808,6 +9896,19 @@ function Cell({ title, action, onGo, span = 1, tall = false, tone, art, children
 // Dashboard motion. Lives with the page, not in the desktop rail's <style>,
 // so phones get it too.
 const DASH_CSS = `
+  @keyframes voltDot { 0%,100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; } 50% { box-shadow: 0 0 0 4px transparent; opacity: .45; } }
+  .volt-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: voltDot 1.4s ease-in-out infinite; }
+  @keyframes voltSpin { to { transform: rotate(360deg); } }
+  .volt-spin { animation: voltSpin 1.1s linear infinite; }
+  @keyframes voltColGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  .volt-col { transform-origin: bottom center; animation: voltColGrow .7s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: var(--d, 0ms); }
+  @media (prefers-reduced-motion: reduce) { .volt-live-dot, .volt-spin, .volt-col { animation: none !important; } }
+  .volt-yc > .volt-cell { flex: 1; }
+  .volt-yc-body { padding-right: 41%; }
+  @media (max-width: 760px) {
+    .volt-yc-body { padding-right: 0; }
+    .volt-yc-fig, .volt-yc-floor { display: none; }
+  }
   @keyframes voltGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
   .volt-bar { transform-origin: left center; animation: voltGrow .8s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: var(--d, 0ms); }
   @keyframes voltRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -10134,7 +10235,7 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
 // player saw whatever they main. This is built from the player's rank colour
 // alone — light, a grid, and the crest's hexagon as a watermark — so it fits
 // anyone and still changes from card to card.
-function CardArt({ hue, agent }) {
+function CardArt({ hue, agent, bare = false }) {
   const hex = (r) => {
     const pts = [0, 1, 2, 3, 4, 5].map((i) => {
       const a = (Math.PI / 3) * i - Math.PI / 2;
@@ -10156,14 +10257,14 @@ function CardArt({ hue, agent }) {
         backgroundSize: "26px 26px",
         maskImage: "linear-gradient(100deg, transparent 38%, #000 88%)",
         WebkitMaskImage: "linear-gradient(100deg, transparent 38%, #000 88%)" }} />
-      <svg viewBox="0 0 200 200" style={{ position: "absolute", right: "-9%", top: "50%",
+      {!bare && <svg viewBox="0 0 200 200" style={{ position: "absolute", right: "-9%", top: "50%",
         transform: "translateY(-50%)", width: "58%", maxWidth: 520, opacity: agent !== undefined ? 0.35 : 0.5 }}>
         {[92, 72, 52].map((r, i) => (
           <polygon key={r} points={hex(r)} fill="none" stroke={hue}
             strokeOpacity={[0.14, 0.1, 0.07][i]} strokeWidth={i === 0 ? 1.4 : 1} />
         ))}
         <polygon points={hex(52)} fill={hue} fillOpacity="0.04" />
-      </svg>
+      </svg>}
       {agent !== undefined && (
         <>
           {/* Cut to the upper body: the card is wider than it is tall, and a
@@ -10334,19 +10435,27 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
   );
   const peakCol = RANKS[profile.peak_rank]?.c || "#9af5c2";
 
-  return shell(hue, <>
-    <CardArt hue={hue} agent={profile.agent || null} />
+  // The agent stands in their own column, full length and uncropped, drawn
+  // OUTSIDE the clipped panel so the head can rise above the card's top edge.
+  const art = agentArt(profile.agent);
+  return <div className="volt-yc" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
+    {shell(hue, <>
+    <CardArt hue={hue} bare />
+    {/* Floor light the figure stands on. */}
+    <span aria-hidden className="volt-yc-floor" style={{ position: "absolute", right: "1%", bottom: -30, width: "40%", height: 120,
+      background: `radial-gradient(ellipse 50% 40% at 50% 55%, ${hue}55, transparent 70%)`, pointerEvents: "none" }} />
     <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0,
       pointerEvents: "none", opacity: 0.35 }} />
     <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
       borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
+    <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
     {head}
 
-    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
       <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
         <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
           win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
-          compare={lg?.compare || null} size={270} hue={hue} />
+          compare={lg?.compare || null} size={228} hue={hue} />
         {lg?.compare && (
           <div style={{ display: "flex", gap: 14, marginTop: 2, fontSize: 9.5, letterSpacing: "0.16em",
             textTransform: "uppercase", color: "rgba(200,215,255,0.45)" }}>
@@ -10363,7 +10472,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             transformOrigin: "left center", marginRight: -30, marginLeft: -8 }}>
             <RankCrest rank={profile.rank} div={profile.rank_div} />
           </div>
-          <div style={{ fontSize: "clamp(30px, 3.4vw, 46px)", fontWeight: 700,
+          <div style={{ fontSize: "clamp(26px, 2.8vw, 40px)", fontWeight: 700,
             textTransform: "uppercase", letterSpacing: "0.005em", lineHeight: 0.95,
             textShadow: `0 0 40px ${hue}55` }}>{profile.display_name || "You"}</div>
         </div>
@@ -10453,7 +10562,13 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
         </div>
       )}
     </div>
-  </>);
+    </div>
+  </>)}
+    <img className="volt-yc-fig" src={art} alt="" aria-hidden style={{ position: "absolute",
+      right: "-3%", bottom: 10, width: "45%", height: "calc(100% + 40px)",
+      objectFit: "contain", objectPosition: "center bottom", pointerEvents: "none", zIndex: 2,
+      filter: `drop-shadow(0 12px 28px rgba(0,0,0,0.55)) drop-shadow(0 0 22px ${hue}40)` }} />
+  </div>;
 }
 
 // Trophies as a row for the current streak, with the lifetime total beside it.
@@ -10508,7 +10623,7 @@ function PoolGlance({ players, live }) {
   );
 }
 
-function TeamGlance({ team, players, onOpen }) {
+function TeamGlance({ team, players, onOpen, slots = 0 }) {
   const roster = (team.roster || [])
     .map((id) => (players || []).find((p) => p.id === (typeof id === "string" ? id : id?.id)))
     .filter(Boolean);
@@ -10553,7 +10668,14 @@ function TeamGlance({ team, players, onOpen }) {
             </span>
           </div>
         ))}
-        {!roster.length && (
+        {/* While the draft runs, the empty seats are the point: show them. */}
+        {Array.from({ length: Math.max(0, slots - roster.length) }, (_, k) => (
+          <div key={"open" + k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <span style={{ flex: "0 0 auto", width: 30, height: 17, border: "1px dashed rgba(120,150,220,0.28)" }} />
+            <span style={{ color: "rgba(200,215,255,0.32)", fontStyle: "italic" }}>Open slot</span>
+          </div>
+        ))}
+        {!roster.length && !slots && (
           <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>Nobody drafted yet.</div>
         )}
       </div>
@@ -10567,9 +10689,13 @@ const allMatches = (t) => !t ? [] : t.format === "group"
 
 function FixtureGlance({ state }) {
   const teamOf = (id) => state.teams.find((x) => x.id === id);
-  const next = allMatches(state?.tournament).filter((m) => m && !m.done && m.teamA && m.teamB)
-    .sort((a, b) => (a.scheduledAt || "~").localeCompare(b.scheduledAt || "~")).slice(0, 3);
+  const now = useNow(30000);
+  const every = allMatches(state?.tournament).filter((m) => m && m.teamA && m.teamB);
+  const played = every.filter((m) => m.done).length;
+  const next = every.filter((m) => !m.done)
+    .sort((a, b) => (a.scheduledAt || "~").localeCompare(b.scheduledAt || "~")).slice(0, 4);
   if (!next.length) return <Empty icon="◈" title="Nothing left to play" hint="Every fixture has a result." />;
+  const isLive = (m) => m.scheduledAt && new Date(m.scheduledAt).getTime() <= now;
   const when = (iso) => {
     if (!iso) return "time TBA";
     const ms = new Date(iso) - Date.now();
@@ -10579,6 +10705,13 @@ function FixtureGlance({ state }) {
   };
   return (
     <div style={{ display: "grid", gap: 9 }}>
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'IBM Plex Mono',monospace",
+          fontSize: 10.5, color: "rgba(200,215,255,0.45)", marginBottom: 5 }}>
+          <span>{played} of {every.length} played</span><span>{every.length - played} to go</span>
+        </div>
+        <Bar pct={every.length ? (played / every.length) * 100 : 0} h={3} color="linear-gradient(90deg,#af9aec,#7da6ff)" />
+      </div>
       {next.map((m, i) => {
         const a = teamOf(m.teamA), b = teamOf(m.teamB);
         return (
@@ -10591,8 +10724,11 @@ function FixtureGlance({ state }) {
             <span style={{ fontSize: 9, color: "rgba(200,215,255,0.3)", letterSpacing: "0.14em" }}>VS</span>
             <span style={{ fontWeight: 700, textTransform: "uppercase", color: b?.hue }}>{b?.name || "TBD"}</span>
             <TeamMono name={b?.name} hue={b?.hue} size={18} />
-            <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5,
-              color: i === 0 ? "#7da6ff" : "rgba(200,215,255,0.4)", whiteSpace: "nowrap" }}>{when(m.scheduledAt)}</span>
+            {isLive(m)
+              ? <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 9.5,
+                  fontWeight: 700, letterSpacing: "0.16em", color: "#ff6b78" }}><span className="volt-live-dot" style={{ color: "#ff4655" }} />LIVE</span>
+              : <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5,
+                  color: i === 0 ? "#7da6ff" : "rgba(200,215,255,0.4)", whiteSpace: "nowrap" }}>{when(m.scheduledAt)}</span>}
           </div>
         );
       })}
@@ -10788,6 +10924,552 @@ function PredictGlance({ viewerId, onOpen }) {
 }
 
 // The auction's own headline: who cost the most.
+// ── Phase cells: registration, draft and match-day ───────────────────────
+// Same atoms as the settled dashboard (Cell, CountUp, Bar, TeamMono, PName,
+// Empty, FeatureTile, Pip) so every phase reads as one product.
+
+const MONO = "'IBM Plex Mono',monospace";
+const DIM = "rgba(200,215,255,0.42)";
+const TINY = { fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: DIM };
+
+// A clock that re-renders the cell it's in. One interval per mounted cell —
+// only countdown cells use it.
+function useNow(ms = 1000) {
+  const [n, setN] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setN(Date.now()), ms); return () => clearInterval(t); }, [ms]);
+  return n;
+}
+
+const relAgo = (ts, now) => {
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+};
+const relIn = (ms) => {
+  if (ms <= 0) return "now";
+  const m = Math.round(ms / 6e4);
+  if (m < 60) return `in ${Math.max(1, m)} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `in ${h}h ${m % 60 ? `${m % 60}m` : ""}`.trim();
+  return `in ${Math.round(h / 24)}d`;
+};
+const whenLabel = (iso) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+const dayLabel = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "short" }) : null;
+
+// Big segmented countdown: DD HH MM SS, with the leading zero segments dropped.
+function Segments({ ms, hue = "#7da6ff" }) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const parts = [
+    { v: Math.floor(t / 86400), k: "days" },
+    { v: Math.floor((t % 86400) / 3600), k: "hrs" },
+    { v: Math.floor((t % 3600) / 60), k: "min" },
+    { v: t % 60, k: "sec" },
+  ];
+  const shown = parts[0].v ? parts : parts.slice(1);
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {shown.map((p, i) => (
+        <div key={p.k} style={{ flex: 1, minWidth: 0, padding: "9px 4px 7px", textAlign: "center",
+          background: i === shown.length - 1 ? `${hue}10` : "rgba(10,13,22,0.6)",
+          border: `1px solid ${i === 0 ? hue + "55" : "rgba(120,150,220,0.16)"}`, clipPath: SHELL_NOTCH(7) }}>
+          <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 24, lineHeight: 1,
+            color: i === 0 ? hue : "#ecf3ff", fontVariantNumeric: "tabular-nums" }}>
+            {String(p.v).padStart(2, "0")}
+          </div>
+          <div style={{ ...TINY, fontSize: 8, marginTop: 5 }}>{p.k}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Countdown to whatever happens next before the draft ──────────────────
+function DraftClock({ ev, phase }) {
+  const now = useNow(1000);
+  const closes = ev?.reg_closes ? new Date(ev.reg_closes).getTime() : null;
+  const draft = ev?.draft_at ? new Date(ev.draft_at).getTime() : null;
+  const useClose = phase === "registration_open" && closes && closes > now;
+  const target = useClose ? closes : draft;
+  const label = useClose ? "Sign-ups close in" : "Draft starts in";
+  const dates = [
+    draft && `Draft ${whenLabel(ev.draft_at)}`,
+    ev?.starts_on && `Matches ${dayLabel(ev.starts_on)}${ev?.ends_on && ev.ends_on !== ev.starts_on ? `–${dayLabel(ev.ends_on)}` : ""}`,
+  ].filter(Boolean);
+  if (!target) return <Empty icon="◷" title="Draft time not set" hint="The host hasn't picked a draft time yet. It shows here the moment they do." />;
+  const left = target - now;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ ...TINY, color: "#7da6ff" }}>{left > 0 ? label : "Draft is due"}</span>
+        {left <= 0 && <span className="volt-live-dot" style={{ color: "#3ddc84" }} />}
+      </div>
+      {left > 0
+        ? <Segments ms={left} hue={left < 36e5 ? "#3ddc84" : "#7da6ff"} />
+        : <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", color: "#3ddc84" }}>Any minute now</div>}
+      {!!dates.length && (
+        <div style={{ fontFamily: MONO, fontSize: 10.5, color: "rgba(200,215,255,0.45)", lineHeight: 1.6 }}>
+          {dates.map((d) => <div key={d}>{d}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Your entry: the steps that decide whether you're in the draft ────────
+function EntryGlance({ reg, profile, phase, ev, onGo }) {
+  const now = useNow(60000);
+  const approved = reg && (reg.status || "approved") === "approved";
+  const declined = reg && reg.status === "declined";
+  const asked = ev?.availability_check_at && new Date(ev.availability_check_at).getTime() <= now;
+  const steps = [
+    { k: "Signed up", ok: !!reg,
+      note: reg ? (reg.is_captain ? "as a captain" : null)
+        : phase === "registration_open" ? "Use the toggle in the banner above" : "Sign-ups have closed" },
+    { k: "Approved by the host", ok: approved, bad: declined,
+      note: !reg ? null : declined ? "Not this time" : approved ? null : "Waiting on the host" },
+    { k: "Card complete", ok: !!(profile?.rank && profile?.role),
+      note: profile?.rank && profile?.role ? null : "Add your rank and role", go: "account" },
+    { k: "Discord linked", ok: !!(profile?.linked || profile?.discord),
+      note: profile?.linked || profile?.discord ? null : "So captains can reach you", go: "account" },
+    { k: "Available on the day", ok: !!reg?.availability_confirmed,
+      note: reg?.availability_confirmed ? null : asked ? "Confirm in Discord" : "We'll ask before the draft",
+      soft: !asked },
+  ];
+  const done = steps.filter((s) => s.ok).length;
+  const allIn = done === steps.length;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 9, height: "100%" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 26, lineHeight: 1,
+          color: allIn ? "#3ddc84" : "#ecf3ff" }}>{done}<span style={{ color: "rgba(200,215,255,0.35)", fontSize: 15 }}>/{steps.length}</span></span>
+        <span style={{ fontSize: 12, color: allIn ? "#3ddc84" : "rgba(200,215,255,0.5)" }}>
+          {allIn ? "You're in. See you at the draft." : `${steps.length - done} ${steps.length - done === 1 ? "step" : "steps"} left`}
+        </span>
+      </div>
+      <Bar pct={(done / steps.length) * 100} h={4}
+        color={allIn ? "linear-gradient(90deg,#3ddc84,#9af5c2)" : "linear-gradient(90deg,#3d7bff,#00e5ff)"} />
+      <div style={{ display: "grid", gap: 6, marginTop: 2 }}>
+        {steps.map((s, i) => {
+          const col = s.ok ? "#3ddc84" : s.bad ? "#ff6b78" : s.soft ? "rgba(200,215,255,0.35)" : "#f5c453";
+          return (
+            <div key={s.k} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5,
+              animation: `voltRise .4s ${i * 60}ms backwards` }}>
+              <span style={{ flex: "0 0 auto", width: 17, height: 17, display: "grid", placeItems: "center",
+                fontSize: 10, fontWeight: 700, color: s.ok ? "#0a0d18" : col,
+                background: s.ok ? "#3ddc84" : "transparent", border: `1px solid ${col}`,
+                clipPath: "polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%)" }}>
+                {s.ok ? "✓" : s.bad ? "✕" : ""}
+              </span>
+              <span style={{ flex: 1, minWidth: 0, color: s.ok ? "rgba(236,243,255,0.62)" : "#ecf3ff" }}>{s.k}</span>
+              {s.note && (s.go && !s.ok
+                ? <button onClick={(e) => { e.stopPropagation(); onGo(s.go)(); }} style={{ fontSize: 10.5,
+                    fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7da6ff",
+                    background: "none", border: "none", padding: 0, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    {s.note} →</button>
+                : <span style={{ fontSize: 10.5, color: col === "#3ddc84" ? DIM : col, whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis", maxWidth: "52%" }}>{s.note}</span>)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Hosts don't sign up, so their version of "Your entry" is the queue.
+function HostQueueGlance({ pending, players }) {
+  const pool = (players || []).filter((p) => !p.isCaptain);
+  const caps = (players || []).filter((p) => p.isCaptain);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 38, lineHeight: 1,
+          color: pending ? "#f5c453" : "#3ddc84" }}><CountUp to={pending || 0} /></span>
+        <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>
+          {pending ? (pending === 1 ? "application to review" : "applications to review") : "nothing waiting on you"}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 18, fontFamily: MONO, fontSize: 12 }}>
+        <span><b style={{ color: "#ecf3ff" }}>{pool.length}</b> <span style={{ color: DIM }}>players</span></span>
+        <span><b style={{ color: "#f5c453" }}>{caps.length}</b> <span style={{ color: DIM }}>captains</span></span>
+      </div>
+    </div>
+  );
+}
+
+// ── Last champions ────────────────────────────────────────────────────────
+function LastChampGlance({ currentId }) {
+  const [row, setRow] = useState(undefined);
+  useEffect(() => {
+    if (!HAS_SUPABASE) { setRow(null); return; }
+    let ok = true;
+    __sb.from("events").select("id, weekend_label, recap, created_at")
+      .eq("community_id", window.__VOLT.communityId).not("recap", "is", null)
+      .order("created_at", { ascending: false }).limit(3)
+      .then(({ data, error }) => {
+        if (!ok) return;
+        if (error) { console.error("last champs", error); setRow(null); return; }
+        setRow((data || []).find((e) => e.id !== currentId && e.recap?.team) || null);
+      });
+    return () => { ok = false; };
+  }, [currentId]);
+  if (row === undefined) return <Skeleton rows={3} />;
+  if (!row) return <Empty icon="🏆" title="No champion yet" hint="This is the league's first tournament. The winners' name goes here." />;
+  const r = row.recap;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10,
+      position: "relative" }}>
+      <span aria-hidden className="volt-shimmer" />
+      <div style={{ ...TINY, color: "rgba(245,196,83,0.7)" }}>{row.weekend_label || "Last tournament"}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+        <TeamMono name={r.team} hue="#f5c453" size={34} />
+        <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase", lineHeight: 1,
+          color: "#f5c453", textShadow: "0 0 26px rgba(245,196,83,0.35)",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.team}</div>
+      </div>
+      {r.mvp && (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ ...TINY, fontSize: 8.5 }}>MVP</div>
+            <div style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", marginTop: 3 }}>
+              {r.mvp} <span style={{ fontFamily: MONO, fontSize: 11, color: DIM, fontWeight: 400 }}>{r.mvpPts}</span></div>
+          </div>
+          {r.decidedBy && (
+            <div>
+              <div style={{ ...TINY, fontSize: 8.5 }}>Decided by</div>
+              <div style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", marginTop: 3 }}>
+                {r.decidedBy === "final" ? "The final" : r.decidedBy}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── The pool, broken down: how many, what roles, what ranks ──────────────
+function PoolBreakdown({ players }) {
+  const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
+  const caps = (players || []).filter((p) => p.isCaptain).length;
+  if (!pool.length) return <Empty icon="⊞" title="Nobody in the pool yet"
+    hint="Players appear here as their sign-ups are approved." />;
+  const roles = ROLES.map((r) => ({ r, n: pool.filter((p) => (p.role || "Flex") === r).length }));
+  const maxRole = Math.max(1, ...roles.map((x) => x.n));
+  const ranks = RANK_LIST.map((r) => ({ r, n: pool.filter((p) => p.rank === r).length }));
+  const maxRank = Math.max(1, ...ranks.map((x) => x.n));
+  const top = [...ranks].reverse().find((x) => x.n);
+  return (
+    <div style={{ display: "flex", gap: 20, height: "100%", flexWrap: "wrap", alignItems: "stretch" }}>
+      <FeatureTile label="Signed up"
+        value={<CountUp to={pool.length} />}
+        name={`${caps} ${caps === 1 ? "captain" : "captains"}`}
+        sub={top ? `Highest: ${top.n} ${top.r}` : null}
+        hue="#7da6ff" />
+      <div style={{ flex: "1 1 170px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 7 }}>
+        <div style={{ ...TINY, marginBottom: 2 }}>By role</div>
+        {roles.map((x, i) => (
+          <div key={x.r} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+            <span style={{ flex: "0 0 72px", color: "rgba(236,243,255,0.75)" }}>
+              <span style={{ color: "#7da6ff", marginRight: 5, fontSize: 9 }}>{ROLE_GLYPH[x.r]}</span>{x.r}</span>
+            <div style={{ flex: 1 }}><Bar pct={(x.n / maxRole) * 100} h={6} i={i}
+              color="linear-gradient(90deg,#3d7bff,#00e5ff)" opacity={x.n ? 1 : 0.2} /></div>
+            <span style={{ flex: "0 0 18px", textAlign: "right", fontFamily: MONO, fontSize: 11, color: "#ecf3ff" }}>{x.n}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ flex: "1 1 200px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div style={{ ...TINY, marginBottom: 8 }}>By rank</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 78 }}>
+          {ranks.map((x, i) => (
+            <div key={x.r} title={`${x.r}: ${x.n}`} style={{ flex: 1, display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "flex-end", height: "100%", gap: 3 }}>
+              {x.n > 0 && <span style={{ fontFamily: MONO, fontSize: 9.5, color: RANKS[x.r].c }}>{x.n}</span>}
+              <div className="volt-col" style={{ width: "100%", height: `${Math.max(x.n ? 10 : 3, (x.n / maxRank) * 100)}%`,
+                background: x.n ? `linear-gradient(180deg, ${RANKS[x.r].c}, ${RANKS[x.r].c}55)` : "rgba(255,255,255,0.06)",
+                "--d": `${160 + i * 50}ms` }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
+          {ranks.map((x) => (
+            <span key={x.r} style={{ flex: 1, textAlign: "center", fontSize: 9, fontWeight: 700,
+              color: x.n ? RANKS[x.r].c : "rgba(200,215,255,0.25)" }}>{x.r === "Radiant" ? "R" : x.r[0]}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Captains: who's buying ────────────────────────────────────────────────
+function CaptainsGlance({ players, teams, onOpen }) {
+  const caps = (players || []).filter((p) => p.isCaptain);
+  if (!caps.length) return <Empty icon="♛" title="No captains yet"
+    hint="Captains are picked from sign-ups. They'll line up here before the draft." />;
+  const teamOf = (id) => (teams || []).find((t) => t.captainUserId === id);
+  return (
+    <div style={{ display: "grid", gap: 7 }}>
+      {caps.slice(0, 8).map((p, i) => {
+        const t = teamOf(p.id);
+        return (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5,
+            animation: `voltRise .4s ${i * 50}ms backwards` }}>
+            <TeamMono name={t?.name || p.name} hue={t?.hue || RANKS[p.rank]?.c} size={18} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <PName uid={p.id} onOpen={onOpen} style={{ display: "block", fontWeight: 700, overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</PName>
+              {t && <div style={{ fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase",
+                color: t.hue, marginTop: 1 }}>{t.name}</div>}
+            </div>
+            <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+          </div>
+        );
+      })}
+      <div style={{ fontFamily: MONO, fontSize: 10.5, color: "rgba(200,215,255,0.38)", marginTop: 2 }}>
+        {caps.length} × $10,000 to spend
+      </div>
+    </div>
+  );
+}
+
+// ── Scout list: the top of the pool, once sign-ups are locked ─────────────
+function ScoutGlance({ players, onOpen }) {
+  const score = (p) => RANK_LIST.indexOf(p.rank) * 10 + Number(p.rankDiv || 0);
+  const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false)
+    .sort((a, b) => score(b) - score(a) || Number(b.acs || 0) - Number(a.acs || 0)).slice(0, 6);
+  if (!pool.length) return <Empty icon="⊞" title="Nobody in the pool" hint="Approved players appear here." />;
+  const [first, ...rest] = pool;
+  return (
+    <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
+      <FeatureTile label="Top of the pool"
+        value={<span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          <RankBadge rank={first.rank} div={first.rankDiv} size="md" />
+          <span style={{ fontSize: "0.62em" }}>{rankLabel(first.rank, first.rankDiv)}</span></span>}
+        name={<PName uid={first.id} onOpen={onOpen}>{first.name}</PName>}
+        sub={[first.role, first.agent !== "—" && first.agent, first.acs && `${first.acs} ACS`].filter(Boolean).join(" · ")}
+        hue={RANKS[first.rank]?.c || "#7da6ff"} />
+      <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4, minWidth: 0 }}>
+        {rest.map((p, i) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+            <Pip i={i + 1} />
+            <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+            <PName uid={p.id} onOpen={onOpen} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+              whiteSpace: "nowrap", color: "rgba(236,243,255,0.85)" }}>{p.name}</PName>
+            <span style={{ flex: "0 0 34px", fontFamily: MONO, fontSize: 9, color: DIM, letterSpacing: "0.06em" }}>
+              {ROLE_ABBR[p.role] || "FLX"}</span>
+            <span style={{ flex: "0 0 52px", textAlign: "right", fontFamily: MONO, fontSize: 12, color: "#ff8f9a" }}>
+              {p.acs ? `${p.acs}` : "—"}<span style={{ fontSize: 8.5, color: DIM }}> ACS</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── On the block: the lot being bid on right now ─────────────────────────
+function BlockGlance({ state, onOpen }) {
+  const block = state?.block;
+  const p = block ? (state.players || []).find((x) => x.id === block.playerId) : null;
+  const leader = block?.leaderId ? (state.teams || []).find((t) => t.id === block.leaderId) : null;
+  const pool = (state?.players || []).filter((x) => !x.isCaptain && x.poolEligible !== false);
+  const sold = pool.filter((x) => x.status === "sold").length;
+  const bids = (state?.bidHistory || []).length;
+  const hue = p ? (RANKS[p.rank]?.c || "#7da6ff") : "#7da6ff";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 10 }}>
+      {p ? (
+        <div key={p.id} style={{ animation: "voltRise .45s backwards", display: "grid", gap: 9 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <RankBadge rank={p.rank} div={p.rankDiv} size="md" />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <PName uid={p.id} onOpen={onOpen} style={{ display: "block", fontSize: 20, fontWeight: 700,
+                textTransform: "uppercase", lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis",
+                whiteSpace: "nowrap" }}>{p.name}</PName>
+              <div style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: hue, marginTop: 4 }}>
+                {p.role}{p.agent && p.agent !== "—" ? <span style={{ color: DIM }}> · {p.agent}</span> : null}</div>
+            </div>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 9.5, fontWeight: 700,
+              letterSpacing: "0.18em", color: "#ff6b78" }}><span className="volt-live-dot" style={{ color: "#ff4655" }} />LIVE</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 12, padding: "10px 12px",
+            background: "linear-gradient(90deg, rgba(61,220,132,0.1), transparent 80%)", borderLeft: "2px solid #3ddc84" }}>
+            <div>
+              <div style={{ ...TINY, fontSize: 8.5 }}>{leader ? "Top bid" : "Opening at"}</div>
+              <div key={block.currentBid} style={{ fontFamily: MONO, fontWeight: 700, fontSize: 28, lineHeight: 1,
+                color: "#3ddc84", marginTop: 4, animation: "bidpop .4s" }}>{fmt(block.currentBid)}</div>
+            </div>
+            <div style={{ marginLeft: "auto", textAlign: "right", minWidth: 0 }}>
+              {leader
+                ? <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700,
+                    textTransform: "uppercase", color: leader.hue }}><TeamMono name={leader.name} hue={leader.hue} size={16} />{leader.name}</div>
+                : <div style={{ fontSize: 12, color: DIM }}>No bids yet</div>}
+              <div style={{ fontFamily: MONO, fontSize: 10, color: DIM, marginTop: 4 }}>{bids} {bids === 1 ? "bid" : "bids"}</div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12 }}>
+          <span className="volt-spin" style={{ width: 34, height: 34, flex: "0 0 auto", border: "2px solid rgba(125,166,255,0.2)",
+            borderTopColor: "#7da6ff", borderRadius: "50%" }} />
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase" }}>
+              {sold >= pool.length && pool.length ? "Board cleared" : "Next spin coming up"}</div>
+            <div style={{ fontSize: 11.5, color: DIM, marginTop: 3 }}>
+              {sold >= pool.length && pool.length ? "Every player has a team." : "The wheel picks who goes up next."}</div>
+          </div>
+        </div>
+      )}
+      <div style={{ marginTop: "auto" }}>
+        <Bar pct={pool.length ? (sold / pool.length) * 100 : 0} h={4} color="linear-gradient(90deg,#3d7bff,#00e5ff)" />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: MONO,
+          fontSize: 10.5, color: "rgba(200,215,255,0.4)" }}>
+          <span>{sold} drafted</span><span>{pool.length - sold} left</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Sales feed: the last few hammers ──────────────────────────────────────
+function SalesGlance({ state, onOpen }) {
+  const now = useNow(30000);
+  const sales = (state?.recentSales || []).slice(0, 5);
+  if (!sales.length) return <Empty icon="$" title="No sales yet" hint="Every sale lands here the moment the hammer drops." />;
+  const teamOf = (id) => (state.teams || []).find((t) => t.id === id);
+  return (
+    <div style={{ display: "grid", gap: 7 }}>
+      {sales.map((s, i) => {
+        const t = teamOf(s.teamId);
+        return (
+          <div key={`${s.playerId}-${s.ts}`} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5,
+            padding: i === 0 ? "7px 9px" : "0 9px",
+            background: i === 0 ? `linear-gradient(90deg, ${t?.hue || "#3d7bff"}22, transparent 80%)` : "none",
+            borderLeft: `2px solid ${i === 0 ? (t?.hue || "#3d7bff") : "transparent"}`,
+            animation: i === 0 ? "voltRise .45s backwards" : undefined }}>
+            <TeamMono name={t?.name} hue={t?.hue} size={17} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <PName uid={s.playerId} onOpen={onOpen} style={{ display: "block", fontWeight: i === 0 ? 700 : 400,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</PName>
+              {i === 0 && <div style={{ fontSize: 10, color: DIM, marginTop: 1 }}>
+                to <span style={{ color: t?.hue }}>{t?.name || "?"}</span>{s.bidCount ? ` · ${s.bidCount} bids` : ""}</div>}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, color: "#3ddc84" }}>{fmt(s.price)}</div>
+              <div style={{ fontFamily: MONO, fontSize: 9, color: "rgba(200,215,255,0.32)" }}>{s.ts ? relAgo(s.ts, now) : ""}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Captains' purses: who can still afford what ──────────────────────────
+function PursesGlance({ state, slots = 4 }) {
+  const teams = [...(state?.teams || [])].sort((a, b) => (b.budget || 0) - (a.budget || 0));
+  if (!teams.length) return <Empty icon="$" title="No teams yet" hint="Teams appear when the host builds them from the captains." />;
+  return (
+    <div style={{ display: "grid", gap: 9 }}>
+      {teams.map((t, i) => {
+        const n = (t.roster || []).length;
+        return (
+          <div key={t.id}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <TeamMono name={t.name} hue={t.hue} size={16} />
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase", color: t.hue,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+              <span style={{ display: "flex", gap: 3 }}>
+                {Array.from({ length: slots }, (_, k) => (
+                  <span key={k} style={{ width: 7, height: 7, transform: "rotate(45deg)",
+                    background: k < n ? t.hue : "transparent", border: `1px solid ${k < n ? t.hue : "rgba(200,215,255,0.25)"}` }} />
+                ))}
+              </span>
+              <span style={{ flex: "0 0 62px", textAlign: "right", fontFamily: MONO, fontSize: 12,
+                color: n >= slots ? DIM : "#ecf3ff" }}>{fmt(t.budget || 0)}</span>
+            </div>
+            <Bar pct={((t.budget || 0) / 10000) * 100} h={3} i={i} color={t.hue} opacity={0.8} style={{ marginTop: 5 }} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Your next match (or the next match, for spectators) ──────────────────
+function NextMatchGlance({ state, team }) {
+  const now = useNow(1000);
+  const teamOf = (id) => (state.teams || []).find((x) => x.id === id);
+  const open = allMatches(state?.tournament).filter((m) => m && !m.done && m.teamA && m.teamB)
+    .sort((a, b) => (a.scheduledAt || "~").localeCompare(b.scheduledAt || "~"));
+  const m = team ? open.find((x) => x.teamA === team.id || x.teamB === team.id) : open[0];
+  if (!m) {
+    const played = team ? allMatches(state?.tournament).filter((x) => x?.done && (x.teamA === team.id || x.teamB === team.id)) : [];
+    const won = played.filter((x) => x.winner === team?.id).length;
+    return <Empty icon="◈" title={team ? "You're done for now" : "Nothing scheduled"}
+      hint={team ? `${won}–${played.length - won} so far. The next round's fixture shows up here once it's set.` : "Fixtures appear here as the host schedules them."} />;
+  }
+  const a = teamOf(m.teamA), b = teamOf(m.teamB);
+  const t = m.scheduledAt ? new Date(m.scheduledAt).getTime() : null;
+  const live = t && t <= now;
+  const mine = (x) => team && x?.id === team.id;
+  const side = (x, align) => (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: align, gap: 7 }}>
+      <TeamMono name={x?.name} hue={x?.hue} size={40} />
+      <div style={{ maxWidth: "100%", fontSize: 15, fontWeight: 700, textTransform: "uppercase", color: x?.hue,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x?.name || "TBD"}</div>
+      {mine(x) && <span style={{ fontSize: 8.5, letterSpacing: "0.2em", color: "#7da6ff" }}>YOU</span>}
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {side(a, "center")}
+        <div style={{ textAlign: "center", flex: "0 0 auto" }}>
+          <div style={{ fontSize: 11, color: "rgba(200,215,255,0.35)", letterSpacing: "0.2em" }}>VS</div>
+          {m.bo && <div style={{ fontFamily: MONO, fontSize: 9.5, color: DIM, marginTop: 4 }}>BO{m.bo}</div>}
+        </div>
+        {side(b, "center")}
+      </div>
+      <div style={{ marginTop: "auto", padding: "9px 11px", display: "flex", alignItems: "center", gap: 10,
+        background: live ? "linear-gradient(90deg, rgba(255,70,85,0.14), transparent 85%)" : "linear-gradient(90deg, rgba(61,123,255,0.12), transparent 85%)",
+        borderLeft: `2px solid ${live ? "#ff4655" : "#3d7bff"}` }}>
+        {live
+          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontWeight: 700, fontSize: 13,
+              letterSpacing: "0.14em", color: "#ff6b78" }}><span className="volt-live-dot" style={{ color: "#ff4655" }} />LIVE NOW</span>
+          : <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 15, color: "#ecf3ff" }}>
+              {t ? relIn(t - now) : "Time TBA"}</span>}
+        <span style={{ marginLeft: "auto", fontSize: 10.5, color: DIM, textAlign: "right" }}>
+          {m.map ? <b style={{ color: "rgba(236,243,255,0.7)" }}>{m.map} · </b> : null}
+          {t && !live ? whenLabel(m.scheduledAt) : team ? "Be in voice 10 min early" : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Predictions lock at kick-off: the strip over the Crystal Ball says which
+// pick closes next, so "predict" has a deadline attached to it.
+function PredictLock({ state }) {
+  const now = useNow(30000);
+  const teamOf = (id) => (state.teams || []).find((x) => x.id === id);
+  const next = allMatches(state?.tournament)
+    .filter((m) => m && !m.done && m.teamA && m.teamB && m.scheduledAt && new Date(m.scheduledAt).getTime() > now)
+    .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))[0];
+  if (!next) return null;
+  const a = teamOf(next.teamA), b = teamOf(next.teamB);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", padding: "7px 10px", marginBottom: 12,
+      fontSize: 12, background: "linear-gradient(90deg, rgba(175,154,236,0.14), transparent 85%)", borderLeft: "2px solid #af9aec" }}>
+      <span style={{ fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#af9aec", fontSize: 10.5 }}>
+        Picks lock {relIn(new Date(next.scheduledAt).getTime() - now)}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700, textTransform: "uppercase" }}>
+        <span style={{ color: a?.hue }}>{a?.name}</span><span style={{ fontSize: 9, color: DIM }}>vs</span><span style={{ color: b?.hue }}>{b?.name}</span></span>
+      <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10.5, color: DIM }}>Vote in #predictions</span>
+    </div>
+  );
+}
+
 function BuysGlance({ state, onOpen }) {
   const sold = (state?.players || [])
     .filter((p) => p.status === "sold" && p.soldPrice)
