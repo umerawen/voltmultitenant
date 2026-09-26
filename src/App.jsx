@@ -2038,7 +2038,9 @@ function RankCrest({ rank, div }) {
         <polygon points="50,28 70,39 70,61 50,72 30,61 30,39" fill={r.c} opacity="0.22" />
       </svg>
       <span className="relative font-bold uppercase leading-none"
-        style={{ color: r.c, fontSize: s * 0.40, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 16px ${r.glow}` }}>
+        style={{ color: r.c, fontSize: s * 0.40, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 16px ${r.glow}`,
+          // Rajdhani's capitals ride high in their line box; drop them to the optical centre.
+          transform: "translateY(0.1em)" }}>
         {letter}
       </span>
       {showDiv && (
