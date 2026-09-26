@@ -686,7 +686,7 @@ function TTeamChip({ team, onClick, active, sub }) {
   return (
     <button onClick={onClick} disabled={!onClick} className="flex items-center gap-2 px-3 py-2 transition-all"
       style={{ cursor: onClick ? "pointer" : "default", background: active ? team.hue + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${active ? team.hue : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
-      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: team.hue }} />
+      <TeamMono name={team.name} hue={team.hue} size={18} />
       <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 16, color: team.hue, letterSpacing: "0.03em" }}>{team.name}</span>
       {sub && <span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>{sub}</span>}
     </button>
@@ -1171,13 +1171,13 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTi
     <div className="flex flex-col gap-2.5 px-4 py-3.5" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(120,150,220,0.14)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: a ? a.hue : "rgba(120,150,220,0.4)" }} />
+          <TeamMono name={a ? a.name : "?"} hue={a ? a.hue : "#4a5570"} size={18} />
           <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 18, color: a ? a.hue : "rgba(200,215,255,0.35)", opacity: winB ? 0.5 : 1 }}>{a ? a.name : "TBD"}{winA && <span style={{ color: "#3ddc84" }}> ✓</span>}</span>
         </div>
         <span className="uppercase tracking-widest px-2 py-0.5 shrink-0" style={{ fontSize: 11, color: "rgba(200,215,255,0.45)", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(120,150,220,0.2)" }}>{bye ? "BYE" : "BO" + bo}</span>
         <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
           <span className="font-bold uppercase truncate text-right" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 18, color: b ? b.hue : "rgba(200,215,255,0.35)", opacity: winA ? 0.5 : 1 }}>{winB && <span style={{ color: "#3ddc84" }}>✓ </span>}{b ? b.name : (bye ? "—" : "TBD")}</span>
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: b ? b.hue : "rgba(120,150,220,0.4)" }} />
+          <TeamMono name={b ? b.name : "?"} hue={b ? b.hue : "#4a5570"} size={18} />
         </div>
       </div>
       {!bye && <MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={onSetTime} />}
@@ -1392,7 +1392,7 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
                 <td className="py-3 px-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: adv ? hue : "rgba(200,215,255,0.5)", fontWeight: 700 }}>{i + 1}{adv && <span style={{ color: hue }}> ▲</span>}</td>
                 <td className="py-3 px-2.5">
                   <span className="flex items-center gap-2.5">
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: tm?.hue }} />
+                    <TeamMono name={tm?.name} hue={tm?.hue} size={20} />
                     <span className="font-bold uppercase truncate" style={{ color: tm?.hue, fontSize: 18 }}>{tm?.name}{r._ov && <span title="manually adjusted" style={{ color: "#ffb020" }}> *</span>}</span>
                   </span>
                 </td>
@@ -1442,7 +1442,7 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onS
 
   const row = (team, win, dim, who) => (
     <div className="flex items-center gap-2.5 px-3" style={{ height: 38, background: win ? (team ? team.hue + "26" : "transparent") : "transparent", borderLeft: `3px solid ${win && team ? team.hue : "transparent"}`, opacity: dim ? 0.45 : 1, transition: "all .2s" }}>
-      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: team ? team.hue : "rgba(120,150,220,0.35)" }} />
+      <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={18} />
       <span className="font-bold uppercase truncate flex-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 16, letterSpacing: "0.02em", color: team ? team.hue : "rgba(200,215,255,0.4)" }}>
         {team ? team.name : (bye && who === "b" ? "—" : "TBD")}{win && <span style={{ color: "#3ddc84", marginLeft: 4 }}>✓</span>}
       </span>
@@ -2243,11 +2243,14 @@ function PlayerCard({ player, lite = false }) {
             </div>
           )}
         </div>
-        <div className="grid grid-cols-3 gap-2 px-5 pt-5">
-          <Stat label="KDA" value={player.kda == null ? "—" : Number(player.kda).toFixed(2)} hue="#00e5ff" />
-          <Stat label="ACS" value={player.acs == null ? "—" : player.acs} hue="#ff4655" />
-          <Stat label="HS %" value={player.hs == null ? "—" : player.hs + "%"} hue="#9d6bff" />
-        </div>
+        {/* Only stats the player actually has — a tile of dashes reads as broken. */}
+        {(() => { const st = [
+            player.kda != null && <Stat key="k" label="KDA" value={Number(player.kda).toFixed(2)} hue="#00e5ff" />,
+            player.acs != null && <Stat key="a" label="ACS" value={player.acs} hue="#ff4655" />,
+            player.hs != null && <Stat key="h" label="HS %" value={player.hs + "%"} hue="#9d6bff" />,
+          ].filter(Boolean);
+          return st.length ? <div className="grid gap-2 px-5 pt-5" style={{ gridTemplateColumns: `repeat(${st.length}, minmax(0, 1fr))` }}>{st}</div>
+            : <div className="px-5 pt-5 text-center text-xs" style={{ color: "rgba(200,215,255,0.35)" }}>No tracker stats on file</div>; })()}
         <div className="px-5 pt-5 pb-7">
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "rgba(236,243,255,0.4)" }}>Trophy cabinet</p>
           <div className="flex flex-wrap items-center gap-2" style={{ minHeight: 40 }}>
@@ -2616,8 +2619,9 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
   const save = () => { onRename(team.id, name, cap); setEditing(false); };
 
   return (
-    <div className="relative overflow-hidden rounded-2xl flex flex-col" style={{ background: `linear-gradient(160deg, ${team.hue}16, rgba(255,255,255,0.03) 55%)`, border: `1px solid ${lead ? "#ff4655" : team.hue + "55"}`, boxShadow: lead ? "0 0 24px rgba(255,70,85,0.3)" : "0 14px 30px rgba(0,0,0,0.35)" }}>
+    <div className="relative overflow-hidden flex flex-col" style={{ background: `linear-gradient(165deg, ${team.hue}22, rgba(10,13,22,0.88) 55%)`, border: `1px solid ${lead ? "#3ddc84" : team.hue + "55"}`, boxShadow: lead ? "0 0 24px rgba(61,220,132,0.3)" : "0 14px 30px rgba(0,0,0,0.35)", clipPath: SHELL_NOTCH(16) }}>
       <div style={{ height: 3, background: `linear-gradient(90deg, ${team.hue}, transparent)` }} />
+      <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11, borderRight: `2px solid ${team.hue}`, borderBottom: `2px solid ${team.hue}` }} />
       <div className="p-4 flex flex-col gap-3 flex-1">
         <div className="flex items-start justify-between gap-2">
           {editing ? (
@@ -2643,9 +2647,12 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
             </div>
           ) : (
             <>
-              <div className="min-w-0">
-                <h3 className="font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: team.hue }}>{team.name}</h3>
-                <p className="text-xs" style={{ color: "rgba(236,243,255,0.5)" }}>Capt. {team.captain}</p>
+              <div className="min-w-0 flex items-center gap-2.5">
+                <TeamMono name={team.name} hue={team.hue} size={30} />
+                <div className="min-w-0">
+                  <h3 className="font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: team.hue, fontSize: 20 }}>{team.name}</h3>
+                  <p className="text-xs" style={{ color: "rgba(236,243,255,0.5)" }}>Capt. {team.captain}</p>
+                </div>
               </div>
               {isAdmin && (
                 <button onClick={() => setEditing(true)} title="Rename team" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-xs"
@@ -2655,7 +2662,7 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
           )}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <div className="px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.04)" }}>
+          <div className="px-3 py-2" style={{ background: "rgba(10,13,22,0.6)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
             <div className="flex items-center gap-1">
               <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Budget</p>
               {isAdmin && !budgetEdit && (
@@ -2676,13 +2683,18 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
               <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(team.budget)}</p>
             )}
           </div>
-          <div className="px-3 py-2 rounded-lg" style={{ background: "rgba(255,255,255,0.04)" }}>
+          <div className="px-3 py-2" style={{ background: "rgba(10,13,22,0.6)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
             <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Max bid</p>
             <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#5b8dff" }}>{fmt(Math.max(maxAllowedBid(team, players.filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false)), 0))}</p>
           </div>
         </div>
+        {/* How much of the purse is gone. */}
+        <div style={{ height: 4, background: "rgba(255,255,255,0.06)", marginTop: -2 }}>
+          <div style={{ height: "100%", width: `${Math.max(0, Math.min(100, (team.budget / 10000) * 100))}%`,
+            background: `linear-gradient(90deg, ${team.hue}, ${team.hue}88)`, transition: "width 500ms" }} />
+        </div>
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-2 px-2 py-1.5 rounded" style={{ background: team.hue + "14" }}>
+          <div className="flex items-center gap-2 px-2 py-1.5" style={{ background: team.hue + "1a", borderLeft: `2px solid ${team.hue}` }}>
             <span style={{ color: team.hue }}>★</span>
             <span className="text-sm font-semibold truncate" style={{ color: "#ecf3ff" }}>{team.captain}</span>
             <span className="ml-auto text-xs uppercase shrink-0" style={{ color: "rgba(236,243,255,0.4)" }}>Captain</span>
@@ -3071,15 +3083,21 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
         </div>
       )}
       <div className="flex items-start justify-between flex-wrap gap-3 mb-1">
-        <h2 className="text-3xl font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}><span style={{ color: teamHue }}>//</span> War Room</h2>
-        <span className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-2" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(236,243,255,0.6)" }}>
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: teamHue }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: teamHue, fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Captain sandbox</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: teamHue }}>Room</span></h2>
+        </div>
+        <span className="text-xs px-3 py-1 inline-flex items-center gap-2" style={{ clipPath: SHELL_NOTCH(6), background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(236,243,255,0.6)" }}>
           <span style={{ color: "#3ddc84" }}>●</span> Private to you
         </span>
       </div>
       <p className="text-sm mb-5" style={{ color: "rgba(236,243,255,0.5)" }}>Brainstorm mock lineups and target bids before the auction. Only you can see these — not other captains, not the host.</p>
 
       {/* projected spend bar */}
-      <div className="p-4 rounded-2xl mb-5" style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${over ? "#ff4655" : "rgba(255,255,255,0.1)"}`, boxShadow: over ? "0 0 24px rgba(255,70,85,0.3)" : "none", transition: "all 250ms" }}>
+      <div className="p-4 mb-5" style={{ clipPath: SHELL_NOTCH(14), background: `linear-gradient(160deg, ${teamHue}18, rgba(10,13,22,0.85) 60%)`, border: `1px solid ${over ? "#ff4655" : "rgba(255,255,255,0.1)"}`, boxShadow: over ? "0 0 24px rgba(255,70,85,0.3)" : "none", transition: "all 250ms" }}>
         <div className="flex items-end justify-between mb-2 flex-wrap gap-2">
           <div>
             <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.5)" }}>Total projected spend</p>
@@ -3107,8 +3125,8 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
           const used = pl.some((s) => s.playerId);
           const isActive = i === active;
           return (
-            <button key={i} onClick={() => setActive(i)} className="px-4 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all"
-              style={{ fontFamily: "'Rajdhani',sans-serif", background: isActive ? teamHue + "22" : "rgba(255,255,255,0.04)", border: `1px solid ${isActive ? teamHue : "rgba(255,255,255,0.12)"}`, color: isActive ? teamHue : "rgba(236,243,255,0.55)" }}>
+            <button key={i} onClick={() => setActive(i)} className="px-4 py-2 text-sm font-bold uppercase tracking-widest transition-all"
+              style={{ clipPath: SHELL_NOTCH(8), fontFamily: "'Rajdhani',sans-serif", background: isActive ? teamHue + "22" : "rgba(255,255,255,0.04)", border: `1px solid ${isActive ? teamHue : "rgba(255,255,255,0.12)"}`, color: isActive ? teamHue : "rgba(236,243,255,0.55)" }}>
               Plan {String.fromCharCode(65 + i)}{used && <span className="ml-1.5" style={{ color: "#3ddc84" }}>●</span>}
             </button>
           );
@@ -3122,7 +3140,7 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
           const sel = players.find((p) => p.id === slot.playerId);
           const r = sel ? rankOf(sel.rank) : null;
           return (
-            <div key={i} className="flex items-center gap-4 p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${r ? r.c + "44" : "rgba(255,255,255,0.08)"}` }}>
+            <div key={i} className="flex items-center gap-4 p-3" style={{ clipPath: SHELL_NOTCH(10), background: "rgba(10,13,22,0.6)", border: `1px solid ${r ? r.c + "44" : "rgba(255,255,255,0.08)"}` }}>
               <span className="w-7 h-7 grid place-items-center rounded-lg text-sm font-bold shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: teamHue, fontFamily: "'Rajdhani',sans-serif" }}>{i + 1}</span>
               <div className="shrink-0" style={{ width: 300 }}>
                 <PlayerPicker value={slot.playerId} players={avail} onChange={(id) => { const np = players.find((p) => p.id === id); const minBid = np ? rankOf(np.rank).bid : 0; setSlot(i, { playerId: id, target: id ? String(minBid) : "" }); }} />
@@ -3158,7 +3176,7 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
           style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(16px 0,100% 0,calc(100% - 16px) 100%,0 100%)", background: `linear-gradient(90deg, ${teamHue}, #3d7bff)`, color: "#06080e", boxShadow: `0 0 24px ${teamHue}66` }}>
           Save Plan {String.fromCharCode(65 + active)}
         </button>
-        <button onClick={clearPlan} className="px-5 py-3 text-sm font-bold uppercase tracking-widest rounded-lg" style={{ border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94" }}>Clear plan</button>
+        <button onClick={clearPlan} className="px-5 py-3 text-sm font-bold uppercase tracking-widest" style={{ border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94" }}>Clear plan</button>
         {dirty ? <span className="text-xs uppercase tracking-widest" style={{ color: "#f5c453" }}>Unsaved changes</span>
           : savedAt ? <span className="text-xs uppercase tracking-widest" style={{ color: "#3ddc84" }}>✓ Saved</span> : null}
       </div>
@@ -3406,6 +3424,53 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
 // Average rather than total, so someone who plays six matches isn't ahead of
 // someone who played three and outperformed them. No qualifying minimum: one
 // strong game can top the table, and that's the intended behaviour.
+// Top three on a podium: second, first, third, with first raised. Gold,
+// silver and bronze edges; the metric being ranked on is the big number.
+function LbPodium({ rows, metric }) {
+  if (!rows.length) return null;
+  const MED = ["#f5c453", "#d7e1ee", "#c08a52"];
+  const order = rows.length === 3 ? [1, 0, 2] : rows.map((_, i) => i);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))`, gap: 12,
+      alignItems: "end", marginBottom: 18 }}>
+      {order.map((idx, k) => {
+        const r = rows[idx]; const c = MED[idx]; const first = idx === 0;
+        const val = metric === "acs" ? r.avgAcs : r.pts;
+        return (
+          <div key={r.id || idx} style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
+            position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(14),
+            background: `linear-gradient(170deg, ${c}${first ? "26" : "18"}, rgba(10,13,22,0.9) 60%)`,
+            animation: `voltRise .5s ${k * 90}ms backwards`, textAlign: "center" }}>
+            {first && <span aria-hidden className="volt-shimmer" />}
+            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
+              borderLeft: `2px solid ${c}`, borderTop: `2px solid ${c}` }} />
+            <div style={{ position: "absolute", right: 14, top: 8, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+              fontSize: first ? 64 : 48, lineHeight: 1, color: c, opacity: 0.14 }}>{idx + 1}</div>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <RankBadge rank={r.rank || "Iron"} div={r.rankDiv} size={first ? "lg" : "md"} solidDiv />
+            </div>
+            <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
+              fontSize: first ? 26 : 20, marginTop: 10, lineHeight: 1,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+            <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: RANKS[r.rank]?.c || "rgba(200,215,255,0.5)",
+              marginTop: 5, fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ") || "—"}</div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
+              color: c, marginTop: 14, textShadow: `0 0 24px ${c}55` }}>
+              <CountUp to={val} dur={1000} delay={k * 90} />
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "acs" ? "ACS" : "PTS"}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 12, fontFamily: "'IBM Plex Mono',monospace",
+              fontSize: 11, color: "rgba(200,215,255,0.5)" }}>
+              <span>{r.m} played</span><span style={{ color: "#3ddc84" }}>{r.w}W</span>
+              <span>{metric === "acs" ? `${r.pts} pts` : `${r.avgAcs} ACS`}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Leaderboard({ isAdmin }) {
   // Two honest answers to "who's best".
   //
@@ -3430,7 +3495,7 @@ function Leaderboard({ isAdmin }) {
           .select("user_id, points_computed, team_won, stat_payload")
           .eq("community_id", window.__VOLT.communityId);
         const { data: us } = await __sb.from("users").select("id, display_name").eq("community_id", window.__VOLT.communityId);
-        const { data: pp } = await __sb.from("player_profiles").select("user_id, rank, role").eq("community_id", window.__VOLT.communityId);
+        const { data: pp } = await __sb.from("player_profiles").select("user_id, rank, rank_div, role").eq("community_id", window.__VOLT.communityId);
         if (!alive) return;
         const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
         const profs = {}; (pp || []).forEach(p => { profs[p.user_id] = p; });
@@ -3442,7 +3507,7 @@ function Leaderboard({ isAdmin }) {
                              || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
         const agg = {};
         (mrs || []).forEach(r => {
-          const a = (agg[r.user_id] = agg[r.user_id] || { name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, acsSum: 0 });
+          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, acsSum: 0 });
           a.pts += Number(r.points_computed || 0);
           const sp = r.stat_payload || {};
           if (!didPlay(sp)) return;                 // rostered, didn't play
@@ -3488,12 +3553,15 @@ function Leaderboard({ isAdmin }) {
         ))}
       </div>
 
-      {rows === null && <p style={{ color: "rgba(200,215,255,0.5)" }}>Loading…</p>}
+      <style>{DASH_CSS}</style>
+      {rows === null && <div style={{ ...PANEL(null, "20px 22px") }}><Skeleton rows={6} /></div>}
       {rows && rows.length === 0 && (
-        <div className="px-5 py-4" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.2)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif" }}>
-          No matches recorded this season yet. Points appear the moment the host reports the first match.
+        <div style={{ ...PANEL(null, "30px 22px") }}>
+          <Empty icon="≣" title="No matches yet"
+            hint="Points and averages appear the moment the host reports the first match." />
         </div>
       )}
+      {rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} />}
       {rows && rows.length > 0 && (
         <div>
           <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
@@ -3501,13 +3569,20 @@ function Leaderboard({ isAdmin }) {
           </div>
           <div className="grid gap-1.5">
             {sorted.map((r, i) => {
+              if (i < 3 && sorted.length > 3) return null;   // the podium shows them
               const rc = (RANKS[r.rank] || {}).c || "#8d97a8";
+              const topV = sortBy === "acs" ? sorted[0].avgAcs : sorted[0].pts;
+              const myV = sortBy === "acs" ? r.avgAcs : r.pts;
               return (
                 <div key={i} className="grid items-center px-4 py-3 volt-lb-row" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
                   <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff" }}>{String(i + 1).padStart(2, "0")}</span>
-                  <span>
-                    <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.03em", fontSize: 15 }}>{r.name}</span>
-                    {(r.rank || r.role) && <span className="ml-2 text-[11px] uppercase tracking-[0.1em]" style={{ color: rc, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ")}</span>}
+                  <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    {r.rank && <RankBadge rank={r.rank} div={r.rankDiv} size="sm" />}
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.03em", fontSize: 15 }}>{r.name}</span>
+                      {(r.rank || r.role) && <span className="ml-2 text-[11px] uppercase tracking-[0.1em]" style={{ color: rc, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ")}</span>}
+                      <Bar pct={topV ? (myV / topV) * 100 : 0} h={2} i={i} color="#00e5ff" opacity={0.5} style={{ marginTop: 5, maxWidth: 260 }} />
+                    </span>
                   </span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.m}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84" }}>{r.w}</span>
@@ -4168,6 +4243,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     else setView(v => (v === "report" ? (reportFrom || "bracket") : v));
   }, [chrome?.reportNode]); // player id for modal
   const [editingPlayer, setEditingPlayer] = useState(null); // player object being edited by admin
+  const [hostFormOpen, setHostFormOpen] = useState(false); // host add-player/reserve forms start folded
   useEffect(() => { if (editingPlayer) { const t = setTimeout(() => document.getElementById("wr-admin-form")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); return () => clearTimeout(t); } }, [editingPlayer]);
   const [filterRank, setFilterRank] = useState("All");
   const [filterRole, setFilterRole] = useState("All");
@@ -5919,7 +5995,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       </div>
       <style>{DASH_CSS}</style>
       <div style={{ position: "relative", zIndex: 1 }}>
-      <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={chrome?.regToggle}
+      <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={null}
         onGo={goto} myTeam={myTeam} isAdmin={isAdmin} state={state} />
 
       <div className="volt-bento volt-3col" style={{ display: "grid", gap: 12, marginTop: 14 }}>
@@ -5936,25 +6012,27 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 <HostQueueGlance pending={chrome?.pendingCount} players={state.players} />
               </Cell>
             : <Cell title="Your entry">
-                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto} />
+                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto}
+                  toggle={chrome?.regToggle} />
               </Cell>}
-          <Cell title="Draft clock"><DraftClock ev={chrome?.ev} phase={ph} /></Cell>
+          <Cell title="Tournament"><DraftClock ev={chrome?.ev} phase={ph} players={state.players} teams={state.teams} /></Cell>
           <Cell title="Last champions"><LastChampGlance currentId={chrome?.ev?.id} /></Cell>
           <Cell title="The pool" action="Scout" span={2} onGo={goto("scout")}>
-            <PoolBreakdown players={state.players} />
+            <PoolBreakdown players={state.players} me={chrome?.myProfile} viewerId={chrome?.viewerId} />
           </Cell>
           <Cell title="Captains" action="Scout" onGo={goto("scout")}>
             <CaptainsGlance players={state.players} teams={state.teams} onOpen={openPlayer} />
           </Cell>
         </>}
         {ph === "registration_closed" && <>
-          <Cell title="Draft clock" tone="rgba(61,123,255,0.5)"><DraftClock ev={chrome?.ev} phase={ph} /></Cell>
+          <Cell title="Tournament" tone="rgba(61,123,255,0.5)"><DraftClock ev={chrome?.ev} phase={ph} players={state.players} teams={state.teams} /></Cell>
           {chrome?.isHost
             ? <Cell title="Applications" action="Review" onGo={chrome?.onBack}>
                 <HostQueueGlance pending={chrome?.pendingCount} players={state.players} />
               </Cell>
             : <Cell title="Your entry">
-                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto} />
+                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto}
+                  toggle={chrome?.regToggle} />
               </Cell>}
           <Cell title="Captains" action="Scout" onGo={goto("scout")}>
             <CaptainsGlance players={state.players} teams={state.teams} onOpen={openPlayer} />
@@ -6014,8 +6092,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             </Cell>
           )}
           <Cell title="Crystal ball" action="Predictions" span={2} onGo={goto("bracket")}>
-            <PredictLock state={state} />
-            <PredictGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+              <PredictLock state={state} />
+              <div style={{ flex: 1, minHeight: 0 }}><PredictGlance viewerId={chrome?.viewerId} onOpen={openPlayer} /></div>
+            </div>
           </Cell>
           {dashTeam
             ? <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
@@ -6041,7 +6121,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               <TeamGlance team={dashTeam} players={state.players} onOpen={openPlayer} />
             </Cell>
           )}
-          <Cell title="Results" action="All fixtures" onGo={goto("bracket")} art={MAP_IMG.Ascent}>
+          <Cell title="Results" action="All fixtures" onGo={goto("bracket")}>
             <ResultsGlance state={state} />
           </Cell>
           <Cell title="Team standings" action="All" onGo={goto("leaderboard")}>
@@ -6078,8 +6158,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     (!query || p.name.toLowerCase().includes(query.toLowerCase()) || p.agent.toLowerCase().includes(query.toLowerCase()))
   );
   const chip = (active, hue = "#3d7bff") => ({
-    background: active ? hue + "22" : "rgba(61,123,255,0.05)", border: `1px solid ${active ? hue : "rgba(120,150,220,0.18)"}`,
-    color: active ? hue : "rgba(200,215,255,0.6)",
+    background: active ? hue + "22" : "rgba(10,13,22,0.55)", border: `1px solid ${active ? hue : "rgba(120,150,220,0.18)"}`,
+    color: active ? hue : "rgba(200,215,255,0.6)", clipPath: SHELL_NOTCH(6), borderRadius: 0,
+    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, boxShadow: active ? `0 0 12px ${hue}33` : "none",
   });
   /* ── RESERVE HUB ── undrafted registrants, available as substitutes.
         Same shape and filters as the Scout Hub, but the job is different: a
@@ -6162,11 +6243,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       </div>
 
       {reserves.length === 0 ? (
-        <p className="text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
-          {draftHasRun
-            ? "No reserves — everyone who registered is on a roster."
-            : "No reserves yet. Late sign-ups land here, and so does anyone you move out of the draft pool."}
-        </p>
+        <div style={{ ...PANEL("rgba(61,220,132,0.25)", "30px 20px"), clipPath: SHELL_NOTCH(12) }}>
+          <Empty icon="⊕" title={draftHasRun ? "Everyone has a team" : "No reserves yet"}
+            hint={draftHasRun
+              ? "Everyone who registered is on a roster. Late sign-ups will land here."
+              : "Late sign-ups land here, and so does anyone moved out of the draft pool."} />
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
           {rFiltered.map((p) => {
@@ -6219,9 +6301,17 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </div>
       )}
 
-      {isAdmin && (
+      {isAdmin && !hostFormOpen && (
+        <button onClick={() => setHostFormOpen(true)} className="mt-8" style={shellBtn("ghost", { padding: "12px 20px", fontSize: 12 })}>
+          ＋ Add a reserve
+        </button>
+      )}
+      {isAdmin && hostFormOpen && (
         <div className="mt-8 p-5" style={{ background: "linear-gradient(160deg, rgba(61,220,132,0.06), rgba(10,15,28,0.5))", border: "1px solid rgba(61,220,132,0.3)", clipPath: SHELL_NOTCH(12) }}>
-          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "#9af5c2" }}>Host · add a reserve</p>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs uppercase tracking-widest" style={{ color: "#9af5c2" }}>Host · add a reserve</p>
+            <button onClick={() => setHostFormOpen(false)} title="Close" className="text-xs px-2.5 py-1.5" style={{ border: "1px solid rgba(120,150,220,0.25)", color: "rgba(200,215,255,0.6)" }}>✕</button>
+          </div>
           <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)" }}>
             For someone who can stand in but isn't in this tournament's draft. They stay out of the Scout Hub and off the auction wheel.
           </p>
@@ -6244,6 +6334,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <span className="text-sm" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{filtered.length} / {state.players.length} players</span>
       </div>
       <p className="text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>Tap any operator to open their full scouting file with a performance radar.</p>
+      <style>{DASH_CSS}</style>
+      <PoolStrip players={state.players.filter((p) => p.poolEligible !== false)} />
 
       <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
         <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
@@ -6266,33 +6358,54 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xl font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
-                <p className="text-xs uppercase tracking-widest mt-1.5 truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
+                <p className="text-xs font-bold uppercase tracking-widest mt-1.5 truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</p>
+                <p className="text-xs uppercase tracking-widest mt-1 truncate" style={{ color: "rgba(200,215,255,0.55)" }}>
+                  <span style={{ color: r.c }}>{ROLE_GLYPH[p.role]}</span> {p.role}{p.agent && p.agent !== "—" ? ` · ${p.agent}` : ""}</p>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
-                <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span>
-              </div>
+              <div className="shrink-0"><RankBadge rank={p.rank} div={p.rankDiv} size="md" /></div>
             </div>
-            <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
-              <span style={{ color: "#00e5ff" }}>KDA {p.kda == null ? "—" : Number(p.kda).toFixed(2)}</span>
-              <span style={{ color: "#ff4655" }}>ACS {p.acs == null ? "—" : p.acs}</span>
-              <span style={{ color: "#9d6bff" }}>HS {p.hs == null ? "—" : p.hs + "%"}</span>
+            {/* Only the stats we actually have — no row of dashes. */}
+            {(() => { const st = [
+                p.acs != null && { v: p.acs, k: "ACS", c: "#ff4655" },
+                p.kda != null && { v: Number(p.kda).toFixed(2), k: "KDA", c: "#00e5ff" },
+                p.hs != null && { v: p.hs + "%", k: "HS", c: "#af9aec" },
+              ].filter(Boolean);
+              return st.length
+                ? <div className="flex gap-4 mt-3.5" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                    {st.map((x) => <span key={x.k} style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}
+                      <span style={{ fontSize: 9, color: "rgba(200,215,255,0.4)", marginLeft: 4, fontWeight: 400 }}>{x.k}</span></span>)}
+                  </div>
+                : <p className="mt-3.5 text-xs" style={{ color: "rgba(200,215,255,0.32)" }}>No tracker stats yet</p>; })()}
+            <div className="mt-3">
+              {p.isCaptain
+                ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", padding: "4px 9px", color: "#f5c453", background: "rgba(245,196,83,0.12)", border: "1px solid rgba(245,196,83,0.35)" }}>★ Captain · not in draw</span>
+                : tm
+                  ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", padding: "4px 9px", color: tm.hue, background: `${tm.hue}18`, border: `1px solid ${tm.hue}55` }}>
+                      <TeamMono name={tm.name} hue={tm.hue} size={11} />{tm.name} · {fmt(p.soldPrice)}</span>
+                  : <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", padding: "4px 9px", color: "#3ddc84", background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.3)" }}>
+                      Available · opens {fmt(r.bid)}</span>}
             </div>
-            {p.isCaptain ? <p className="mt-2 text-xs uppercase tracking-widest font-bold truncate" style={{ color: "#f5c453" }}>★ Captain · not in draw</p>
-              : tm ? <p className="mt-2 text-xs uppercase tracking-widest truncate" style={{ color: tm.hue }}>◆ {tm.name} · {fmt(p.soldPrice)}</p>
-              : <p className="mt-2 text-xs uppercase tracking-widest truncate" style={{ color: "rgba(236,243,255,0.4)" }}>Available · opens {fmt(r.bid)}</p>}
           </button>
         ); })}
-        {filtered.length === 0 && <p className="col-span-full text-sm py-10 text-center" style={{ color: "rgba(236,243,255,0.4)" }}>No players match those filters.</p>}
+        {filtered.length === 0 && <div className="col-span-full" style={{ ...PANEL(null, "26px 20px") }}>
+          <Empty icon="⌕" title="Nobody matches" hint="Try a different rank or role, or clear the search." /></div>}
       </div>
 
-      {isAdmin && (
+      {isAdmin && !(hostFormOpen || editingPlayer) && (
+        <button onClick={() => setHostFormOpen(true)} className="mt-8" style={shellBtn("ghost", { padding: "12px 20px", fontSize: 12 })}>
+          ＋ Add a player
+        </button>
+      )}
+      {isAdmin && (hostFormOpen || editingPlayer) && (
         <div id="wr-admin-form" className="mt-8 p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.5))", border: `1px solid ${editingPlayer ? "#3ddc8455" : "rgba(61,123,255,0.22)"}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs uppercase tracking-widest" style={{ color: editingPlayer ? "#3ddc84" : "#7da6ff" }}>
               {editingPlayer ? `Host · editing ${editingPlayer.name}` : "Host · add player"}
             </p>
-            {isOwner && <button onClick={resetAll} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ border: `1px solid ${resetArmed ? "#ff4655" : "rgba(255,70,85,0.5)"}`, background: resetArmed ? "rgba(255,70,85,0.2)" : "transparent", color: resetArmed ? "#ffd2d7" : "#ff8a94" }}>{resetArmed ? "Click again to confirm" : "Reset auction"}</button>}
+            <div className="flex items-center gap-2">
+              {isOwner && <button onClick={resetAll} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ border: `1px solid ${resetArmed ? "#ff4655" : "rgba(255,70,85,0.5)"}`, background: resetArmed ? "rgba(255,70,85,0.2)" : "transparent", color: resetArmed ? "#ffd2d7" : "#ff8a94" }}>{resetArmed ? "Click again to confirm" : "Reset auction"}</button>}
+              {!editingPlayer && <button onClick={() => setHostFormOpen(false)} title="Close" className="text-xs px-2.5 py-1.5" style={{ border: "1px solid rgba(120,150,220,0.25)", color: "rgba(200,215,255,0.6)" }}>✕</button>}
+            </div>
           </div>
           <AddPlayerForm onAdd={addPlayer} editing={editingPlayer} onSave={(p) => { editPlayer(p); setEditingPlayer(null); }} onCancel={() => setEditingPlayer(null)} />
         </div>
@@ -6306,6 +6419,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const iLead = block && myTeam && block.leaderId === myTeam.id;
   const myFull = myTeam && emptySlots(myTeam) === 0;
   const canBid = block && myTeam && !iLead && !myFull && myMax >= myReq;
+  // The reel is the auction's centrepiece and sizes itself to the full stage
+  // width, so the side rails only exist while a player is up for bidding. They
+  // slide in after the reveal and step aside for the next spin.
+  const railsOn = !!(blockPlayer && !spinLive);
 
   // auction storylines — derived from sold players (spectator feed)
   const soldPlayers = state.players.filter((p) => p.status === "sold");
@@ -6355,8 +6472,22 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </div>
       )}
 
-      {/* slim budget bar */}
-      <div className="flex flex-wrap justify-center gap-2 px-5 md:px-8 pt-5 pb-3">
+      <style>{`
+        .volt-auc-grid { display: block; }
+        .volt-auc-rail { display: none !important; }
+        @media (min-width: 1280px) {
+          .volt-auc-grid { display: grid; grid-template-columns: 230px minmax(0, 1fr) 230px; gap: 18px; padding: 0 20px; align-items: start; }
+          .volt-auc-rail { display: flex !important; }
+          .volt-auc-rail[data-side="left"] { animation: voltRailL .45s cubic-bezier(.2,.8,.3,1) backwards; }
+          .volt-auc-rail[data-side="right"] { animation: voltRailR .45s cubic-bezier(.2,.8,.3,1) backwards; }
+          @keyframes voltRailL { from { opacity: 0; transform: translateX(-24px); } }
+          @keyframes voltRailR { from { opacity: 0; transform: translateX(24px); } }
+          @media (prefers-reduced-motion: reduce) { .volt-auc-rail { animation: none !important; } }
+          .volt-auc-bar { display: none !important; }
+        }
+      `}</style>
+      {/* slim budget bar — narrow screens only; wide screens get the side rails */}
+      <div className={(railsOn ? "volt-auc-bar " : "") + "flex flex-wrap justify-center gap-2 px-5 md:px-8 pt-5 pb-3"}>
         {state.teams.map((t) => { const lead = block?.leaderId === t.id; return (
           <div key={t.id} className="shrink-0 flex items-center gap-2.5 px-3.5 py-2 rounded-lg" style={{ background: lead ? "rgba(255,70,85,0.16)" : "rgba(255,255,255,0.04)", border: `1px solid ${lead ? "#ff4655" : t.hue + "44"}` }}>
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.hue, boxShadow: `0 0 8px ${t.hue}` }} />
@@ -6366,6 +6497,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         ); })}
       </div>
 
+      <div className={railsOn ? "volt-auc-grid" : undefined}>
+      {railsOn && <AuctionRail side="left" teams={state.teams.slice(0, Math.ceil(state.teams.length / 2))} players={state.players}
+        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} />}
       <div className="px-5 md:px-8 py-4 flex flex-col items-center gap-6">
         {/* center stage */}
         <div className="flex flex-col items-center gap-5 w-full">
@@ -6457,14 +6591,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         {/* bidding war + auction feed, side by side */}
         <div className="w-full flex flex-col md:flex-row gap-4 justify-center items-stretch">
         {/* bidding war tracker */}
-        <div className="w-full max-w-md p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(10px)" }}>
-          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: "#ff4655" }}>Bidding war</p>
+        <div className="w-full max-w-md p-4" style={{ ...PANEL(null, "16px 18px"), position: "relative", clipPath: SHELL_NOTCH(14), backdropFilter: "blur(10px)" }}>
+          <div className="mb-3"><SectionHead title="Bidding war" /></div>
           {state.bidHistory.length === 0 ? (
             <p className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>{block ? "No bids yet. First captain to act sets the pace." : "Tracker activates when a player hits the block."}</p>
           ) : (
             <div className="flex flex-col gap-2">
               {state.bidHistory.map((h, i) => { const tm = teamOf(h.teamId); return (
-                <div key={h.ts} className="flex items-center gap-2.5 px-3 py-2 rounded-lg" style={{ background: i === 0 ? tm.hue + "1f" : "rgba(255,255,255,0.03)", border: `1px solid ${i === 0 ? tm.hue + "66" : "transparent"}` }}>
+                <div key={h.ts} className="flex items-center gap-2.5 px-3 py-2" style={{ background: i === 0 ? tm.hue + "1f" : "rgba(255,255,255,0.03)", border: `1px solid ${i === 0 ? tm.hue + "66" : "transparent"}` }}>
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: tm.hue, boxShadow: i === 0 ? `0 0 8px ${tm.hue}` : "none" }} />
                   <span className="flex flex-col min-w-0">
                     <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm.hue }}>{tm.captain || tm.name.split(" ")[0]}</span>
@@ -6478,14 +6612,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </div>
 
         {/* auction feed — running storylines */}
-        <div className="w-full max-w-md p-4 rounded-2xl" style={{ background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(10px)" }}>
-          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: "#3d7bff" }}>Auction feed</p>
+        <div className="w-full max-w-md p-4" style={{ ...PANEL(null, "16px 18px"), position: "relative", clipPath: SHELL_NOTCH(14), backdropFilter: "blur(10px)" }}>
+          <div className="mb-3"><SectionHead title="Auction feed" /></div>
           {soldPlayers.length === 0 ? (
             <p className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>Storylines appear as players get sold.</p>
           ) : (
             <div className="flex flex-col gap-2">
               {recordSale && (() => { const tm = teamOf(recordSale.soldTo); return (
-                <div className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.3)" }}>
+                <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.3)" }}>
                   <span className="text-lg shrink-0">🔨</span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: "#f5c453", fontFamily: "'Rajdhani',sans-serif" }}>Record sale</span>
@@ -6497,7 +6631,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               ); })()}
 
               {mostContested && (mostContested.bidCount || 0) > 1 && (() => { const tm = teamOf(mostContested.soldTo); return (
-                <div className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: "rgba(255,70,85,0.08)", border: "1px solid rgba(255,70,85,0.3)" }}>
+                <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(255,70,85,0.08)", border: "1px solid rgba(255,70,85,0.3)" }}>
                   <span className="text-lg shrink-0">🔥</span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: "#ff8a94", fontFamily: "'Rajdhani',sans-serif" }}>Most contested</span>
@@ -6509,7 +6643,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               ); })()}
 
               {biggestSpenderId && (() => { const tm = teamOf(biggestSpenderId); return (
-                <div className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)" }}>
+                <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)" }}>
                   <span className="text-lg shrink-0">💰</span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Biggest spender</span>
@@ -6521,7 +6655,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
               {/* roster complete — milestone callout for any team that's drafted all 4 */}
               {completedTeams.map((t) => (
-                <div key={t.id} className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: `${t.hue}14`, border: `1px solid ${t.hue}55` }}>
+                <div key={t.id} className="flex items-center gap-3 px-3 py-2" style={{ background: `${t.hue}14`, border: `1px solid ${t.hue}55` }}>
                   <span className="text-lg shrink-0">✅</span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: t.hue, fontFamily: "'Rajdhani',sans-serif" }}>Draft complete</span>
@@ -6563,6 +6697,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           )}
         </div>
         </div>
+      </div>
+      {railsOn && <AuctionRail side="right" teams={state.teams.slice(Math.ceil(state.teams.length / 2))} players={state.players}
+        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} />}
       </div>
     </div>
   );
@@ -7518,8 +7655,14 @@ function ToggleSwitch({ on, color, disabled, onClick }) {
   const c = color || "#3ddc84";
   return (
     <button onClick={disabled ? undefined : onClick} aria-pressed={on}
-      style={{ position: "relative", width: 56, height: 28, flex: "0 0 auto", background: on ? c + "26" : "rgba(255,255,255,0.05)", border: `1px solid ${on ? c : "rgba(120,150,220,0.35)"}`, clipPath: SHELL_NOTCH(7), cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1, padding: 0, boxShadow: on ? `0 0 14px ${c}44` : "none", transition: "all 160ms" }}>
-      <span style={{ position: "absolute", top: 3, left: on ? 31 : 3, width: 20, height: 20, background: on ? c : "rgba(200,215,255,0.35)", clipPath: SHELL_NOTCH(5), transition: "left 160ms ease" }} />
+      style={{ position: "relative", width: 54, height: 28, flex: "0 0 auto", padding: 0,
+        background: on ? `linear-gradient(90deg, ${c}33, ${c}55)` : "rgba(10,13,22,0.8)",
+        border: `1px solid ${on ? c : "rgba(125,166,255,0.4)"}`, clipPath: SHELL_NOTCH(7),
+        cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1,
+        boxShadow: on ? `0 0 16px ${c}55, inset 0 0 10px ${c}33` : "inset 0 0 8px rgba(0,0,0,0.5)", transition: "all 180ms" }}>
+      <span style={{ position: "absolute", top: 4, left: on ? 30 : 4, width: 18, height: 18,
+        background: on ? c : "rgba(125,166,255,0.55)", clipPath: SHELL_NOTCH(5),
+        boxShadow: on ? `0 0 10px ${c}` : "none", transition: "left 180ms cubic-bezier(.2,.8,.3,1), background 180ms" }} />
     </button>
   );
 }
@@ -9892,6 +10035,109 @@ function Cell({ title, action, onGo, span = 1, tall = false, tone, art, children
   );
 }
 
+
+// ── Pool strip: the Scout/Reserve hubs' one-line summary ─────────────────
+function PoolStrip({ players, tone = "#3d7bff" }) {
+  const pool = (players || []).filter((p) => !p.isCaptain);
+  const avail = pool.filter((p) => p.status === "pool").length;
+  const sold = pool.filter((p) => p.status === "sold").length;
+  const caps = (players || []).filter((p) => p.isCaptain).length;
+  const roles = ROLES.map((r) => ({ r, n: pool.filter((p) => (p.role || "Flex") === r).length }));
+  const max = Math.max(1, ...roles.map((x) => x.n));
+  const tile = (v, k, c, i) => (
+    <div key={k} style={{ padding: "12px 16px", borderLeft: `2px solid ${c}`, animation: `voltRise .4s ${i * 60}ms backwards` }}>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, lineHeight: 1, color: c }}><CountUp to={v} /></div>
+      <div style={{ fontSize: 9.5, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{k}</div>
+    </div>
+  );
+  return (
+    <div style={{ ...PANEL(`${tone}33`, "14px 18px"), clipPath: SHELL_NOTCH(12), display: "flex", flexWrap: "wrap",
+      alignItems: "center", gap: 18, marginBottom: 18 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {tile(pool.length, "In the pool", "#ecf3ff", 0)}
+        {tile(avail, "Available", "#3ddc84", 1)}
+        {tile(sold, "Drafted", "#7da6ff", 2)}
+        {tile(caps, "Captains", "#f5c453", 3)}
+      </div>
+      <div style={{ flex: "1 1 260px", display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
+        {roles.map((x, i) => (
+          <div key={x.r}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, marginBottom: 5 }}>
+              <span style={{ color: "rgba(236,243,255,0.7)" }}><span style={{ color: "#7da6ff", fontSize: 9, marginRight: 4 }}>{ROLE_GLYPH[x.r]}</span>{x.r}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{x.n}</span>
+            </div>
+            <Bar pct={(x.n / max) * 100} h={4} i={i} color="linear-gradient(90deg,#3d7bff,#00e5ff)" opacity={x.n ? 1 : 0.2} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Auction side rails ───────────────────────────────────────────────────
+// Every captain's squad and purse beside the block, so nobody leaves the
+// auction to check who still needs what. Half the teams each side.
+function AuctionTeamCell({ t, players, lead, mine, pool }) {
+  const roster = (t.roster || []).map((id) => (players || []).find((p) => p.id === id)).filter(Boolean);
+  const full = roster.length >= 4;
+  const max = Math.max(0, maxAllowedBid(t, pool));
+  const edge = lead ? "#3ddc84" : mine ? t.hue : `${t.hue}44`;
+  return (
+    <div style={{ position: "relative", padding: "11px 12px 10px", clipPath: SHELL_NOTCH(10),
+      background: lead ? `linear-gradient(160deg, rgba(61,220,132,0.16), rgba(10,13,22,0.85) 65%)`
+                       : `linear-gradient(160deg, ${t.hue}1a, rgba(10,13,22,0.82) 60%)`,
+      border: `1px solid ${edge}`, opacity: full && !lead ? 0.62 : 1,
+      boxShadow: lead ? "0 0 22px rgba(61,220,132,0.25)" : "none", transition: "all 200ms" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <TeamMono name={t.name} hue={t.hue} size={20} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14, textTransform: "uppercase",
+            color: t.hue, lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+          <div style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginTop: 3, overflow: "hidden",
+            textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.captain}{mine ? " · you" : ""}</div>
+        </div>
+        {lead && <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", color: "#3ddc84",
+          border: "1px solid rgba(61,220,132,0.5)", padding: "2px 5px" }}>LEADING</span>}
+        {full && !lead && <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", color: "rgba(200,215,255,0.5)",
+          border: "1px solid rgba(200,215,255,0.25)", padding: "2px 5px" }}>FULL</span>}
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 9 }}>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 18, color: "#ecf3ff" }}>{fmt(t.budget)}</span>
+        {!full && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "rgba(200,215,255,0.45)" }}>
+          max <span style={{ color: "#7da6ff" }}>{fmt(max)}</span></span>}
+      </div>
+      <div style={{ height: 3, background: "rgba(255,255,255,0.06)", marginTop: 5 }}>
+        <div style={{ height: "100%", width: `${Math.max(0, Math.min(100, (t.budget / 10000) * 100))}%`, background: t.hue,
+          transition: "width 500ms cubic-bezier(.2,.8,.2,1)" }} />
+      </div>
+      <div style={{ display: "grid", gap: 3, marginTop: 9 }}>
+        {[0, 1, 2, 3].map((k) => {
+          const p = roster[k];
+          return p ? (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
+              <span style={{ width: 24, fontFamily: "'IBM Plex Mono',monospace", fontSize: 8, color: "rgba(200,215,255,0.45)" }}>
+                {ROLE_ABBR[p.role] || "FLX"}</span>
+              <span style={{ flex: 1, minWidth: 0, color: "rgba(236,243,255,0.85)", overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#3ddc84" }}>{fmt(p.soldPrice)}</span>
+            </div>
+          ) : (
+            <div key={k} style={{ height: 17, border: "1px dashed rgba(120,150,220,0.2)" }} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function AuctionRail({ teams, players, leaderId, myTeamId, pool, side }) {
+  return (
+    <div className="volt-auc-rail" data-side={side} style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 16 }}>
+      {teams.map((t) => <AuctionTeamCell key={t.id} t={t} players={players} pool={pool}
+        lead={leaderId === t.id} mine={myTeamId === t.id} />)}
+    </div>
+  );
+}
+
 // ── Dashboard motion + atoms ─────────────────────────────────────────────
 
 // Dashboard motion. Lives with the page, not in the desktop rail's <style>,
@@ -9903,11 +10149,13 @@ const DASH_CSS = `
   .volt-spin { animation: voltSpin 1.1s linear infinite; }
   @keyframes voltColGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
   .volt-col { transform-origin: bottom center; animation: voltColGrow .7s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: var(--d, 0ms); }
-  @media (prefers-reduced-motion: reduce) { .volt-live-dot, .volt-spin, .volt-col, .volt-rays { animation: none !important; } }
+  @media (prefers-reduced-motion: reduce) { .volt-live-dot, .volt-spin, .volt-col, .volt-rays, .volt-cta-pulse { animation: none !important; } }
   .volt-yc > .volt-cell { flex: 1; }
   .volt-yc-body > :not(:last-child) { margin-right: 44%; }
   @keyframes voltRays { from { background-position: 0 0; } to { background-position: 280px 0; } }
   .volt-rays { animation: voltRays 14s linear infinite; }
+  @keyframes voltCta { 0%,100% { box-shadow: 0 0 0 0 rgba(61,123,255,0.55); } 60% { box-shadow: 0 0 0 10px rgba(61,123,255,0); } }
+  .volt-cta-pulse { animation: voltCta 2.4s ease-out infinite; }
   @media (max-width: 760px) {
     .volt-yc-body > :not(:last-child) { margin-right: 0; }
     .volt-yc-form { margin-left: 0 !important; }
@@ -10409,18 +10657,88 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
 
   if (!profile) return shell("#5b8dff", <>{head}<div style={{ flex: 1, display: "flex", alignItems: "center" }}><Skeleton rows={5} /></div></>);
 
-  if (!profile.rank) return shell("#5b8dff", <>
-    <CardArt hue="#5b8dff" />
-    {head}
-    <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", gap: 14 }}>
-      <Empty icon="◉" title="Your card is waiting"
-        hint="Add your rank and paste a tracker screenshot — your radar, stats and trophies build themselves from it." />
-      <button onClick={onGo("account")} style={shellBtn("primary", { padding: "11px 20px", fontSize: 12 })}>
-        Set up my card →
-      </button>
-    </div>
-  </>);
+  // A first-timer: the card they're about to get, shown as a ghost, with one
+  // clear job — set it up. Same frame, grid and rays as the real card, so the
+  // preview reads as "this, but yours".
+  if (!profile.rank) {
+    const H = "#5b8dff";
+    const ghost = "rgba(200,215,255,0.2)";
+    const GHOST_NUM = { fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 30, lineHeight: 1,
+      color: "rgba(200,215,255,0.22)" };
+    const GLBL = { fontSize: 9.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.3)", marginTop: 7 };
+    const pent = (r) => [0, 1, 2, 3, 4].map((i) => {
+      const t = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+      return `${100 + r * Math.cos(t)},${100 + r * Math.sin(t)}`;
+    }).join(" ");
+    return <div className="volt-yc" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
+      <div className="volt-cell" style={{ ...PANEL(`${H}55`, "34px 36px 30px"), position: "relative", overflow: "hidden",
+        display: "flex", flexDirection: "column", flex: 1, minHeight: 460, clipPath: SHELL_NOTCH(18) }}>
+        <CardArt hue={H} bare />
+        <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%",
+          pointerEvents: "none",
+          background: `repeating-linear-gradient(105deg, transparent 0 46px, ${H}14 46px 52px, transparent 52px 110px, ${H}0c 110px 140px)`,
+          maskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)",
+          WebkitMaskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)" }} />
+        {/* The agent, unlit: whoever they main takes this spot. */}
+        <img className="volt-yc-fig" src={agentArt(null)} alt="" aria-hidden style={{ position: "absolute", left: "79%",
+          transform: "translateX(-50%)", top: 10, height: "calc(100% + 20px)", width: "auto", maxWidth: "none",
+          pointerEvents: "none", opacity: 0.5, filter: `grayscale(1) brightness(0.32) drop-shadow(0 0 1px ${H}88)`,
+          maskImage: "linear-gradient(180deg, #000 45%, transparent 78%)",
+          WebkitMaskImage: "linear-gradient(180deg, #000 45%, transparent 78%)" }} />
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12,
+          borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
+        <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12,
+          borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
+
+        <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
+          {/* The ask */}
+          <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>
+            // New player</div>
+          <div style={{ fontSize: "clamp(30px, 3.3vw, 46px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 0.98,
+            marginTop: 10, textShadow: `0 0 34px ${H}55` }}>
+            Build your card<br /><span style={{ color: "#7da6ff" }}>to get drafted</span></div>
+          <div style={{ fontSize: 14, lineHeight: 1.55, color: "rgba(200,215,255,0.62)", marginTop: 12, maxWidth: 440 }}>
+            Captains scout every player before they bid. No card, no bids. It takes two minutes and you only do it once.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 20 }}>
+            <button onClick={onGo("account")} className="volt-cta-pulse"
+              style={shellBtn("primary", { padding: "16px 30px", fontSize: 14, letterSpacing: "0.16em" })}>
+              Set up my card →
+            </button>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "rgba(200,215,255,0.45)" }}>
+              ~2 min · one time</span>
+          </div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 16 }}>
+            {["Rank", "Role", "Discord", "WhatsApp"].map((k) => (
+              <span key={k} style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+                padding: "5px 10px", color: "rgba(200,215,255,0.7)", border: "1px dashed rgba(125,166,255,0.35)" }}>{k}</span>
+            ))}
+            <span style={{ fontSize: 10.5, padding: "5px 4px", color: "rgba(200,215,255,0.38)" }}>+ tracker stats, optional</span>
+          </div>
+
+          {/* The preview: where each part of the card will go. */}
+          <div style={{ marginTop: "auto", paddingTop: 22, display: "flex", alignItems: "center", gap: 26, flexWrap: "wrap" }}>
+            <svg viewBox="-24 -8 248 220" width="210" height="186" aria-hidden>
+              {[80, 56, 32].map((r) => <polygon key={r} points={pent(r)} fill="none" stroke={ghost} strokeWidth="1" />)}
+              <polygon points={pent(80)} fill="none" stroke="rgba(125,166,255,0.4)" strokeWidth="1.4" strokeDasharray="5 5" />
+              {["KDA", "ACS", "HS%", "WIN%", "RANK"].map((k, i) => {
+                const t = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+                return <text key={k} x={100 + 96 * Math.cos(t)} y={104 + 96 * Math.sin(t)} textAnchor="middle"
+                  fontSize="9" fontWeight="700" fill="rgba(200,215,255,0.3)" letterSpacing="1">{k}</text>;
+              })}
+              <text x="100" y="110" textAnchor="middle" fontSize="28" fontWeight="700" fill="rgba(125,166,255,0.4)">?</text>
+            </svg>
+            <div style={{ alignSelf: "stretch", width: 1, margin: "12px 0",
+              background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.2), transparent)" }} />
+            <div style={{ display: "grid", gap: 18 }}>
+              <div><div style={GHOST_NUM}>#—</div><div style={GLBL}>League rank</div></div>
+              <div><div style={GHOST_NUM}>—</div><div style={GLBL}>Season points</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>;
+  }
 
   const hue = RANKS[profile.rank]?.c || "#5b8dff";
   const num = (v) => (v == null || v === "" ? null : Number(v));
@@ -10755,38 +11073,49 @@ function ResultsGlance({ state }) {
   const teamOf = (id) => state.teams.find((x) => x.id === id);
   const done = allMatches(t).filter((m) => m?.done && m.winner).slice(-4).reverse();
   if (!done.length) return <Empty icon="◈" title="No results yet" hint="Scores land here as matches are reported." />;
+  // Scoreline from the winner's side: rounds for a single map, maps for a series.
   const score = (m) => {
     const ms = (m.maps || []).filter((x) => x && x.a != null && x.b != null);
     if (!ms.length) return null;
     const wA = m.winner === m.teamA;
-    if (ms.length === 1) return wA ? `${ms[0].a}–${ms[0].b}` : `${ms[0].b}–${ms[0].a}`;
+    if (ms.length === 1) return wA ? [ms[0].a, ms[0].b] : [ms[0].b, ms[0].a];
     let a = 0, b = 0;
     ms.forEach((x) => { if (x.a > x.b) a++; else if (x.b > x.a) b++; });
-    return wA ? `${a}–${b}` : `${b}–${a}`;
+    return wA ? [a, b] : [b, a];
   };
   return (
-    <div style={{ display: "grid", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 8, height: "100%" }}>
       {done.map((m, i) => {
         const w = teamOf(m.winner), l = teamOf(m.winner === m.teamA ? m.teamB : m.teamA);
         const isFinal = t?.final && t.final.id === m.id;
         const sc = score(m);
+        const lead = i === 0;
         return (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5,
-            padding: "5px 8px", borderLeft: `2px solid ${w?.hue}`,
-            background: `linear-gradient(90deg, ${w?.hue}14, transparent 75%)` }}>
-            {m.map && MAP_IMG[m.map]
-              ? <img src={MAP_IMG[m.map]} alt={m.map} style={{ width: 30, height: 20, objectFit: "cover", flex: "0 0 auto" }} />
-              : <TeamMono name={w?.name} hue={w?.hue} size={17} />}
-            <span style={{ color: w?.hue, fontWeight: 700, textTransform: "uppercase",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w?.name}</span>
-            {sc && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 700,
-              color: "#ecf3ff", padding: "1px 6px", background: "rgba(255,255,255,0.06)",
-              whiteSpace: "nowrap" }}>{sc}</span>}
-            <span style={{ flex: 1, minWidth: 0, color: "rgba(200,215,255,0.4)",
-              textDecoration: "line-through", textDecorationColor: "rgba(200,215,255,0.2)",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l?.name}</span>
-            {isFinal && <span style={{ fontSize: 8.5, letterSpacing: "0.16em", fontWeight: 700,
-              color: "#f5c453", border: "1px solid rgba(245,196,83,0.4)", padding: "1px 5px" }}>FINAL</span>}
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 10,
+            padding: lead ? "11px 12px" : "7px 12px", position: "relative",
+            background: lead ? `linear-gradient(90deg, ${w?.hue}22, rgba(10,13,22,0.4) 70%)` : "rgba(10,13,22,0.35)",
+            border: `1px solid ${lead ? (w?.hue || "#7da6ff") + "44" : "rgba(120,150,220,0.1)"}`,
+            animation: `voltRise .4s ${i * 60}ms backwards` }}>
+            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: w?.hue }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <TeamMono name={w?.name} hue={w?.hue} size={lead ? 22 : 17} />
+              <span style={{ color: w?.hue, fontWeight: 700, textTransform: "uppercase", fontSize: lead ? 14 : 12.5,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w?.name}</span>
+            </div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: lead ? 18 : 14,
+              whiteSpace: "nowrap", textAlign: "center" }}>
+              {sc ? <><span style={{ color: "#ecf3ff" }}>{sc[0]}</span>
+                <span style={{ color: "rgba(200,215,255,0.3)", margin: "0 5px" }}>–</span>
+                <span style={{ color: "rgba(200,215,255,0.45)" }}>{sc[1]}</span></>
+                : <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", letterSpacing: "0.14em" }}>WON</span>}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, minWidth: 0 }}>
+              {isFinal && <span style={{ fontSize: 8.5, letterSpacing: "0.16em", fontWeight: 700,
+                color: "#f5c453", border: "1px solid rgba(245,196,83,0.4)", padding: "1px 5px" }}>FINAL</span>}
+              <span style={{ color: "rgba(200,215,255,0.4)", fontSize: lead ? 13 : 12, textTransform: "uppercase",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l?.name}</span>
+              <span style={{ opacity: 0.45 }}><TeamMono name={l?.name} hue={l?.hue} size={lead ? 18 : 15} /></span>
+            </div>
           </div>
         );
       })}
@@ -10913,7 +11242,7 @@ function PredictGlance({ viewerId, onOpen }) {
         sub={`${first.hit} of ${first.total} called`}
         hue={meFirst ? "#7da6ff" : "#f5c453"} />
       <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column",
-        justifyContent: "center", gap: 13, minWidth: 0 }}>
+        justifyContent: "center", gap: 10, minWidth: 0 }}>
         {rest.map((r, i) => {
           const me = r.userId === viewerId;
           return (
@@ -10996,7 +11325,7 @@ function Segments({ ms, hue = "#7da6ff" }) {
 }
 
 // ── Countdown to whatever happens next before the draft ──────────────────
-function DraftClock({ ev, phase }) {
+function DraftClock({ ev, phase, players, teams }) {
   const now = useNow(1000);
   const closes = ev?.reg_closes ? new Date(ev.reg_closes).getTime() : null;
   const draft = ev?.draft_at ? new Date(ev.draft_at).getTime() : null;
@@ -11007,7 +11336,28 @@ function DraftClock({ ev, phase }) {
     draft && `Draft ${whenLabel(ev.draft_at)}`,
     ev?.starts_on && `Matches ${dayLabel(ev.starts_on)}${ev?.ends_on && ev.ends_on !== ev.starts_on ? `–${dayLabel(ev.ends_on)}` : ""}`,
   ].filter(Boolean);
-  if (!target) return <Empty icon="◷" title="Draft time not set" hint="The host hasn't picked a draft time yet. It shows here the moment they do." />;
+  const nTeams = (teams || []).length || (players || []).filter((p) => p.isCaptain).length;
+  const facts = [
+    { k: "Teams", v: nTeams || "—" },
+    { k: "Per team", v: 5 },
+    { k: "Budget", v: "$10k" },
+  ];
+  const factRow = (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+      {facts.map((f) => (
+        <div key={f.k} style={{ padding: "8px 10px", background: "rgba(10,13,22,0.5)", border: "1px solid rgba(120,150,220,0.14)" }}>
+          <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 17, lineHeight: 1, color: "#ecf3ff" }}>{f.v}</div>
+          <div style={{ ...TINY, fontSize: 8, marginTop: 5 }}>{f.k}</div>
+        </div>
+      ))}
+    </div>
+  );
+  if (!target) return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10 }}>
+      <div style={{ fontSize: 13, color: DIM }}>Draft time not set yet. It shows here the moment the host picks one.</div>
+      {factRow}
+    </div>
+  );
   const left = target - now;
   return (
     <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10 }}>
@@ -11018,6 +11368,7 @@ function DraftClock({ ev, phase }) {
       {left > 0
         ? <Segments ms={left} hue={left < 36e5 ? "#3ddc84" : "#7da6ff"} />
         : <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", color: "#3ddc84" }}>Any minute now</div>}
+      {factRow}
       {!!dates.length && (
         <div style={{ fontFamily: MONO, fontSize: 10.5, color: "rgba(200,215,255,0.45)", lineHeight: 1.6 }}>
           {dates.map((d) => <div key={d}>{d}</div>)}
@@ -11028,15 +11379,15 @@ function DraftClock({ ev, phase }) {
 }
 
 // ── Your entry: the steps that decide whether you're in the draft ────────
-function EntryGlance({ reg, profile, phase, ev, onGo }) {
+function EntryGlance({ reg, profile, phase, ev, onGo, toggle }) {
   const now = useNow(60000);
   const approved = reg && (reg.status || "approved") === "approved";
-  const declined = reg && reg.status === "declined";
+  const declined = reg && (reg.status === "rejected" || reg.status === "declined");
   const asked = ev?.availability_check_at && new Date(ev.availability_check_at).getTime() <= now;
   const steps = [
     { k: "Signed up", ok: !!reg,
       note: reg ? (reg.is_captain ? "as a captain" : null)
-        : phase === "registration_open" ? "Use the toggle in the banner above" : "Sign-ups have closed" },
+        : phase === "registration_open" ? (toggle ? "Flip the switch above" : "Sign-ups are open") : "Sign-ups have closed" },
     { k: "Approved by the host", ok: approved, bad: declined,
       note: !reg ? null : declined ? "Not this time" : approved ? null : "Waiting on the host" },
     { k: "Card complete", ok: !!(profile?.rank && profile?.role),
@@ -11051,6 +11402,14 @@ function EntryGlance({ reg, profile, phase, ev, onGo }) {
   const allIn = done === steps.length;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 9, height: "100%" }}>
+      {/* The sign-up switch lives here, where the steps it starts are. */}
+      {toggle && (
+        <div onClick={(e) => e.stopPropagation()} style={{ padding: "11px 13px", marginBottom: 4,
+          background: reg ? "rgba(10,13,22,0.55)" : "linear-gradient(90deg, rgba(61,220,132,0.12), rgba(10,13,22,0.55) 80%)",
+          border: `1px solid ${reg ? "rgba(120,150,220,0.16)" : "rgba(61,220,132,0.4)"}`, clipPath: SHELL_NOTCH(8) }}>
+          {toggle}
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
         <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 26, lineHeight: 1,
           color: allIn ? "#3ddc84" : "#ecf3ff" }}>{done}<span style={{ color: "rgba(200,215,255,0.35)", fontSize: 15 }}>/{steps.length}</span></span>
@@ -11066,11 +11425,13 @@ function EntryGlance({ reg, profile, phase, ev, onGo }) {
           return (
             <div key={s.k} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5,
               animation: `voltRise .4s ${i * 60}ms backwards` }}>
-              <span style={{ flex: "0 0 auto", width: 17, height: 17, display: "grid", placeItems: "center",
-                fontSize: 10, fontWeight: 700, color: s.ok ? "#0a0d18" : col,
-                background: s.ok ? "#3ddc84" : "transparent", border: `1px solid ${col}`,
-                clipPath: "polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%)" }}>
-                {s.ok ? "✓" : s.bad ? "✕" : ""}
+              <span style={{ flex: "0 0 auto", width: 17, height: 17, position: "relative", display: "grid", placeItems: "center" }}>
+                <svg viewBox="0 0 20 20" width="17" height="17" style={{ position: "absolute", inset: 0 }}>
+                  <polygon points="10,1 18,5.5 18,14.5 10,19 2,14.5 2,5.5" fill={s.ok ? "#3ddc84" : "none"}
+                    stroke={col} strokeWidth="1.4" strokeDasharray={s.soft ? "2.5 2" : undefined} />
+                </svg>
+                <span style={{ position: "relative", fontSize: 10, fontWeight: 700, color: s.ok ? "#0a0d18" : col }}>
+                  {s.ok ? "✓" : s.bad ? "✕" : ""}</span>
               </span>
               <span style={{ flex: 1, minWidth: 0, color: s.ok ? "rgba(236,243,255,0.62)" : "#ecf3ff" }}>{s.k}</span>
               {s.note && (s.go && !s.ok
@@ -11160,7 +11521,7 @@ function LastChampGlance({ currentId }) {
 }
 
 // ── The pool, broken down: how many, what roles, what ranks ──────────────
-function PoolBreakdown({ players }) {
+function PoolBreakdown({ players, me, viewerId }) {
   const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
   const caps = (players || []).filter((p) => p.isCaptain).length;
   if (!pool.length) return <Empty icon="⊞" title="Nobody in the pool yet"
@@ -11170,8 +11531,30 @@ function PoolBreakdown({ players }) {
   const ranks = RANK_LIST.map((r) => ({ r, n: pool.filter((p) => p.rank === r).length }));
   const maxRank = Math.max(1, ...ranks.map((x) => x.n));
   const top = [...ranks].reverse().find((x) => x.n);
+  // Your role's competition: the question a player actually has here.
+  const myRole = me?.role;
+  const score = (p) => RANK_LIST.indexOf(p.rank) * 10 + Number(p.rankDiv ?? p.rank_div ?? 0);
+  const rivals = myRole ? pool.filter((p) => (p.role || "Flex") === myRole) : [];
+  const meIn = rivals.find((p) => p.id === viewerId);
+  const meScore = meIn ? score(meIn) : me?.rank ? score({ rank: me.rank, rankDiv: me.rank_div }) : null;
+  const place = meScore != null ? rivals.filter((p) => p.id !== viewerId && score(p) > meScore).length + 1 : null;
+  const others = rivals.filter((p) => p.id !== viewerId).length;
+  const ord = (n) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
   return (
-    <div style={{ display: "flex", gap: 20, height: "100%", flexWrap: "wrap", alignItems: "stretch" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
+    {myRole && (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "9px 12px", fontSize: 13,
+        background: "linear-gradient(90deg, rgba(61,123,255,0.14), transparent 85%)", borderLeft: "2px solid #7da6ff" }}>
+        <span style={{ color: "#7da6ff", fontSize: 11 }}>{ROLE_GLYPH[myRole] || "◆"}</span>
+        <span><b style={{ fontFamily: MONO, color: "#ecf3ff" }}>{others}</b>{" "}
+          <span style={{ color: "rgba(236,243,255,0.75)" }}>other {myRole}{others === 1 ? "" : "s"} signed up</span></span>
+        {place && <span style={{ color: DIM }}>·</span>}
+        {place && <span style={{ color: "rgba(236,243,255,0.75)" }}>
+          {meIn ? "you're" : "you'd be"} the <b style={{ color: place === 1 ? "#f5c453" : "#7da6ff" }}>
+            {place === 1 ? "highest" : `${ord(place)} highest`}</b> ranked</span>}
+      </div>
+    )}
+    <div style={{ display: "flex", gap: 20, flex: 1, flexWrap: "wrap", alignItems: "stretch" }}>
       <FeatureTile label="Signed up"
         value={<CountUp to={pool.length} />}
         name={`${caps} ${caps === 1 ? "captain" : "captains"}`}
@@ -11209,6 +11592,7 @@ function PoolBreakdown({ players }) {
           ))}
         </div>
       </div>
+    </div>
     </div>
   );
 }
