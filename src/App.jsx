@@ -10858,8 +10858,8 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
   const figStyle = { position: "absolute", left: "79%", transform: "translateX(-50%)", top: -FIG_RISE,
     height: "calc(100% + 40px)", width: "auto", maxWidth: "none", pointerEvents: "none", zIndex: 2,
     filter: `drop-shadow(0 10px 26px rgba(0,0,0,0.5)) drop-shadow(0 0 22px ${hue}40)`,
-    maskImage: "linear-gradient(180deg, #000 55%, transparent 76%)",
-    WebkitMaskImage: "linear-gradient(180deg, #000 55%, transparent 76%)" };
+    maskImage: "linear-gradient(180deg, #000 70%, transparent 92%)",
+    WebkitMaskImage: "linear-gradient(180deg, #000 70%, transparent 92%)" };
   const LBL = { fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 8 };
   const BIG = (c) => ({ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 38, lineHeight: 1, color: c });
   return <div className="volt-yc" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
@@ -10885,14 +10885,20 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
       <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
         {/* Identity */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ flex: "0 0 auto", width: 88, height: 88, display: "grid", placeItems: "center" }}>
-            <div style={{ transform: "scale(0.85)" }}><RankCrest rank={profile.rank} div={profile.rank_div} /></div>
+          <div style={{ flex: "0 0 auto", width: 88, height: 88, position: "relative" }}>
+            {/* The crest is drawn at 104px; scale it about its own centre so its
+                visual middle is the box's middle. */}
+            <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%) scale(0.85)" }}>
+              <RankCrest rank={profile.rank} div={profile.rank_div} /></div>
           </div>
-          <div style={{ minWidth: 0 }}>
+          {/* Name + role as one block, centred on the crest. The name's line
+              box is trimmed to its capitals so the block's centre is where the
+              eye sees it, not dragged up by empty ascender space. */}
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
             <div style={{ fontSize: "clamp(32px, 3.4vw, 48px)", fontWeight: 700, textTransform: "uppercase",
-              lineHeight: 0.95, textShadow: `0 0 30px ${hue}44`,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.display_name || "You"}</div>
-            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: hue, marginTop: 6 }}>
+              lineHeight: 0.78, paddingTop: "0.06em", textShadow: `0 0 30px ${hue}44`,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.ign || profile.display_name || "You"}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: hue, marginTop: 10, lineHeight: 1 }}>
               {profile.role || "Player"}
               {profile.agent && <span style={{ color: "rgba(236,243,255,0.5)", fontWeight: 400 }}>{" · "}{profile.agent}</span>}
             </div>
@@ -10928,7 +10934,15 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.28), transparent)" }} />
           <div style={{ display: "grid", gap: 28 }}>
             {!lg && <Skeleton rows={3} />}
-            {lg && (
+            {/* Before a first league match there's no league rank or points to
+                show, so the card leads with the tracker numbers instead. */}
+            {lg && !lg.played && tiles.slice(0, 2).map((t) => (
+              <div key={t.label}>
+                <div style={BIG(t.col)}><CountUp to={t.v} format={t.f} /></div>
+                <div style={LBL}>Tracker {t.label}</div>
+              </div>
+            ))}
+            {lg && lg.played > 0 && (
               <div>
                 <div style={BIG(lg.pos === 1 ? "#f5c453" : "#ecf3ff")}>
                   {lg.pos ? <>#<CountUp to={lg.pos} /></> : "—"}
@@ -10937,7 +10951,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
                 <div style={LBL}>League rank</div>
               </div>
             )}
-            {lg && (
+            {lg && lg.played > 0 && (
               <div>
                 <div style={BIG("#ecf3ff")}><CountUp to={lg.points || 0} dur={1100} /></div>
                 <div style={LBL}>Season points</div>
@@ -10973,11 +10987,18 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
               <FormStrip games={lg.recent} part="line" w={160} />
               <div style={LBL}>Form · ACS per match</div>
             </div>
-          </> : lg && !lg.failed ? (
-            <div style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
-              No league matches yet. Your first reported result starts your record here.
+          </> : lg && !lg.failed ? <>
+            {tiles.slice(2).map((t) => (
+              <div key={t.label}>
+                <div style={BIG(t.col)}><CountUp to={t.v} format={t.f} /></div>
+                <div style={LBL}>Tracker {t.label}</div>
+              </div>
+            ))}
+            <div style={{ marginLeft: "auto", alignSelf: "flex-end", maxWidth: 260, fontSize: 11.5, lineHeight: 1.5,
+              color: "rgba(200,215,255,0.45)", paddingBottom: 4 }}>
+              League rank, points and form appear after your first reported match.
             </div>
-          ) : null}
+          </> : null}
         </div>
       </div>
     </div>
