@@ -10100,36 +10100,101 @@ function Cell({ title, action, onGo, span = 1, tall = false, tone, art, children
 // ── Pool strip: the Scout/Reserve hubs' one-line summary ─────────────────
 function PoolStrip({ players, tone = "#3d7bff" }) {
   const pool = (players || []).filter((p) => !p.isCaptain);
-  const avail = pool.filter((p) => p.status === "pool").length;
+  const caps = (players || []).filter((p) => p.isCaptain);
+  const avail = pool.filter((p) => p.status === "pool" || p.status === "block").length;
   const sold = pool.filter((p) => p.status === "sold").length;
-  const caps = (players || []).filter((p) => p.isCaptain).length;
   const roles = ROLES.map((r) => ({ r, n: pool.filter((p) => (p.role || "Flex") === r).length }));
-  const max = Math.max(1, ...roles.map((x) => x.n));
-  const tile = (v, k, c, i) => (
-    <div key={k} style={{ padding: "12px 16px", borderLeft: `2px solid ${c}`, animation: `voltRise .4s ${i * 60}ms backwards` }}>
-      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, lineHeight: 1, color: c }}><CountUp to={v} /></div>
-      <div style={{ fontSize: 9.5, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 6 }}>{k}</div>
-    </div>
-  );
+  const maxRole = Math.max(1, ...roles.map((x) => x.n));
+  const ranks = RANK_LIST.map((r) => ({ r, n: pool.filter((p) => p.rank === r).length })).filter((x) => x.n);
+  const top = ranks[ranks.length - 1];
+  const pct = pool.length ? sold / pool.length : 0;
+  // Ring geometry
+  const R = 46, C = 2 * Math.PI * R;
+  const box = { ...PANEL(null, "16px 18px"), clipPath: SHELL_NOTCH(12), position: "relative", overflow: "hidden" };
+  const lbl = { fontSize: 9.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", fontWeight: 700 };
   return (
-    <div style={{ ...PANEL(`${tone}33`, "14px 18px"), clipPath: SHELL_NOTCH(12), display: "flex", flexWrap: "wrap",
-      alignItems: "center", gap: 18, marginBottom: 18 }}>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {tile(pool.length, "In the pool", "#ecf3ff", 0)}
-        {tile(avail, "Available", "#3ddc84", 1)}
-        {tile(sold, "Drafted", "#7da6ff", 2)}
-        {tile(caps, "Captains", "#f5c453", 3)}
-      </div>
-      <div style={{ flex: "1 1 260px", display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
-        {roles.map((x, i) => (
-          <div key={x.r}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, marginBottom: 5 }}>
-              <span style={{ color: "rgba(236,243,255,0.7)" }}><span style={{ color: "#7da6ff", fontSize: 9, marginRight: 4 }}>{ROLE_GLYPH[x.r]}</span>{x.r}</span>
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{x.n}</span>
+    <div className="volt-poolstrip" style={{ display: "grid", gap: 12, marginBottom: 18 }}>
+      <style>{`
+        .volt-poolstrip { grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.2fr) minmax(0, 1.2fr); }
+        @media (max-width: 1000px) { .volt-poolstrip { grid-template-columns: 1fr 1fr; } .volt-poolstrip > :first-child { grid-column: 1 / -1; } }
+        @media (max-width: 640px) { .volt-poolstrip { grid-template-columns: 1fr; } }
+      `}</style>
+
+      {/* 1 — Draft progress ring */}
+      <div style={{ ...box, display: "flex", alignItems: "center", gap: 18 }}>
+        <div style={{ position: "relative", width: 112, height: 112, flex: "0 0 auto" }}>
+          <svg viewBox="0 0 112 112" width="112" height="112" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="56" cy="56" r={R} fill="none" stroke="rgba(61,220,132,0.18)" strokeWidth="9" />
+            <circle cx="56" cy="56" r={R} fill="none" stroke="url(#vpsg)" strokeWidth="9" strokeLinecap="butt"
+              strokeDasharray={`${C * pct} ${C}`} style={{ transition: "stroke-dasharray 900ms cubic-bezier(.2,.8,.2,1)", filter: "drop-shadow(0 0 6px rgba(61,123,255,0.6))" }} />
+            <defs><linearGradient id="vpsg" x1="0" x2="1"><stop offset="0" stopColor="#3d7bff" /><stop offset="1" stopColor="#00e5ff" /></linearGradient></defs>
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", textAlign: "center" }}>
+            <div>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 28, lineHeight: 1, color: "#ecf3ff" }}><CountUp to={pool.length} /></div>
+              <div style={{ ...lbl, fontSize: 8, marginTop: 4 }}>players</div>
             </div>
-            <Bar pct={(x.n / max) * 100} h={4} i={i} color="linear-gradient(90deg,#3d7bff,#00e5ff)" opacity={x.n ? 1 : 0.2} />
           </div>
-        ))}
+        </div>
+        <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
+          {[["Drafted", sold, "#7da6ff"], ["Available", avail, "#3ddc84"], ["Captains", caps.length, "#f5c453"]].map(([k, v, c]) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <span style={{ width: 8, height: 8, transform: "rotate(45deg)", background: c, boxShadow: `0 0 8px ${c}` }} />
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 18, color: c, minWidth: 26 }}><CountUp to={v} /></span>
+              <span style={{ ...lbl, fontSize: 9 }}>{k}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 2 — Roles as columns with their glyphs */}
+      <div style={box}>
+        <div style={{ ...lbl, marginBottom: 12 }}>By role</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, alignItems: "end", height: 96 }}>
+          {roles.map((x, i) => {
+            const hot = x.n === maxRole && x.n > 0;
+            return (
+              <div key={x.r} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", gap: 5 }}>
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: hot ? "#00e5ff" : "#ecf3ff" }}>{x.n}</span>
+                <div className="volt-col" style={{ width: "100%", maxWidth: 38, height: `${Math.max(6, (x.n / maxRole) * 62)}px`,
+                  background: hot ? "linear-gradient(180deg,#00e5ff,#3d7bff55)" : "linear-gradient(180deg,#3d7bff,#3d7bff33)",
+                  clipPath: "polygon(0 6px, 6px 0, 100% 0, 100% 100%, 0 100%)", "--d": `${120 + i * 60}ms`,
+                  boxShadow: hot ? "0 0 14px rgba(0,229,255,0.4)" : "none" }} />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, marginTop: 7 }}>
+          {roles.map((x) => (
+            <div key={x.r} style={{ textAlign: "center", fontSize: 10, letterSpacing: "0.06em", color: "rgba(236,243,255,0.7)",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span style={{ color: "#7da6ff", marginRight: 3 }}>{ROLE_GLYPH[x.r]}</span>{x.r}</div>
+          ))}
+        </div>
+      </div>
+
+      {/* 3 — Rank spread: one colour band, then the tiers */}
+      <div style={box}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+          <span style={lbl}>Rank spread</span>
+          {top && <span style={{ fontSize: 11, color: "rgba(200,215,255,0.55)" }}>
+            Top tier <b style={{ color: RANKS[top.r].c }}>{top.r}</b> × {top.n}</span>}
+        </div>
+        <div style={{ display: "flex", height: 14, gap: 2, clipPath: SHELL_NOTCH(5) }}>
+          {ranks.map((x, i) => (
+            <div key={x.r} title={`${x.r}: ${x.n}`} className="volt-bar" style={{ flex: x.n, background: RANKS[x.r].c,
+              opacity: 0.9, "--d": `${120 + i * 60}ms` }} />
+          ))}
+          {!ranks.length && <div style={{ flex: 1, background: "rgba(255,255,255,0.06)" }} />}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(52px, 1fr))", gap: "10px 8px", marginTop: 16 }}>
+          {ranks.map((x) => (
+            <div key={x.r} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <RankBadge rank={x.r} size="sm" />
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 13, color: RANKS[x.r].c }}>{x.n}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -10854,7 +10919,9 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
       <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
         {/* Identity */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ flex: "0 0 auto" }}><RankBadge rank={profile.rank} div={profile.rank_div} size="xl" solidDiv /></div>
+          <div style={{ flex: "0 0 auto", width: 88, height: 88, display: "grid", placeItems: "center" }}>
+            <div style={{ transform: "scale(0.85)" }}><RankCrest rank={profile.rank} div={profile.rank_div} /></div>
+          </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: "clamp(32px, 3.4vw, 48px)", fontWeight: 700, textTransform: "uppercase",
               lineHeight: 0.95, textShadow: `0 0 30px ${hue}44`,
