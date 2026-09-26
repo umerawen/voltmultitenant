@@ -3570,8 +3570,8 @@ function Leaderboard({ isAdmin }) {
       {rows === null && <div style={{ ...PANEL(null, "20px 22px") }}><Skeleton rows={6} /></div>}
       {rows && rows.length === 0 && (
         <div style={{ ...PANEL(null, "30px 22px") }}>
-          <Empty icon="≣" title="No matches yet"
-            hint="Points and averages appear the moment the host reports the first match." />
+          <Empty title="No matches yet"
+            hint="Rankings start after the first reported match." />
         </div>
       )}
       {rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} />}
@@ -6307,7 +6307,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
       {reserves.length === 0 ? (
         <div style={{ ...PANEL("rgba(61,220,132,0.25)", "30px 20px"), clipPath: SHELL_NOTCH(12) }}>
-          <Empty icon="⊕" title={draftHasRun ? "Everyone has a team" : "No reserves yet"}
+          <Empty title={draftHasRun ? "Everyone has a team" : "No reserves yet"}
             hint={draftHasRun
               ? "Everyone who registered is on a roster. Late sign-ups will land here."
               : "Late sign-ups land here, and so does anyone moved out of the draft pool."} />
@@ -6451,7 +6451,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           </button>
         ); })}
         {filtered.length === 0 && <div className="col-span-full" style={{ ...PANEL(null, "26px 20px") }}>
-          <Empty icon="⌕" title="Nobody matches" hint="Try a different rank or role, or clear the search." /></div>}
+          <Empty rows={0} title="Nobody matches" hint="Try a different rank or role, or clear the search." /></div>}
       </div>
 
       {isAdmin && !(hostFormOpen || editingPlayer) && (
@@ -10359,17 +10359,34 @@ function PName({ uid, onOpen, children, style }) {
 // What a cell says when there's nothing in it yet. A fresh league sees these
 // more than anything else, so they explain what will appear rather than
 // leaving a blank box.
-function Empty({ icon = "◇", title, hint }) {
+function Empty({ title, hint, rows = 3, shape = "row" }) {
+  // Not an icon-in-a-box with centred copy. The cell keeps the shape of what
+  // will fill it: a plain line saying what's missing, then faint placeholder
+  // slots in the same layout the real content uses, so the dashboard reads
+  // as "waiting" rather than "broken".
+  const slot = (i) => {
+    const w = [72, 54, 63, 46, 58][i % 5];
+    if (shape === "block") return (
+      <div key={i} style={{ height: 38, background: "rgba(120,150,220,0.045)", borderLeft: "2px solid rgba(120,150,220,0.12)" }} />
+    );
+    return (
+      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, height: 20 }}>
+        <span style={{ width: 16, height: 16, flex: "0 0 auto", background: "rgba(120,150,220,0.07)",
+          clipPath: "polygon(0 0, 100% 0, 100% 68%, 50% 100%, 0 68%)" }} />
+        <span style={{ height: 7, width: `${w}%`, background: "rgba(120,150,220,0.07)" }} />
+        <span style={{ marginLeft: "auto", height: 7, width: 34, background: "rgba(120,150,220,0.05)" }} />
+      </div>
+    );
+  };
   return (
-    <div style={{ height: "100%", minHeight: 96, display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", textAlign: "center", gap: 7, padding: "6px" }}>
-      <span style={{ width: 34, height: 34, display: "grid", placeItems: "center", fontSize: 15,
-        color: "rgba(125,166,255,0.75)", background: "rgba(61,123,255,0.07)",
-        border: "1px dashed rgba(125,166,255,0.35)" }}>{icon}</span>
-      <div style={{ fontSize: 12.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em",
-        color: "rgba(236,243,255,0.72)" }}>{title}</div>
-      {hint && <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", maxWidth: 230,
-        lineHeight: 1.45 }}>{hint}</div>}
+    <div style={{ height: "100%", minHeight: 96, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "rgba(236,243,255,0.78)" }}>{title}</div>
+        {hint && <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.45)", marginTop: 4, lineHeight: 1.5, maxWidth: 340 }}>{hint}</div>}
+      </div>
+      {rows > 0 && <div aria-hidden style={{ display: "grid", gap: 10, marginTop: "auto", maxWidth: 480 }}>
+        {Array.from({ length: rows }, (_, i) => slot(i))}
+      </div>}
     </div>
   );
 }
@@ -11046,7 +11063,7 @@ function PoolGlance({ players, live }) {
   const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
   const left = pool.filter((p) => p.status === "pool").length;
   const sold = pool.length - left;
-  if (!pool.length) return <Empty icon="⊞" title="Nobody in the pool yet"
+  if (!pool.length) return <Empty title="Nobody in the pool yet"
     hint="Players appear here as their applications are approved." />;
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "center" }}>
@@ -11138,7 +11155,7 @@ function FixtureGlance({ state }) {
   const played = every.filter((m) => m.done).length;
   const next = every.filter((m) => !m.done)
     .sort((a, b) => (a.scheduledAt || "~").localeCompare(b.scheduledAt || "~")).slice(0, 4);
-  if (!next.length) return <Empty icon="◈" title="Nothing left to play" hint="Every fixture has a result." />;
+  if (!next.length) return <Empty title="Nothing left to play" hint="Every fixture has a result." />;
   const isLive = (m) => m.scheduledAt && new Date(m.scheduledAt).getTime() <= now;
   const when = (iso) => {
     if (!iso) return "time TBA";
@@ -11187,7 +11204,7 @@ function ResultsGlance({ state }) {
   const t = state?.tournament;
   const teamOf = (id) => state.teams.find((x) => x.id === id);
   const done = allMatches(t).filter((m) => m?.done && m.winner).slice(-4).reverse();
-  if (!done.length) return <Empty icon="◈" title="No results yet" hint="Scores land here as matches are reported." />;
+  if (!done.length) return <Empty title="No results yet" hint="Scores land here as matches are reported." />;
   // Scoreline from the winner's side: rounds for a single map, maps for a series.
   const score = (m) => {
     const ms = (m.maps || []).filter((x) => x && x.a != null && x.b != null);
@@ -11281,7 +11298,7 @@ function LeaderGlance({ viewerId, onOpen }) {
   }, []);
 
   if (!rows) return <Skeleton rows={6} />;
-  if (!rows.length) return <Empty icon="≣" title="No matches yet" hint="Once a result is reported, the best performers rank here." />;
+  if (!rows.length) return <Empty title="No matches yet" hint="Once a result is reported, the best performers rank here." />;
   const top = rows[0].acs || 1;
   const pos = rows.findIndex((r) => r.id === viewerId);
   const shown = rows.slice(0, 5).map((r, i) => ({ ...r, i }));
@@ -11344,7 +11361,7 @@ function PredictGlance({ viewerId, onOpen }) {
     return () => { ok = false; };
   }, []);
   if (!rows) return <Skeleton rows={5} />;
-  if (!rows.length) return <Empty icon="◇" title="No calls scored yet"
+  if (!rows.length) return <Empty title="No calls scored yet"
     hint="Anyone in the server can predict a match before kick-off. Correct calls rank here." />;
   const [first, ...rest] = rows;
   const meFirst = first.userId === viewerId;
@@ -11602,7 +11619,7 @@ function LastChampGlance({ currentId }) {
     return () => { ok = false; };
   }, [currentId]);
   if (row === undefined) return <Skeleton rows={3} />;
-  if (!row) return <Empty icon="🏆" title="No champion yet" hint="This is the league's first tournament. The winners' name goes here." />;
+  if (!row) return <Empty rows={1} shape="block" title="No champion yet" hint="The winner of each tournament is listed here." />;
   const r = row.recap;
   return (
     <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10,
@@ -11639,8 +11656,8 @@ function LastChampGlance({ currentId }) {
 function PoolBreakdown({ players, me, viewerId }) {
   const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
   const caps = (players || []).filter((p) => p.isCaptain).length;
-  if (!pool.length) return <Empty icon="⊞" title="Nobody in the pool yet"
-    hint="Players appear here as their sign-ups are approved." />;
+  if (!pool.length) return <Empty title="Nobody in the pool yet"
+    hint="Approved sign-ups are listed here." />;
   const roles = ROLES.map((r) => ({ r, n: pool.filter((p) => (p.role || "Flex") === r).length }));
   const maxRole = Math.max(1, ...roles.map((x) => x.n));
   const ranks = RANK_LIST.map((r) => ({ r, n: pool.filter((p) => p.rank === r).length }));
@@ -11715,8 +11732,8 @@ function PoolBreakdown({ players, me, viewerId }) {
 // ── Captains: who's buying ────────────────────────────────────────────────
 function CaptainsGlance({ players, teams, onOpen }) {
   const caps = (players || []).filter((p) => p.isCaptain);
-  if (!caps.length) return <Empty icon="♛" title="No captains yet"
-    hint="Captains are picked from sign-ups. They'll line up here before the draft." />;
+  if (!caps.length) return <Empty rows={4} title="No captains yet"
+    hint="The host picks captains from sign-ups before the draft." />;
   const teamOf = (id) => (teams || []).find((t) => t.captainUserId === id);
   return (
     <div style={{ display: "grid", gap: 7 }}>
@@ -11748,7 +11765,7 @@ function ScoutGlance({ players, onOpen }) {
   const score = (p) => RANK_LIST.indexOf(p.rank) * 10 + Number(p.rankDiv || 0);
   const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false)
     .sort((a, b) => score(b) - score(a) || Number(b.acs || 0) - Number(a.acs || 0)).slice(0, 6);
-  if (!pool.length) return <Empty icon="⊞" title="Nobody in the pool" hint="Approved players appear here." />;
+  if (!pool.length) return <Empty title="Nobody in the pool" hint="Approved players appear here." />;
   const [first, ...rest] = pool;
   return (
     <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
@@ -11845,7 +11862,7 @@ function BlockGlance({ state, onOpen }) {
 function SalesGlance({ state, onOpen }) {
   const now = useNow(30000);
   const sales = (state?.recentSales || []).slice(0, 5);
-  if (!sales.length) return <Empty icon="$" title="No sales yet" hint="Every sale lands here the moment the hammer drops." />;
+  if (!sales.length) return <Empty title="No sales yet" hint="Sales show up here as players are sold." />;
   const teamOf = (id) => (state.teams || []).find((t) => t.id === id);
   return (
     <div style={{ display: "grid", gap: 7 }}>
@@ -11878,7 +11895,7 @@ function SalesGlance({ state, onOpen }) {
 // ── Captains' purses: who can still afford what ──────────────────────────
 function PursesGlance({ state, slots = 4 }) {
   const teams = [...(state?.teams || [])].sort((a, b) => (b.budget || 0) - (a.budget || 0));
-  if (!teams.length) return <Empty icon="$" title="No teams yet" hint="Teams appear when the host builds them from the captains." />;
+  if (!teams.length) return <Empty title="No teams yet" hint="Teams appear when the host builds them from the captains." />;
   return (
     <div style={{ display: "grid", gap: 9 }}>
       {teams.map((t, i) => {
@@ -11916,7 +11933,7 @@ function NextMatchGlance({ state, team }) {
   if (!m) {
     const played = team ? allMatches(state?.tournament).filter((x) => x?.done && (x.teamA === team.id || x.teamB === team.id)) : [];
     const won = played.filter((x) => x.winner === team?.id).length;
-    return <Empty icon="◈" title={team ? "You're done for now" : "Nothing scheduled"}
+    return <Empty title={team ? "You're done for now" : "Nothing scheduled"}
       hint={team ? `${won}–${played.length - won} so far. The next round's fixture shows up here once it's set.` : "Fixtures appear here as the host schedules them."} />;
   }
   const a = teamOf(m.teamA), b = teamOf(m.teamB);
@@ -11984,7 +12001,7 @@ function BuysGlance({ state, onOpen }) {
   const sold = (state?.players || [])
     .filter((p) => p.status === "sold" && p.soldPrice)
     .sort((a, b) => b.soldPrice - a.soldPrice).slice(0, 6);
-  if (!sold.length) return <Empty icon="$" title="Nobody sold yet" hint="The biggest buys of the auction show up here as players go." />;
+  if (!sold.length) return <Empty title="Nobody sold yet" hint="The most expensive players are listed here during the draft." />;
   const teamOf = (p) => (state.teams || []).find((t) => (t.roster || []).includes(p.id));
   const [first, ...rest] = sold;
   const ft = teamOf(first);
@@ -12032,7 +12049,7 @@ function StandingsGlance({ state }) {
   const rows = (state?.teams || [])
     .map((x) => ({ name: x.name, hue: x.hue, w: tally[x.id] || 0 }))
     .sort((a, b) => b.w - a.w).slice(0, 4);
-  if (!rows.length) return <Empty icon="▦" title="No teams yet" />;
+  if (!rows.length) return <Empty title="No teams yet" />;
   const top = Math.max(1, ...rows.map((r) => r.w));
   return (
     <div style={{ display: "grid", gap: 8 }}>
