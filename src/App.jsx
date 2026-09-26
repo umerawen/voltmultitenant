@@ -3259,6 +3259,7 @@ const MAP_IMG = {
   Lotus: "/img/maps/lotus.jpg",
   Pearl: "/img/maps/pearl.jpg",
   Split: "/img/maps/split.jpg",
+  Summit: "/img/maps/summit.jpg",
   Sunset: "/img/maps/sunset.jpg",
   Abyss: "/img/maps/abyss.jpg",
 };
@@ -3315,7 +3316,8 @@ function HudLabel({ children, dot = "#3d7bff" }) {
 //      rim, bevel, field, inner disc — rather than from shadows.
 const OCT = "polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%)";
 
-function CoinFace({ label, back }) {
+function CoinFace({ label, back, team }) {
+  const hue = team?.hue || "#6f9dff";
   const layer = (inset, style) => (
     <div className="absolute" style={{ inset, clipPath: OCT, ...style }} />
   );
@@ -3325,37 +3327,46 @@ function CoinFace({ label, back }) {
       transform: back ? "rotateX(180deg)" : "none",
     }}>
       {/* Rim, catching light from the top-left like a milled edge. */}
-      {layer(0, { background: "linear-gradient(155deg,#6f9dff 0%,#2f56a8 38%,#0d122a 100%)" })}
+      {layer(0, { background: `linear-gradient(155deg, ${hue} 0%, ${hue}88 38%, #0d122a 100%)` })}
       {/* Bevel — a darker step in from the rim gives the edge thickness. */}
       {layer(3, { background: "linear-gradient(155deg,#1b2c52,#0a1020)" })}
       {/* Field, with a soft highlight where the light lands. */}
       {layer(5, {
-        background: "radial-gradient(120% 100% at 28% 22%, rgba(120,165,255,0.34), rgba(10,16,32,0.96) 62%)",
+        background: `radial-gradient(120% 100% at 28% 22%, ${hue}55, rgba(10,16,32,0.96) 62%)`,
       })}
       {/* Inner disc the legend sits on. */}
       <div className="absolute grid place-items-center" style={{
         inset: "22%", clipPath: OCT,
-        background: "linear-gradient(155deg,rgba(61,123,255,0.22),rgba(8,12,24,0.5))",
-        border: "1px solid rgba(140,180,255,0.45)",
+        background: `linear-gradient(155deg, ${hue}33, rgba(8,12,24,0.5))`,
+        border: `1px solid ${hue}88`,
       }}>
-        <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14,
-          letterSpacing: "0.16em", color: "#e8f0ff", textShadow: "0 0 10px rgba(120,170,255,0.9)" }}>
-          {label}
-        </span>
+        {team ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <TeamMono name={team.name} hue={team.hue} size={34} />
+            <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: "0.12em",
+              color: "#e8f0ff", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              textShadow: `0 0 10px ${hue}` }}>{team.name}</span>
+          </div>
+        ) : (
+          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14,
+            letterSpacing: "0.16em", color: "#e8f0ff", textShadow: "0 0 10px rgba(120,170,255,0.9)" }}>
+            {label}
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-function HudCoin({ coin, deg = 0, flipping }) {
+function HudCoin({ coin, deg = 0, flipping, a, b, size = 112, glow = "rgba(61,123,255,0.34)" }) {
   const lit = !!coin || flipping;
   return (
-    <div className="relative" style={{ width: 112, height: 112, perspective: 760 }}>
+    <div className="relative" style={{ width: size, height: size, perspective: 760 }}>
       {/* Glow sits behind and never rotates — putting it on the coin would
           flatten the 3D and mirror the far face. */}
       <div className="absolute" style={{
         inset: -18, borderRadius: "50%", pointerEvents: "none",
-        background: "radial-gradient(circle, rgba(61,123,255,0.34), rgba(61,123,255,0) 68%)",
+        background: `radial-gradient(circle, ${glow}, transparent 68%)`,
         opacity: lit ? 1 : 0.25, transition: "opacity .4s ease",
       }} />
       <div className="relative" style={{
@@ -3365,8 +3376,8 @@ function HudCoin({ coin, deg = 0, flipping }) {
         // Slow enough to read as a coin settling rather than a blur.
         transition: "transform 1.9s cubic-bezier(.12,.78,.16,1)",
       }}>
-        <CoinFace label="HEADS" />
-        <CoinFace label="TAILS" back />
+        <CoinFace label="HEADS" team={a} />
+        <CoinFace label="TAILS" back team={b} />
       </div>
     </div>
   );
@@ -3648,9 +3659,12 @@ function MapVeto({ teams }) {
     if (flipping) return;
     const result = Math.random() < 0.5 ? "HEADS" : "TAILS";
     setCoinTeam(null);
+    setTurn(null);
 
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      setCoin(result); setCoinDeg((d) => d + (result === "HEADS" ? 0 : 180)); return;
+      setCoin(result); setCoinDeg((d) => d + (result === "HEADS" ? 0 : 180));
+      if (teamA && teamB) setCoinTeam(result === "HEADS" ? teamA : teamB);
+      return;
     }
 
     setFlipping(true); setCoin(null);
@@ -3662,7 +3676,11 @@ function MapVeto({ teams }) {
       return base + (((want - (base % 360)) % 360) + 360) % 360;
     });
     // Matches the CSS transition, so the result registers exactly as it settles.
-    coinTimer.current = setTimeout(() => { setCoin(result); setFlipping(false); }, 1900);
+    coinTimer.current = setTimeout(() => {
+      setCoin(result); setFlipping(false);
+      // Each face carries a team, so the coin names the winner itself.
+      if (teamA && teamB) setCoinTeam(result === "HEADS" ? teamA : teamB);
+    }, 1900);
   };
 
   const banMap = (m) => {
@@ -3771,27 +3789,70 @@ function MapVeto({ teams }) {
             ))}
           </div>
 
-          {/* coin flip */}
-          <HudPanel pad="px-5 py-5">
+          {/* coin toss — each face is a team, the winner picks their ban order */}
+          <HudPanel pad="px-5 py-6">
             <HudLabel dot="#3ddc84">Coin Toss</HudLabel>
-            <div className="flex flex-col items-center gap-3">
-              <HudCoin coin={coin} deg={coinDeg} flipping={flipping} />
-              <button onClick={flip} disabled={flipping} className="ea-btn relative" style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "11px 30px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.85rem", letterSpacing: "0.28em", textTransform: "uppercase", color: "#cfe0ff", background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))", border: "1px solid rgba(61,123,255,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)", opacity: flipping ? 0.5 : 1 }}>
-                <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                <span className="absolute right-0 top-0" style={{ width: 10, height: 10, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-                {flipping ? "Flipping…" : coin ? "Flip again" : "Flip coin"}
-              </button>
-              {coin && !flipping && <p className="text-xs text-center" style={{ color: "rgba(200,215,255,0.5)" }}>Tap the team that won the flip, then choose who bans first.</p>}
-              {coin && !flipping && (
-                <div className="w-full flex gap-3 mt-1">{teamPill(teamA, "Side A")}{teamPill(teamB, "Side B")}</div>
-              )}
-            </div>
+            {(() => {
+              const ready = A && B && teamA !== teamB;
+              const W = coinTeam ? resolve(coinTeam) : null;
+              const L = coinTeam ? resolve(other(coinTeam)) : null;
+              const side = (t, face, win) => (
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                  opacity: coinTeam && !win ? 0.35 : 1, transition: "opacity .4s" }}>
+                  <TeamMono name={t?.name} hue={t?.hue} size={win ? 46 : 38} />
+                  <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase", fontSize: win ? 22 : 18,
+                    color: t?.hue || "rgba(200,215,255,0.4)", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    textShadow: win ? `0 0 24px ${t?.hue}` : "none" }}>{t?.name || "Pick a team"}</div>
+                  <span style={{ fontSize: 9.5, letterSpacing: "0.22em", fontWeight: 700, padding: "3px 8px",
+                    color: win ? "#0a0d18" : "rgba(200,215,255,0.5)", background: win ? "#3ddc84" : "transparent",
+                    border: `1px solid ${win ? "#3ddc84" : "rgba(120,150,220,0.25)"}` }}>{win ? "WON THE TOSS" : face}</span>
+                </div>
+              );
+              return (
+                <div className="flex flex-col items-center gap-5">
+                  <div className="w-full flex items-center gap-4">
+                    {side(A, "HEADS", coinTeam && coinTeam === teamA)}
+                    <div className="flex flex-col items-center gap-3" style={{ flex: "0 0 auto" }}>
+                      <HudCoin coin={coin} deg={coinDeg} flipping={flipping} a={A} b={B} size={136}
+                        glow={W ? `${W.hue}66` : "rgba(61,123,255,0.34)"} />
+                      <button onClick={flip} disabled={flipping || !ready} className="ea-btn relative" style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "12px 32px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.85rem", letterSpacing: "0.28em", textTransform: "uppercase", color: "#cfe0ff", background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))", border: "1px solid rgba(61,123,255,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)", opacity: flipping || !ready ? 0.45 : 1 }}>
+                        <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                        <span className="absolute right-0 top-0" style={{ width: 10, height: 10, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                        {flipping ? "Flipping…" : coin ? "Flip again" : "Flip coin"}
+                      </button>
+                    </div>
+                    {side(B, "TAILS", coinTeam && coinTeam === teamB)}
+                  </div>
+                  {!ready && <p className="text-xs text-center" style={{ color: "rgba(200,215,255,0.5)" }}>Pick both teams above to flip.</p>}
+                  {W && !flipping && (
+                    <div className="w-full" style={{ animation: "voltRise .4s backwards" }}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-center mb-3" style={{ color: "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+                        <span style={{ color: W.hue }}>{W.name}</span> chooses</p>
+                      <div className="flex gap-3">
+                        {[[coinTeam, "Ban first", "They open the veto"], [other(coinTeam), "Ban second", `${L?.name} opens, ${W.name} gets the last ban`]].map(([first, label, sub]) => {
+                          const on = turn === first;
+                          return (
+                            <button key={label} onClick={() => setTurn(first)} className="relative flex-1 px-4 py-3 text-left"
+                              style={{ fontFamily: "'Rajdhani',sans-serif", background: on ? W.hue + "26" : "rgba(255,255,255,0.03)",
+                                border: `1px solid ${on ? W.hue : "rgba(120,150,220,0.2)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))",
+                                boxShadow: on ? `0 0 18px ${W.hue}44` : "none" }}>
+                              <div className="font-bold uppercase" style={{ fontSize: 16, letterSpacing: "0.08em", color: on ? "#ecf3ff" : W.hue }}>{on ? "✓ " : ""}{label}</div>
+                              <div className="text-xs mt-0.5" style={{ color: "rgba(200,215,255,0.5)" }}>{sub}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </HudPanel>
 
-          {/* who bans first */}
-          {teamA && teamB && teamA !== teamB && (
+          {/* manual override when there's no toss */}
+          {teamA && teamB && teamA !== teamB && !coinTeam && (
             <HudPanel>
-              <HudLabel>First Ban</HudLabel>
+              <HudLabel>Or set first ban manually</HudLabel>
               <div className="flex gap-3">
                 {[teamA, teamB].map((id) => (
                   <button key={id} onClick={() => setTurn(id)} className="relative flex-1 px-3 py-2.5 font-bold uppercase text-sm"
