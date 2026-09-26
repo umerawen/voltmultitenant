@@ -11026,7 +11026,9 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
     {/* Cropped at the card's right edge, like the body inside the panel. */}
     <div aria-hidden className="volt-yc-fig" style={{ position: "absolute", top: -FIG_RISE, left: 0, right: 0, bottom: 0,
       overflow: "hidden", pointerEvents: "none", zIndex: 2 }}>
-      <img src={art} alt="" style={{ ...figStyle, top: 0, height: `calc(100% - ${FIG_RISE - 40}px)`,
+      {/* No filter here: the glow belongs to the card, only the figure itself
+          breaks out above the edge. */}
+      <img src={art} alt="" style={{ ...figStyle, top: 0, height: `calc(100% - ${FIG_RISE - 40}px)`, filter: "none",
         clipPath: `inset(0 0 calc(100% - ${FIG_RISE + 3}px) 0)` }} />
     </div>
   </div>;
