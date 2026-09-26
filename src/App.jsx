@@ -10098,103 +10098,48 @@ function Cell({ title, action, onGo, span = 1, tall = false, tone, art, children
 
 
 // ── Pool strip: the Scout/Reserve hubs' one-line summary ─────────────────
-function PoolStrip({ players, tone = "#3d7bff" }) {
+function PoolStrip({ players }) {
+  // Deliberately quiet: three numbers and one progress line. Role counts live
+  // on the role filter buttons below, where they're actually used.
   const pool = (players || []).filter((p) => !p.isCaptain);
-  const caps = (players || []).filter((p) => p.isCaptain);
+  const caps = (players || []).filter((p) => p.isCaptain).length;
   const avail = pool.filter((p) => p.status === "pool" || p.status === "block").length;
   const sold = pool.filter((p) => p.status === "sold").length;
-  const roles = ROLES.map((r) => ({ r, n: pool.filter((p) => (p.role || "Flex") === r).length }));
-  const maxRole = Math.max(1, ...roles.map((x) => x.n));
-  const ranks = RANK_LIST.map((r) => ({ r, n: pool.filter((p) => p.rank === r).length })).filter((x) => x.n);
-  const top = ranks[ranks.length - 1];
-  const pct = pool.length ? sold / pool.length : 0;
-  // Ring geometry
-  const R = 46, C = 2 * Math.PI * R;
-  const box = { ...PANEL(null, "16px 18px"), clipPath: SHELL_NOTCH(12), position: "relative", overflow: "hidden" };
-  const lbl = { fontSize: 9.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", fontWeight: 700 };
+  const stat = (v, k, c) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 22, lineHeight: 1, color: c }}>{v}</span>
+      <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>{k}</span>
+    </div>
+  );
   return (
-    <div className="volt-poolstrip" style={{ display: "grid", gap: 12, marginBottom: 18 }}>
-      <style>{`
-        .volt-poolstrip { grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.2fr) minmax(0, 1.2fr); }
-        @media (max-width: 1000px) { .volt-poolstrip { grid-template-columns: 1fr 1fr; } .volt-poolstrip > :first-child { grid-column: 1 / -1; } }
-        @media (max-width: 640px) { .volt-poolstrip { grid-template-columns: 1fr; } }
-      `}</style>
-
-      {/* 1 — Draft progress ring */}
-      <div style={{ ...box, display: "flex", alignItems: "center", gap: 18 }}>
-        <div style={{ position: "relative", width: 112, height: 112, flex: "0 0 auto" }}>
-          <svg viewBox="0 0 112 112" width="112" height="112" style={{ transform: "rotate(-90deg)" }}>
-            <circle cx="56" cy="56" r={R} fill="none" stroke="rgba(61,220,132,0.18)" strokeWidth="9" />
-            <circle cx="56" cy="56" r={R} fill="none" stroke="url(#vpsg)" strokeWidth="9" strokeLinecap="butt"
-              strokeDasharray={`${C * pct} ${C}`} style={{ transition: "stroke-dasharray 900ms cubic-bezier(.2,.8,.2,1)", filter: "drop-shadow(0 0 6px rgba(61,123,255,0.6))" }} />
-            <defs><linearGradient id="vpsg" x1="0" x2="1"><stop offset="0" stopColor="#3d7bff" /><stop offset="1" stopColor="#00e5ff" /></linearGradient></defs>
-          </svg>
-          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", textAlign: "center" }}>
-            <div>
-              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 28, lineHeight: 1, color: "#ecf3ff" }}><CountUp to={pool.length} /></div>
-              <div style={{ ...lbl, fontSize: 8, marginTop: 4 }}>players</div>
+    <div style={{ display: "flex", alignItems: "center", gap: "18px 28px", flexWrap: "wrap", padding: "14px 18px 12px", marginBottom: 16,
+      background: "rgba(10,13,22,0.55)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(10) }}>
+      {stat(avail, "Available", "#3ddc84")}
+      {stat(sold, "Drafted", "#ecf3ff")}
+      {stat(caps, "Captains", "#f5c453")}
+      {/* Per role: who's still on the board while the draft runs, the whole
+          pool before and after it. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap", paddingLeft: 22,
+        borderLeft: "1px solid rgba(120,150,220,0.16)" }}>
+        {ROLES.map((r) => {
+          const inRole = pool.filter((p) => (p.role || "Flex") === r);
+          const n = avail ? inRole.filter((p) => p.status === "pool" || p.status === "block").length : inRole.length;
+          return (
+            <div key={r} title={avail ? `${n} ${r} still available of ${inRole.length}` : `${n} ${r}`}
+              style={{ display: "flex", alignItems: "baseline", gap: 6, opacity: n ? 1 : 0.4 }}>
+              <span style={{ fontSize: 10, color: "#7da6ff" }}>{ROLE_GLYPH[r]}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 17, lineHeight: 1, color: "#ecf3ff" }}>{n}</span>
+              <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>{r}</span>
             </div>
-          </div>
-        </div>
-        <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
-          {[["Drafted", sold, "#7da6ff"], ["Available", avail, "#3ddc84"], ["Captains", caps.length, "#f5c453"]].map(([k, v, c]) => (
-            <div key={k} style={{ display: "flex", alignItems: "center", gap: 9 }}>
-              <span style={{ width: 8, height: 8, transform: "rotate(45deg)", background: c, boxShadow: `0 0 8px ${c}` }} />
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 18, color: c, minWidth: 26 }}><CountUp to={v} /></span>
-              <span style={{ ...lbl, fontSize: 9 }}>{k}</span>
-            </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
-
-      {/* 2 — Roles as columns with their glyphs */}
-      <div style={box}>
-        <div style={{ ...lbl, marginBottom: 12 }}>By role</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, alignItems: "end", height: 96 }}>
-          {roles.map((x, i) => {
-            const hot = x.n === maxRole && x.n > 0;
-            return (
-              <div key={x.r} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", gap: 5 }}>
-                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: hot ? "#00e5ff" : "#ecf3ff" }}>{x.n}</span>
-                <div className="volt-col" style={{ width: "100%", maxWidth: 38, height: `${Math.max(6, (x.n / maxRole) * 62)}px`,
-                  background: hot ? "linear-gradient(180deg,#00e5ff,#3d7bff55)" : "linear-gradient(180deg,#3d7bff,#3d7bff33)",
-                  clipPath: "polygon(0 6px, 6px 0, 100% 0, 100% 100%, 0 100%)", "--d": `${120 + i * 60}ms`,
-                  boxShadow: hot ? "0 0 14px rgba(0,229,255,0.4)" : "none" }} />
-              </div>
-            );
-          })}
+      <div style={{ flex: "1 1 100%", display: "flex", alignItems: "center", gap: 10, marginTop: -8 }}>
+        <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.07)" }}>
+          <div style={{ height: "100%", width: `${pool.length ? (sold / pool.length) * 100 : 0}%`, background: "#3d7bff", transition: "width 600ms" }} />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, marginTop: 7 }}>
-          {roles.map((x) => (
-            <div key={x.r} style={{ textAlign: "center", fontSize: 10, letterSpacing: "0.06em", color: "rgba(236,243,255,0.7)",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              <span style={{ color: "#7da6ff", marginRight: 3 }}>{ROLE_GLYPH[x.r]}</span>{x.r}</div>
-          ))}
-        </div>
-      </div>
-
-      {/* 3 — Rank spread: one colour band, then the tiers */}
-      <div style={box}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-          <span style={lbl}>Rank spread</span>
-          {top && <span style={{ fontSize: 11, color: "rgba(200,215,255,0.55)" }}>
-            Top tier <b style={{ color: RANKS[top.r].c }}>{top.r}</b> × {top.n}</span>}
-        </div>
-        <div style={{ display: "flex", height: 14, gap: 2, clipPath: SHELL_NOTCH(5) }}>
-          {ranks.map((x, i) => (
-            <div key={x.r} title={`${x.r}: ${x.n}`} className="volt-bar" style={{ flex: x.n, background: RANKS[x.r].c,
-              opacity: 0.9, "--d": `${120 + i * 60}ms` }} />
-          ))}
-          {!ranks.length && <div style={{ flex: 1, background: "rgba(255,255,255,0.06)" }} />}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(52px, 1fr))", gap: "10px 8px", marginTop: 16 }}>
-          {ranks.map((x) => (
-            <div key={x.r} style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <RankBadge rank={x.r} size="sm" />
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 13, color: RANKS[x.r].c }}>{x.n}</span>
-            </div>
-          ))}
-        </div>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "rgba(200,215,255,0.45)", whiteSpace: "nowrap" }}>
+          {sold}/{pool.length} drafted</span>
       </div>
     </div>
   );
