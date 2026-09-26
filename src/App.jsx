@@ -7470,8 +7470,27 @@ function AccountView({ auth, chrome }) {
   const overline = { fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", marginBottom: 12 };
   const fieldLabel = { fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif", marginBottom: 3 };
 
+  // A new account has nothing to show until the scouting profile exists, so the
+  // setup jumps to the top of the page; once it's filled in it returns to the
+  // editing section at the bottom.
+  const [bump, setBump] = useState(0);
+  const onScoutSaved = () => { setBump((n) => n + 1); try { __sb.from("users").select("*").eq("id", auth.userId).maybeSingle().then(({ data }) => data && setMe(data)); } catch {} };
+  const scoutPanelFor = (scoutFirst) => scoutFirst ? (
+    // Top of the page: the setup card on its own, lit, no second frame around it.
+    <div style={{ filter: "drop-shadow(0 0 22px rgba(61,123,255,0.22))" }}>
+      <ScoutProfileCard userId={auth?.userId} onSaved={onScoutSaved} />
+    </div>
+  ) : (
+    <div style={{ ...panel, ...(scoutFirst ? { border: "1px solid rgba(61,123,255,0.6)", boxShadow: "0 0 30px rgba(61,123,255,0.15)" } : {}) }}>
+      <div style={overline}>// Scouting profile{scoutFirst ? " · start here" : ""}</div>
+      <p style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif" }}>
+        {scoutFirst ? "Your card, radar and stats are all built from this. Captains won't bid on a blank profile."
+          : "Captains see this on the auction block — keep it honest, keep it current. Edits update the radar above."}</p>
+      <ScoutProfileCard userId={auth?.userId} onSaved={() => { setBump((n) => n + 1); try { __sb.from("users").select("*").eq("id", auth.userId).maybeSingle().then(({ data }) => data && setMe(data)); } catch {} }} />
+    </div>
+  );
   // Editing lives below the read-only profile — same screen, clear separation.
-  const editor = (
+  const editorFor = (empty) => (
     <div className="view-in" style={{ display: "grid", gap: 18, marginTop: 34 }}>
       {(me?.suspension_remaining || 0) > 0 && (
         <div style={{ padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", fontFamily: "'Rajdhani',sans-serif" }}>
@@ -7502,11 +7521,7 @@ function AccountView({ auth, chrome }) {
         </div>
       </div>
 
-      <div style={panel}>
-        <div style={overline}>// Scouting profile</div>
-        <p style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif" }}>Captains see this on the auction block — keep it honest, keep it current. Edits update the radar above.</p>
-        <ScoutProfileCard userId={auth?.userId} onSaved={() => { try { __sb.from("users").select("*").eq("id", auth.userId).maybeSingle().then(({ data }) => data && setMe(data)); } catch {} }} />
-      </div>
+      {!empty && scoutPanelFor(false)}
       {HAS_SUPABASE && <DiscordLinkCard />}
 
       {chrome?.onSignOut && (
@@ -7517,7 +7532,9 @@ function AccountView({ auth, chrome }) {
 
   // The rich profile screen, rendered for the logged-in user, with the editor
   // dropped in as its footer. One coherent page, same visual language.
-  return <PlayerProfile userId={auth?.userId} onBack={null} footer={editor} />;
+  return <PlayerProfile key={bump} userId={auth?.userId} onBack={null}
+    lead={({ empty }) => empty ? <div style={{ marginBottom: 18 }}>{scoutPanelFor(true)}</div> : null}
+    footer={({ empty }) => editorFor(empty)} />;
 }
 
 // Collapsed host controls for narrow screens — same overlay pattern as the chip.
@@ -8266,7 +8283,7 @@ function ModeratorToggle({ userId, role, name, onChanged }) {
   );
 }
 
-function PlayerProfile({ userId, onBack, footer }) {
+function PlayerProfile({ userId, onBack, footer, lead }) {
   const [d, setD] = useState(null);
   useEffect(() => {
     (async () => {
@@ -8345,6 +8362,8 @@ function PlayerProfile({ userId, onBack, footer }) {
         <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// {onBack ? "Player file" : "My Account"}</span>
         {onBack && <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>‹ Back</button>}
       </div>
+      {/* Anything the page wants first — for a brand-new account, the setup. */}
+      {typeof lead === "function" ? lead({ empty: !hasScout }) : lead}
 
       {/* HERO — two equal panels, identity + radar, matched heights */}
       <style>{`@media (max-width: 720px){ .volt-hero-grid{ grid-template-columns: 1fr !important; } }`}</style>
@@ -8508,7 +8527,7 @@ function PlayerProfile({ userId, onBack, footer }) {
           </div>
         </>
       )}
-      {footer}
+      {typeof footer === "function" ? footer({ empty: !hasScout }) : footer}
     </div>
   );
 }

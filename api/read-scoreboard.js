@@ -9,8 +9,6 @@
 // by anyone who opens devtools, and they can exhaust the daily free quota — which
 // would break match reporting mid-tournament.
 
-const MODEL = "gemini-3.6-flash";
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
 // Gemini's inline-image ceiling is 20MB for the whole request. The client
 // downscales before sending, so anything near this is a bug or an abuse attempt.
@@ -56,6 +54,55 @@ Read the digits carefully and do not guess. If a row's numbers are not clearly
 legible, still include the row but set the unreadable fields to 0 so a human can
 correct them. Include every player from both teams.`;
 
+// ── Resilient Gemini call ────────────────────────────────────────────────
+// "This model is currently experiencing high demand" is Google's 503: the
+// model is overloaded, not broken. Retry it briefly, then fall back to the
+// next model in the list. A model name that doesn't exist on this key (404)
+// is simply skipped. The whole thing stays inside Vercel's time limit.
+const MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"];
+const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function callGemini(key, payload, budgetMs = 50000) {
+  const started = Date.now();
+  let last = { status: 503, message: "The reader is busy right now." };
+  for (const model of MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const left = budgetMs - (Date.now() - started);
+      if (left < 4000) return { ok: false, ...last };
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), Math.min(left - 1000, 25000));
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST", signal: ctl.signal,
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify(payload),
+        });
+        const body = await r.json().catch(() => null);
+        if (r.ok) return { ok: true, body, model };
+        last = { status: r.status, message: body?.error?.message || `Gemini returned ${r.status}.` };
+        console.error("gemini", model, r.status, last.message);
+        if (r.status === 404 || r.status === 400 && /not found|not supported/i.test(last.message)) break; // try next model
+        if (!RETRY_STATUS.has(r.status)) return { ok: false, ...last };      // a real error — don't mask it
+        if (attempt === 0) await sleep(900 + Math.random() * 600);
+      } catch (e) {
+        last = { status: 504, message: e.name === "AbortError" ? "The reader took too long." : String(e.message || e) };
+        console.error("gemini", model, last.message);
+      } finally { clearTimeout(t); }
+    }
+  }
+  return { ok: false, ...last };
+}
+
+// What the player sees when every model is busy: a plain next step, not
+// Google's wording.
+const busyMessage = (status) => RETRY_STATUS.has(status) || status === 404
+  ? "The screenshot reader is busy right now. Try again in a minute, or type your stats in below."
+  : null;
+
+// Room for a retry and a fallback model when Gemini is overloaded.
+export const config = { maxDuration: 60 };
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -78,10 +125,7 @@ export default async function handler(req, res) {
   const mt = /^image\/(png|jpeg|webp)$/.test(mimeType || "") ? mimeType : "image/jpeg";
 
   try {
-    const r = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
+    const g = await callGemini(key, {
         contents: [{
           parts: [
             { inline_data: { mime_type: mt, data: image } },
@@ -93,16 +137,12 @@ export default async function handler(req, res) {
           responseSchema: SCHEMA,
           temperature: 0, // transcription, not creativity
         },
-      }),
-    });
-
-    const body = await r.json().catch(() => null);
-    if (!r.ok) {
-      // Surface Google's message but never the key or full request.
-      const msg = body?.error?.message || `Gemini returned ${r.status}.`;
-      console.error("gemini error", r.status, msg);
-      return res.status(502).json({ error: msg });
+      });
+    if (!g.ok) {
+      return res.status(g.status === 429 || g.status === 503 ? 503 : 502)
+        .json({ error: busyMessage(g.status) || g.message });
     }
+    const body = g.body;
 
     const text = body?.candidates?.[0]?.content?.parts?.map((p) => p.text).filter(Boolean).join("") || "";
     let parsed;
