@@ -1880,7 +1880,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
               <div key={g.id} className="flex flex-col gap-4">
                 <TPanel>
                   <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name} · Standings</p>
-                  <TStandings teamIds={g.teamIds} matches={t.matches[g.id] || []} overrides={t.overrides} teamOf={teamOf} advance={1} />
+                  <TStandings teamIds={g.teamIds} matches={t.matches[g.id] || []} overrides={t.overrides} teamOf={teamOf} advance={t.playoff === "semis" && t.groups.length === 2 ? 2 : 1} />
                 </TPanel>
                 <TPanel>
                   <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name} · Matches</p>
@@ -1940,7 +1940,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
         <div className="flex flex-col gap-6">
           <TPanel>
             <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Standings</p>
-            <TStandings teamIds={t.teamIds} matches={t.matches} overrides={t.overrides} teamOf={teamOf} advance={1} />
+            <TStandings teamIds={t.teamIds} matches={t.matches} overrides={t.overrides} teamOf={teamOf} advance={2} />
           </TPanel>
           <TPanel>
             <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Fixtures</p>
@@ -2036,7 +2036,7 @@ function RankBadge({ rank, div, size = "md", solidDiv = false }) {
         <polygon points="50,22 76,36 76,64 50,78 24,64 24,36" fill={r.c} opacity="0.9" />
       </svg>
       <span className="relative font-bold text-black" style={{ fontSize: dim * 0.34, fontFamily: "'Rajdhani',sans-serif" }}>
-        {rank === "Radiant" ? "R" : rank[0]}
+        {rank === "Radiant" ? "R" : (rank || "?")[0]}
       </span>
       {/* Division rides in the corner rather than inside the crest — at 24px the
           hexagon has no room for two glyphs without both becoming unreadable. */}
@@ -2057,7 +2057,7 @@ function RankBadge({ rank, div, size = "md", solidDiv = false }) {
 function RankCrest({ rank, div }) {
   const r = RANKS[rank] || RANKS.Iron;
   const s = 104;
-  const letter = rank === "Radiant" ? "R" : rank[0];
+  const letter = rank === "Radiant" ? "R" : (rank || "?")[0];
   const showDiv = hasDivisions(rank) && !!div;
   return (
     <div className="relative grid place-items-center" style={{ width: s, height: s }}>
@@ -2590,8 +2590,9 @@ function Field({ label, children }) {
   return <label className="flex flex-col gap-1"><span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>{label}</span>{children}</label>;
 }
 function AddPlayerForm({ onAdd, editing, onSave, onCancel }) {
+  const str = (v) => (v != null ? String(v) : "");
   const init = editing
-    ? { name: editing.name, rank: editing.rank, role: editing.role, agent: editing.agent, kda: String(editing.kda), acs: String(editing.acs), hs: String(editing.hs), win: editing.win != null ? String(editing.win) : "", badgeInput: "", badges: editing.badges || [] }
+    ? { name: editing.name, rank: editing.rank, role: editing.role, agent: editing.agent, kda: str(editing.kda), acs: str(editing.acs), hs: str(editing.hs), win: str(editing.win), badgeInput: "", badges: editing.badges || [] }
     : { name: "", rank: "Gold", role: "Duelist", agent: "Jett", kda: "", acs: "", hs: "", win: "", badgeInput: "", badges: [] };
   const [f, setF] = useState(init);
   // re-seed when switching which player is being edited
@@ -2600,7 +2601,11 @@ function AddPlayerForm({ onAdd, editing, onSave, onCancel }) {
   const addBadge = () => { const b = f.badgeInput.trim(); if (b) setF({ ...f, badges: [...f.badges, b], badgeInput: "" }); };
   const submit = () => {
     if (!f.name.trim()) return;
-    const data = { name: f.name.trim(), rank: f.rank, role: f.role, agent: f.agent, kda: parseFloat(f.kda) || 1.0, acs: parseInt(f.acs) || 200, hs: parseInt(f.hs) || 20, win: Math.max(0, Math.min(parseInt(f.win) || 50, 100)), badges: f.badges };
+    // Blank stays blank. Defaulting to 1.00 / 200 / 20% / 50% invented stats,
+    // and for registered players editPlayer saved them into their real profile.
+    const num = (v, parse) => { const s = String(v ?? "").trim(); if (!s) return null; const n = parse(s); return Number.isFinite(n) ? n : null; };
+    const win = num(f.win, parseInt);
+    const data = { name: f.name.trim(), rank: f.rank, role: f.role, agent: f.agent, kda: num(f.kda, parseFloat), acs: num(f.acs, parseInt), hs: num(f.hs, parseInt), win: win == null ? null : Math.max(0, Math.min(win, 100)), badges: f.badges };
     if (editing) { onSave({ ...editing, ...data }); }
     else { onAdd({ id: uid(), ...data, status: "pool", soldTo: null, soldPrice: null }); setF(init); }
   };
@@ -3102,11 +3107,15 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
   }, [plans, dirty, loaded]);
 
   // Belt and braces: flush on the way out, in case the debounce hasn't fired.
+  // Read through a ref — with plans as a dependency, this cleanup ran (and
+  // wrote) on every single edit, defeating the debounce above.
+  const latestRef = useRef({ plans, dirty });
+  latestRef.current = { plans, dirty };
   useEffect(() => {
-    const flush = () => { if (dirty) writeWarRoom(teamId, { plans, savedAt: Date.now() }); };
+    const flush = () => { const l = latestRef.current; if (l.dirty) writeWarRoom(teamId, { plans: l.plans, savedAt: Date.now() }); };
     window.addEventListener("pagehide", flush);
     return () => { window.removeEventListener("pagehide", flush); flush(); };
-  }, [plans, dirty, teamId]);
+  }, [teamId]);
   const clearPlan = () => { setPlans((prev) => prev.map((pl, pi) => pi === active ? emptyLineup() : pl)); setDirty(true); };
 
   const chosenIds = new Set(lineup.filter((s) => s.playerId).map((s) => s.playerId));
@@ -3565,6 +3574,9 @@ function Leaderboard({ isAdmin }) {
                              || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
         const agg = {};
         (mrs || []).forEach(r => {
+          // Stand-ins without an account have no user_id; keyed on null they all
+          // merged into one phantom "Player" row with everyone's stats.
+          if (!r.user_id) return;
           const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, acsSum: 0 });
           a.pts += Number(r.points_computed || 0);
           const sp = r.stat_payload || {};
@@ -3576,7 +3588,7 @@ function Leaderboard({ isAdmin }) {
         // is instant instead of a refetch.
         setRows(Object.values(agg)
           .filter(a => a.m > 0)                     // nobody ranks off zero appearances
-          .map(a => ({ ...a, avgAcs: Math.round(a.acsSum / a.m) })));
+          .map(a => ({ ...a, pts: Math.round(a.pts), avgAcs: Math.round(a.acsSum / a.m) })));
       } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
     }
     load();
@@ -3794,13 +3806,10 @@ function MapVeto({ teams }) {
             </div>
 
             {[
-              ["1 · Coin toss", <>Both captains call it. The winner gets <b style={{ color: "#ecf3ff" }}>one choice</b> — and the loser automatically gets the other.</>],
-              ["2 · The choice", <>
-                <b style={{ color: "#f5c453" }}>Map pick</b> — you ban <b style={{ color: "#ecf3ff" }}>second</b>, and you choose the map that gets played from the final two.<br />
-                <b style={{ color: "#f5c453" }}>Side pick</b> — you choose <b style={{ color: "#ecf3ff" }}>Attack or Defence</b> on whatever map ends up being played.
-              </>],
-              ["3 · Banning", <>Teams take turns removing maps, one at a time, until the decider is settled. Whoever bans first removes one more map than their opponent — that's the cost of going first.</>],
-              ["4 · The decider", <>The map that survives is played. The team holding <b style={{ color: "#f5c453" }}>side pick</b> then calls Attack or Defence; the other team takes the opposite side.</>],
+              ["1 · Coin toss", <>The coin picks a winner. The winner decides whether their team <b style={{ color: "#ecf3ff" }}>bans first or second</b>.</>],
+              ["2 · Banning", <>Teams take turns removing one map at a time until a single map is left. With an even number of maps in the pool the team that bans first removes one extra; with an odd number the bans split evenly.</>],
+              ["3 · The decider", <>The last map standing is played.</>],
+              ["4 · Sides", <>The team that did <b style={{ color: "#ecf3ff" }}>not</b> make the final ban picks <b style={{ color: "#f5c453" }}>Attack or Defence</b>; the other team takes the opposite side. The host can hand the side pick over if the captains agree.</>],
             ].map(([title, body], i) => (
               <div key={i} style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#7da6ff", marginBottom: 5 }}>{title}</div>
@@ -3811,7 +3820,7 @@ function MapVeto({ teams }) {
             <div style={{ marginTop: 18, padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(9) }}>
               <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 7 }}>In short</div>
               <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(200,215,255,0.7)", margin: 0 }}>
-                One team decides <b style={{ color: "#ecf3ff" }}>where</b> you play, the other decides <b style={{ color: "#ecf3ff" }}>which side</b> you start on. The toss just decides who gets which.
+                Ban down to one map. Whoever got the last ban gave up the side choice, so the other team picks the starting side.
               </p>
             </div>
           </div>
@@ -3876,7 +3885,15 @@ function MapVeto({ teams }) {
                       <p className="text-xs uppercase tracking-[0.2em] text-center mb-3" style={{ color: "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
                         <span style={{ color: W.hue }}>{W.name}</span> chooses</p>
                       <div className="flex gap-3">
-                        {[[coinTeam, "Ban first", "They open the veto"], [other(coinTeam), "Ban second", `${L?.name} opens, ${W.name} gets the last ban`]].map(([first, label, sub]) => {
+                        {(() => {
+                          // Who makes the final ban depends on how many bans there are
+                          // (one fewer than the maps in play), not on going second.
+                          const lastBy = (first) => ((remaining.length - 1) % 2 === 1 ? first : other(first));
+                          const tail = (first) => (lastBy(first) === coinTeam
+                            ? `${W.name} gets the last ban, ${L?.name} picks the side`
+                            : `${L?.name} gets the last ban, ${W.name} picks the side`);
+                          return [[coinTeam, "Ban first", `${W.name} opens · ${tail(coinTeam)}`], [other(coinTeam), "Ban second", `${L?.name} opens · ${tail(other(coinTeam))}`]];
+                        })().map(([first, label, sub]) => {
                           const on = turn === first;
                           return (
                             <button key={label} onClick={() => setTurn(first)} className="relative flex-1 px-4 py-3 text-left"
@@ -4860,9 +4877,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // the move survives a rebuild from registrations. Moving a SOLD player out
   // refunds their team and frees the slot, per the host's call that this is an undo.
   const setPoolEligible = async (pid, next) => {
+    // Not while they're the lot being bid on — the sale would go through anyway.
+    if (stateRef.current?.block?.playerId === pid) { setSaveErr("Finish or pass the current lot before moving this player."); return; }
     mutate((s) => {
       const p = s.players.find((x) => x.id === pid); if (!p) return null;
-      if (p.poolEligible === next) return null;
+      if (p.poolEligible === next || s.block?.playerId === pid) return null;
       p.poolEligible = next;
       if (!next && p.status === "sold") {
         const t = s.teams.find((x) => x.id === p.soldTo);
@@ -5088,9 +5107,15 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const toggleCaptain = (pid) => {
     const p0 = stateRef.current?.players?.find((x) => x.id === pid);
     const promoting = p0 ? !p0.isCaptain : true;
+    // A drafted player (or the current lot) would end up on two teams at once.
+    if (promoting && p0 && p0.status !== "pool") {
+      setSaveErr(`${p0.name} is ${p0.status === "sold" ? "already on a team" : "up for auction"} — remove them from that first.`);
+      return;
+    }
     mutate((s) => {
       const p = s.players.find((x) => x.id === pid); if (!p) return null;
       if (!p.isCaptain) {
+        if (p.status !== "pool") return null;
         // Promote: exclude from the draw AND spin up their roster in the Locker Room.
         p.isCaptain = true;
         const nid = "t" + (Math.max(0, ...s.teams.map((t) => parseInt(String(t.id).slice(1)) || 0)) + 1);
