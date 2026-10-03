@@ -109,6 +109,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Use POST." });
   }
 
+  // Signed-in VOLT users only. Without this the endpoint was an open proxy to
+  // the Gemini key — anyone with the URL could spend the quota.
+  const jwt = (req.headers.authorization || "").replace(/^Bearer /i, "");
+  if (!jwt || !(await whoami(jwt))) {
+    return res.status(401).json({ error: "Sign in to VOLT to use the screenshot reader." });
+  }
+
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     // Deliberately explicit: this is the single most likely setup mistake.
@@ -179,4 +186,14 @@ function clampInt(v, lo, hi) {
   const n = Math.round(Number(v));
   if (!Number.isFinite(n)) return 0;
   return Math.min(hi, Math.max(lo, n));
+}
+
+async function whoami(jwt) {
+  try {
+    const r = await fetch(process.env.SUPABASE_URL + "/auth/v1/user", {
+      headers: { apikey: process.env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${jwt}` },
+    });
+    if (!r.ok) return null;
+    return (await r.json())?.id || null;
+  } catch { return null; }
 }

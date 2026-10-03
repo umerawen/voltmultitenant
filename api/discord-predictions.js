@@ -1,10 +1,10 @@
 // api/discord-predictions.js — posts a prediction card an hour before kick-off.
 //
-// Called on a schedule (Vercel cron or the DB tick). Idempotent: each match is
-// stamped `predictedAt` on the board once announced, so repeated runs never
-// double-post. Safe to call every few minutes.
+// Called on a schedule by the DB tick (volt_run_predictions, every 5 min).
+// Idempotent: each match is stamped `remindedAt` on the board once nudged, so
+// repeated runs never double-post. Safe to call every few minutes.
 //
-// Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY, CRON_SECRET
+// Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY, VOLT_NOTIFY_SECRET
 
 const API = "https://discord.com/api/v10";
 const WINDOW_MINS = 60;
@@ -19,14 +19,18 @@ export default async function handler(req, res) {
   // isn't final yet doesn't get published by a timer.
   const mode = url.searchParams.get("mode") === "open" ? "open" : "remind";
 
-  // Vercel cron sends a bearer; a host-triggered call passes a user JWT, which
+  // The DB tick (volt_run_predictions) sends x-volt-secret; a Vercel cron would
+  // send a CRON_SECRET bearer; a host-triggered call passes a user JWT, which
   // the RPC itself authorises. Anything else is refused, since this posts
-  // publicly.
+  // publicly. With neither secret configured the endpoint stays open, as before.
   const secret = process.env.CRON_SECRET;
+  const notifySecret = process.env.VOLT_NOTIFY_SECRET;
   const auth = req.headers.authorization || "";
   const qs = url.searchParams.get("secret");
   const jwt = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-  const cronOk = !secret || auth === `Bearer ${secret}` || qs === secret;
+  const bySecret = !!notifySecret && req.headers["x-volt-secret"] === notifySecret;
+  const byCron = secret ? (auth === `Bearer ${secret}` || qs === secret) : !notifySecret;
+  const cronOk = bySecret || byCron;
   if (mode === "open") {
     // Staff only, checked by Supabase against the caller's own token.
     if (!jwt) return res.status(401).json({ error: "unauthorized" });

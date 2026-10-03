@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Secrets — never commit these
+.env
+.env.local
+.env.*.local
+
+# Vercel CLI
+.vercel/
+
+# Logs & OS junk
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

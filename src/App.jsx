@@ -9367,8 +9367,6 @@ function JoinGuideCard({ community, current }) {
         setErr(`Role: ${body.roleError}`);
       } else if (!body?.roleId) {
         setErr("Couldn't create the role. Give the bot Manage Roles in Server Settings → Roles.");
-      } else if (c) {
-        setRes(`Player role synced — ${c.added} added, ${c.removed} removed, ${c.kept} already had it.`);
       } else {
         setRes("Player role created. Nobody's approved for this tournament yet, so it's empty.");
       }
@@ -13811,6 +13809,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       backLabel: inReg ? "Registration" : "Schedule",
       // For the dashboard: it chooses its cells by phase, and shows the viewer
       // their own card, so it needs both rather than deriving them from the board.
+      // Raw phase — DraftApp branches on it, not just labels it.
       phase,
       ev,
       myProfile,
@@ -13820,7 +13819,6 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       portalLabel: inReg ? "Registration" : "League hub",
       onBack: inReg ? () => setRegView("gate") : onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
-    phase,   // raw phase — DraftApp needs to branch on it, not just label it
       draftAt: ev?.draft_at || null,
       // Confirmed captain for this tournament, from the registration record. The
       // auction board doesn't exist until the draft starts, so during
@@ -13999,9 +13997,13 @@ function ScoutProfileCard({ userId, onSaved, embedded = false }) {
     setShotBusy(true); setShotErr(""); setShotScope(""); setShotFilled([]);
     try {
       const { base64, mimeType } = await downscaleImage(file);
+      // Signed-in members only: the reader spends the league's Gemini quota.
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
       const r = await fetch("/api/read-tracker", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ image: base64, mimeType }),
       });
       const body = await r.json().catch(() => null);
@@ -14386,9 +14388,13 @@ function MatchReport({ ev, onDone, prefill }) {
     setShotBusy(true); setShotErr(""); setShot(null);
     try {
       const { base64, mimeType } = await downscaleImage(file);
+      // Signed-in members only: the reader spends the league's Gemini quota.
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
       const r = await fetch("/api/read-scoreboard", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ image: base64, mimeType }),
       });
       const body = await r.json().catch(() => null);
