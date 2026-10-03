@@ -13956,8 +13956,14 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <div className="volt-lg-hero" style={{ ...PANEL(`${H}55`, "30px 34px 28px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(18),
               marginBottom: 14, minHeight: 300, display: "flex", flexDirection: "column" }}>
               <CardArt hue={H} bare />
-              {/* Designed broadcast art, with the league's own name as the watermark. */}
-              <BroadcastArt hue={H} mark={community?.name || "VOLT"} />
+              {/* The league's key art: mirrored so the figure stands on the right
+                  facing the name, graded into VOLT blue, fading out behind the text. */}
+              <img className="volt-lg-art" src="/img/league-hero.webp" alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "68%", height: "100%",
+                objectFit: "cover", objectPosition: "72% 4%", pointerEvents: "none",
+                maskImage: "linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.55) 22%, #000 48%)",
+                WebkitMaskImage: "linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.55) 22%, #000 48%)" }} />
+              <span aria-hidden className="volt-scan" />
+              <span aria-hidden className="volt-sweep" />
               <span aria-hidden className="volt-scan" />
               <span aria-hidden className="volt-sweep" />
               <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%", pointerEvents: "none",
