@@ -163,6 +163,100 @@ const AGENT_ART = {
   Tejo: "/img/tejo.webp",
 };
 const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
+
+// ── Icons ────────────────────────────────────────────────────────────────
+// One set, drawn for VOLT: 24px grid, 1.75 stroke, square ends and mitred
+// joins so they share the angular, notched feel of the panels. They replace
+// a mix of unicode symbols and emoji that rendered at different sizes and
+// weights on every platform. Colour comes from currentColor.
+const ICON_PATHS = {
+  dashboard:   "M3.8 17.5a8.5 8.5 0 1 1 16.4 0M12 15.5l4.2-5.3M12 17a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM7 20h10",
+  overview:    "M3 10.5L12 3l9 7.5V21h-6.5v-6h-5v6H3z",
+  pool:        "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20v-.5A6.5 6.5 0 0 1 9 13a6.5 6.5 0 0 1 6.5 6.5v.5M16 4.3a3.5 3.5 0 0 1 0 6.4M21.5 20v-.5a6.5 6.5 0 0 0-3.8-5.9",
+  auction:     "M13.5 3.5l7 7-3 3-7-7zM12 8L4 16l2 2 8-8M3 21h11",
+  reserve:     "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20v-.5A6.5 6.5 0 0 1 9 13a6.5 6.5 0 0 1 6.5 6.5v.5M19 8v6M16 11h6",
+  rosters:     "M12 2.5l8 3v6c0 4.8-3.4 8.6-8 10-4.6-1.4-8-5.2-8-10v-6zM8.5 10.5h7M8.5 14h7",
+  mock:        "M12 3v4M12 17v4M3 12h4M17 12h4M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
+  fixtures:    "M3 5h5v14H3M8 12h5M13 8h3v8h-3M16 12h5",
+  leaderboard: "M3 14h5v7H3zM9.5 5h5v16h-5zM16 10h5v11h-5z",
+  veto:        "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM5.6 5.6l12.8 12.8",
+  season:      "M7 4h10v5a5 5 0 0 1-10 0zM7 6H3.5v2A3.5 3.5 0 0 0 7 11.5M17 6h3.5v2a3.5 3.5 0 0 1-3.5 3.5M12 14v4M8 21h8M9.5 18h5",
+  trophy:      "M7 4h10v5a5 5 0 0 1-10 0zM7 6H3.5v2A3.5 3.5 0 0 0 7 11.5M17 6h3.5v2a3.5 3.5 0 0 1-3.5 3.5M12 14v4M8 21h8M9.5 18h5",
+  history:     "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3.5 2.5",
+  discord:     "M3 4h18v12H9l-6 4.5zM8 10h.01M12 10h.01M16 10h.01",
+  account:     "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21v-.5a8 8 0 0 1 16 0v.5",
+  soundOn:     "M3 9h4l5-4.5v15L7 15H3zM16 9.5a3.5 3.5 0 0 1 0 5M18.5 6.5a8 8 0 0 1 0 11",
+  soundOff:    "M3 9h4l5-4.5v15L7 15H3zM16 9.5l5 5M21 9.5l-5 5",
+  back:        "M15 5l-7 7 7 7",
+  forward:     "M9 5l7 7-7 7",
+  collapse:    "M11 6l-6 6 6 6M19 6l-6 6 6 6",
+  expand:      "M5 6l6 6-6 6M13 6l6 6-6 6",
+  plus:        "M12 4v16M4 12h16",
+  bell:        "M6 10a6 6 0 0 1 12 0v4.5l2 3H4l2-3zM10 20.5a2 2 0 0 0 4 0",
+  settings:    "M4 6h9M17 6h3M15 4v4M4 12h3M11 12h9M9 10v4M4 18h11M19 18h1M17 16v4",
+  clipboard:   "M8 4h8v3H8zM6 5.5H4V21h16V5.5h-2M8 12h8M8 16h5",
+  calendar:    "M3 5h18v16H3zM3 10h18M8 3v4M16 3v4",
+  clean:       "M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6",
+  refresh:     "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
+  hash:        "M5 9h14M5 15h14M10 4L8 20M16 4l-2 16",
+  eye:         "M2 12s3.8-7 10-7 10 7 10 7-3.8 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  swap:        "M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4",
+  flame:       "M12 3c.8 3.6 5 5 5 10a5 5 0 0 1-10 0c0-2.6 1.5-3.8 2-6 1.2 1 2 2.2 2.4 3.6.6-2.4.8-5 .6-7.6z",
+  star:        "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
+  coins:       "M9 9.5c3.3 0 6-1.1 6-2.5S12.3 4.5 9 4.5 3 5.6 3 7s2.7 2.5 6 2.5zM3 7v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V7M9 13.5v4c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5v-4c0-1.4-2.7-2.5-6-2.5",
+  check:       "M4 12.5l5 5L20 6.5",
+  flag:        "M5 21V4M5 4h12l-2.5 4L17 12H5",
+  bolt:        "M13 2L4 14h7l-1 8 9-12h-7z",
+  chevronDown: "M6 9l6 6 6-6",
+};
+function Icon({ name, size = 18, strokeWidth = 1.75, style, className, title }) {
+  const d = ICON_PATHS[name];
+  if (!d) return null;
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+      strokeLinecap="square" strokeLinejoin="miter" aria-hidden={title ? undefined : true} role={title ? "img" : undefined}
+      className={className} style={{ display: "inline-block", verticalAlign: "-0.15em", flex: "0 0 auto", ...style }}>
+      {title && <title>{title}</title>}
+      <path d={d} />
+    </svg>
+  );
+}
+// The league's crest: a shield cut on the same corner as every panel, with a
+// red accent along the cut and the league's initial. Used wherever the league
+// is named in the chrome, so every league gets a proper mark without a logo upload.
+function LeagueMark({ name, size = 38 }) {
+  const ch = (name || "V").trim().charAt(0).toUpperCase() || "V";
+  const g = "lmk";   // same gradients everywhere, so one id is fine
+  return (
+    <svg viewBox="0 0 40 44" width={size} height={Math.round(size * 1.1)} aria-hidden style={{ display: "block", flex: "0 0 auto", filter: "drop-shadow(0 0 8px rgba(61,123,255,0.35))" }}>
+      <defs>
+        <linearGradient id={`${g}f`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#2f66e0" /><stop offset="1" stopColor="#0b1530" /></linearGradient>
+        <linearGradient id={`${g}s`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#9cbcff" /><stop offset="1" stopColor="#3d7bff" stopOpacity="0.35" /></linearGradient>
+      </defs>
+      <path d="M2.5 1.5h27l8 8v18.5L20 42.5 2.5 30z" fill={`url(#${g}f)`} stroke={`url(#${g}s)`} strokeWidth="1.2" strokeLinejoin="miter" />
+      <path d="M6.5 5.5h21.5l5.5 5.5v15.3L20 37.6 6.5 27.9z" fill="none" stroke="rgba(170,200,255,0.22)" strokeWidth="0.8" />
+      <path d="M30.6 3.4l4.9 4.9" stroke="#ff4655" strokeWidth="2.2" strokeLinecap="square" />
+      <text x="20" y="27.5" textAnchor="middle" fontFamily="Rajdhani, sans-serif" fontWeight="700" fontSize="21" fill="#f4f8ff" style={{ letterSpacing: 0 }}>{ch}</text>
+    </svg>
+  );
+}
+// Crest plus name: the league's name in white with the platform line beneath.
+function LeagueLockup({ name, wide = true, size = 34 }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+      <LeagueMark name={name} size={size} />
+      {wide && (
+        <span style={{ display: "flex", flexDirection: "column", minWidth: 0, lineHeight: 1, textAlign: "left" }}>
+          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 15.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#f1f5ff",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name || "VOLT"}</span>
+          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.32em", textTransform: "uppercase", color: "#5b8dff", marginTop: 4 }}>// Volt league</span>
+        </span>
+      )}
+    </span>
+  );
+}
+// Nav items name their icon; anything that isn't an icon name renders as-is.
+const glyphNode = (g, size = 18) => (typeof g === "string" && ICON_PATHS[g] ? <Icon name={g} size={size} /> : g);
 const IMG_HERO = "/img/hero.webp";
 
 // Key art for banners. Each piece is mirrored so the figure stands on the
@@ -1523,13 +1617,13 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
     return (
       <span className="inline-flex items-center gap-1">
         {f.map((w, i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: w ? "#3ddc84" : "rgba(255,70,85,0.7)", boxShadow: w ? "0 0 5px rgba(61,220,132,0.6)" : "none" }} />)}
-        {s >= 3 && <span style={{ fontSize: 10, color: "#f5c453", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif" }}>🔥{s}W</span>}
+        {s >= 3 && <span style={{ fontSize: 10, color: "#f5c453", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif" , display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="flame" size={11} />{s}W</span>}
       </span>
     );
   };
   const mvpChip = (m) => {
     const v = mvpOf(m); if (!v) return null;
-    return <span className="uppercase" style={{ fontSize: 10.5, color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.1em" }}>⭐ {v.name} · {v.pts} PTS</span>;
+    return <span className="uppercase" style={{ fontSize: 10.5, color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.1em", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="star" size={12} />{v.name} · {v.pts} PTS</span>;
   };
 
   const roundTag = (k) => isDone(k)
@@ -2462,7 +2556,7 @@ function PlayerCard({ player, lite = false }) {
         <div className="px-5 pt-5 pb-7">
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "rgba(236,243,255,0.4)" }}>Trophy cabinet</p>
           <div className="flex flex-wrap items-center gap-2" style={{ minHeight: 40 }}>
-            {player.trophies > 0 && <Tag hue="#f5c453">🏆 ×{player.trophies} in a row</Tag>}
+            {player.trophies > 0 && <Tag hue="#f5c453"><Icon name="trophy" size={12} /> ×{player.trophies} in a row</Tag>}
             {player.badges?.length ? player.badges.map((b, i) => <Tag key={i} hue={i % 2 ? "#00e5ff" : "#9d6bff"}>{b}</Tag>)
               : !player.trophies && <span className="text-sm" style={{ color: "rgba(236,243,255,0.3)" }}>No titles yet — write the first chapter.</span>}
           </div>
@@ -4213,18 +4307,18 @@ function MapVeto({ teams }) {
 // Plain names in the nav — it's a signpost you scan in half a second, so it has
 // to say what's behind it. The pages keep their own flavour in their headings.
 const NAV = [
-  { id: "lobby", label: "Dashboard", glyph: "⌂" },
-  { id: "scout", label: "Player Pool", glyph: "⊞" },
-  { id: "block", label: "Live Auction", glyph: "⟁" },
-  { id: "reserve", label: "Reserve Pool", glyph: "⊕" },
-  { id: "locker", label: "Rosters", glyph: "▦" },
-  { id: "warroom", label: "Mock Draft", glyph: "✦" },
+  { id: "lobby", label: "Dashboard", glyph: "dashboard" },
+  { id: "scout", label: "Player Pool", glyph: "pool" },
+  { id: "block", label: "Live Auction", glyph: "auction" },
+  { id: "reserve", label: "Reserve Pool", glyph: "reserve" },
+  { id: "locker", label: "Rosters", glyph: "rosters" },
+  { id: "warroom", label: "Mock Draft", glyph: "mock" },
 ];
 // grouped under the "Tournament" dropdown to keep the nav from overflowing
 const TOURNEY_NAV = [
-  { id: "bracket", label: "Fixtures", glyph: "◈" },
-  { id: "leaderboard", label: "Leaderboard", glyph: "≣" },
-  { id: "veto", label: "Map Veto", glyph: "⊘", adminOnly: true },
+  { id: "bracket", label: "Fixtures", glyph: "fixtures" },
+  { id: "leaderboard", label: "Leaderboard", glyph: "leaderboard" },
+  { id: "veto", label: "Map Veto", glyph: "veto", adminOnly: true },
 ];
 
 /* ════════════════════════════════════════════════════════════════════
@@ -6038,7 +6132,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
         borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
       <span className="volt-rail-glyph" style={{ fontSize: 17, color: active ? "#3d7bff" : color || "rgba(200,215,255,0.5)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none", transition: "color .12s", position: "relative" }}>
-        {glyph}
+        {glyphNode(glyph, 19)}
         {liveDot && !railWide && <span className="animate-pulse" style={{ position: "absolute", top: -3, right: -6, width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
       </span>
       {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: active ? "#eaf1ff" : "rgba(200,215,255,0.72)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>}
@@ -6052,14 +6146,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         {/* The league mark doubles as the way home, as logos usually do. */}
         <button onClick={chrome?.onHub || undefined} disabled={!chrome?.onHub} aria-label="Back to the league page" title="League home"
           className="flex items-center gap-2" style={{ minWidth: 0, background: "none", border: "none", padding: 0, cursor: chrome?.onHub ? "pointer" : "default" }}>
-          <span className="grid place-items-center shrink-0" style={{ width: 42, height: 42, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
-            <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>{(window.__VOLT.communityName || "V").slice(0, 1).toUpperCase()}</span>
-          </span>
-          {railWide && <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{window.__VOLT.communityName || "VOLT"}</span>}
+          <LeagueLockup name={window.__VOLT.communityName || "VOLT"} wide={railWide} />
         </button>
         {railWide && (
           <button onClick={() => setRailWide(false)} aria-label="Collapse navigation" title="Collapse"
-            style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}>«</button>
+            style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}><Icon name="collapse" size={14} /></button>
         )}
       </div>
       {!railWide && (
@@ -6070,14 +6161,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           style={{ width: 34, height: 30, margin: "2px auto 0", cursor: "pointer",
             color: "#9dc0ff", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)",
             clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
-          <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>»</span>
+          <Icon name="expand" size={15} />
         </button>
       )}
       <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
       {/* Back to the league page, first in the list so it's never hunted for. */}
       {chrome?.onHub && <>
         {/* Named after the league, like a back link, so it can't be mistaken for this tournament's dashboard. */}
-        {railItem("__hub", "‹", window.__VOLT.communityName || "League page", { onClick: chrome.onHub, color: "#7da6ff" })}
+        {railItem("__hub", "back", window.__VOLT.communityName || "League page", { onClick: chrome.onHub, color: "#7da6ff" })}
         <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "6px 6px 8px" : "6px auto 8px", background: "rgba(120,150,220,0.2)" }} />
       </>}
       {railSections.map((sec, si) => (
@@ -6088,12 +6179,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </div>
       ))}
       <div style={{ marginTop: "auto" }} />
-      {chrome?.account && railItem("__account", "◉", "My Account", { active: view === "account", onClick: () => setView("account") })}
+      {chrome?.account && railItem("__account", "account", "My Account", { active: view === "account", onClick: () => setView("account") })}
       <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
         onMouseEnter={e => { if (!railWide) setRailTip({ label: soundOn ? "Sound on" : "Sound off", y: e.currentTarget.getBoundingClientRect().top + 20 }); }}
         onMouseLeave={() => setRailTip(null)}
         style={{ width: railWide ? RAIL_W - 16 : 42, height: 40, justifyContent: railWide ? "flex-start" : "center", gap: 10, paddingLeft: railWide ? 12 : 0, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)", margin: railWide ? 0 : "0 auto" }}>
-        <span style={{ fontSize: 15 }}>{soundOn ? "🔊" : "🔇"}</span>
+        <span style={{ fontSize: 15 }}><Icon name={soundOn ? "soundOn" : "soundOff"} size={18} /></span>
         {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" }}>{soundOn ? "Sound on" : "Sound off"}</span>}
       </button>
     </nav>
@@ -6177,7 +6268,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 color: pendingReview > 0 ? "#ffe4a0" : "#9dc0ff" }}>
               {pendingReview > 0
                 ? <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
-                : <span style={{ fontSize: 14, lineHeight: 1 }}>⊞</span>}
+                : <Icon name={chrome.portalLabel === "Registration" ? "clipboard" : "overview"} size={16} />}
               <span className="hidden sm:inline" style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{chrome.portalLabel || "League hub"}</span>
               {pendingReview > 0 && (
                 <span style={{ minWidth: 18, height: 18, padding: "0 5px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10.5, fontWeight: 700, borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace" }}>{pendingReview}</span>
@@ -6190,7 +6281,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           {!chrome && (
             <button data-snd="off" data-nohover="1" onClick={() => setSoundOn((v) => !v)} aria-label={soundOn ? "Mute sound" : "Unmute sound"}
               className="grid place-items-center transition-all hover:scale-110" style={{ width: 36, height: 36, clipPath: SHELL_NOTCH(9), background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
-              {soundOn ? "🔊" : "🔇"}
+              <Icon name={soundOn ? "soundOn" : "soundOff"} size={18} />
             </button>
           )}
         </div>
@@ -6244,7 +6335,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                     <button key={nav.id} onClick={() => { setView(nav.id); setDrawerOpen(false); }}
                       className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left"
                       style={{ paddingLeft: 12, paddingRight: 12, background: active ? "linear-gradient(90deg, rgba(61,123,255,0.18), rgba(61,123,255,0.03))" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.72)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
-                      <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.4)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none" }}>{nav.glyph}</span>
+                      <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.4)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none", display: "inline-flex" }}>{glyphNode(nav.glyph, 18)}</span>
                       <span className="font-semibold uppercase tracking-[0.12em] text-sm">{nav.label}</span>
                       {live && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
                       {active && !live && <span className="ml-auto" style={{ fontSize: 9, letterSpacing: "0.2em", color: "#3d7bff", fontWeight: 700 }}>◂</span>}
@@ -6260,21 +6351,21 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               <button onClick={() => { setView("account"); setDrawerOpen(false); }}
                 className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left"
                 style={{ paddingLeft: 12, paddingRight: 12, background: view === "account" ? "linear-gradient(90deg, rgba(61,123,255,0.18), rgba(61,123,255,0.03))" : "transparent", color: view === "account" ? "#eaf1ff" : "rgba(200,215,255,0.72)", borderLeft: view === "account" ? "2px solid #3d7bff" : "2px solid transparent" }}>
-                <span className="text-base" style={{ color: view === "account" ? "#3d7bff" : "rgba(200,215,255,0.4)" }}>◉</span>
+                <span className="text-base" style={{ color: view === "account" ? "#3d7bff" : "rgba(200,215,255,0.4)", display: "inline-flex" }}><Icon name="account" /></span>
                 <span className="font-semibold uppercase tracking-[0.12em] text-sm">My Account</span>
               </button>
             )}
             {!auth?.userId && (
               <button onClick={() => { setDrawerOpen(false); setIdentity(null); }}
                 className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
-                <span className="text-base" style={{ color: "rgba(200,215,255,0.4)" }}>⇄</span>
+                <span className="text-base" style={{ color: "rgba(200,215,255,0.4)", display: "inline-flex" }}><Icon name="swap" /></span>
                 <span className="font-semibold uppercase tracking-[0.12em] text-sm">Switch Seat</span>
               </button>
             )}
             {!isDesk && (
               <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)}
                 className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
-                <span className="text-base" style={{ color: soundOn ? "#7da6ff" : "rgba(200,215,255,0.4)" }}>{soundOn ? "🔊" : "🔇"}</span>
+                <span className="text-base" style={{ color: soundOn ? "#7da6ff" : "rgba(200,215,255,0.4)" }}><Icon name={soundOn ? "soundOn" : "soundOff"} size={18} /></span>
                 <span className="font-semibold uppercase tracking-[0.12em] text-sm">{soundOn ? "Sound on" : "Sound off"}</span>
               </button>
             )}
@@ -6999,7 +7090,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <div className="flex flex-col gap-2">
               {recordSale && (() => { const tm = teamOf(recordSale.soldTo); return (
                 <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.3)" }}>
-                  <span className="text-lg shrink-0">🔨</span>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#7da6ff" }}><Icon name="auction" size={20} /></span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: "#f5c453", fontFamily: "'Rajdhani',sans-serif" }}>Record sale</span>
                     <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{recordSale.name}</span>
@@ -7011,7 +7102,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
               {mostContested && (mostContested.bidCount || 0) > 1 && (() => { const tm = teamOf(mostContested.soldTo); return (
                 <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(255,70,85,0.08)", border: "1px solid rgba(255,70,85,0.3)" }}>
-                  <span className="text-lg shrink-0">🔥</span>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#ff8a5c" }}><Icon name="flame" size={20} /></span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: "#ff8a94", fontFamily: "'Rajdhani',sans-serif" }}>Most contested</span>
                     <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{mostContested.name}</span>
@@ -7023,7 +7114,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
               {biggestSpenderId && (() => { const tm = teamOf(biggestSpenderId); return (
                 <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)" }}>
-                  <span className="text-lg shrink-0">💰</span>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#f5c453" }}><Icon name="coins" size={20} /></span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Biggest spender</span>
                     <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm ? tm.hue : "#ecf3ff" }}>{tm ? (tm.captain || tm.name) : "—"}</span>
@@ -7035,7 +7126,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               {/* roster complete — milestone callout for any team that's drafted all 4 */}
               {completedTeams.map((t) => (
                 <div key={t.id} className="flex items-center gap-3 px-3 py-2" style={{ background: `${t.hue}14`, border: `1px solid ${t.hue}55` }}>
-                  <span className="text-lg shrink-0">✅</span>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#3ddc84" }}><Icon name="check" size={20} /></span>
                   <span className="flex flex-col min-w-0">
                     <span className="text-[10px] uppercase tracking-widest" style={{ color: t.hue, fontFamily: "'Rajdhani',sans-serif" }}>Draft complete</span>
                     <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{t.captain || t.name}</span>
@@ -8079,7 +8170,7 @@ function HostMenu({ children }) {
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
       <button onClick={() => setOpen(o => !o)} aria-label="Host controls"
-        style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", textShadow: "0 0 10px rgba(61,123,255,0.45)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>⚙ Manage<span style={{ fontSize: 9, color: "rgba(174,198,255,0.65)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease", display: "inline-block" }}>▼</span></button>
+        style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", textShadow: "0 0 10px rgba(61,123,255,0.45)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}><Icon name="settings" size={16} /> Manage<span style={{ color: "rgba(174,198,255,0.65)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease", display: "inline-flex" }}><Icon name="chevronDown" size={13} /></span></button>
       {open && <>
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 230, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
@@ -8913,7 +9004,7 @@ function NotifBell() {
           boxShadow: "0 0 0 2px #0a0d18" }}>{unread}</span>
       )}
       <button onClick={openPanel} title="Notifications" style={shellBtn("ghost", { width: 36, height: 36, padding: 0, display: "grid", placeItems: "center", fontSize: 14, position: "relative" })}>
-        ◈
+        <Icon name="bell" size={18} />
       </button>
       {open && (
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 320, maxHeight: 400, overflowY: "auto", zIndex: 130, background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(10), padding: "12px 14px", boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
@@ -9188,7 +9279,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
 
           {/* season strip — three summary cells, value-first like the card's Stat boxes */}
           <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-            {[["Season pts", String(pts), "#f5c453"], ["Win rate", winRate != null ? winRate + "%" : "—", "#3ddc84"], ["Trophies", "🏆×" + (u.trophy_streak || 0), "#f5c453"]].map(([lb, v, c], i) => (
+            {[["Season pts", String(pts), "#f5c453"], ["Win rate", winRate != null ? winRate + "%" : "—", "#3ddc84"], ["Trophies", "×" + (u.trophy_streak || 0), "#f5c453"]].map(([lb, v, c], i) => (
               <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "12px 6px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <span style={{ fontSize: 20, fontWeight: 700, lineHeight: 1, color: c, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 14px ${c}66` }}>{v}</span>
                 <span style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(236,243,255,0.5)", fontWeight: 600 }}>{lb}</span>
@@ -9241,7 +9332,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
             return (
               <div key={eid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: won ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.03)", border: `1px solid ${won ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.14)"}`, clipPath: SHELL_NOTCH(8) }}>
                 <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13.5 }}>{weekendName(evMap[eid]) || "Tournament"}
-                  {won && <span style={{ color: "#f5c453", marginLeft: 8, fontSize: 12 }}>🏆 champion</span>}</span>
+                  {won && <span style={{ color: "#f5c453", marginLeft: 8, fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="trophy" size={13} />champion</span>}</span>
                 <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{w.m} matches · {w.w}W</span>
                 <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 68, textAlign: "right" }}>{w.pts} pts</span>
               </div>
@@ -9325,7 +9416,6 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
   const W = wide ? 224 : 60;
   const enterable = !!target;
   const finished = target?.phase === "settled";
-  const mark = (community?.name || "V").slice(0, 1).toUpperCase();
 
   const item = (glyph, label, { onClick, disabled, accent, liveDot } = {}) => (
     <button key={label} disabled={disabled} onClick={disabled ? undefined : onClick}
@@ -9333,7 +9423,7 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
       onMouseEnter={e => { if (!wide) setTip({ label: disabled ? label + " — enter a live tournament first" : label, y: e.currentTarget.getBoundingClientRect().top + 21 }); }}
       onMouseLeave={() => setTip(null)}
       style={{ width: wide ? W - 16 : 44, height: 42, justifyContent: wide ? "flex-start" : "center", gap: 10, paddingLeft: wide ? 12 : 0, paddingRight: wide ? 10 : 0, background: "none", border: "none", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.32 : 1, color: accent || "rgba(200,215,255,0.72)", position: "relative", margin: wide ? 0 : "0 auto" }}>
-      <span className="volt-rail-glyph" style={{ fontSize: 16, transition: "color .12s", position: "relative" }}>{glyph}
+      <span className="volt-rail-glyph" style={{ fontSize: 16, transition: "color .12s", position: "relative", display: "inline-flex" }}>{glyphNode(glyph, 19)}
         {liveDot && <span style={{ position: "absolute", top: -2, right: -4, width: 6, height: 6, borderRadius: "50%", background: "#af9aec", boxShadow: "0 0 6px #af9aec" }} />}</span>
       {wide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{label}</span>}
     </button>
@@ -9345,10 +9435,10 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
   // This page's own sections: always live, they just scroll.
   const jump = (id) => id ? document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }) : window.scrollTo({ top: 0, behavior: "smooth" });
   const leagueViews = [
-    item("⌂", "Overview", { onClick: () => jump(null) }),
-    item("≣", "Season race", { onClick: () => jump("volt-league-boards") }),
-    hasPast && item("◷", "Past tournaments", { onClick: () => jump("volt-past") }),
-    isHost && item("◈", "Discord", { onClick: () => jump("volt-discord-console") }),
+    item("overview", "Overview", { onClick: () => jump(null) }),
+    item("season", "Season race", { onClick: () => jump("volt-league-boards") }),
+    hasPast && item("history", "Past tournaments", { onClick: () => jump("volt-past") }),
+    isHost && item("discord", "Discord", { onClick: () => jump("volt-discord-console") }),
   ].filter(Boolean);
   const byId = Object.fromEntries([...NAV, ...TOURNEY_NAV].map(n => [n.id, n]));
   const tourneyViews = enterable ? (RAIL_PHASE_VIEWS[target.phase] || []).map(id => byId[id])
@@ -9362,18 +9452,15 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
       {/* league mark + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: wide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: wide ? 4 : 0 }}>
         <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
-          <span className="grid place-items-center shrink-0" style={{ width: 42, height: 42, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
-            <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>{mark}</span>
-          </span>
-          {wide && <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{community?.name || "VOLT"}</span>}
+          <LeagueLockup name={community?.name || "VOLT"} wide={wide} />
         </div>
-        {wide && <button onClick={() => setWide(false)} aria-label="Collapse" title="Collapse" style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}>«</button>}
+        {wide && <button onClick={() => setWide(false)} aria-label="Collapse" title="Collapse" style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}><Icon name="collapse" size={14} /></button>}
       </div>
       {!wide && <button onClick={() => setWide(true)} aria-label="Expand" title="Expand menu" className="volt-expand-btn grid place-items-center"
         onMouseEnter={e => setTip({ label: "Expand menu", y: e.currentTarget.getBoundingClientRect().top + 15 })} onMouseLeave={() => setTip(null)}
         style={{ width: 34, height: 30, margin: "2px auto 0", cursor: "pointer", color: "#9dc0ff",
           background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)",
-          clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}><span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>»</span></button>}
+          clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}><Icon name="expand" size={15} /></button>}
       <div style={{ width: wide ? "auto" : 26, height: 1, margin: wide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
 
       {secLabel("League")}
@@ -9396,18 +9483,18 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
         )}
         <div style={{ display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", gap: 2 }}>{tourneyViews}</div>
       </> : onCreate ? (
-        item("+", "Create tournament", { onClick: onCreate, accent: "#7da6ff" })
+        item("plus", "Create tournament", { onClick: onCreate, accent: "#7da6ff" })
       ) : (
         wide && <div style={{ padding: "4px 12px", fontSize: 12, color: "rgba(200,215,255,0.4)", lineHeight: 1.5 }}>No tournament yet. You'll get a notification when sign-ups open.</div>
       )}
 
       <div style={{ marginTop: "auto" }} />
       {divider()}
-      {onAccount && item("◉", "My Account", { onClick: onAccount, accent: "rgba(200,215,255,0.72)" })}
+      {onAccount && item("account", "My Account", { onClick: onAccount, accent: "rgba(200,215,255,0.72)" })}
       <button onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute" : "Unmute"}
         onMouseEnter={e => { if (!wide) setTip({ label: soundOn ? "Sound on" : "Sound off", y: e.currentTarget.getBoundingClientRect().top + 20 }); }} onMouseLeave={() => setTip(null)}
         style={{ width: wide ? W - 16 : 42, height: 40, justifyContent: wide ? "flex-start" : "center", gap: 10, paddingLeft: wide ? 12 : 0, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)", margin: wide ? 0 : "0 auto", background: "none", border: "none", cursor: "pointer" }}>
-        <span style={{ fontSize: 15 }}>{soundOn ? "🔊" : "🔇"}</span>
+        <span style={{ fontSize: 15 }}><Icon name={soundOn ? "soundOn" : "soundOff"} size={18} /></span>
         {wide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" }}>{soundOn ? "Sound on" : "Sound off"}</span>}
       </button>
 
@@ -10427,19 +10514,19 @@ function DiscordArenaCard({ eventId, phase }) {
       <SectionHead title="Discord arena" hint="Channels, team rooms and live results" />
       <div style={PANEL()}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <B mode="common" label="⊞ Set up channels" kind="primary"
+          <B mode="common" label={<><Icon name="hash" size={15} style={{ marginRight: 6 }} />Set up channels</>} kind="primary"
              tip="Category, #results, #standings, #trash-talk, and voice rooms" />
-          <B mode="teams" label="◈ Build team rooms" on={drafted} kind={drafted ? "primary" : "ghost"}
+          <B mode="teams" label={<><Icon name="rosters" size={15} style={{ marginRight: 6 }} />Build team rooms</>} on={drafted} kind={drafted ? "primary" : "ghost"}
              tip={drafted ? "A role, a private text room and a private voice room per team"
                           : "Available once the auction has run"} />
-          <B mode="fixtures" label="🗓 Post fixtures" tip="Who plays who and when, in everyone's own timezone" />
+          <B mode="fixtures" label={<><Icon name="calendar" size={15} style={{ marginRight: 6 }} />Post fixtures</>} tip="Who plays who and when, in everyone's own timezone" />
           <button disabled={!!busy} onClick={openPredictions}
             title="Posts a prediction card for every upcoming match. A reminder pings the role an hour before each one."
             style={shellBtn("ghost", { padding: "10px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
-            {busy === "predictions" ? "Posting…" : "◈ Open predictions"}
+            {busy === "predictions" ? "Posting…" : <><Icon name="eye" size={15} style={{ marginRight: 6 }} />Open predictions</>}
           </button>
-          <B mode="standings" label="⟳ Post standings" />
-          <B mode="wrapup" label="🧹 Clear old tournaments"
+          <B mode="standings" label={<><Icon name="refresh" size={15} style={{ marginRight: 6 }} />Post standings</>} />
+          <B mode="wrapup" label={<><Icon name="clean" size={15} style={{ marginRight: 6 }} />Clear old tournaments</>}
              tip="Delete team roles and rooms left over from finished tournaments" />
         </div>
         <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 11, lineHeight: 1.65 }}>
@@ -10505,7 +10592,7 @@ function DiscordMomentsCard({ eventId, phase, draftAt }) {
             title={draftAt ? "Creates a Discord event people can mark Interested on"
                            : "Set a draft time first"}
             style={shellBtn("ghost", { padding: "10px 18px", fontSize: 12, opacity: (!draftAt || busy) ? 0.5 : 1 })}>
-            {busy === "event" ? "Working…" : "🗓 Add draft night to the server"}
+            {busy === "event" ? "Working…" : <><Icon name="calendar" size={15} style={{ marginRight: 6 }} />Add draft night to the server</>}
           </button>
         </div>
         <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)", marginTop: 10, lineHeight: 1.6 }}>
@@ -11432,7 +11519,7 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
           return (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <span aria-hidden style={{ fontSize: 30, lineHeight: 1, marginRight: 4,
-                filter: "drop-shadow(0 0 10px rgba(245,196,83,0.45))" }}>🏆</span>
+                filter: "drop-shadow(0 0 10px rgba(245,196,83,0.45))", color: "#f5c453", display: "inline-flex" }}><Icon name="trophy" size={30} strokeWidth={1.5} /></span>
               {names.slice(0, 5).map((p, i) => (
                 <span key={p.id} style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase",
                   padding: "6px 11px", whiteSpace: "nowrap",
@@ -11791,7 +11878,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 18 }}>
           {profile.peak_rank && chip(<>Peak {rankLabel(profile.peak_rank, profile.peak_rank_div)}</>, peakCol, "peak")}
           {profile.weekends_won > 0 && chip(<>
-            <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
+            <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))", color: "#f5c453", display: "inline-flex" }}><Icon name="trophy" size={15} /></span>
             {profile.weekends_won} {profile.weekends_won === 1 ? "title" : "titles"}
             {profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
           </>, "#f5c453", "trophy")}
@@ -11912,7 +11999,7 @@ function TrophyRow({ streak, total }) {
       {shown > 0 && (
         <span style={{ display: "flex", gap: 2 }}>
           {Array.from({ length: shown }, (_, i) => (
-            <span key={i} style={{ fontSize: 15, filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))" }}>🏆</span>
+            <span key={i} style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))", color: "#f5c453", display: "inline-flex" }}><Icon name="trophy" size={15} /></span>
           ))}
           {streak > 6 && (
             <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
@@ -16112,7 +16199,7 @@ function WeekendRegistration({ ev, auth, phase }) {
           {stat("Rank", r.rank ? rankLabel(r.rank, r.rankDiv) : null)}{stat("Peak", r.peakRank ? rankLabel(r.peakRank, r.peakRankDiv) : null)}{stat("Role", r.role)}{stat("Agent", r.agent)}{stat("KDA", r.kda)}{stat("ACS", r.acs)}{stat("HS%", r.hs != null && r.hs !== "" ? r.hs + "%" : null)}{stat("Win%", r.win != null && r.win !== "" ? r.win + "%" : null)}
         </div>
         <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 10, flexWrap: "wrap", fontSize: 12, color: "rgba(200,215,255,0.55)" }}>
-          {r.volunteered && <span style={{ color: "#7da6ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11 }}>✋ wants to captain</span>}
+          {r.volunteered && <span style={{ color: "#7da6ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="flag" size={12} />wants to captain</span>}
           <span>{r.noShows > 0 ? `${r.noShows} no-show${r.noShows === 1 ? "" : "s"} this season` : "Clean attendance record"}</span>
           {r.tracker
             ? <a href={r.tracker} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: "#7da6ff", textDecoration: "underline", fontWeight: 600 }}>Open tracker profile ↗</a>
