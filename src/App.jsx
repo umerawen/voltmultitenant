@@ -495,6 +495,13 @@ async function writeWarRoom(teamId, data) {
    ════════════════════════════════════════════════════════════════════ */
 const tuid = () => "m" + Math.random().toString(36).slice(2, 9);
 
+// A Bo1 fixture's round score, to pre-fill the match report so it isn't typed
+// twice. Bo3 totals don't map onto one score, so those are left to the host.
+function fixtureScore(m) {
+  const mp = (m?.bo || 1) === 1 ? m?.maps?.[0] : null;
+  return mp && mp.a != null && mp.b != null ? { scoreA: mp.a, scoreB: mp.b } : {};
+}
+
 // stats label linking a fixture to its match_results rows (must stay stable)
 function fxLabel(a, b, match) {
   return a && b ? `${a.name} vs ${b.name}${match.id ? " · " + String(match.id).slice(-4).toUpperCase() : ""}` : null;
@@ -1256,6 +1263,7 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTi
             <button onClick={() => window.__VOLT.openReport({
                 teamAName: a.name, teamBName: b.name, label: statsLabel,
                 winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null,
+                ...fixtureScore(match),
               })}
               className="uppercase tracking-widest px-3 py-1 transition-all hover:scale-[1.03]"
               style={{ fontSize: 10.5, color: statsRecorded ? "rgba(200,215,255,0.55)" : scoreIn ? "#ffe4a0" : "#9af5c2",
@@ -1360,7 +1368,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
                       <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 17, fontWeight: 700, color: "#eaf1ff" }}>{sc ? `${sc[0]} : ${sc[1]}` : "—"}</span>
                       <span className="font-bold uppercase truncate text-right" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 15, color: b?.hue, opacity: winA ? 0.45 : 1, textShadow: !winA ? `0 0 12px ${b?.hue}66` : "none", flex: 1 }}>{!winA && "✓ "}{b?.name}</span>
                     </div>
-                    <div className="flex items-center justify-center">{mvpChip(m) || (isAdmin && window.__VOLT?.openReport && <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: fxLabel(a, b, m), winner: winA ? "A" : "B" })} className="uppercase" style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>▦ add player stats</button>)}</div>
+                    <div className="flex items-center justify-center">{mvpChip(m) || (isAdmin && window.__VOLT?.openReport && <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: fxLabel(a, b, m), winner: winA ? "A" : "B", ...fixtureScore(m) })} className="uppercase" style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>▦ add player stats</button>)}</div>
                   </div>
                 );
               })}
@@ -1517,7 +1525,7 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onS
             <span title="Score is in — player stats still needed for season points" className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 9.5, color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", background: "rgba(245,196,83,0.07)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em" }}>⚠ Stats pending</span>
           ) : null}
           {canReport && (
-            <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: statsLabel, winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null })}
+            <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: statsLabel, winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null, ...fixtureScore(match) })}
               className="uppercase tracking-widest px-2.5 py-1 transition-all hover:scale-[1.03]"
               style={{ fontSize: 10, color: statsRecorded ? "rgba(200,215,255,0.55)" : scoreIn ? "#ffe4a0" : "#9af5c2",
                 border: `1px solid ${statsRecorded ? "rgba(120,150,220,0.25)" : scoreIn ? "rgba(245,196,83,0.5)" : "rgba(61,220,132,0.45)"}`,
@@ -5528,6 +5536,28 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     return () => { clearInterval(iv); window.removeEventListener("focus", onFocus); };
   }, [loadAuctioneer]);
 
+  // The match report calls this after saving, so a reported score lands on the
+  // bracket without being typed twice. Found by the fixture's stats label (a
+  // pair can meet more than once); Bo1 only, since a Bo3's total rounds don't
+  // say how the maps went. Re-runs the same resolve/seed steps as tSetMap.
+  useEffect(() => {
+    window.__VOLT.setFixtureScore = (label, aId, bId, a, b) => mutate((s) => {
+      const t = s.tournament; if (!t || !t.locked) return null;
+      const team = (id) => s.teams.find((x) => x.id === id);
+      const m = tournamentMatches(t).find((x) => x.teamA && x.teamB && fxLabel(team(x.teamA), team(x.teamB), x) === label);
+      if (!m || (m.bo || 1) !== 1) return null;
+      const [sa, sb] = m.teamA === aId ? [a, b] : [b, a];
+      if (m.maps?.[0]?.a === sa && m.maps?.[0]?.b === sb) return null;
+      m.maps = [{ a: sa, b: sb }];
+      resolveMatch(m);
+      if (t.format === "single") propagateElim(t);
+      if (t.format === "group") syncFinal(s, t);
+      syncLeagueFinal(s, t);
+      return s;
+    }, true);
+    return () => { if (window.__VOLT) delete window.__VOLT.setFixtureScore; };
+  });
+
   /* ── loading ── */
   if (!state) return (
     <div className="min-h-screen grid place-items-center" style={{ background: "#0a0d18", color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif" }}>
@@ -7023,6 +7053,8 @@ function VoltGate() {
   const [pw2, setPw2] = useState("");  // new-password confirmation on the reset screen
   const [info, setInfo] = useState(""); // neutral status line (e.g. "check your email")
   const [invitedTo, setInvitedTo] = useState(null); // league name, when they arrived on an invite link
+  const [discordAuth, setDiscordAuth] = useState(false); // Discord sign-in provider enabled in Supabase
+  useEffect(() => { discordAuthEnabled().then(setDiscordAuth); }, []);
 
   // ?join=<code> lets a host post one link instead of asking people to copy a
   // code between two apps. Read once on mount and stripped from the URL, so a
@@ -7090,8 +7122,24 @@ function VoltGate() {
 
   async function loadProfile(uid) {
     window.__VOLT.userId = uid;
+    // Back from "Continue with Discord": finish what they started (join or
+    // create) with the values they'd entered before the redirect.
+    const authResume = takeResume((r) => r.kind === "auth");
+    if (authResume) {
+      const ok = authResume.intent === "host"
+        ? await doHost({ leagueName: authResume.leagueName, displayName: authResume.displayName })
+        : await doJoin({ code: authResume.code, displayName: authResume.displayName });
+      if (ok) return;
+      // Something went wrong — put them back on the form with their values.
+      if (authResume.intent === "host") { setLeagueName(authResume.leagueName || ""); setPendingIntent("host"); setPhase("host"); }
+      else { setCcode(authResume.code || ""); setPendingIntent("join"); setPhase("join"); }
+      setDisplayName(authResume.displayName || "");
+      return;
+    }
     const { data: u } = await __sb.from("users").select("*, communities(*)").eq("id", uid).maybeSingle();
     if (u && u.community_id) {
+      // Discord sign-ins keep their league link current (idempotent).
+      __sb.auth.getSession().then(({ data }) => linkDiscordIfAny(data?.session?.user)).catch(() => {});
       setProfile(u); setCommunity(u.communities);
       window.__VOLT.communityId = u.community_id;
       window.__VOLT.communityName = u.communities?.name || null;
@@ -7124,6 +7172,34 @@ function VoltGate() {
       setProfile(u || null);
       setPhase(pendingIntent === "join" ? "join" : pendingIntent === "host" ? "host" : "welcome");
     }
+  }
+
+  // Signed in with Discord → their Discord is already verified, so link it to
+  // the league profile now instead of asking them to connect it separately.
+  async function linkDiscordIfAny(user) {
+    const providers = user?.app_metadata?.providers || [];
+    if (!providers.includes("discord")) return;
+    try { await __sb.rpc("volt_link_discord_from_auth"); } catch (e) { console.error("discord auto-link", e); }
+  }
+
+  // "Continue with Discord" — one tap instead of email + password + a separate
+  // Discord connection. The redirect wipes component state, so what they'd
+  // chosen (join code, league name, display name) rides along as a resume note.
+  async function continueWithDiscord(intent) {
+    setErr(""); setBusy(true);
+    try {
+      if (intent === "join") {
+        if (!ccode.trim()) throw new Error("Enter your league's join code first.");
+        const { data: rows } = await __sb.rpc("join_lookup", { p_slug: ccode.trim() });
+        if (!(Array.isArray(rows) ? rows[0] : rows)) throw new Error("No league found with that code. Check with your host.");
+        setResume({ kind: "auth", intent, code: ccode.trim(), displayName: displayName.trim() });
+      } else if (intent === "host") {
+        if (!leagueName.trim()) throw new Error("Give your league a name first.");
+        setResume({ kind: "auth", intent, leagueName: leagueName.trim(), displayName: displayName.trim() });
+      }
+      const { error } = await __sb.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: window.location.origin } });
+      if (error) throw error;
+    } catch (e) { setErr(e.message || "Couldn't start Discord sign-in."); setBusy(false); }
   }
 
   // Returning user: plain sign in, then land wherever they belong.
@@ -7161,25 +7237,29 @@ function VoltGate() {
   }
 
   // Host path: create the league, become host (atomic RPC — avoids RLS ordering).
-  async function doHost() {
+  // over: values carried through a Discord sign-in (state is reset by the redirect).
+  async function doHost(over = {}) {
     setErr(""); setBusy(true);
     try {
-      if (!leagueName.trim()) throw new Error("Give your league a name.");
+      const name = (over.leagueName ?? leagueName).trim();
+      if (!name) throw new Error("Give your league a name.");
       const user = await ensureAuthedUser();
       window.__VOLT.userId = user.id;
-      const slug = leagueName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 20) + "-" + Math.random().toString(36).slice(2, 5);
-      const dn = displayName || email.split("@")[0];
-      const { data: rows, error } = await __sb.rpc("create_league", { p_name: leagueName.trim(), p_slug: slug, p_display: dn });
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 20) + "-" + Math.random().toString(36).slice(2, 5);
+      const dn = (over.displayName ?? displayName) || discordNameOf(user) || (user.email || email).split("@")[0];
+      const { data: rows, error } = await __sb.rpc("create_league", { p_name: name, p_slug: slug, p_display: dn });
       if (error) throw error;
       const c = Array.isArray(rows) ? rows[0] : rows;
       if (!c) throw new Error("League was not created — try again.");
       window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
       setProfile({ id: user.id, role: "host", display_name: dn, community_id: c.id });
+      await linkDiscordIfAny(user);
       // New leagues are reviewed before they can run anything, so send the host
       // to a waiting screen rather than a schedule they can't use.
       setPhase(c.status === "approved" ? "schedule" : "pending");
+      setBusy(false); return true;
     } catch (e) { setErr(e.message || "Could not create the league."); }
-    setBusy(false);
+    setBusy(false); return false;
   }
 
   async function saveHostNote() {
@@ -7196,11 +7276,12 @@ function VoltGate() {
   }
 
   // Join path: code first, then account, placed as player.
-  async function doJoin() {
+  async function doJoin(over = {}) {
     setErr(""); setBusy(true);
     try {
-      if (!ccode.trim()) throw new Error("Enter your league's join code.");
-      const { data: rows } = await __sb.rpc("join_lookup", { p_slug: ccode.trim() });
+      const code = (over.code ?? ccode).trim();
+      if (!code) throw new Error("Enter your league's join code.");
+      const { data: rows } = await __sb.rpc("join_lookup", { p_slug: code });
       const c = Array.isArray(rows) ? rows[0] : rows;
       if (!c) throw new Error("No league found with that code. Check with your host.");
       const user = await ensureAuthedUser();
@@ -7222,13 +7303,15 @@ function VoltGate() {
         // moderator of one league joining another arrives as a plain player.
         role: (existing?.community_id === c.id && (existing?.role === "host" || existing?.role === "moderator"))
           ? existing.role : "player",
-        display_name: displayName || existing?.display_name || email.split("@")[0],
+        display_name: (over.displayName ?? displayName) || existing?.display_name || discordNameOf(user) || (user.email || email).split("@")[0],
       });
       window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
-      setProfile({ id: user.id, role: "player", display_name: displayName || email.split("@")[0], community_id: c.id });
+      setProfile({ id: user.id, role: "player", display_name: (over.displayName ?? displayName) || discordNameOf(user) || email.split("@")[0], community_id: c.id });
+      await linkDiscordIfAny(user);
       setPhase("schedule");
+      setBusy(false); return true;
     } catch (e) { setErr(e.message || "Could not join the league."); }
-    setBusy(false);
+    setBusy(false); return false;
   }
 
   const wrap = (inner) => (
@@ -7372,6 +7455,17 @@ function VoltGate() {
       newAccount ? "At least 6 characters" : ""))}
   </>);
   const submitting = (fn) => (e) => { e.preventDefault(); if (!busy) fn(); };
+  // One tap: account + verified Discord together. Email stays as the fallback.
+  const discordFirst = (intent, label) => discordAuth && (<>
+    <button type="button" disabled={busy} onClick={() => continueWithDiscord(intent)}
+      style={{ ...btn(true), marginTop: 2, background: "#5865F2", borderColor: "#7983f5", color: "#fff", boxShadow: "0 0 24px rgba(88,101,242,0.35)" }}>
+      {busy ? "…" : label}</button>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "12px 0 10px" }}>
+      <span style={{ flex: 1, height: 1, background: "rgba(120,150,220,0.2)" }} />
+      <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>or use email</span>
+      <span style={{ flex: 1, height: 1, background: "rgba(120,150,220,0.2)" }} />
+    </div>
+  </>);
   const infoLine = info && <p style={{ color: "#9af5c2", fontSize: 13, marginTop: 12, lineHeight: 1.5 }}>{info}</p>;
 
   async function sendReset() {
@@ -7417,6 +7511,7 @@ function VoltGate() {
   if (phase === "signin") return wrap(<form onSubmit={submitting(doSignIn)}>
     {backLink}
     <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Welcome back. Sign in to your league.</p>
+    {discordFirst("signin", "Continue with Discord")}
     {emailPw(false)}
     <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : "Sign in →"}</button>
     <div style={{ textAlign: "center", marginTop: 12 }}>
@@ -7453,8 +7548,8 @@ function VoltGate() {
     <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Name your league and create your host account. You'll get an invite link to share with players.</p>
     {labelled("League name", <input style={field} name="organization" autoComplete="organization" required placeholder="e.g. Minaal.GG" value={leagueName} onChange={e => setLeagueName(e.target.value)} />)}
     {labelled("Your display name", <input style={field} name="nickname" autoComplete="nickname" placeholder="What players will see" value={displayName} onChange={e => setDisplayName(e.target.value)} />)}
-    {!session && emailPw(true)}
-    <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : "Create my league →"}</button>
+    {!session && <>{discordFirst("host", "Create with Discord →")}{emailPw(true)}</>}
+    <button type="submit" disabled={busy} style={btn(!(discordAuth && !session))}>{busy ? "…" : "Create my league →"}</button>
   </form>);
 
   if (phase === "pending") return wrap(<>
@@ -7519,10 +7614,11 @@ function VoltGate() {
     </>}
     {labelled("Your display name", <input style={field} name="nickname" autoComplete="nickname" placeholder="What captains and players will see" value={displayName} onChange={e => setDisplayName(e.target.value)} />)}
     {!session && <>
+      {discordFirst("join", invitedTo ? `Join ${invitedTo} with Discord →` : "Join with Discord →")}
       {emailPw(true)}
       <p style={{ margin: "-4px 0 8px", fontSize: 12, color: "rgba(200,215,255,0.45)" }}>Already have an account? Use the same email and password — we'll sign you in.</p>
     </>}
-    <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : invitedTo ? `Join ${invitedTo} →` : "Join league →"}</button>
+    <button type="submit" disabled={busy} style={btn(!(discordAuth && !session))}>{busy ? "…" : invitedTo ? `Join ${invitedTo} →` : "Join league →"}</button>
   </form>);
 
   return wrap(<p className="vg-loading" style={{ margin: 0 }}>// Syncing…</p>);
@@ -8201,6 +8297,26 @@ function VoltToastHost() {
     document.body);
 }
 
+// Display name from a Discord sign-in (global display name first). Null for
+// email accounts, whose metadata has none of these.
+function discordNameOf(user) {
+  const m = user?.user_metadata || {};
+  return m.custom_claims?.global_name || m.full_name || (m.name ? String(m.name).replace(/#0$/, "") : null) || null;
+}
+
+// Is the Discord sign-in provider switched on in Supabase? Public endpoint;
+// the "Continue with Discord" buttons only appear when it is.
+let __discordAuthEnabled = null;
+async function discordAuthEnabled() {
+  if (__discordAuthEnabled !== null || !HAS_SUPABASE) return !!__discordAuthEnabled;
+  try {
+    const r = await fetch(import.meta.env.VITE_SUPABASE_URL + "/auth/v1/settings", { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY } });
+    const j = await r.json();
+    __discordAuthEnabled = !!j?.external?.discord;
+  } catch { __discordAuthEnabled = false; }
+  return __discordAuthEnabled;
+}
+
 // ── Resume after a round trip to Discord. Connecting Discord is a full-page
 //    redirect, so whatever the player was in the middle of is gone when they
 //    come back. Before leaving we note where they were; the screen that owns
@@ -8278,6 +8394,9 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
   const [endYmd, setEndYmd] = useState(ev?.ends_on || null);
   const [nick, setNick] = useState(
     ev?.weekend_label && !/^(week(end)?)\s*\d+$/i.test(ev.weekend_label.trim()) ? ev.weekend_label : "");
+  // Draft time lives here too, so a new tournament is set up in one go rather
+  // than created and then hunted down to add the time.
+  const [draftAt, setDraftAt] = useState(ev?.draft_at || null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -8303,7 +8422,7 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
   async function save() {
     if (!startYmd) { setErr("Pick the dates first."); return; }
     setBusy(true); setErr("");
-    try { await onSave({ starts_on: startYmd, ends_on: effectiveEnd, weekend_label: nick.trim() || null }); onClose(); }
+    try { await onSave({ starts_on: startYmd, ends_on: effectiveEnd, weekend_label: nick.trim() || null, draft_at: draftAt || null }); onClose(); }
     catch (e) { setErr(e.message || "Could not save."); setBusy(false); }
   }
 
@@ -8361,6 +8480,12 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
         <input value={nick} onChange={(e) => setNick(e.target.value)} maxLength={28} placeholder="e.g. Playoffs"
           style={{ width: "100%", padding: "10px 12px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, fontWeight: 600 }} />
 
+        <div style={{ margin: "16px 0 6px", fontSize: 10.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Draft time (optional)</div>
+        <VoltDateTime value={draftAt} onChange={setDraftAt} placeholder="Set the draft time" />
+        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 6 }}>
+          Players see a countdown, and the bot sends the availability check and reminders off it. You can set it later.
+        </div>
+
         {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{err}</div>}
 
         <button disabled={busy || !startYmd} onClick={save}
@@ -8377,12 +8502,39 @@ function WeekendSetup({ mode, ev, onSave, onClose }) {
 // ── Terms gate — shown every time a player enters a tournament. Availability
 //    is a per-tournament commitment, so this is deliberately not a one-time
 //    account-level accept. Ticking the box is the record.
-function RegisterTerms({ ev, onAccept, onClose }) {
+// `returning`: they've played before and have seen the full rules, so the
+// commitment is one deliberate tap on a button that says exactly what they're
+// agreeing to. The full version stays one tap away.
+function RegisterTerms({ ev, onAccept, onClose, returning = false }) {
   const [ok, setOk] = useState(false);
+  const [full, setFull] = useState(!returning);
   const line = (children) => (
     <li style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 14.5, lineHeight: 1.68, color: "rgba(214,226,255,0.85)" }}>
       <span style={{ color: "#5b8dff", flex: "0 0 auto", marginTop: 2 }}>▪</span><span>{children}</span>
     </li>
+  );
+  if (!full) return (
+    <VoltOverlay onClose={onClose} zIndex={140} center>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, padding: "22px 24px 20px",
+        background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,220,132,0.45)",
+        clipPath: SHELL_NOTCH(14), fontFamily: "'Rajdhani',sans-serif" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#3ddc84", fontWeight: 700 }}>// {weekendName(ev)}</div>
+        <div style={{ fontSize: 21, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.2, margin: "10px 0 8px" }}>
+          Free <span style={{ color: "#f5c453" }}>Sat &amp; Sun, 7PM–2AM PKT</span>?
+        </div>
+        <p style={{ fontSize: 14, lineHeight: 1.6, color: "rgba(205,219,255,0.75)", margin: "0 0 16px" }}>
+          Same deal as always: drop out before the draft and it costs nothing. Unreachable after you're drafted is a strike, and two strikes means a 2-tournament suspension.
+        </p>
+        <button onClick={onAccept}
+          style={{ width: "100%", padding: "14px", fontSize: 13.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", cursor: "pointer",
+            background: "rgba(61,220,132,0.16)", border: "1px solid #3ddc84", color: "#9af5c2", clipPath: SHELL_NOTCH(12) }}>
+          I'm available all weekend — sign me up</button>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
+          <button onClick={() => setFull(true)} style={{ background: "none", border: "none", color: "#7da6ff", fontSize: 12.5, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>See the full rules</button>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "rgba(200,215,255,0.5)", fontSize: 12.5, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>Not this time</button>
+        </div>
+      </div>
+    </VoltOverlay>
   );
   return (
     <VoltOverlay onClose={onClose} zIndex={140}>
@@ -8440,6 +8592,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
   const [onboard, setOnboard] = useState(false); // first-timer welcome + profile setup
   const [onboardStart, setOnboardStart] = useState("intro");
   const [terms, setTerms] = useState(false);      // availability + strike policy gate
+  const [termsQuick, setTermsQuick] = useState(false); // returning player → one-tap commitment
   const status = mine ? (mine.status || "approved") : null;
   const on = status === "pending" || status === "approved";
   // Back from connecting Discord mid-setup → reopen it at the profile step,
@@ -8462,6 +8615,12 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
     setNote("");
     if (!on) {
       if (!profileComplete) { setOnboardStart("intro"); setOnboard(true); return; } // first-timer → guided setup + auto-continue
+      // Played before? They've read the full rules, so the commitment is one tap.
+      try {
+        const { count } = await __sb.from("registrations").select("id", { count: "exact", head: true })
+          .eq("community_id", window.__VOLT.communityId).eq("user_id", window.__VOLT.userId).eq("status", "approved");
+        setTermsQuick((count || 0) > 0);
+      } catch { setTermsQuick(false); }
       setTerms(true);                                     // must accept the commitment each tournament
       return;
     } else {
@@ -8529,7 +8688,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
       )}
       {note && <div style={{ fontSize: 11.5, color: "#f5c453" }}>{note}</div>}
       {onboard && <FirstTimeOnboard ev={ev} wantCap={wantCap} startPhase={onboardStart} onClose={() => setOnboard(false)} onApplied={onChanged} />}
-      {terms && <RegisterTerms ev={ev} onAccept={doApply} onClose={() => setTerms(false)} />}
+      {terms && <RegisterTerms ev={ev} returning={termsQuick} onAccept={doApply} onClose={() => setTerms(false)} />}
     </div>
   );
 }
@@ -13484,6 +13643,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         starts_on: patch?.starts_on || comingSaturday(),
         ends_on: patch?.ends_on ?? null,
         weekend_label: patch?.weekend_label ?? null,
+        draft_at: patch?.draft_at ?? null,
         phase: "registration_open",
       }).select().maybeSingle();
       if (error) throw error;
@@ -15044,6 +15204,8 @@ function MatchReport({ ev, onDone, prefill }) {
     if (pB) setTB(pB.id); else if (board[1]) setTB(board[1].id);
     if (prefill?.winner) setWinner(prefill.winner);
     if (prefill?.label) setLabel(l => l || prefill.label);
+    // Score already entered on the bracket → don't make the host type it again.
+    if (prefill?.scoreA != null && prefill?.scoreB != null) { setScoreA(String(prefill.scoreA)); setScoreB(String(prefill.scoreB)); }
     try { const r = await fetchRosterForEvent(ev.id); setAllRegs(r.all); } catch (e) { console.error(e); }
     const { data } = await __sb.from("match_results").select("match_label, team_won, points_computed, user_id, stat_payload").eq("event_id", ev.id).order("created_at", { ascending: false });
     const byLabel = {};
@@ -15212,6 +15374,13 @@ function MatchReport({ ev, onDone, prefill }) {
       // failure path: a Discord outage must never make a recorded match look
       // like it didn't save. Worst case the host presses "Post standings".
       postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB);
+      // And the other direction: a reported score lands on the bracket too, so
+      // the fixture shows the result without a second entry. The draft room
+      // owns board edits (it re-seeds semis/finals), so it does the write.
+      if (scoreA !== "" && scoreB !== "" && window.__VOLT?.setFixtureScore) {
+        try { window.__VOLT.setFixtureScore(ml, A.id, B.id, +scoreA, +scoreB); }
+        catch (e) { console.error("fixture score", e); }
+      }
       setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); setScoreA(""); setScoreB(""); await load();
     } catch (e) { setErr(e.message || "Could not save the match."); }
     setBusy(false);
@@ -15598,6 +15767,26 @@ function WeekendRegistration({ ev, auth, phase }) {
     } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
     setBusy(false);
   }
+  // Clear the whole queue in one go. Anyone with a no-show on record is named
+  // in the confirmation, so the shortcut can't wave them through unnoticed.
+  async function hostApproveAll(list) {
+    const flagged = list.filter((r) => r.noShows > 0);
+    const ok = await voltConfirm(
+      `Approve all ${list.length} applications for ${weekendName(ev)}?` +
+      (flagged.length ? `\n\n${flagged.length} of them ${flagged.length === 1 ? "has" : "have"} a no-show on record: ${flagged.map((r) => r.name).join(", ")}.` : ""),
+      { title: "Approve everyone?", confirmLabel: `Approve ${list.length}` });
+    if (!ok) return;
+    setBusy(true); setDecideErr("");
+    try {
+      const { error } = await __sb.from("registrations").update({ status: "approved" }).in("id", list.map((r) => r.regId));
+      if (error) throw new Error(error.message);
+      await voltNotify(list.map((r) => ({ community_id: window.__VOLT.communityId, user_id: r.userId, event_id: ev.id, kind: "approved",
+        title: "You're in — " + weekendName(ev), body: "Approved for the pool. Captains can draft you now." })));
+      voltToast(`Approved ${list.length} player${list.length === 1 ? "" : "s"}.`);
+      await load();
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't approve them — try again."); }
+    setBusy(false);
+  }
   // Player side: a quiet availability signal only — not a captain claim.
   async function volunteer(v) {
     setBusy(true);
@@ -15677,9 +15866,15 @@ function WeekendRegistration({ ev, auth, phase }) {
               <p style={{ color: "#ff8f9a", fontSize: 12.5, margin: "0 0 10px" }}>⚠ {decideErr}</p>
             )}
             {pendingQ.length > 0 && (
-              <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: "0 0 10px" }}>
-                Tap a row to see their full stats and history before you decide.
-              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 10px" }}>
+                <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: 0, flex: 1, minWidth: 180 }}>
+                  Tap a row to see their full stats and history before you decide.
+                </p>
+                {pendingQ.length > 1 && (
+                  <button disabled={busy} onClick={() => hostApproveAll(pendingQ)}
+                    style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>✓ Approve all ({pendingQ.length})</button>
+                )}
+              </div>
             )}
             {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
             <div style={{ display: "grid", gap: 6 }}>
