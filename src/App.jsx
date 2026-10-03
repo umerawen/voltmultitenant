@@ -168,19 +168,21 @@ const IMG_HERO = "/img/hero.webp";
 const IMG_ARENA = "/img/stock-arena.webp";   // competition PCs, red chairs, blue light
 const IMG_CROWD = "/img/stock-crowd.webp";   // crowd under blue stage lights
 const IMG_KEYS = "/img/stock-keys.webp";     // backlit keyboard close-up
-const VID_LINES = { src: "/video/lines.mp4", poster: "/video/lines-poster.webp" };          // Nicola Narracci, Pexels
-const VID_PARTICLES = { src: "/video/particles.mp4", poster: "/video/particles-poster.webp" }; // Nicola Narracci, Pexels
+const IMG_CROWD_GOLD = "/img/stock-crowd-gold.webp"; // same crowd, graded gold for champions
+// All stock is graded into the brand palette (navy → VOLT blue, or gold) so it
+// reads as broadcast graphics rather than stock photography.
 
-// A muted looping background clip. With reduced motion it's the poster frame
-// only, and it never steals focus or sound. The poster shows while it loads.
-function BgVideo({ video, style, className }) {
-  const still = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const base = { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none", ...style };
-  if (still) return <img src={video.poster} alt="" aria-hidden className={className} style={base} />;
-  return <video src={video.src} poster={video.poster} autoPlay muted loop playsInline preload="metadata"
-    aria-hidden tabIndex={-1} disablePictureInPicture className={className} style={base} />;
-}
-
+// Broadcast finish for a photo banner: fine scanlines plus a slow light
+// sweep. Restrained on purpose — motion that loops visibly looks cheap.
+const SWEEP_CSS = `
+  @keyframes voltSweep { 0% { background-position: 160% 0; } 55%, 100% { background-position: -60% 0; } }
+  .volt-sweep { position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(105deg, transparent 42%, rgba(170,200,255,0.09) 50%, transparent 58%);
+    background-size: 260% 100%; animation: voltSweep 11s cubic-bezier(.45,0,.25,1) infinite; }
+  .volt-scan { position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,0.022) 0 1px, transparent 1px 3px); }
+  @media (prefers-reduced-motion: reduce) { .volt-sweep { animation: none; opacity: 0; } }
+`;
 
 /* ════════════════════════════════════════════════════════════════════
    VOLT PROTOCOL — Community Valorant Auction Draft
@@ -1738,7 +1740,7 @@ function TChampion({ team }) {
   if (!team) return null;
   return (
     <div className="relative flex flex-col items-center gap-1 py-7 px-8 mx-auto overflow-hidden" style={{ maxWidth: 560, background: `linear-gradient(160deg, ${team.hue}22, rgba(10,15,28,0.6))`, border: `1px solid ${team.hue}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", boxShadow: `0 0 50px ${team.hue}33` }}>
-      <img src={IMG_CROWD} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.35, pointerEvents: "none",
+      <img src={IMG_CROWD_GOLD} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.55, pointerEvents: "none",
         maskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)", WebkitMaskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)" }} />
       <p className="uppercase text-xs font-bold tracking-[0.3em] relative" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Champion ★</p>
       <p className="font-bold uppercase relative" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.8rem", lineHeight: 1, color: team.hue, letterSpacing: "0.03em", textShadow: `0 0 30px ${team.hue}88` }}>{team.name}</p>
@@ -1992,11 +1994,13 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
 
   return (
     <div className="view-in page-wrap py-8">
-      <style>{FX_CSS}</style>
+      <style>{FX_CSS + SWEEP_CSS}</style>
       <div style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
         {/* A real competition floor behind the agent, faded into the panel. */}
-        <img src={champion ? IMG_CROWD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "75%", height: "100%", objectFit: "cover", objectPosition: "center 45%",
-          opacity: 0.32, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
+        <img src={champion ? IMG_CROWD_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "75%", height: "100%", objectFit: "cover", objectPosition: "center 45%",
+          opacity: 0.7, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
+        <span aria-hidden className="volt-scan" />
+        <span aria-hidden className="volt-sweep" />
         <CardArt hue={H} agent={BANNER_AGENT[t.format] || "Jett"} />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
@@ -3762,7 +3766,8 @@ function Leaderboard({ isAdmin }) {
       {/* Same banner as the home and fixtures pages, with its own picture. */}
       <div style={{ ...PANEL("rgba(61,123,255,0.4)", "24px 28px 20px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18 }}>
         <img src={IMG_KEYS} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "70%", height: "100%", objectFit: "cover", objectPosition: "center 60%",
-          opacity: 0.5, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
+          opacity: 0.85, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
+        <span aria-hidden className="volt-scan" />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
         <div style={{ position: "relative" }}>
@@ -3790,7 +3795,7 @@ function Leaderboard({ isAdmin }) {
         </div>
       </div>
 
-      <style>{DASH_CSS}</style>
+      <style>{DASH_CSS + SWEEP_CSS}</style>
       {rows === null && <div style={{ ...PANEL(null, "20px 22px") }}><Skeleton rows={6} /></div>}
       {rows && rows.length === 0 && (
         <div style={{ ...PANEL(null, "30px 22px") }}>
@@ -7481,8 +7486,6 @@ function VoltGate() {
         <img src={IMG_GATE_BG} alt="" className="volt-bg-img"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%",
             opacity: 0.38, filter: "brightness(0.62) saturate(1.08)" }} />
-        {/* Slow particle drift over the art, screened in so only the light shows. */}
-        <BgVideo video={VID_PARTICLES} style={{ opacity: 0.55, mixBlendMode: "screen" }} />
 
         {/* circuit grid — perspective floor with pulses running up its lines */}
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "42%", overflow: "hidden",
@@ -11308,8 +11311,8 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
                : phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
       {phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
       {gold && <span aria-hidden className="volt-shimmer" />}
-      {(phase === "matches_live" || gold) && <img src={gold ? IMG_CROWD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "62%", height: "100%", objectFit: "cover",
-        opacity: 0.3, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 65%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 65%)" }} />}
+      {(phase === "matches_live" || gold) && <img src={gold ? IMG_CROWD_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "62%", height: "100%", objectFit: "cover",
+        opacity: 0.65, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 65%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 65%)" }} />}
       {/* Both brackets, matching the auction block — one alone reads as a
           rendering glitch rather than a deliberate frame. */}
       <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
@@ -13886,7 +13889,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         </VoltOverlay>
       )}
       <div style={{ maxWidth: hideHeader ? 1000 : 1120, margin: "0 auto", padding: hideHeader ? "16px 20px 0" : "30px 20px 0" }}>
-        <style>{DASH_CSS + `
+        <style>{DASH_CSS + SWEEP_CSS + `
           .volt-lg-stats { display: flex; gap: 22px; align-items: flex-start; }
           .volt-lg-stats > :not(.volt-lg-rule) { flex: 0 1 auto; }
           .volt-lg-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; align-items: stretch; }
@@ -13925,10 +13928,12 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <div className="volt-lg-hero" style={{ ...PANEL(`${H}55`, "30px 34px 28px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(18),
               marginBottom: 14, minHeight: 300, display: "flex", flexDirection: "column" }}>
               <CardArt hue={H} bare />
-              {/* Moving neon behind the league name — the one place the league
-                  itself gets motion; agent art is kept for players' own cards. */}
-              <BgVideo video={VID_LINES} className="volt-lg-art" style={{ left: "auto", right: 0, width: "70%", opacity: 0.85,
-                maskImage: "linear-gradient(90deg, transparent 0%, #000 45%)", WebkitMaskImage: "linear-gradient(90deg, transparent 0%, #000 45%)" }} />
+              {/* A real stage, graded into the league's blue, behind the name. */}
+              <img className="volt-lg-art" src={IMG_CROWD} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "72%", height: "100%",
+                objectFit: "cover", objectPosition: "center 35%", pointerEvents: "none", opacity: 0.9,
+                maskImage: "linear-gradient(90deg, transparent 0%, #000 50%)", WebkitMaskImage: "linear-gradient(90deg, transparent 0%, #000 50%)" }} />
+              <span aria-hidden className="volt-scan" />
+              <span aria-hidden className="volt-sweep" />
               <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%", pointerEvents: "none",
                 background: `repeating-linear-gradient(105deg, transparent 0 46px, ${H}14 46px 52px, transparent 52px 110px, ${H}0c 110px 140px)`,
                 maskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)",
