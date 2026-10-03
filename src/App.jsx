@@ -7063,6 +7063,10 @@ function VoltGate() {
       window.__VOLT.userName = u.display_name || null;   // used for vote attribution
       window.__VOLT.isHost = u.role === "host";              // strictly the owner
       window.__VOLT.isStaff = u.role === "host" || u.role === "moderator"; // + moderators
+      // A league still awaiting review can't run anything yet. Returning hosts
+      // used to land on the schedule and only learn that when creating a
+      // tournament failed.
+      if (u.communities?.status === "pending") { setPhase("pending"); return; }
       // Dive straight into a LIVE tournament (draft/matches) — login shouldn't
       // land on a list when there's a tournament to be inside. Registration and
       // "all settled" fall through to the hub (that's where the play toggle is).
@@ -8169,7 +8173,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
     if (!mine) { setWantCap(v); return; }
     setBusy(true);
     try { const { error } = await __sb.rpc("volt_wants_captain", { p_event: ev.id, p_v: v }); if (error) throw error; onChanged && await onChanged(); }
-    catch (e) { console.error(e); }
+    catch (e) { console.error(e); setNote(e.message || "Could not update that."); }
     setBusy(false);
   }
 
@@ -10057,18 +10061,27 @@ function SubDesk({ eventId, onChanged }) {
     return () => clearInterval(t);
   }, [open, eventId]);
 
+  // Close a request nobody can answer, so the player can be asked for again.
+  async function cancel(reqId) {
+    const { error } = await __sb.rpc("volt_sub_cancel", { p_request: reqId });
+    if (error) throw new Error(error.message);
+  }
+
   async function ask(outUserId) {
     setBusy(outUserId); setErr(""); setMsg("");
+    let reqId = null;
     try {
       const team = (roster.find((x) => x.userId === outUserId) || {}).team || "the team";
       const { data, error } = await __sb.rpc("volt_sub_request",
         { p_event: eventId, p_out: outUserId, p_team: team });
       if (error) throw new Error(error.message);
-      if (data?.error === "already_open") { setErr("There's already an open request for that player."); setBusy(""); return; }
+      if (data?.error === "already_open") { setErr("There's already an open request for that player."); setPicking(null); setBusy(""); return; }
+      reqId = data?.id || null;
 
       const { data: el } = await __sb.rpc("volt_sub_eligible", { p_event: eventId, p_out: outUserId });
       const targets = (el?.players || []).filter((x) => x.linked).map((x) => x.userId);
       if (!targets.length) {
+        if (reqId) await cancel(reqId).catch((e) => console.error("sub cancel", e));
         setErr(`Nobody below ${el?.outRank || "that rank"} has Discord connected, so there's no one to ask.`);
         setPicking(null); setBusy(""); load(); return;
       }
@@ -10090,7 +10103,12 @@ function SubDesk({ eventId, onChanged }) {
       if (!r.ok) throw new Error(b?.error || "Couldn't send the DMs.");
       setMsg(`Asked ${b?.delivered ?? targets.length} player${targets.length === 1 ? "" : "s"}. Offers show up here.`);
       setPicking(null); load();
-    } catch (e) { setErr(e.message || "Couldn't open the request."); }
+    } catch (e) {
+      // Nobody was asked, so don't leave a request open that blocks a retry.
+      if (reqId) await cancel(reqId).catch((err) => console.error("sub cancel", err));
+      setErr(e.message || "Couldn't open the request.");
+      setPicking(null); load();
+    }
     setBusy("");
   }
 
@@ -10142,6 +10160,16 @@ function SubDesk({ eventId, onChanged }) {
                   Waiting on offers — everyone eligible has been DM'd.
                 </div>
               )}
+              <button disabled={!!busy} onClick={async () => {
+                  if (!window.confirm(`Cancel the sub request for ${r.outName}?`)) return;
+                  setBusy(r.id); setErr(""); setMsg("");
+                  try { await cancel(r.id); setMsg("Request cancelled."); load(); }
+                  catch (e) { setErr(e.message || "Couldn't cancel it."); }
+                  setBusy("");
+                }}
+                style={shellBtn("ghost", { padding: "5px 12px", fontSize: 10.5, marginTop: 8, opacity: busy ? 0.5 : 1 })}>
+                {busy === r.id ? "…" : "Cancel request"}
+              </button>
             </div>
           ))}
 
@@ -12912,9 +12940,19 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   }
   async function deleteWeekend(ev) {
     if (!isTrueHost) { setErr("Only the host can delete a tournament."); return; }
-    if (!window.confirm(`Delete ${weekendName(ev)}? This removes the tournament and its registrations. Reported match points are kept.`)) return;
+    // match_results cascade with the event, so deleting a played tournament
+    // would wipe everyone's season points from it — the old prompt promised
+    // the opposite.
+    const { count } = await __sb.from("match_results").select("id", { count: "exact", head: true }).eq("event_id", ev.id);
+    if (count) {
+      setErr(`${weekendName(ev)} has ${count} reported stat line${count === 1 ? "" : "s"}. Deleting it would erase those season points — settle it instead, or delete its matches in Report match first.`);
+      return;
+    }
+    if (!window.confirm(`Delete ${weekendName(ev)}? This removes the tournament and its registrations.`)) return;
     try {
-      await __sb.from("registrations").delete().eq("event_id", ev.id);
+      // Registrations, notifications and the draft row cascade with the event,
+      // in one statement — deleting registrations first left them gone if the
+      // event delete then failed.
       const { error } = await __sb.from("events").delete().eq("id", ev.id);
       if (error) throw error;
       await refreshEvents();
@@ -13619,9 +13657,11 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     if (!window.confirm(`Move ${weekendName(ev)} back to "${PREV[phase].replace(/_/g, " ")}"? The draft board is kept.`)) return;
     setBusy(true);
     try {
-      const { data } = await __sb.from("events").update({ phase: PREV[phase] }).eq("id", ev.id).select().maybeSingle();
-      if (data) setEv(data);
-    } catch (e) { console.error(e); }
+      const { data, error } = await __sb.from("events").update({ phase: PREV[phase] }).eq("id", ev.id).select().maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("The tournament wasn't changed — you may not have permission.");
+      setEv(data);
+    } catch (e) { console.error(e); window.alert(e.message || "Couldn't move the tournament back."); }
     setBusy(false);
   }
 
@@ -13725,8 +13765,11 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       // tournament marked settled without trophies looks finished but isn't,
       // and nothing on screen says so.
       if (next === "settled") { await snapshotStandings(); await settleTrophiesAndRecap(); }
-      const { data } = await __sb.from("events").update({ phase: next }).eq("id", ev.id).select().maybeSingle();
-      if (data) setEv(data);
+      const { data, error } = await __sb.from("events").update({ phase: next }).eq("id", ev.id).select().maybeSingle();
+      // A refused update comes back as no row rather than an error.
+      if (error) throw error;
+      if (!data) throw new Error("The tournament wasn't changed — you may not have permission.");
+      setEv(data);
     } catch (e) {
       console.error(e);
       alert(e.message || "Couldn't move the tournament on. Nothing was changed.");
@@ -14977,7 +15020,7 @@ function WeekendRegistration({ ev, auth, phase }) {
   async function withdraw() {
     setBusy(true);
     try { const { error } = await __sb.rpc("volt_withdraw", { p_event: ev.id }); if (error) throw error; await load(); }
-    catch (e) { console.error(e); }
+    catch (e) { console.error(e); setDecideErr(e.message || "Couldn't withdraw — try again."); }
     setBusy(false);
   }
   const [decideErr, setDecideErr] = useState("");
@@ -14998,7 +15041,7 @@ function WeekendRegistration({ ev, auth, phase }) {
   async function volunteer(v) {
     setBusy(true);
     try { const { error } = await __sb.rpc("volt_wants_captain", { p_event: ev.id, p_v: v }); if (error) throw error; await load(); }
-    catch (e) { console.error(e); }
+    catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
     setBusy(false);
   }
   // Host side: the actual captain decision.

@@ -413,7 +413,7 @@ async function onButton(out, customId, guild, discordId, origin, body) {
     if (!uid) return needsLink(out);
     const r = await rpc("volt_sub_offer", { p_request: reqId, p_user: uid });
     if (r?.error === "gone") return reply(out, "That request no longer exists.");
-    if (r?.error === "closed") return reply(out, "Too late — that spot has already been filled.");
+    if (r?.error === "closed") return reply(out, "Too late — that request has been filled or cancelled.");
     if (r?.error === "ineligible") return reply(out,
       "You're not eligible for this one. Subs have to be a lower rank than the player they're covering, " +
       "so the team can't come out stronger than it went in.");
