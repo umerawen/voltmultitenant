@@ -13293,8 +13293,14 @@ function StaffPanel({ onOpenPlayer }) {
 function ChecklistCard({ eyebrow, title, steps, cta, footer, tone = "#3d7bff", onHide }) {
   const done = steps.filter((s) => s.done).length;
   return (
-    <div style={{ marginBottom: 20, padding: "18px 20px", background: `linear-gradient(160deg, ${tone}14, rgba(10,13,22,0.85))`,
+    <div style={{ position: "relative", overflow: "hidden", marginBottom: 14, padding: "18px 20px", background: `linear-gradient(160deg, ${tone}14, rgba(10,13,22,0.85))`,
       border: `1px solid ${tone}66`, clipPath: SHELL_NOTCH(12), boxShadow: `0 0 30px ${tone}14` }}>
+      {/* The dashboard cells' chrome: hatching in one corner, a bracket in the other. */}
+      <span aria-hidden style={{ position: "absolute", right: 0, top: 0, width: 150, height: 96, pointerEvents: "none",
+        background: `repeating-linear-gradient(135deg, ${tone}1a 0 1px, transparent 1px 8px)`,
+        maskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)", WebkitMaskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)" }} />
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 10, height: 10, borderLeft: `2px solid ${tone}`, borderTop: `2px solid ${tone}` }} />
+      <div style={{ position: "relative" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
         <span style={{ ...SEC_LABEL, color: tone }}>{eyebrow}</span>
         <span style={{ flex: 1, minWidth: 12, height: 1, background: `linear-gradient(90deg, ${tone}55, transparent)` }} />
@@ -13324,6 +13330,7 @@ function ChecklistCard({ eyebrow, title, steps, cta, footer, tone = "#3d7bff", o
           {onHide && <button onClick={onHide} style={{ marginLeft: "auto", background: "none", border: "none", color: "rgba(200,215,255,0.4)", fontSize: 12, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>Hide checklist</button>}
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -13741,39 +13748,62 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       )}
       <div style={{ maxWidth: hideHeader ? 1000 : 1120, margin: "0 auto", padding: hideHeader ? "16px 20px 0" : "30px 20px 0" }}>
         <style>{DASH_CSS + `
-          .volt-lg-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px 24px; align-items: end; }
-          .volt-lg-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+          .volt-lg-stats { display: flex; gap: 22px; align-items: flex-start; }
+          .volt-lg-stats > :not(.volt-lg-rule) { flex: 0 1 auto; }
           .volt-lg-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; align-items: stretch; }
           .volt-lg-grid > .volt-lg-full { grid-column: 1 / -1; }
           @media (max-width: 860px) {
-            .volt-lg-head { grid-template-columns: 1fr; }
             .volt-lg-grid { grid-template-columns: 1fr; }
+            .volt-lg-art { width: 100% !important; opacity: 0.35 !important; }
           }
-          @media (max-width: 560px) { .volt-lg-stats { grid-template-columns: 1fr; } }
+          @media (max-width: 560px) {
+            .volt-lg-hero { padding: 24px 20px 22px !important; }
+            .volt-lg-stats { flex-wrap: wrap; gap: 16px 20px; }
+            .volt-lg-rule { display: none; }
+          }
         `}</style>
         {!hideHeader && (() => {
+          // The league's banner, built like the player card on the tournament
+          // home: same frame, grid, rays and brackets, the art standing on the
+          // right, and the headline numbers big with a small label under each.
           const settled = (events || []).filter(e => e.phase === "settled").length;
           const lead = board && board[0];
-          const tile = (k, v, sub, col, i) => (
-            <div key={k} style={{ ...PANEL(null, "14px 18px"), clipPath: SHELL_NOTCH(10), animation: `voltRise .45s ${i * 70}ms backwards` }}>
-              <div style={{ fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", fontWeight: 700 }}>{k}</div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 8, minWidth: 0 }}>
-                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, lineHeight: 1, color: col,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span>
-                {sub && <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", whiteSpace: "nowrap" }}>{sub}</span>}
+          const H = "#3d7bff";
+          const BIG = (c) => ({ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: "clamp(28px, 3.4vw, 40px)", lineHeight: 1, color: c,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+          const LBL = { fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 8, whiteSpace: "nowrap" };
+          const stat = (v, label, col, i, sub) => (
+            <div key={label} style={{ minWidth: 0, animation: `voltRise .45s ${120 + i * 70}ms backwards` }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                <span style={BIG(col)}>{v}</span>
+                {sub && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.45)", whiteSpace: "nowrap" }}>{sub}</span>}
               </div>
+              <div style={LBL}>{label}</div>
             </div>
           );
+          const rule = <div aria-hidden className="volt-lg-rule" style={{ alignSelf: "stretch", width: 1, background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.25), transparent)" }} />;
           return (
-            <div style={{ marginBottom: 18 }}>
-              <div className="volt-lg-head">
-                <div style={{ minWidth: 0 }}>
-                  <div style={SEC_LABEL}>// VOLT league</div>
-                  <div style={{ fontSize: "clamp(34px, 5vw, 56px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.01em",
-                    lineHeight: 0.95, marginTop: 8, textShadow: "0 0 40px rgba(61,123,255,0.3)" }}>{community?.name || "Community"}</div>
+            <div className="volt-lg-hero" style={{ ...PANEL(`${H}55`, "30px 34px 28px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(18),
+              marginBottom: 14, minHeight: 300, display: "flex", flexDirection: "column" }}>
+              <CardArt hue={H} bare />
+              <img className="volt-lg-art" src={IMG_HERO} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "68%", height: "100%",
+                objectFit: "cover", objectPosition: "70% 30%", pointerEvents: "none", opacity: 0.9,
+                maskImage: "linear-gradient(90deg, transparent 0%, #000 45%)", WebkitMaskImage: "linear-gradient(90deg, transparent 0%, #000 45%)" }} />
+              <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%", pointerEvents: "none",
+                background: `repeating-linear-gradient(105deg, transparent 0 46px, ${H}14 46px 52px, transparent 52px 110px, ${H}0c 110px 140px)`,
+                maskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)",
+                WebkitMaskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)" }} />
+              <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
+              <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
+
+              <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, maxWidth: 620 }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>// VOLT league</div>
+                <div style={{ fontSize: "clamp(40px, 6vw, 72px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.01em",
+                  lineHeight: 0.92, marginTop: 10, textShadow: `0 0 40px ${H}55`, overflowWrap: "anywhere" }}>{community?.name || "Community"}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                   {community?.slug && (
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: 12, marginTop: 14, padding: "6px 7px 6px 13px",
-                      background: "rgba(10,13,22,0.6)", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(8) }}>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "6px 7px 6px 13px",
+                      background: "rgba(8,11,20,0.75)", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(8) }}>
                       <span style={{ fontSize: 9.5, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>Join code</span>
                       <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff" }}>{community.slug}</span>
                       {/* The link beats the code: it opens the join screen with the code
@@ -13781,20 +13811,23 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                       <CopyButton text={`${window.location.origin}/?join=${community.slug}`} label="Copy invite link" style={shellBtn("accent", { padding: "5px 11px", fontSize: 9.5, letterSpacing: "0.16em" })} />
                     </div>
                   )}
+                  {isHost && events && (
+                    <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })}
+                      className={pickCurrent(events) ? undefined : "volt-cta-pulse"}
+                      style={shellBtn(pickCurrent(events) ? "ghost" : "primary", { padding: "11px 20px", fontSize: 12, whiteSpace: "nowrap" })}>
+                      {busy ? "…" : pickCurrent(events) ? "+ Next tournament" : "+ Create tournament"}</button>
+                  )}
                 </div>
-                {isHost && events && (
-                  <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })}
-                    style={shellBtn(pickCurrent(events) ? "ghost" : "primary", { padding: "13px 22px", fontSize: 12.5, whiteSpace: "nowrap" })}>
-                    {busy ? "…" : pickCurrent(events) ? "+ Next tournament" : "+ Create tournament"}</button>
+                {events && events.length > 0 && (
+                  <div className="volt-lg-stats" style={{ marginTop: "auto", paddingTop: 26 }}>
+                    {stat(<CountUp to={settled} />, "Tournaments played", "#ecf3ff", 0)}
+                    {rule}
+                    {stat(board ? <CountUp to={board.length} /> : "—", "Players ranked", "#7da6ff", 1)}
+                    {rule}
+                    {stat(lead ? String(lead.name).toUpperCase() : "—", "Season leader", "#f5c453", 2, lead ? `${lead.pts} pts` : null)}
+                  </div>
                 )}
               </div>
-              {events && events.length > 0 && (
-                <div className="volt-lg-stats" style={{ marginTop: 20 }}>
-                  {tile("Tournaments played", <CountUp to={settled} />, null, "#ecf3ff", 0)}
-                  {tile("Players ranked", board ? <CountUp to={board.length} /> : "—", null, "#7da6ff", 1)}
-                  {tile("Season leader", lead ? String(lead.name).toUpperCase() : "—", lead ? `${lead.pts} pts` : null, "#f5c453", 2)}
-                </div>
-              )}
             </div>
           );
         })()}
@@ -13879,15 +13912,16 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         </div>
       : <div className="volt-lg-grid" style={{ marginBottom: 22 }}>
           {current && (
-            <div id="volt-current-hero" style={{ position: "relative", overflow: "hidden", padding: "20px 24px 22px", background: "linear-gradient(160deg,rgba(24,32,54,0.95),rgba(10,13,22,0.95))", border: `1px solid ${PHASE_COLOR[current.phase] || "#3d7bff"}66`, clipPath: SHELL_NOTCH(16), boxShadow: "0 0 40px rgba(61,123,255,0.12)", height: "100%" }}>
-              {/* The league's own art, faint, so the live tournament is the
-                  loudest thing on the page without another decoration. */}
-              <img src={IMG_HERO} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "60%", height: "100%", objectFit: "cover",
-                opacity: 0.16, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 70%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 70%)" }} />
+            <div id="volt-current-hero" className="volt-cell" style={{ ...PANEL(`${PHASE_COLOR[current.phase] || "#3d7bff"}66`, "20px 24px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16),
+              boxShadow: current.phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none", height: "100%" }}>
+              {/* Same backdrop as the tournament home's banner, in the phase's
+                  colour, so this card and the page it opens look like one thing. */}
+              <CardArt hue={PHASE_COLOR[current.phase] || "#3d7bff"} />
+              {current.phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
               <span aria-hidden className="volt-rays" style={{ position: "absolute", inset: "-20% 0 -20% 40%", pointerEvents: "none",
                 background: `repeating-linear-gradient(105deg, transparent 0 46px, ${PHASE_COLOR[current.phase] || "#3d7bff"}10 46px 52px, transparent 52px 110px)` }} />
-              <span style={{ position: "absolute", left: 0, top: 0, width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-              <span style={{ position: "absolute", right: 0, bottom: 0, width: 10, height: 10, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+              <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+              <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
               {/* Label rule spans the card and carries the host's edit/delete out
                   of the headline — they were breaking the title's line before. */}
               <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
@@ -13900,8 +13934,15 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
               </div>
               <div className="volt-tourn-hero" style={{ position: "relative" }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: "clamp(22px, 2.7vw, 31px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.08 }}>{weekendName(current)}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 11, flexWrap: "wrap", rowGap: 8 }}>
+                  <div style={{ fontSize: "clamp(28px, 3.4vw, 40px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1,
+                    textShadow: `0 0 34px ${PHASE_COLOR[current.phase] || "#3d7bff"}40` }}>{weekendName(current)}</div>
+                  <div style={{ fontSize: 13, color: "rgba(200,215,255,0.55)", marginTop: 7, lineHeight: 1.45 }}>
+                    {{ registration_open: "Sign-ups are open. Put your name in and captains can bid for you.",
+                       registration_closed: "Roster locked. The draft is next.",
+                       drafting: "The auction is live. Captains are bidding now.",
+                       matches_live: "Matches are running. Check your fixture and be in voice ten minutes early." }[current.phase] || ""}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 13, flexWrap: "wrap", rowGap: 8 }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", color: PHASE_COLOR[current.phase], fontWeight: 700 }}>
                       <span style={{ width: 7, height: 7, borderRadius: "50%", background: PHASE_COLOR[current.phase], boxShadow: `0 0 8px ${PHASE_COLOR[current.phase]}` }} />
                       {PHASE_LABEL[current.phase]}
@@ -13971,17 +14012,11 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           )}
           {/* Right of the live tournament: the season in five lines. */}
           {board && board.length > 0 && (
-            <div style={{ ...PANEL(null, "16px 18px"), clipPath: SHELL_NOTCH(14), display: "flex", flexDirection: "column", minHeight: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <span style={SEC_LABEL}>// Season race</span>
-                <span style={SEC_RULE} />
-                <button onClick={() => document.getElementById("volt-league-boards")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
-                    fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "#7da6ff", whiteSpace: "nowrap" }}>Full table →</button>
-              </div>
-              <div style={{ display: "grid", gap: 9 }}>
+            <Cell title="Season race" action="Full table"
+              onGo={() => document.getElementById("volt-league-boards")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+              <div style={{ display: "grid", gap: 9, marginTop: 2 }}>
                 {board.slice(0, 5).map((r, i) => (
-                  <div key={i} onClick={() => r.uid && setShowPlayer(r.uid)} className={r.uid ? "volt-pname" : undefined}
+                  <div key={i} onClick={(e) => { if (r.uid) { e.stopPropagation(); setShowPlayer(r.uid); } }} className={r.uid ? "volt-pname" : undefined}
                     style={{ display: "flex", alignItems: "center", gap: 10, cursor: r.uid ? "pointer" : "default",
                       padding: i === 0 ? "8px 10px" : "2px 10px", background: i === 0 ? "linear-gradient(90deg, rgba(245,196,83,0.13), transparent 80%)" : "none",
                       borderLeft: `2px solid ${i === 0 ? "#f5c453" : "transparent"}`, animation: `voltRise .4s ${i * 60}ms backwards` }}>
@@ -13993,7 +14028,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                   </div>
                 ))}
               </div>
-            </div>
+            </Cell>
           )}
           {(() => {
             // Next tournament already open while this one runs → its toggle rides
@@ -14026,8 +14061,14 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           })()}
           {upcoming.filter(e => !(current?.phase !== "registration_open" && e.phase === "registration_open")).map(ev => <div key={ev.id} className="volt-lg-full">{strip(ev, false)}</div>)}
           {past.length > 0 && (
-            <div className="volt-lg-full" style={{ ...PANEL(null, "16px 18px"), clipPath: SHELL_NOTCH(14) }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <div className="volt-lg-full volt-cell" style={{ ...PANEL(null, "15px 17px"), position: "relative", overflow: "hidden" }}>
+              {/* Cell's chrome, drawn here because this panel carries its own
+                  header controls (the jump-to select). */}
+              <span aria-hidden style={{ position: "absolute", right: 0, top: 0, width: 130, height: 86, pointerEvents: "none",
+                background: "repeating-linear-gradient(135deg, rgba(125,166,255,0.09) 0 1px, transparent 1px 8px)",
+                maskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)", WebkitMaskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)" }} />
+              <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid rgba(61,123,255,0.5)", borderTop: "2px solid rgba(61,123,255,0.5)" }} />
+              <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
                 <span style={SEC_LABEL}>// Past tournaments</span>
                 <span style={SEC_RULE} />
                 {past.length > 4 && (
@@ -14038,7 +14079,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                   </select>
                 )}
               </div>
-              <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ position: "relative", display: "grid", gap: 8 }}>
               {past.map((ev, i) => {
                 const rc = ev.recap || null;
                 const openIt = expandPast === ev.id;
