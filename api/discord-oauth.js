@@ -18,8 +18,14 @@ export default async function handler(req, res) {
   const origin = `https://${req.headers.host}`;
   const redirectUri = `${origin}/api/discord-oauth`;
 
+  // Every outcome goes straight back into the app, which reopens whatever the
+  // player was doing (see setResume in App.jsx) and shows the result. Ending on
+  // a static page meant a "Back to VOLT" tap that dropped them on the home
+  // screen with their setup gone.
+  const back = (status) => { res.setHeader("Location", `/?discord=${status}`); return res.status(302).end(); };
+
   // The user pressed "no" on Discord's consent screen.
-  if (error) return page(res, "Not connected", "You cancelled the Discord connection. Nothing has changed.", false);
+  if (error) return back("cancelled");
 
   /* ── leg 1: send them to Discord ─────────────────────────────────────── */
   if (token) {
@@ -55,7 +61,7 @@ export default async function handler(req, res) {
       if (Date.now() - Number(ts) > 10 * 60 * 1000) throw new Error("expired");
       uid = id;
     } catch {
-      return page(res, "That link didn't work", "It may have expired. Open VOLT and press Connect Discord again.", false);
+      return back("expired");
     }
 
     try {
@@ -84,12 +90,10 @@ export default async function handler(req, res) {
       });
       if (!r?.ok) throw new Error(r?.error || "link failed");
 
-      return page(res, "Connected",
-        `You're linked as <b>${escapeHtml(me.username)}</b>. VOLT will message you on Discord about drafts and matches.`,
-        true);
+      return back("linked");
     } catch (e) {
       console.error("oauth callback failed", e);
-      return page(res, "Couldn't connect", "Something went wrong talking to Discord. Try again in a moment.", false);
+      return back("failed");
     }
   }
 
