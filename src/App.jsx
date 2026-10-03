@@ -715,11 +715,25 @@ const requiredBid = (b) => (b.leaderId ? b.currentBid + 100 : b.startingBid);
    ════════════════════════════════════════════════════════════════════ */
 
 // notched HUD panel wrapper
-function TPanel({ children, hue = "#3d7bff", className = "", style = {} }) {
+// The fixtures screen's panel: the dashboard cells' chrome (bracket, corner
+// hatching, // label header) so it reads as the same product as the home page.
+function TPanel({ children, hue = "#3d7bff", className = "", style = {}, title, right }) {
   return (
-    <div className={"relative p-5 " + className} style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.05), rgba(10,15,28,0.5))", border: `1px solid ${hue}33`, clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", backdropFilter: "blur(8px)", ...style }}>
+    <div className={"relative p-5 " + className} style={{ background: "linear-gradient(160deg, rgba(17,23,40,0.78), rgba(10,13,22,0.78))", border: `1px solid ${hue}33`, clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", ...style }}>
+      <span aria-hidden className="absolute" style={{ right: 0, top: 0, width: 140, height: 90, pointerEvents: "none",
+        background: `repeating-linear-gradient(135deg, ${hue}17 0 1px, transparent 1px 8px)`,
+        maskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)", WebkitMaskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)" }} />
       <span className="absolute left-0 top-0" style={{ width: 11, height: 11, borderLeft: `2px solid ${hue}`, borderTop: `2px solid ${hue}` }} />
-      {children}
+      <div className="relative">
+        {title && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <span style={{ ...SEC_LABEL, fontSize: 11, color: hue === "#3d7bff" ? "#7da6ff" : hue }}>// {title}</span>
+            <span style={{ ...SEC_RULE, background: `linear-gradient(90deg, ${hue}55, transparent)` }} />
+            {right}
+          </div>
+        )}
+        {children}
+      </div>
     </div>
   );
 }
@@ -1089,7 +1103,7 @@ function MatchPrediction({ match, locator, a, b, onVote }) {
     <div style={{ borderTop: "1px dashed rgba(120,150,220,0.18)", paddingTop: 9, marginTop: 2 }}>
       <div className="flex items-center justify-between gap-2">
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(160,185,235,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>
-          Final prediction{mine ? <span style={{ color: "#7da6ff" }}> · you picked {mine === "a" ? a.name : b.name}</span> : null}
+          Who wins?{mine ? <span style={{ color: "#7da6ff" }}> · you picked {mine === "a" ? a.name : b.name}</span> : null}
           {/* Say why the buttons are gone. A control that silently disappears
               reads as a bug rather than a deadline. */}
           {started && !match.done && <span style={{ color: "rgba(245,196,83,0.85)" }}> · closed at kick-off</span>}
@@ -1196,86 +1210,229 @@ function FormatSwitcher({ t, actions }) {
   );
 }
 
-// editable score row for a single match
-function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
+// ── Match cards ─────────────────────────────────────────────────────────
+// Every fixture in every format is drawn by the same two pieces: a compact
+// card (teams, score, when) and a match panel that opens on click with the
+// time, prediction, score entry and player stats. Cards used to carry all of
+// that inline, which made them different heights and broke the bracket.
+const FX_NOTCH = (n) => `polygon(0 0, calc(100% - ${n}px) 0, 100% ${n}px, 100% 100%, ${n}px 100%, 0 calc(100% - ${n}px))`;
+// Cards are clipped (notched corners), which also clips outlines and shadows,
+// so hover and keyboard focus are shown by brightening the border instead.
+const FX_CSS = `
+  .volt-fx { transition: border-color .15s, transform .15s, filter .15s; }
+  .volt-fx[role="button"]:hover { border-color: rgba(125,166,255,0.7) !important; transform: translateY(-1px); filter: brightness(1.08); }
+  .volt-fx:focus-visible { outline: none; border-color: #9cc0ff !important; filter: brightness(1.15); }
+  @keyframes voltFxDot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .volt-fx-dot { display: inline-block; border-radius: 50%; background: currentColor; animation: voltFxDot 1.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .volt-fx { transition: none; } .volt-fx[role="button"]:hover { transform: none; } .volt-fx-dot { animation: none; } }
+`;
+
+function matchFacts(match, teamOf) {
   const a = teamOf(match.teamA), b = teamOf(match.teamB);
   const bo = match.bo || 1;
-  // League mode: fixtures hand off to the player-stats report, pre-filled.
-  const statsLabel = fxLabel(a, b, match);
-  const statsRecorded = statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel);
-  const canReport = !!(a && b && window.__VOLT?.openReport);
-  // A score has been entered (or the match closed) but player stats aren't in
-  // yet — the state that previously had no signal at all.
-  const scoreIn = !!(match.done || (match.maps || []).some(m => m && (m.a != null || m.b != null)));
-  const mapsNeeded = bo === 3 ? 3 : 1;
-  const winA = match.done && match.winner === match.teamA;
-  const winB = match.done && match.winner === match.teamB;
-  // A real bye, not an opponent still to be decided (which shows as TBD).
   const bye = !!match.bye || (match.done && (match.teamA == null) !== (match.teamB == null));
+  const maps = (match.maps || []).filter((m) => m && m.a != null && m.b != null);
+  const score = (who) => {
+    if (!maps.length) return null;
+    if (bo === 1) return maps[0][who];
+    return maps.filter((m) => (who === "a" ? m.a > m.b : m.b > m.a)).length;
+  };
+  const at = match.scheduledAt ? new Date(match.scheduledAt) : null;
+  const started = !!(at && !isNaN(at) && Date.now() >= at.getTime());
+  const statsLabel = fxLabel(a, b, match);
+  return {
+    a, b, bo, bye, at: at && !isNaN(at) ? at : null, started,
+    winA: match.done && match.winner === match.teamA,
+    winB: match.done && match.winner === match.teamB,
+    sA: score("a"), sB: score("b"),
+    scoreIn: !!(match.done || (match.maps || []).some((m) => m && (m.a != null || m.b != null))),
+    statsLabel, statsRecorded: !!(statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel)),
+    canReport: !!(a && b && window.__VOLT?.openReport),
+    votes: match.votes && typeof match.votes === "object" ? Object.values(match.votes) : [],
+  };
+}
+
+// "SUN 4 OCT · 7:00 PM" — short enough for a bracket card.
+const fxWhen = (d) => d
+  ? d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }).toUpperCase().replace(",", "")
+    + " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+  : null;
+
+// Status line for a card: final, live, the kick-off time, or "time TBC".
+function FxStatus({ f, match }) {
+  const base = { fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", whiteSpace: "nowrap" };
+  if (f.bye) return <span style={{ ...base, color: "rgba(200,215,255,0.35)" }}>Bye</span>;
+  if (match.done) return <span style={{ ...base, color: "#3ddc84" }}>Final</span>;
+  if (f.started) return <span style={{ ...base, color: "#ff4655", display: "inline-flex", alignItems: "center", gap: 6 }}>
+    <span className="volt-fx-dot" style={{ width: 6, height: 6 }} />Live</span>;
+  if (f.at) return <span style={{ ...base, color: "#9af5c2", letterSpacing: "0.1em" }}>{fxWhen(f.at)}</span>;
+  return <span style={{ ...base, color: "rgba(200,215,255,0.3)" }}>Time TBC</span>;
+}
+
+// Thin vote split along the bottom of a card: who people are backing, at a glance.
+function FxVoteBar({ f }) {
+  if (!f.a || !f.b || f.bye) return null;
+  const n = f.votes.length;
+  const aPct = n ? (f.votes.filter((v) => v.side === "a").length / n) * 100 : 50;
   return (
-    <div className="flex flex-col gap-2.5 px-4 py-3.5" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(120,150,220,0.14)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <TeamMono name={a ? a.name : "?"} hue={a ? a.hue : "#4a5570"} size={18} />
-          <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 18, color: a ? a.hue : "rgba(200,215,255,0.35)", opacity: winB ? 0.5 : 1 }}>{a ? a.name : "TBD"}{winA && <span style={{ color: "#3ddc84" }}> ✓</span>}</span>
-        </div>
-        <span className="uppercase tracking-widest px-2 py-0.5 shrink-0" style={{ fontSize: 11, color: "rgba(200,215,255,0.45)", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(120,150,220,0.2)" }}>{bye ? "BYE" : "BO" + bo}</span>
-        <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
-          <span className="font-bold uppercase truncate text-right" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 18, color: b ? b.hue : "rgba(200,215,255,0.35)", opacity: winA ? 0.5 : 1 }}>{winB && <span style={{ color: "#3ddc84" }}>✓ </span>}{b ? b.name : (bye ? "—" : "TBD")}</span>
-          <TeamMono name={b ? b.name : "?"} hue={b ? b.hue : "#4a5570"} size={18} />
-        </div>
-      </div>
-      {!bye && <MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={onSetTime} />}
-      {!bye && <MatchPrediction match={match} locator={locator} a={a} b={b} onVote={onVote} />}
-      {!bye && (
-        <div className="flex items-center justify-center gap-2.5 flex-wrap">
-          {Array.from({ length: mapsNeeded }).map((_, mi) => {
-            const mp = match.maps?.[mi] || { a: null, b: null };
-            // hide map 3 of a Bo3 if already decided in 2
-            const decidedEarly = bo === 3 && mi === 2 && match.done && (match.maps || []).slice(0, 2).filter((x) => x && x.a != null && x.b != null && x.a !== x.b).length === 2 && ((match.maps[0].a > match.maps[0].b) === (match.maps[1].a > match.maps[1].b));
-            if (decidedEarly && mp.a == null) return null;
-            return (
-              <div key={mi} className="flex items-center gap-1.5">
-                {bo === 3 && <span className="uppercase" style={{ fontSize: 11, color: "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace" }}>M{mi + 1}</span>}
-                <input type="number" inputMode="numeric" min="0" disabled={!isAdmin || !a || !b} value={mp.a == null ? "" : mp.a}
-                  onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–"
-                  className="text-center py-1.5 outline-none" style={{ width: 52, background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 17 }} />
-                <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 16 }}>:</span>
-                <input type="number" inputMode="numeric" min="0" disabled={!isAdmin || !a || !b} value={mp.b == null ? "" : mp.b}
-                  onChange={(e) => onSetMap(locator, mi, mp.a, e.target.value)} placeholder="–"
-                  className="text-center py-1.5 outline-none" style={{ width: 52, background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 17 }} />
-              </div>
-            );
-          })}
-          {isAdmin && onSetBo && (
-            <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} className="uppercase tracking-widest px-2.5 py-1.5 ml-1" style={{ fontSize: 11, color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }} title="Toggle best-of">→ BO{bo === 1 ? 3 : 1}</button>
-          )}
-        </div>
-      )}
-      {(canReport || statsRecorded) && !bye && (
-        <div className="flex items-center justify-center gap-2 flex-wrap" style={{ marginTop: 2 }}>
-          {statsRecorded ? (
-            <span className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 10, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.35)", background: "rgba(61,220,132,0.06)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>✓ Stats recorded</span>
-          ) : scoreIn ? (
-            <span title="Score is in — player stats still needed for season points" className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 10, color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", background: "rgba(245,196,83,0.07)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>⚠ Stats pending</span>
-          ) : null}
-          {canReport && (
-            <button onClick={() => window.__VOLT.openReport({
-                teamAName: a.name, teamBName: b.name, label: statsLabel,
-                winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null,
-                ...fixtureScore(match),
-              })}
-              className="uppercase tracking-widest px-3 py-1 transition-all hover:scale-[1.03]"
-              style={{ fontSize: 10.5, color: statsRecorded ? "rgba(200,215,255,0.55)" : scoreIn ? "#ffe4a0" : "#9af5c2",
-                border: `1px solid ${statsRecorded ? "rgba(120,150,220,0.25)" : scoreIn ? "rgba(245,196,83,0.5)" : "rgba(61,220,132,0.45)"}`,
-                background: statsRecorded ? "transparent" : scoreIn ? "rgba(245,196,83,0.1)" : "rgba(61,220,132,0.06)",
-                fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
-              ▦ {statsRecorded ? "Edit stats" : scoreIn ? "Add player stats" : "Player stats"}</button>
-          )}
-        </div>
+    <div aria-hidden style={{ display: "flex", height: 3, opacity: n ? 0.9 : 0.18 }}>
+      <div style={{ width: `${aPct}%`, background: f.a.hue, transition: "width .3s" }} />
+      <div style={{ flex: 1, background: f.b.hue }} />
+    </div>
+  );
+}
+
+// Host score entry, one box pair per map.
+function ScoreEntry({ match, locator, onSetMap, onSetBo }) {
+  const bo = match.bo || 1;
+  const box = { width: 56, height: 40, background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff",
+    fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, fontWeight: 700, textAlign: "center", outline: "none" };
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+      {Array.from({ length: bo === 3 ? 3 : 1 }).map((_, mi) => {
+        const mp = match.maps?.[mi] || { a: null, b: null };
+        const decidedEarly = bo === 3 && mi === 2 && match.done && (match.maps || []).slice(0, 2).filter((x) => x && x.a != null && x.b != null && x.a !== x.b).length === 2 && ((match.maps[0].a > match.maps[0].b) === (match.maps[1].a > match.maps[1].b));
+        if (decidedEarly && mp.a == null) return null;
+        return (
+          <span key={mi} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {bo === 3 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace", marginRight: 2 }}>MAP {mi + 1}</span>}
+            <input type="number" inputMode="numeric" min="0" aria-label={`Map ${mi + 1}, first team's rounds`} value={mp.a == null ? "" : mp.a}
+              onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–" style={box} />
+            <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 18 }}>:</span>
+            <input type="number" inputMode="numeric" min="0" aria-label={`Map ${mi + 1}, second team's rounds`} value={mp.b == null ? "" : mp.b}
+              onChange={(e) => onSetMap(locator, mi, mp.a, e.target.value)} placeholder="–" style={box} />
+          </span>
+        );
+      })}
+      {onSetBo && (
+        <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} title="Switch this match's length"
+          style={shellBtn("ghost", { padding: "8px 12px", fontSize: 10.5 })}>Make it BO{bo === 1 ? 3 : 1}</button>
       )}
     </div>
   );
+}
+
+// Player-stats state and the button into the report.
+function StatsActions({ match, f }) {
+  if (f.bye || !(f.canReport || f.statsRecorded)) return null;
+  const chip = (txt, col) => <span style={{ fontSize: 10, color: col, border: `1px solid ${col}66`, background: `${col}12`, padding: "4px 9px",
+    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", clipPath: FX_NOTCH(6) }}>{txt}</span>;
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+      {f.statsRecorded ? chip("✓ Stats recorded", "#3ddc84") : f.scoreIn ? chip("⚠ Stats still needed", "#f5c453") : null}
+      {f.canReport && (
+        <button onClick={() => window.__VOLT.openReport({ teamAName: f.a.name, teamBName: f.b.name, label: f.statsLabel,
+            winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null, ...fixtureScore(match) })}
+          style={shellBtn(f.statsRecorded ? "ghost" : f.scoreIn ? "warn" : "accent", { padding: "8px 14px", fontSize: 11 })}>
+          ▦ {f.statsRecorded ? "Edit player stats" : "Add player stats"}</button>
+      )}
+    </div>
+  );
+}
+
+// The match panel. Opened from any card; everything you can do to a match is here.
+function MatchModal({ match, locator, teamOf, isAdmin, A, stage, onClose }) {
+  const f = matchFacts(match, teamOf);
+  const side = (team, win, lose, s, align) => (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: align, gap: 8, opacity: lose ? 0.5 : 1 }}>
+      <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={40} />
+      <div style={{ fontSize: "clamp(17px, 2.4vw, 24px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 1, textAlign: align === "flex-end" ? "right" : "left",
+        color: team ? team.hue : "rgba(200,215,255,0.4)", textShadow: win && team ? `0 0 20px ${team.hue}66` : "none", maxWidth: "100%", overflowWrap: "anywhere" }}>
+        {team ? team.name : "TBD"}</div>
+      {win && <span style={{ fontSize: 9.5, letterSpacing: "0.2em", color: "#3ddc84", fontWeight: 700 }}>✓ WINNER</span>}
+    </div>
+  );
+  const label = (t) => <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0 10px" }}>
+    <span style={{ ...SEC_LABEL, fontSize: 9.5 }}>// {t}</span><span style={SEC_RULE} /></div>;
+  return (
+    <VoltOverlay onClose={onClose} zIndex={130} dim="rgba(4,6,12,0.82)">
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`${f.a?.name || "TBD"} vs ${f.b?.name || "TBD"}`}
+        style={{ width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", position: "relative", padding: "22px 24px 24px",
+          background: "linear-gradient(160deg, rgba(20,26,42,0.99), rgba(10,13,22,0.99))", border: "1px solid rgba(61,123,255,0.4)",
+          clipPath: FX_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={SEC_LABEL}>// {stage || "Match"}</span>
+          <span style={{ fontSize: 10, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.45)", border: "1px solid rgba(120,150,220,0.2)", padding: "1px 6px" }}>BO{f.bo}</span>
+          <span style={SEC_RULE} />
+          <FxStatus f={f} match={match} />
+          <button onClick={onClose} aria-label="Close" style={shellBtn("ghost", { padding: "4px 10px", fontSize: 11, marginLeft: 4 })}>✕</button>
+        </div>
+        {/* Scoreboard */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20 }}>
+          {side(f.a, f.winA, f.winB, f.sA, "flex-start")}
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: "clamp(30px, 5vw, 44px)", lineHeight: 1, color: "#eaf1ff", whiteSpace: "nowrap" }}>
+            {f.sA == null ? <span style={{ fontSize: 18, color: "rgba(200,215,255,0.35)", letterSpacing: "0.2em" }}>VS</span>
+              : <>{f.sA}<span style={{ color: "rgba(200,215,255,0.3)", margin: "0 8px" }}>:</span>{f.sB}</>}
+          </div>
+          {side(f.b, f.winB, f.winA, f.sB, "flex-end")}
+        </div>
+        {!f.bye && (isAdmin || f.at) && <>{label("When")}<MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={A.onSetTime} /></>}
+        {!f.bye && f.a && f.b && (f.votes.length > 0 || !match.done) && <>{label("Prediction")}<MatchPrediction match={match} locator={locator} a={f.a} b={f.b} onVote={A.onVote} /></>}
+        {isAdmin && !f.bye && f.a && f.b && <>{label("Result")}<ScoreEntry match={match} locator={locator} onSetMap={A.onSetMap} onSetBo={A.onSetBo} /></>}
+        {!f.bye && (f.canReport || f.statsRecorded) && <>{label("Player stats")}<StatsActions match={match} f={f} /></>}
+      </div>
+    </VoltOverlay>
+  );
+}
+
+// List card: used by groups, playoffs, finals and the league's live round.
+function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false }) {
+  const [open, setOpen] = useState(false);
+  const f = matchFacts(match, teamOf);
+  const mine = window.__VOLT?.userId && match.votes?.[window.__VOLT.userId]?.side;
+  const canVote = !!(A.onVote && window.__VOLT?.userId && !match.done && !f.started && f.a && f.b && !f.bye);
+  const lead = f.winA ? f.a : f.winB ? f.b : null;
+  const name = (team, win, lose, align) => (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, justifyContent: align === "right" ? "flex-end" : "flex-start", opacity: lose ? 0.45 : 1 }}>
+      {align === "left" && <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />}
+      <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: big ? 20 : 16.5, lineHeight: 1.1, letterSpacing: "0.02em", textAlign: align,
+        color: team ? team.hue : "rgba(200,215,255,0.35)", textShadow: win && team ? `0 0 16px ${team.hue}55` : "none",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team ? team.name : (f.bye && align === "right" ? "—" : "TBD")}</span>
+      {align === "right" && <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />}
+    </div>
+  );
+  return (
+    <>
+      <div role="button" tabIndex={0} onClick={() => setOpen(true)} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setOpen(true))}
+        className="volt-fx" style={{ position: "relative", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+          background: lead ? `linear-gradient(90deg, ${lead.hue}14, rgba(12,17,30,0.7) 45%)` : "rgba(12,17,30,0.7)",
+          border: `1px solid ${big ? "rgba(255,209,102,0.35)" : "rgba(120,150,220,0.16)"}`, clipPath: FX_NOTCH(10) }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 0" }}>
+          <span style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", fontWeight: 700 }}>{stage || "Match"}</span>
+          <span style={{ fontSize: 9.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.35)" }}>BO{f.bo}</span>
+          <span style={{ flex: 1 }} />
+          <FxStatus f={f} match={match} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: big ? "14px 16px 14px" : "10px 14px 12px" }}>
+          {name(f.a, f.winA, f.winB, "left")}
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: big ? 26 : 20, color: "#eaf1ff", minWidth: 64, textAlign: "center", whiteSpace: "nowrap" }}>
+            {f.sA == null ? <span style={{ fontSize: 11, letterSpacing: "0.2em", color: "rgba(200,215,255,0.3)" }}>VS</span>
+              : <>{f.sA}<span style={{ color: "rgba(200,215,255,0.3)", margin: "0 5px" }}>:</span>{f.sB}</>}
+          </div>
+          {name(f.b, f.winB, f.winA, "right")}
+        </div>
+        {(canVote || mine || (isAdmin && !f.bye && f.a && f.b) || f.statsRecorded || (f.scoreIn && f.canReport)) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 14px 10px", flexWrap: "wrap" }}>
+            {mine ? <span style={{ fontSize: 10.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.08em" }}>✓ You picked {mine === "a" ? f.a?.name : f.b?.name}</span>
+              : canVote ? <span style={{ fontSize: 10.5, color: "#9af5c2", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>◈ Make your prediction →</span> : null}
+            <span style={{ flex: 1 }} />
+            {f.statsRecorded ? <span style={{ fontSize: 9.5, color: "#3ddc84", fontWeight: 700, letterSpacing: "0.14em" }}>✓ STATS</span>
+              : f.scoreIn && f.canReport ? <span style={{ fontSize: 9.5, color: "#f5c453", fontWeight: 700, letterSpacing: "0.14em" }}>⚠ STATS NEEDED</span> : null}
+            {isAdmin && !f.bye && f.a && f.b && <span style={{ fontSize: 9.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.14em" }}>EDIT ▸</span>}
+          </div>
+        )}
+        <FxVoteBar f={f} />
+      </div>
+      {open && <MatchModal match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} A={A} stage={stage} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+// editable score row for a single match — now the shared fixture card.
+function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, stage, big }) {
+  return <FixtureCard match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage} big={big}
+    A={{ onSetMap, onSetBo, onSetTime, onVote }} />;
 }
 
 // standings table
@@ -1390,7 +1547,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
                         <span className="flex items-center gap-2">{pips(m.teamB)}{posChip(m.teamB)}</span>
                       </div>
                     )}
-                    <TMatchRow match={m} locator={{ kind: "rr", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+                    <TMatchRow match={m} locator={{ kind: "rr", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`Round ${k}`} {...A} />
                   </div>
                 );
               })}
@@ -1426,7 +1583,7 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
         <thead>
           <tr style={{ color: "rgba(200,215,255,0.5)" }}>
             {["#", "Team", "P", "W", "L", "RF", "RA", "DIFF", "PTS"].map((h, i) => (
-              <th key={h} className="text-left uppercase tracking-widest py-3 px-2.5" style={{ fontSize: 14, textAlign: i < 2 ? "left" : "center", borderBottom: "1px solid rgba(120,150,220,0.18)" }}>{h}</th>
+              <th key={h} className="text-left uppercase py-2.5 px-2.5" style={{ fontSize: 10.5, letterSpacing: "0.2em", fontWeight: 700, textAlign: i < 2 ? "left" : "center", borderBottom: "1px solid rgba(120,150,220,0.18)", whiteSpace: "nowrap" }}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -1434,8 +1591,8 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
           {rows.map((r, i) => {
             const tm = teamOf(r.teamId); const adv = i < advance;
             return (
-              <tr key={r.teamId} style={{ background: adv ? hue + "12" : "transparent" }}>
-                <td className="py-3 px-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: adv ? hue : "rgba(200,215,255,0.5)", fontWeight: 700 }}>{i + 1}{adv && <span style={{ color: hue }}> ▲</span>}</td>
+              <tr key={r.teamId} style={{ background: adv ? `linear-gradient(90deg, ${hue}1c, ${hue}08 60%, transparent)` : "transparent", borderBottom: "1px solid rgba(120,150,220,0.08)", boxShadow: adv ? `inset 3px 0 0 ${hue}` : "none" }}>
+                <td className="py-3 px-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: adv ? hue : "rgba(200,215,255,0.5)", fontWeight: 700, whiteSpace: "nowrap" }}>{i + 1}{adv && <span style={{ color: hue }}> ▲</span>}</td>
                 <td className="py-3 px-2.5">
                   <span className="flex items-center gap-2.5">
                     <TeamMono name={tm?.name} hue={tm?.hue} size={20} />
@@ -1458,156 +1615,104 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
   );
 }
 
-// one bracket match — two stacked team rows + a score box on the right (reference style)
-function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
-  const a = teamOf(match.teamA), b = teamOf(match.teamB);
-  const bo = match.bo || 1;
-  // A real bye, not an opponent still to be decided (which shows as TBD).
-  const bye = !!match.bye || (match.done && (match.teamA == null) !== (match.teamB == null));
-  const statsLabel = fxLabel(a, b, match);
-  const statsRecorded = statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel);
-  const canReport = !!(a && b && window.__VOLT?.openReport);
-  const scoreIn = !!(match.done || (match.maps || []).some(m => m && (m.a != null || m.b != null)));
-  const winA = match.done && match.winner === match.teamA;
-  const winB = match.done && match.winner === match.teamB;
-
-  // per-team series score = number of maps won (what shows in the right cell)
-  const mapsWon = (who) => {
-    let n = 0;
-    for (const mp of (match.maps || [])) {
-      if (mp.a == null || mp.b == null) continue;
-      if (who === "a" && mp.a > mp.b) n++;
-      if (who === "b" && mp.b > mp.a) n++;
-    }
-    return n;
-  };
-  // for Bo1 we show the single map's round score; for Bo3 we show maps won
-  const scoreFor = (who) => {
-    if (bo === 1) { const mp = match.maps?.[0]; return mp && mp[who] != null ? mp[who] : null; }
-    return mapsWon(who);
-  };
-
-  const row = (team, win, dim, who) => (
-    <div className="flex items-center gap-2.5 px-3" style={{ height: 38, background: win ? (team ? team.hue + "26" : "transparent") : "transparent", borderLeft: `3px solid ${win && team ? team.hue : "transparent"}`, opacity: dim ? 0.45 : 1, transition: "all .2s" }}>
+// One bracket match. Fixed height on purpose: the bracket lines up by rows,
+// so a card that grows (a vote, a time picker) would knock every connector
+// off its centre. Everything else lives in the match panel it opens.
+const BK_CARD_H = 104;
+const BK_ROW_H = 124;          // card + breathing room between cards in round one
+function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, stage, tag }) {
+  const [open, setOpen] = useState(false);
+  const f = matchFacts(match, teamOf);
+  const row = (team, win, lose, s, who) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 10px 0 11px",
+      background: win && team ? `linear-gradient(90deg, ${team.hue}2a, transparent 85%)` : "transparent",
+      borderLeft: `3px solid ${win && team ? team.hue : "transparent"}`, opacity: lose ? 0.42 : 1 }}>
       <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={18} />
-      <span className="font-bold uppercase truncate flex-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 16, letterSpacing: "0.02em", color: team ? team.hue : "rgba(200,215,255,0.4)" }}>
-        {team ? team.name : (bye && who === "b" ? "—" : "TBD")}{win && <span style={{ color: "#3ddc84", marginLeft: 4 }}>✓</span>}
-      </span>
-      {/* score cell */}
-      <span className="grid place-items-center shrink-0" style={{ width: 34, height: 26, fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 700, color: win ? "#eaf1ff" : "rgba(200,215,255,0.55)", background: win ? "rgba(61,123,255,0.22)" : "rgba(255,255,255,0.04)", border: `1px solid ${win ? "rgba(61,123,255,0.5)" : "rgba(120,150,220,0.18)"}` }}>
-        {scoreFor(who) == null ? "–" : scoreFor(who)}
-      </span>
+      <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase", fontSize: 15, letterSpacing: "0.02em",
+        color: team ? team.hue : "rgba(200,215,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {team ? team.name : (f.bye && who === "b" ? "—" : "TBD")}</span>
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, minWidth: 22, textAlign: "right",
+        color: win ? "#eaf1ff" : "rgba(200,215,255,0.45)" }}>{s == null ? "" : s}</span>
     </div>
   );
-
   return (
-    <div className="relative" style={{ background: "rgba(10,15,28,0.6)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
-      <span className="absolute left-0 top-0" style={{ width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-      {row(a, winA, winB, "a")}
-      <div style={{ height: 1, background: "rgba(120,150,220,0.16)" }} />
-      {row(b, winB, winA || bye, "b")}
-
-      {!bye && (match.scheduledAt || isAdmin) && (
-        <div className="px-2 py-2" style={{ borderTop: "1px solid rgba(120,150,220,0.16)" }}>
-          <MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={onSetTime} />
+    <>
+      <div role="button" tabIndex={0} aria-label={`${tag || stage}: ${f.a?.name || "TBD"} vs ${f.b?.name || "TBD"}`}
+        onClick={() => !f.bye && setOpen(true)} onKeyDown={(e) => !f.bye && (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setOpen(true))}
+        className="volt-fx" style={{ position: "relative", height: BK_CARD_H, display: "flex", flexDirection: "column", cursor: f.bye ? "default" : "pointer",
+          background: "rgba(12,17,30,0.85)", border: `1px solid ${match.done ? "rgba(120,150,220,0.2)" : f.a && f.b ? "rgba(61,123,255,0.35)" : "rgba(120,150,220,0.14)"}`,
+          clipPath: FX_NOTCH(9), opacity: f.bye ? 0.5 : 1, fontFamily: "'Rajdhani',sans-serif" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 26, padding: "0 10px 0 11px", borderBottom: "1px solid rgba(120,150,220,0.12)" }}>
+          <span style={{ fontSize: 9.5, letterSpacing: "0.18em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>{tag}</span>
+          <span style={{ flex: 1 }} />
+          <FxStatus f={f} match={match} />
         </div>
-      )}
-      {!bye && a && b && (
-        <div className="px-3 pb-2" style={{ borderTop: "1px solid rgba(120,150,220,0.16)" }}>
-          <MatchPrediction match={match} locator={locator} a={a} b={b} onVote={onVote} />
-        </div>
-      )}
-      {!bye && (canReport || statsRecorded) && (
-        <div className="flex items-center justify-center gap-2 flex-wrap px-3 pb-2.5" style={{ borderTop: "1px solid rgba(120,150,220,0.16)", paddingTop: 8 }}>
-          {statsRecorded ? (
-            <span className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 9.5, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.35)", background: "rgba(61,220,132,0.06)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em" }}>✓ Stats recorded</span>
-          ) : scoreIn ? (
-            <span title="Score is in — player stats still needed for season points" className="uppercase tracking-widest px-2 py-1" style={{ fontSize: 9.5, color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", background: "rgba(245,196,83,0.07)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em" }}>⚠ Stats pending</span>
-          ) : null}
-          {canReport && (
-            <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: statsLabel, winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null, ...fixtureScore(match) })}
-              className="uppercase tracking-widest px-2.5 py-1 transition-all hover:scale-[1.03]"
-              style={{ fontSize: 10, color: statsRecorded ? "rgba(200,215,255,0.55)" : scoreIn ? "#ffe4a0" : "#9af5c2",
-                border: `1px solid ${statsRecorded ? "rgba(120,150,220,0.25)" : scoreIn ? "rgba(245,196,83,0.5)" : "rgba(61,220,132,0.45)"}`,
-                background: statsRecorded ? "transparent" : scoreIn ? "rgba(245,196,83,0.1)" : "rgba(61,220,132,0.06)",
-                fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
-              ▦ {statsRecorded ? "Edit" : "Player stats"}</button>
-          )}
-        </div>
-      )}
-
-      {/* score-entry strip (admin only, not for byes) */}
-      {isAdmin && !bye && a && b && (
-        <div className="flex items-center justify-center gap-2 px-2 py-2 flex-wrap" style={{ borderTop: "1px solid rgba(120,150,220,0.16)", background: "rgba(61,123,255,0.04)" }}>
-          {Array.from({ length: bo === 3 ? 3 : 1 }).map((_, mi) => {
-            const mp = match.maps?.[mi] || { a: null, b: null };
-            const decidedEarly = bo === 3 && mi === 2 && match.done && (match.maps || []).slice(0, 2).filter((x) => x && x.a != null && x.b != null && x.a !== x.b).length === 2 && ((match.maps[0].a > match.maps[0].b) === (match.maps[1].a > match.maps[1].b));
-            if (decidedEarly && mp.a == null) return null;
-            return (
-              <span key={mi} className="flex items-center gap-1">
-                {bo === 3 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.35)", fontFamily: "'IBM Plex Mono',monospace" }}>M{mi + 1}</span>}
-                <input type="number" inputMode="numeric" min="0" value={mp.a == null ? "" : mp.a} onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–"
-                  className="text-center outline-none" style={{ width: 40, height: 28, background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 14 }} />
-                <span style={{ color: "rgba(200,215,255,0.3)", fontSize: 13 }}>:</span>
-                <input type="number" inputMode="numeric" min="0" value={mp.b == null ? "" : mp.b} onChange={(e) => onSetMap(locator, mi, mp.a, e.target.value)} placeholder="–"
-                  className="text-center outline-none" style={{ width: 40, height: 28, background: "rgba(61,123,255,0.07)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 14 }} />
-              </span>
-            );
-          })}
-          {onSetBo && (
-            <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} className="uppercase tracking-widest px-2 py-1 ml-0.5" style={{ fontSize: 10, color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }} title="Toggle best-of">→ BO{bo === 1 ? 3 : 1}</button>
-          )}
-        </div>
-      )}
-    </div>
+        {row(f.a, f.winA, f.winB, f.sA, "a")}
+        {row(f.b, f.winB, f.winA || f.bye, f.sB, "b")}
+        <span style={{ flex: 1 }} />
+        <FxVoteBar f={f} />
+      </div>
+      {open && <MatchModal match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage}
+        A={{ onSetMap, onSetBo, onSetTime, onVote }} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
-// single-elim bracket display — columns of matches joined by elbow connector lines
+// Single-elim bracket on a grid. Round one sets the rows; a match in round r
+// spans 2^r of them and centres in that span, so it always sits exactly
+// between the two matches that feed it, and the elbow connectors (drawn in
+// their own columns at 25% / 75% / 50%) always meet the card centres.
 function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
-  const roundName = (ri, total) => {
-    const fromEnd = total - 1 - ri;
+  const R = rounds.length;
+  const N = rounds[0]?.length || 1;
+  const roundName = (ri) => {
+    const fromEnd = R - 1 - ri;
     if (fromEnd === 0) return "Final";
     if (fromEnd === 1) return "Semifinals";
     if (fromEnd === 2) return "Quarterfinals";
-    return "Round " + (ri + 1);
+    return "Round of " + rounds[ri].length * 2;
   };
-  const LINE = "rgba(110,150,230,0.4)";
+  const tagOf = (ri, idx) => {
+    const fromEnd = R - 1 - ri;
+    if (fromEnd === 0) return "Final";
+    return (fromEnd === 1 ? "SF" : fromEnd === 2 ? "QF" : "R" + (ri + 1)) + " " + (idx + 1);
+  };
+  const LINE = "rgba(110,150,230,0.38)";
+  const CONN = 44;
+  const cols = rounds.map((_, ri) => (ri < R - 1 ? `minmax(230px, 1fr) ${CONN}px` : "minmax(230px, 1fr)")).join(" ");
   return (
-    <div className="flex overflow-x-auto pb-3" style={{ minHeight: 200 }}>
-      {rounds.map((round, ri) => {
-        const isLast = ri === rounds.length - 1;
-        return (
-          <div key={ri} className="flex" style={{ minWidth: 286 }}>
-            {/* match column */}
-            <div className="flex flex-col justify-around flex-1" style={{ gap: 0 }}>
-              <p className="uppercase text-sm font-bold tracking-widest text-center mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>{roundName(ri, rounds.length)}</p>
-              {round.map((m, idx) => (
-                <div key={m.id} className="flex flex-col justify-center flex-1" style={{ position: "relative" }}>
-                  <TBracketMatch match={m} locator={{ kind: "elim", round: ri, idx }} teamOf={teamOf} isAdmin={isAdmin} onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} />
-                </div>
-              ))}
-            </div>
-            {/* connector column (between this round and the next) */}
-            {!isLast && (
-              <div className="flex flex-col" style={{ width: 30 }}>
-                <div style={{ height: 30 }} />{/* offset for the round label */}
-                <div className="flex flex-col flex-1">
-                  {Array.from({ length: Math.ceil(round.length / 2) }).map((_, pi) => (
-                    <div key={pi} className="flex-1 flex items-center" style={{ position: "relative" }}>
-                      {/* top match out-line, elbow down, into next match */}
-                      <div style={{ position: "absolute", left: 0, right: "50%", top: "25%", borderTop: `2px solid ${LINE}` }} />
-                      <div style={{ position: "absolute", left: 0, right: "50%", bottom: "25%", borderTop: `2px solid ${LINE}` }} />
-                      <div style={{ position: "absolute", left: "50%", top: "25%", bottom: "25%", borderLeft: `2px solid ${LINE}` }} />
-                      <div style={{ position: "absolute", left: "50%", right: 0, top: "50%", borderTop: `2px solid ${LINE}` }} />
-                    </div>
-                  ))}
-                </div>
+    <div style={{ overflowX: "auto", paddingBottom: 6 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols, gridTemplateRows: `auto repeat(${N}, ${BK_ROW_H}px)`,
+        minWidth: R * 230 + (R - 1) * CONN, fontFamily: "'Rajdhani',sans-serif" }}>
+        {rounds.map((round, ri) => {
+          const col = ri * 2 + 1;
+          const span = 2 ** ri;
+          const done = round.every((m) => m.done);
+          return [
+            <div key={"h" + ri} style={{ gridColumn: col, gridRow: 1, display: "flex", alignItems: "center", gap: 8, padding: "0 2px 14px" }}>
+              <span style={{ ...SEC_LABEL, color: ri === R - 1 ? "#ffd166" : "#7da6ff" }}>{roundName(ri)}</span>
+              <span style={{ ...SEC_RULE, background: `linear-gradient(90deg, ${ri === R - 1 ? "rgba(255,209,102,0.35)" : "rgba(61,123,255,0.3)"}, transparent)` }} />
+              {done && <span style={{ fontSize: 9, letterSpacing: "0.18em", color: "#3ddc84", fontWeight: 700 }}>✓</span>}
+            </div>,
+            ...round.map((m, idx) => (
+              <div key={m.id} style={{ gridColumn: col, gridRow: `${2 + idx * span} / span ${span}`, alignSelf: "center" }}>
+                <TBracketMatch match={m} locator={{ kind: "elim", round: ri, idx }} teamOf={teamOf} isAdmin={isAdmin}
+                  stage={roundName(ri)} tag={tagOf(ri, idx)}
+                  onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} />
               </div>
-            )}
-          </div>
-        );
-      })}
+            )),
+            // Connectors into the next round: one elbow per pair of matches.
+            ...(ri < R - 1 ? Array.from({ length: Math.ceil(round.length / 2) }).map((_, pi) => (
+              <div key={"c" + ri + "-" + pi} aria-hidden style={{ gridColumn: col + 1, gridRow: `${2 + pi * span * 2} / span ${span * 2}`, position: "relative" }}>
+                <div style={{ position: "absolute", left: 0, width: "50%", top: "25%", borderTop: `2px solid ${LINE}` }} />
+                <div style={{ position: "absolute", left: 0, width: "50%", top: "75%", borderTop: `2px solid ${LINE}` }} />
+                <div style={{ position: "absolute", left: "50%", top: "25%", height: "50%", borderLeft: `2px solid ${LINE}` }} />
+                <div style={{ position: "absolute", left: "50%", right: 0, top: "50%", borderTop: `2px solid ${LINE}` }} />
+              </div>
+            )) : []),
+          ];
+        })}
+      </div>
     </div>
   );
 }
@@ -1859,10 +1964,33 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
   // Any format that ends in a decider (group final, or the league Sunday final)
   if (!champion && t.final?.done && t.final.winner) champion = teamOf(t.final.winner);
 
+  // Progress for the banner: every real fixture, including ones whose teams
+  // aren't decided yet (a semifinal is still a match to play), but not byes.
+  const allFx = tournamentMatches(t).filter((m) => !m.bye && !(m.done && (m.teamA == null) !== (m.teamB == null)));
+  const playedFx = allFx.filter((m) => m.done).length;
+  const nextFx = allFx.filter((m) => !m.done && m.scheduledAt).sort((x, y) => new Date(x.scheduledAt) - new Date(y.scheduledAt))[0];
+  const BANNER_AGENT = { single: "Jett", group: "Raze", league: "Sova", roundrobin: "Killjoy" };
+  const H = champion ? "#ffd166" : "#3d7bff";
+
   return (
-    <div className="view-in page-wrap py-10">
-      {header("Live Competition", fmtName.split(" ")[0], fmtName.split(" ").slice(1).join(" ") || "")}
-      <div className="flex items-center justify-center gap-3 mb-7 flex-wrap">
+    <div className="view-in page-wrap py-8">
+      <style>{FX_CSS}</style>
+      <div style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
+        <CardArt hue={H} agent={BANNER_AGENT[t.format] || "Jett"} />
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
+        <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
+        <div style={{ position: "relative", maxWidth: 640 }}>
+          <div style={{ ...SEC_LABEL, color: champion ? "#ffd166" : "#7da6ff" }}>// {champion ? "Tournament complete" : "Live competition"}</div>
+          <div style={{ fontSize: "clamp(30px, 4.4vw, 52px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 0.95, marginTop: 8,
+            letterSpacing: "0.01em", textShadow: `0 0 36px ${H}50` }}>{fmtName}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 12, flexWrap: "wrap", fontSize: 13, color: "rgba(200,215,255,0.6)" }}>
+            <span><b style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{playedFx}</b> of <b style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{allFx.length}</b> matches played</span>
+            {allFx.length > 0 && <span aria-hidden style={{ width: 120, height: 4, background: "rgba(255,255,255,0.08)", position: "relative" }}>
+              <span style={{ position: "absolute", inset: 0, width: `${(playedFx / allFx.length) * 100}%`, background: H, boxShadow: `0 0 10px ${H}` }} /></span>}
+            {nextFx && !champion && <span style={{ color: "#9af5c2" }}>Next: {teamOf(nextFx.teamA)?.name} vs {teamOf(nextFx.teamB)?.name} · {fxWhen(new Date(nextFx.scheduledAt))}</span>}
+          </div>
+        </div>
+      <div className="flex items-center gap-3 flex-wrap" style={{ position: "relative", marginTop: 18 }}>
         <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo} default</span>
         {isAdmin && t.format === "group" && t.groups?.length === 2 && actions.tSetPlayoff && (() => {
           // Two explicit options rather than one toggle. The old button showed
@@ -1890,8 +2018,9 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
         {isAdmin && actions.tSwitchFormat && <FormatSwitcher t={t} actions={actions} />}
         {isAdmin && <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "transparent" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>}
       </div>
+      </div>
 
-      {champion && <div className="mb-8"><TChampion team={champion} /></div>}
+      {champion && <div className="mb-6"><TChampion team={champion} /></div>}
 
       {/* GROUP STAGE */}
       {t.format === "group" && (
@@ -1899,15 +2028,13 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           <div className="grid lg:grid-cols-2 gap-6 mb-8">
             {t.groups.map((g) => (
               <div key={g.id} className="flex flex-col gap-4">
-                <TPanel>
-                  <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name} · Standings</p>
+                <TPanel title={`${g.name} · Standings`}>
                   <TStandings teamIds={g.teamIds} matches={t.matches[g.id] || []} overrides={t.overrides} teamOf={teamOf} advance={t.playoff === "semis" && t.groups.length === 2 ? 2 : 1} />
                 </TPanel>
-                <TPanel>
-                  <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name} · Matches</p>
+                <TPanel title={`${g.name} · Matches`}>
                   <div className="flex flex-col gap-2">
-                    {(t.matches[g.id] || []).map((m) => (
-                      <TMatchRow key={m.id} match={m} locator={{ kind: "group", groupId: g.id, matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+                    {(t.matches[g.id] || []).map((m, mi) => (
+                      <TMatchRow key={m.id} match={m} locator={{ kind: "group", groupId: g.id, matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`${g.name} · Match ${mi + 1}`} {...A} />
                     ))}
                   </div>
                 </TPanel>
@@ -1916,9 +2043,8 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           </div>
           {/* semifinals, when the bracket has them */}
           {t.playoff === "semis" && (
-            <TPanel hue="#7da6ff">
-              <p className="uppercase text-lg font-bold tracking-widest mb-1 text-center" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Semifinals</p>
-              <p className="text-center text-xs mb-3" style={{ color: "rgba(200,215,255,0.4)" }}>
+            <TPanel hue="#7da6ff" title="Semifinals" className="mb-6">
+              <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
                 {(t.groups?.length || 2) === 2
                   ? "Winner of each group meets the other group's runner-up."
                   : t.groups.length === 3
@@ -1927,8 +2053,8 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
               </p>
               {t.semis?.length ? (
                 <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
-                  {t.semis.map((m) => (
-                    <TMatchRow key={m.id} match={m} locator={{ kind: "semi", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+                  {t.semis.map((m, si) => (
+                    <TMatchRow key={m.id} match={m} locator={{ kind: "semi", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`Semifinal ${si + 1}`} {...A} />
                   ))}
                 </div>
               ) : (
@@ -1939,11 +2065,10 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             </TPanel>
           )}
           {/* the final */}
-          <TPanel hue="#ffd166">
-            <p className="uppercase text-lg font-bold tracking-widest mb-3 text-center" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Grand Final ★</p>
+          <TPanel hue="#ffd166" title="★ Grand final">
             {t.final ? (
-              <div className="max-w-md mx-auto">
-                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+              <div className="max-w-xl mx-auto">
+                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Grand final" big {...A} />
               </div>
             ) : (
               <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
@@ -1959,27 +2084,21 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
       {/* ROUND ROBIN */}
       {(t.format === "roundrobin" || t.format === "league") && (
         <div className="flex flex-col gap-6">
-          <TPanel>
-            <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Standings</p>
+          <TPanel title="Standings">
             <TStandings teamIds={t.teamIds} matches={t.matches} overrides={t.overrides} teamOf={teamOf} advance={2} />
           </TPanel>
-          <TPanel>
-            <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Fixtures</p>
+          <TPanel title="Fixtures">
             <TMatchdays t={t} teamOf={teamOf} isAdmin={isAdmin} A={A} />
           </TPanel>
 
           {/* ── THE SUNDAY FINAL — top two from the table settle the tournament ── */}
-          <TPanel hue="#ffd166">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-              <p className="uppercase text-lg font-bold tracking-widest" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Sunday Final ★</p>
-              {isAdmin && t.finalLock && !t.final?.done && actions.tResetFinal && (
+          <TPanel hue="#ffd166" title="★ Sunday final" right={isAdmin && t.finalLock && !t.final?.done && actions.tResetFinal ? (
                 <button onClick={actions.tResetFinal} className="text-[11px] uppercase tracking-widest px-3 py-1.5"
                   style={{ color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(120,150,220,0.3)", background: "transparent" }}>↺ Use table seeding</button>
-              )}
-            </div>
+              ) : null}>
             {t.final ? (
-              <div className="max-w-md mx-auto">
-                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+              <div className="max-w-xl mx-auto">
+                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Sunday final" big {...A} />
                 {t.finalLock && !t.final.done && (
                   <p className="text-center text-[11px] mt-2" style={{ color: "rgba(255,209,102,0.7)" }}>Teams set manually — the table won't re-seed this.</p>
                 )}
@@ -2010,15 +2129,14 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
 
       {/* SINGLE ELIM */}
       {t.format === "single" && (
-        <TPanel>
+        <TPanel title="Bracket" right={<span style={{ fontSize: 11, color: "rgba(200,215,255,0.45)" }}>Tap a match for times, predictions{isAdmin ? " and scores" : ""}</span>}>
           <TBracket rounds={t.rounds} teamOf={teamOf} isAdmin={isAdmin} {...A} />
         </TPanel>
       )}
 
       {/* manual override panel (admin) */}
       {isAdmin && (t.format === "group" || (t.format === "roundrobin" || t.format === "league")) && (
-        <TPanel className="mt-6" hue="#ffb020">
-          <p className="uppercase text-sm font-bold tracking-widest mb-2" style={{ color: "#ffb020", fontFamily: "'Rajdhani',sans-serif" }}>⚙ Manual standings override</p>
+        <TPanel className="mt-6" hue="#ffb020" title="⚙ Manual standings override">
           <p className="text-[11px] mb-3" style={{ color: "rgba(200,215,255,0.45)" }}>Force points / round-diff for a team (forfeits, penalties). Leave blank to clear. Overridden teams show a *.</p>
           <TOverrideEditor state={state} t={t} teamOf={teamOf} onOverride={actions.tOverride} />
         </TPanel>
@@ -4304,6 +4422,61 @@ const SndFX = (() => {
 /* ════════════════════════════════════════════════════════════════════
    MAIN
    ════════════════════════════════════════════════════════════════════ */
+const SHELL_CSS = `
+        .volt-expand-btn { transition: background .15s, border-color .15s, transform .15s; }
+        .volt-expand-btn:hover { background: rgba(61,123,255,0.3); border-color: #6fa0ff; transform: scale(1.08); }
+        /* Dashboard cells. A clickable panel has to say so before it's clicked —
+           the rest of the product lifts and brightens on hover, so these do too. */
+        .volt-cell { transition: transform .16s cubic-bezier(.2,.8,.3,1), border-color .16s, box-shadow .16s; }
+        /* Hero card two columns wide and two rows tall; the glance cells fill
+           the third column beside it, then wrap underneath. */
+        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(132px, auto); }
+        .volt-bento > *:first-child { grid-column: span 2; grid-row: span 3; }
+        /* Glance cells stretch to share the height of the hero rather than
+           sitting short with dead space under them. */
+        .volt-bento > * { min-height: 0; }
+        /* The hero is only ever as tall as the column beside it: three glances
+           make a square block, two make a shorter one, one shouldn't leave the
+           hero towering over a single small cell. */
+        .volt-bento:not(.volt-3col):has(> :nth-child(3):last-child) > *:first-child { grid-row: span 2; }
+        .volt-bento:not(.volt-3col):has(> :nth-child(2):last-child) > *:first-child { grid-row: span 1; }
+        /* Four glances: widen to four columns so the hero keeps its 2x2 block
+           and the cells fill a 2x2 beside it, instead of three stacking and one
+           orphaning onto a row of its own. */
+        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) > *:first-child { grid-row: span 2; }
+        /* Six glances: four small ones stack beside the hero, then two
+           double-width cells close the row underneath so the block ends as a
+           rectangle rather than trailing off. */
+        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) > *:first-child { grid-row: span 2; }
+        @media (max-width: 1100px) {
+          .volt-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; }
+          .volt-bento > *:first-child { grid-column: 1 / -1; grid-row: auto; }
+        }
+        @media (max-width: 700px) {
+          .volt-bento { grid-template-columns: minmax(0, 1fr); }
+          .volt-bento > * { grid-column: 1 / -1 !important; }
+        }
+        .volt-cell[style*="cursor: pointer"]:hover,
+        .volt-cell[style*="cursor:pointer"]:hover {
+          transform: translateY(-2px);
+          border-color: rgba(61,123,255,0.45) !important;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.45), 0 0 26px rgba(61,123,255,0.12);
+        }
+        @media (prefers-reduced-motion: reduce) { .volt-cell { transition: none; } }
+        .volt-expand-btn { animation: voltExpandHint 2.4s ease-in-out 3; }
+        @keyframes voltExpandHint {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(61,123,255,0); }
+          50%      { box-shadow: 0 0 0 4px rgba(61,123,255,0.22); }
+        }
+        @media (prefers-reduced-motion: reduce) { .volt-expand-btn { animation: none; } }
+
+        .volt-rail-item { position: relative; }
+        .volt-rail-item:hover .volt-rail-glyph { color: #eaf1ff !important; }
+        @keyframes voltTipIn { from { opacity: 0; transform: translateY(-50%) translateX(-8px); } to { opacity: 1; transform: translateY(-50%) translateX(0); } }
+      `;
+
 function DraftApp({ auth, browse, chrome, initialView }) {
   const [state, setState] = useState(null);
   // Auto-resolve in-app identity from the logged-in role:
@@ -5713,6 +5886,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
   const shell = (children) => (
     <div className="min-h-screen volt-shell-box" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)", containerType: "inline-size" }}>
+      {/* Shell CSS lives here, not in the desktop rail: the rail is not drawn on phones, and the home grid's phone layout was going missing with it. */}
+      <style>{SHELL_CSS}</style>
       {fonts}
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
       <div className="relative min-h-screen">
@@ -5829,60 +6004,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
   const Rail = isDesk && createPortal(<>
     <nav aria-label="Primary" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: RAIL_W, display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", padding: railWide ? "12px 8px 14px" : "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif", transition: "width .18s cubic-bezier(.2,.8,.3,1)", overflowY: "auto", overflowX: "hidden" }}>
-      <style>{`
-        .volt-expand-btn { transition: background .15s, border-color .15s, transform .15s; }
-        .volt-expand-btn:hover { background: rgba(61,123,255,0.3); border-color: #6fa0ff; transform: scale(1.08); }
-        /* Dashboard cells. A clickable panel has to say so before it's clicked —
-           the rest of the product lifts and brightens on hover, so these do too. */
-        .volt-cell { transition: transform .16s cubic-bezier(.2,.8,.3,1), border-color .16s, box-shadow .16s; }
-        /* Hero card two columns wide and two rows tall; the glance cells fill
-           the third column beside it, then wrap underneath. */
-        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(132px, auto); }
-        .volt-bento > *:first-child { grid-column: span 2; grid-row: span 3; }
-        /* Glance cells stretch to share the height of the hero rather than
-           sitting short with dead space under them. */
-        .volt-bento > * { min-height: 0; }
-        /* The hero is only ever as tall as the column beside it: three glances
-           make a square block, two make a shorter one, one shouldn't leave the
-           hero towering over a single small cell. */
-        .volt-bento:not(.volt-3col):has(> :nth-child(3):last-child) > *:first-child { grid-row: span 2; }
-        .volt-bento:not(.volt-3col):has(> :nth-child(2):last-child) > *:first-child { grid-row: span 1; }
-        /* Four glances: widen to four columns so the hero keeps its 2x2 block
-           and the cells fill a 2x2 beside it, instead of three stacking and one
-           orphaning onto a row of its own. */
-        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) > *:first-child { grid-row: span 2; }
-        /* Six glances: four small ones stack beside the hero, then two
-           double-width cells close the row underneath so the block ends as a
-           rectangle rather than trailing off. */
-        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) > *:first-child { grid-row: span 2; }
-        @media (max-width: 1100px) {
-          .volt-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; }
-          .volt-bento > *:first-child { grid-column: 1 / -1; grid-row: auto; }
-        }
-        @media (max-width: 700px) {
-          .volt-bento { grid-template-columns: minmax(0, 1fr); }
-          .volt-bento > * { grid-column: 1 / -1 !important; }
-        }
-        .volt-cell[style*="cursor: pointer"]:hover,
-        .volt-cell[style*="cursor:pointer"]:hover {
-          transform: translateY(-2px);
-          border-color: rgba(61,123,255,0.45) !important;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.45), 0 0 26px rgba(61,123,255,0.12);
-        }
-        @media (prefers-reduced-motion: reduce) { .volt-cell { transition: none; } }
-        .volt-expand-btn { animation: voltExpandHint 2.4s ease-in-out 3; }
-        @keyframes voltExpandHint {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(61,123,255,0); }
-          50%      { box-shadow: 0 0 0 4px rgba(61,123,255,0.22); }
-        }
-        @media (prefers-reduced-motion: reduce) { .volt-expand-btn { animation: none; } }
-
-        .volt-rail-item { position: relative; }
-        .volt-rail-item:hover .volt-rail-glyph { color: #eaf1ff !important; }
-        @keyframes voltTipIn { from { opacity: 0; transform: translateY(-50%) translateX(-8px); } to { opacity: 1; transform: translateY(-50%) translateX(0); } }
-      `}</style>
       {/* league mark + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: railWide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: railWide ? 4 : 0 }}>
         <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
@@ -11167,7 +11288,7 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
         borderRight: `2px solid ${gold ? "#f5c453" : "#3d7bff"}`,
         borderBottom: `2px solid ${gold ? "#f5c453" : "#3d7bff"}` }} />
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ minWidth: "min(100%, 260px)", flex: 1 }}>
           <div style={{ ...SEC_LABEL, fontSize: 10 }}>// {PHASE_LABEL[phase] || phase}</div>
           <div style={{ fontSize: "clamp(22px, 3.2vw, 34px)", fontWeight: 700, textTransform: "uppercase",
             letterSpacing: "0.02em", lineHeight: 1.05, marginTop: 4,
@@ -11263,14 +11384,9 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
 // player saw whatever they main. This is built from the player's rank colour
 // alone — light, a grid, and the crest's hexagon as a watermark — so it fits
 // anyone and still changes from card to card.
-function CardArt({ hue, agent, bare = false }) {
-  const hex = (r) => {
-    const pts = [0, 1, 2, 3, 4, 5].map((i) => {
-      const a = (Math.PI / 3) * i - Math.PI / 2;
-      return `${100 + r * Math.cos(a)},${100 + r * Math.sin(a)}`;
-    });
-    return pts.join(" ");
-  };
+// Grid, glow and light beams behind a hero card. (`bare` used to drop a
+// hexagon ring; the ring is gone, so every card gets the same backdrop.)
+function CardArt({ hue, agent }) {
   return (
     <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
       <div style={{ position: "absolute", inset: 0,
@@ -11285,14 +11401,6 @@ function CardArt({ hue, agent, bare = false }) {
         backgroundSize: "26px 26px",
         maskImage: "linear-gradient(100deg, transparent 38%, #000 88%)",
         WebkitMaskImage: "linear-gradient(100deg, transparent 38%, #000 88%)" }} />
-      {!bare && <svg viewBox="0 0 200 200" style={{ position: "absolute", right: "-9%", top: "50%",
-        transform: "translateY(-50%)", width: "58%", maxWidth: 520, opacity: agent !== undefined ? 0.35 : 0.5 }}>
-        {[92, 72, 52].map((r, i) => (
-          <polygon key={r} points={hex(r)} fill="none" stroke={hue}
-            strokeOpacity={[0.14, 0.1, 0.07][i]} strokeWidth={i === 0 ? 1.4 : 1} />
-        ))}
-        <polygon points={hex(52)} fill={hue} fillOpacity="0.04" />
-      </svg>}
       {agent !== undefined && (
         <>
           {/* Cut to the upper body: the card is wider than it is tall, and a

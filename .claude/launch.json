@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "volt-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5173 }
+    { "name": "volt-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5173 },
+    { "name": "volt-offline", "runtimeExecutable": "node", "runtimeArgs": ["-e", "process.env.VITE_SUPABASE_URL='';process.env.VITE_SUPABASE_ANON_KEY='';require('child_process').spawn('npx',['vite','--port','5174','--strictPort'],{stdio:'inherit',shell:true,env:process.env})"], "port": 5174 }
   ]
 }
