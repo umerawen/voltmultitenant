@@ -516,19 +516,27 @@ function leagueMatches(teamIds, bo) {
 // next power of two >= n
 const nextPow2 = (n) => { let p = 1; while (p < n) p *= 2; return p; };
 
-// build a single-elim bracket from an ordered slot list (may contain nulls for empty slots)
+// Standard bracket order for n seeds: 1 v n, and 1 and 2 can only meet in the
+// final. n=8 → [1,8,4,5,2,7,3,6].
+function seedOrder(n) {
+  let order = [1];
+  while (order.length < n) { const m = order.length * 2; order = order.flatMap((s) => [s, m + 1 - s]); }
+  return order;
+}
+
+// build a single-elim bracket from a seed list (slotIds[0] = seed 1; nulls are
+// empty seeds, which become byes for the top seeds)
 function buildSingleElim(slotIds, bo) {
   const size = Math.max(nextPow2(slotIds.length || 2), 2);
-  const seeds = slotIds.slice(0, size);
-  while (seeds.length < size) seeds.push(null);
+  const seeds = seedOrder(size).map((s) => slotIds[s - 1] ?? null);
   const rounds = [];
   // round 0: pair 0-1, 2-3, ...
   let r0 = [];
   for (let i = 0; i < size; i += 2) {
     const a = seeds[i], b = seeds[i + 1];
     const m = { id: tuid(), teamA: a, teamB: b, bo, maps: [], done: false, winner: null };
-    if (a && !b) { m.done = true; m.winner = a; }       // bye
-    else if (!a && b) { m.done = true; m.winner = b; }   // bye
+    if (a && !b) { m.done = true; m.winner = a; m.bye = true; }       // bye
+    else if (!a && b) { m.done = true; m.winner = b; m.bye = true; }   // bye
     r0.push(m);
   }
   rounds.push(r0);
@@ -546,7 +554,14 @@ function buildSingleElim(slotIds, bo) {
 
 // has this match been decided by its map scores? sets winner + returns it
 function resolveMatch(m) {
-  if (m.teamB == null) { m.done = !!m.teamA; m.winner = m.teamA || null; return m; }
+  // One side empty: only a genuine bye (marked when the bracket is built or
+  // propagated) advances the other team. Otherwise the opponent is just not
+  // decided yet — treating that as a bye crowned a champion as soon as one
+  // semifinal finished.
+  if (m.teamA == null || m.teamB == null) {
+    const solo = m.teamA ?? m.teamB ?? null;
+    m.done = !!(m.bye && solo); m.winner = m.done ? solo : null; return m;
+  }
   const need = m.bo === 3 ? 2 : 1;
   let aw = 0, bw = 0;
   for (const mp of (m.maps || [])) {
@@ -619,16 +634,25 @@ function findMatch(t, loc) {
 
 // after a single-elim result, feed winners into the next round's matches
 function propagateElim(t) {
-  if (!t.rounds) return;
+  if (!t.rounds?.length) return;
+  // A feeder is "dead" when it can never produce a team: an empty first-round
+  // pairing, or a later match fed only by dead ones. Only a dead side makes the
+  // other team's match a bye; an undecided live side is TBD.
+  const dead = t.rounds.map(() => []);
+  t.rounds[0].forEach((m, i) => {
+    dead[0][i] = !m.teamA && !m.teamB;
+    // Boards built before byes were flagged.
+    if (!m.teamA !== !m.teamB) { m.bye = true; m.done = true; m.winner = m.teamA || m.teamB; }
+  });
   for (let r = 0; r < t.rounds.length - 1; r++) {
-    const next = t.rounds[r + 1];
-    t.rounds[r].forEach((m, i) => {
-      const slot = Math.floor(i / 2);
-      const isA = i % 2 === 0;
-      const nm = next[slot]; if (!nm) return;
-      const w = m.done ? m.winner : null;
-      if (isA) { if (nm.teamA !== w) { nm.teamA = w; if (!nm.done) { nm.maps = []; nm.winner = null; } } }
-      else { if (nm.teamB !== w) { nm.teamB = w; if (!nm.done) { nm.maps = []; nm.winner = null; } } }
+    t.rounds[r + 1].forEach((nm, slot) => {
+      const fa = t.rounds[r][slot * 2], fb = t.rounds[r][slot * 2 + 1];
+      const aDead = !fa || dead[r][slot * 2], bDead = !fb || dead[r][slot * 2 + 1];
+      dead[r + 1][slot] = aDead && bDead;
+      const wa = fa?.done ? fa.winner : null, wb = fb?.done ? fb.winner : null;
+      // A result recorded between two other teams means nothing for the new pair.
+      if (nm.teamA !== wa || nm.teamB !== wb) { nm.teamA = wa; nm.teamB = wb; nm.maps = []; nm.winner = null; nm.done = false; }
+      nm.bye = !!((wa && !wb && bDead) || (!wa && wb && aDead));
       resolveMatch(nm);
     });
   }
@@ -1090,12 +1114,12 @@ function MatchPrediction({ match, locator, a, b, onVote }) {
 //    match_results rows regardless of format. ──
 function FormatSwitcher({ t, actions }) {
   const [open, setOpen] = useState(false);
-  const [fmt, setFmt] = useState(t.format === "league" ? "roundrobin" : t.format);
+  const [fmt, setFmt] = useState(t.format);
   const [bo, setBo] = useState(t.bo === 3 ? "bo3" : "bo1");
   const [groups, setGroups] = useState(t.groups?.length || 2);
   const OPTS = [
     { id: "league", name: "League", desc: "Auto round-robin — the standard tournament." },
-    { id: "group", name: "Group Stage", desc: "Groups, then a final." },
+    { id: "group", name: "Group Stage", desc: "Groups, then semifinals and a final." },
     { id: "single", name: "Single Elim", desc: "Straight knockout bracket." },
     { id: "roundrobin", name: "Round Robin", desc: "One table, everyone once." },
   ];
@@ -1133,7 +1157,7 @@ function FormatSwitcher({ t, actions }) {
               {fmt === "group" && (
                 <>
                   <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.5)", fontWeight: 700, marginLeft: 6 }}>Groups</span>
-                  <input type="number" min="2" max="8" value={groups} onChange={(e) => setGroups(Number(e.target.value) || 2)}
+                  <input type="number" min="2" max="4" value={groups} onChange={(e) => setGroups(Math.min(4, Math.max(2, Number(e.target.value) || 2)))}
                     style={{ width: 60, padding: "6px 8px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} />
                 </>
               )}
@@ -1166,7 +1190,8 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTi
   const mapsNeeded = bo === 3 ? 3 : 1;
   const winA = match.done && match.winner === match.teamA;
   const winB = match.done && match.winner === match.teamB;
-  const bye = match.teamB == null && match.teamA != null;
+  // A real bye, not an opponent still to be decided (which shows as TBD).
+  const bye = !!match.bye || (match.done && (match.teamA == null) !== (match.teamB == null));
   return (
     <div className="flex flex-col gap-2.5 px-4 py-3.5" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(120,150,220,0.14)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
       <div className="flex items-center justify-between gap-2">
@@ -1416,7 +1441,8 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
 function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
   const a = teamOf(match.teamA), b = teamOf(match.teamB);
   const bo = match.bo || 1;
-  const bye = match.teamB == null && match.teamA != null;
+  // A real bye, not an opponent still to be decided (which shows as TBD).
+  const bye = !!match.bye || (match.done && (match.teamA == null) !== (match.teamB == null));
   const statsLabel = fxLabel(a, b, match);
   const statsRecorded = statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel);
   const canReport = !!(a && b && window.__VOLT?.openReport);
@@ -1603,7 +1629,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
         <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>No tournament has been set up yet. The host will configure the format and brackets — they'll appear here live once it begins.</p>
       </div>
     );
-    const maxGroups = Math.max(2, Math.floor(state.teams.length / 2));
+    const maxGroups = Math.max(2, Math.min(4, Math.floor(state.teams.length / 2))); // semis + final seat at most four group winners
     return (
       <div className="view-in page-wrap py-10 flex flex-col items-center">
         {header("Competition", "New", "Tournament")}
@@ -1612,7 +1638,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>1 · Format</p>
             <div className="grid sm:grid-cols-3 gap-3">
               {[
-                { id: "group", name: "Group Stage", desc: "Split into groups, round-robin each, top of each advances to a final." },
+                { id: "group", name: "Group Stage", desc: "Split into groups, round-robin each, then semifinals and a final." },
                 { id: "roundrobin", name: "Round Robin", desc: "One table — every team plays every other team once." },
                 { id: "league", name: "League Play", desc: "No bracket — 4 matches per team, every match banks points." },
                 { id: "single", name: "Single Elim", desc: "Seeded knockout bracket. Lose once, you're out." },
@@ -1652,7 +1678,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                   );
                 })}
               </div>
-              <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>{state.teams.length} teams available · winner of each group meets in the final.</p>
+              <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>{state.teams.length} teams available · the top of each group goes through to the semifinals.</p>
             </TPanel>
           )}
 
@@ -1691,7 +1717,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
     return false;
   });
 
-  const fmtName = t.format === "group" ? "Group Stage" : t.format === "single" ? "Single Elimination" : "Round Robin";
+  const fmtName = t.format === "group" ? "Group Stage" : t.format === "single" ? "Single Elimination" : t.format === "league" ? "League Play" : "Round Robin";
 
   if (!t.locked) {
     if (!isAdmin) return (
@@ -1773,7 +1799,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                 </select>
               </div>
             </div>
-            <p className="mb-4" style={{ fontSize: 13, color: "rgba(200,215,255,0.4)" }}>Pick the team for each seed. Seeds 1 &amp; 2 meet last; adjacent seeds (1–2, 3–4…) play in round one. Empty seeds become byes.</p>
+            <p className="mb-4" style={{ fontSize: 13, color: "rgba(200,215,255,0.4)" }}>Pick the team for each seed, strongest first. Seed 1 opens against the lowest seed, and seeds 1 &amp; 2 can only meet in the final. Leave the bottom seeds empty and the top seeds get byes.</p>
             <div className="grid sm:grid-cols-2 gap-3">
               {t.slots.map((id, i) => {
                 const taken = new Set(t.slots.filter((x, k) => x && k !== i));
@@ -1872,7 +1898,11 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             <TPanel hue="#7da6ff">
               <p className="uppercase text-lg font-bold tracking-widest mb-1 text-center" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Semifinals</p>
               <p className="text-center text-xs mb-3" style={{ color: "rgba(200,215,255,0.4)" }}>
-                Winner of each group meets the other group's runner-up.
+                {(t.groups?.length || 2) === 2
+                  ? "Winner of each group meets the other group's runner-up."
+                  : t.groups.length === 3
+                    ? "The three group winners and the best runner-up, seeded by record."
+                    : "The four group winners, seeded by record — 1 v 4, 2 v 3."}
               </p>
               {t.semis?.length ? (
                 <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
@@ -5100,7 +5130,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const boNum = matchType === "bo3" ? 3 : 1;       // numeric best-of for match logic
     const t = { format, bo: boNum, overrides: {}, createdAt: Date.now() };
     if (format === "group") {
-      const g = Math.max(2, Math.min(numGroups || 2, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      const g = Math.max(2, Math.min(numGroups || 2, 4, Math.max(2, Math.floor(ids.length / 2) || 2)));
       t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
       t.matches = {}; // per-group matches generated when groups are locked
       t.locked = false;
@@ -5108,7 +5138,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       // means two of the six teams play a knockout and the rest go home. Semis
       // take the top two from each group instead, so second place still has
       // something to play for on the last group match.
-      t.playoff = g === 2 ? "semis" : "final";
+      t.playoff = "semis";
       t.semis = null; // [{id:'sf1'...},{id:'sf2'...}] once the groups finish
       t.final = null; // { teamA, teamB, bo, maps, done, winner } once semis do
     } else if (format === "roundrobin" || format === "league") {
@@ -5162,7 +5192,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const boNum = matchType === "bo3" ? 3 : 1;
     const t = { format, bo: boNum, overrides: prev?.overrides || {}, createdAt: Date.now() };
     if (format === "group") {
-      const g = Math.max(2, Math.min(numGroups || 2, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      const g = Math.max(2, Math.min(numGroups || 2, 4, Math.max(2, Math.floor(ids.length / 2) || 2)));
       t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
       t.matches = {}; t.locked = false; t.final = null;
     } else if (format === "roundrobin" || format === "league") {
@@ -5223,6 +5253,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       t.matches = t.format === "league" ? leagueMatches(t.teamIds, t.bo) : roundRobinMatches(t.teamIds, t.bo);
     } else if (t.format === "single") {
       t.rounds = buildSingleElim(t.slots, t.bo);
+      propagateElim(t); // byes advance straight away, not on the first reported score
     }
     // Restore anything already played/scheduled for the same team pairing so a
     // format switch doesn't orphan reported stats (fxLabel depends on match id).
@@ -5241,7 +5272,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         if (old.votes) m.votes = old.votes;
       };
       if (t.format === "group") { Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach(restore)); }
-      else if (t.format === "single") { (t.rounds || []).forEach((r) => (r || []).forEach(restore)); propagateElim(t); }
+      // Later rounds only learn their teams from propagation, so restore and
+      // propagate once per round to carry results all the way up the bracket.
+      else if (t.format === "single") { (t.rounds || []).forEach(() => { t.rounds.forEach((r) => (r || []).forEach(restore)); propagateElim(t); }); }
       else { (t.matches || []).forEach(restore); }
       delete s.__carry;
     }
@@ -5371,8 +5404,10 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
     // Two groups default to semis. Straight-to-final discards both runners-up,
     // so second place in a group is worth nothing and half the teams are done
-    // after the group stage. Explicitly choosing "final" still works, and 3+
-    // groups keep the old behaviour since winners alone already fill a bracket.
+    // after the group stage. Explicitly choosing "final" still works for two
+    // groups. Three or four groups always need semis — a final only has room
+    // for two group winners, and the old code silently dropped the rest.
+    if (t.groups.length > 2) t.playoff = "semis";
     const wantSemis = t.playoff === "semis" || (t.playoff == null && t.groups.length === 2);
     if (!wantSemis) {
       t.semis = null;
@@ -5391,11 +5426,25 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       if (t.final && !t.final.done) t.final = null;
       return;
     }
-    const [A, B] = groups;
-    const pairs = [
-      { id: "sf1", teamA: A.rows[0].teamId, teamB: B.rows[1].teamId },
-      { id: "sf2", teamA: B.rows[0].teamId, teamB: A.rows[1].teamId },
-    ];
+    let pairs;
+    if (groups.length === 2) {
+      const [A, B] = groups;
+      pairs = [
+        { id: "sf1", teamA: A.rows[0].teamId, teamB: B.rows[1].teamId },
+        { id: "sf2", teamA: B.rows[0].teamId, teamB: A.rows[1].teamId },
+      ];
+    } else {
+      // Three or four groups: every group winner (plus the best runner-up when
+      // there are three) goes through, seeded by record — 1 v 4, 2 v 3.
+      const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
+      const seeds = groups.map((g) => g.rows[0]);
+      if (groups.length === 3) seeds.push(groups.map((g) => g.rows[1]).sort(byRecord)[0]);
+      seeds.sort(byRecord);
+      pairs = [
+        { id: "sf1", teamA: seeds[0].teamId, teamB: seeds[3].teamId },
+        { id: "sf2", teamA: seeds[1].teamId, teamB: seeds[2].teamId },
+      ];
+    }
     if (!t.semis) {
       t.semis = pairs.map((x) => ({ ...x, bo: t.bo, maps: [], done: false, winner: null }));
     } else {
