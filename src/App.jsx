@@ -4213,7 +4213,7 @@ function MapVeto({ teams }) {
 // Plain names in the nav — it's a signpost you scan in half a second, so it has
 // to say what's behind it. The pages keep their own flavour in their headings.
 const NAV = [
-  { id: "lobby", label: "Home", glyph: "⌂" },
+  { id: "lobby", label: "Dashboard", glyph: "⌂" },
   { id: "scout", label: "Player Pool", glyph: "⊞" },
   { id: "block", label: "Live Auction", glyph: "⟁" },
   { id: "reserve", label: "Reserve Pool", glyph: "⊕" },
@@ -6076,7 +6076,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
       {/* Back to the league page, first in the list so it's never hunted for. */}
       {chrome?.onHub && <>
-        {railItem("__hub", "‹", "League home", { onClick: chrome.onHub, color: "#7da6ff" })}
+        {/* Named after the league, like a back link, so it can't be mistaken for this tournament's dashboard. */}
+        {railItem("__hub", "‹", window.__VOLT.communityName || "League page", { onClick: chrome.onHub, color: "#7da6ff" })}
         <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "6px 6px 8px" : "6px auto 8px", background: "rgba(120,150,220,0.2)" }} />
       </>}
       {railSections.map((sec, si) => (
@@ -9352,7 +9353,7 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
   const byId = Object.fromEntries([...NAV, ...TOURNEY_NAV].map(n => [n.id, n]));
   const tourneyViews = enterable ? (RAIL_PHASE_VIEWS[target.phase] || []).map(id => byId[id])
     .filter(n => n && (!n.adminOnly || isHost))
-    .map(n => item(n.glyph, n.id === "lobby" ? "Tournament home" : n.label, { onClick: () => go(n.id), liveDot: n.id === "block" && target.phase === "drafting" })) : [];
+    .map(n => item(n.glyph, n.label, { onClick: () => go(n.id), liveDot: n.id === "block" && target.phase === "drafting" })) : [];
   const tLabel = enterable ? (finished ? "Last tournament" : weekendName(target)) : null;
 
   return (
