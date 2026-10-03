@@ -166,9 +166,8 @@ const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 const IMG_HERO = "/img/hero.webp";
 // Stock art (Pexels licence: free for commercial use, no credit needed).
 const IMG_ARENA = "/img/stock-arena.webp";   // competition PCs, red chairs, blue light
-const IMG_CROWD = "/img/stock-crowd.webp";   // crowd under blue stage lights
 const IMG_KEYS = "/img/stock-keys.webp";     // backlit keyboard close-up
-const IMG_CROWD_GOLD = "/img/stock-crowd-gold.webp"; // same crowd, graded gold for champions
+const IMG_ARENA_GOLD = "/img/stock-arena-gold.webp"; // the competition floor, graded gold for champions
 // All stock is graded into the brand palette (navy → VOLT blue, or gold) so it
 // reads as broadcast graphics rather than stock photography.
 
@@ -1740,7 +1739,7 @@ function TChampion({ team }) {
   if (!team) return null;
   return (
     <div className="relative flex flex-col items-center gap-1 py-7 px-8 mx-auto overflow-hidden" style={{ maxWidth: 560, background: `linear-gradient(160deg, ${team.hue}22, rgba(10,15,28,0.6))`, border: `1px solid ${team.hue}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", boxShadow: `0 0 50px ${team.hue}33` }}>
-      <img src={IMG_CROWD_GOLD} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.55, pointerEvents: "none",
+      <img src={IMG_ARENA_GOLD} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.55, pointerEvents: "none",
         maskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)", WebkitMaskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)" }} />
       <p className="uppercase text-xs font-bold tracking-[0.3em] relative" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Champion ★</p>
       <p className="font-bold uppercase relative" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.8rem", lineHeight: 1, color: team.hue, letterSpacing: "0.03em", textShadow: `0 0 30px ${team.hue}88` }}>{team.name}</p>
@@ -1997,7 +1996,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
       <style>{FX_CSS + SWEEP_CSS}</style>
       <div style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
         {/* A real competition floor behind the agent, faded into the panel. */}
-        <img src={champion ? IMG_CROWD_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "75%", height: "100%", objectFit: "cover", objectPosition: "center 45%",
+        <img src={champion ? IMG_ARENA_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "75%", height: "100%", objectFit: "cover", objectPosition: "center 45%",
           opacity: 0.7, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
         <span aria-hidden className="volt-scan" />
         <span aria-hidden className="volt-sweep" />
@@ -11311,7 +11310,7 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
                : phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
       {phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
       {gold && <span aria-hidden className="volt-shimmer" />}
-      {(phase === "matches_live" || gold) && <img src={gold ? IMG_CROWD_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "62%", height: "100%", objectFit: "cover",
+      {(phase === "matches_live" || gold) && <img src={gold ? IMG_ARENA_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "62%", height: "100%", objectFit: "cover",
         opacity: 0.65, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 65%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 65%)" }} />}
       {/* Both brackets, matching the auction block — one alone reads as a
           rendering glitch rather than a deliberate frame. */}
@@ -13928,9 +13927,9 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <div className="volt-lg-hero" style={{ ...PANEL(`${H}55`, "30px 34px 28px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(18),
               marginBottom: 14, minHeight: 300, display: "flex", flexDirection: "column" }}>
               <CardArt hue={H} bare />
-              {/* A real stage, graded into the league's blue, behind the name. */}
-              <img className="volt-lg-art" src={IMG_CROWD} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "72%", height: "100%",
-                objectFit: "cover", objectPosition: "center 35%", pointerEvents: "none", opacity: 0.9,
+              {/* A competition floor, graded into the league's blue, behind the name. */}
+              <img className="volt-lg-art" src={IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "72%", height: "100%",
+                objectFit: "cover", objectPosition: "70% 55%", pointerEvents: "none", opacity: 0.95,
                 maskImage: "linear-gradient(90deg, transparent 0%, #000 50%)", WebkitMaskImage: "linear-gradient(90deg, transparent 0%, #000 50%)" }} />
               <span aria-hidden className="volt-scan" />
               <span aria-hidden className="volt-sweep" />
