@@ -22,8 +22,10 @@ tournament bracket, predictions, leaderboard, plus a Discord bot.
   anon key unless you `revoke execute ... from public, anon, authenticated`.
   Functions meant only for `api/` (anything taking a guild/Discord id or a
   user id as a parameter) must be revoked and granted to `service_role`.
-- Pushing to `main` deploys to production on Vercel immediately. Work on a
-  branch; Vercel builds a preview for it.
+- Pushing to `main` deploys to production on Vercel immediately. The owner
+  wants changes shipped straight to `main` (no preview branch, no PR to
+  merge), so `npm run build` must pass before every push. If a deploy breaks
+  the live site, roll back in Vercel (Instant Rollback) and then fix.
 - Vercel is on the Hobby plan: crons can run at most once a day. Frequent jobs
   run from Supabase `pg_cron` (`volt_cron_tick`, every 5 minutes).
 
