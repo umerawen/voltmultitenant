@@ -2414,10 +2414,20 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
   const wheelPool = drawing ? spin.pool.map((id) => players.find((p) => p.id === id)).filter(Boolean) : pool;
   const n = Math.max(wheelPool.length, 1);
 
-  const [vw, setVw] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
-  useEffect(() => { const f = () => setVw(window.innerWidth); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
-  // inline stage is inside the page shell (max 1760, with padding); approximate usable width
-  const stageW = Math.min(vw - 40, 1720);
+  // Measure the reel box itself: the red marker sits at its exact centre, so the
+  // landing maths has to use the same width. (Deriving it from the window width
+  // missed the shell's padding and side rails, so the winner stopped off-centre.)
+  const reelRef = useRef(null);
+  const [stageW, setStageW] = useState(() => (typeof window !== "undefined" ? Math.min(window.innerWidth - 40, 1720) : 1200));
+  useEffect(() => {
+    const el = reelRef.current;
+    if (!el) return;
+    const measure = () => { if (el.clientWidth) setStageW(el.clientWidth); };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const [x, setX] = useState(0);
   const [centerIdx, setCenterIdx] = useState(0);
@@ -2479,7 +2489,7 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
       </div>
 
       {/* reel */}
-      <div className="relative w-full mt-4" style={{ height: REEL_CARD_H + 50, overflow: "hidden" }}>
+      <div ref={reelRef} className="relative w-full mt-4" style={{ height: REEL_CARD_H + 50, overflow: "hidden" }}>
         <div className="absolute pointer-events-none" style={{ left: 0, right: 0, top: -20, bottom: -20, background: `radial-gradient(ellipse 30% 80% at 50% 50%, ${glow}, transparent 70%)`, filter: "blur(20px)", transition: "background 600ms" }} />
         {/* edge fades */}
         <div className="absolute inset-y-0 left-0 z-10 pointer-events-none" style={{ width: 80, background: "linear-gradient(90deg, #0a0d18, transparent)" }} />
