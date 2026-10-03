@@ -5,6 +5,7 @@
 //   teams      — one role + private text + private voice per team (after the draft)
 //   results    — post a match result card to #results
 //   standings  — post/refresh the leaderboard, editing one message in place
+//   wrapup     — delete finished tournaments' team roles and rooms
 //
 // Everything is idempotent. Each object created is recorded in discord_objects,
 // so a second run updates instead of duplicating — pressing "build" twice must
@@ -90,7 +91,7 @@ export default async function handler(req, res) {
     // Building seven channels meant seven full guild-channel listings and seven
     // registry queries — enough sequential round trips to blow Vercel's function
     // timeout, which surfaces as a bare 500 with no JSON body to explain it.
-    if (mode === "common" || mode === "teams") {
+    if (mode === "common" || mode === "teams" || mode === "wrapup") {
       const list = await call(token, `/guilds/${ctx.guild}/channels`, "GET");
       ctx.channels = Array.isArray(list.body) ? list.body : [];
       ctx.registry = await sb(`/rest/v1/discord_objects?community_id=eq.${ctx.community}` +
@@ -102,6 +103,7 @@ export default async function handler(req, res) {
     if (mode === "results")   return res.status(200).json(await postResult(ctx, payload));
     if (mode === "standings") return res.status(200).json(await postStandings(ctx));
     if (mode === "fixtures")  return res.status(200).json(await postFixtures(ctx));
+    if (mode === "wrapup")    return res.status(200).json(await wrapUp(ctx));
     return res.status(400).json({ error: `unknown mode ${mode}` });
   } catch (e) {
     console.error("arena failed", e);
@@ -116,10 +118,13 @@ async function buildCommon(ctx) {
   ctx.deadline = Date.now() + BUDGET_MS;
   // A category keeps the tournament's channels together and, more usefully,
   // lets one permission change apply to all of them at once later.
+  // Named after the league, not the tournament: these channels outlive every
+  // tournament, and the first one's name used to stay on them for good.
   const cat = await ensureChannel(ctx, {
-    ref: "category", name: ctx.ev.weekend_label || ctx.c.name, type: 4, eventScoped: false,
+    ref: "category", name: ctx.c.name, type: 4, eventScoped: false,
   }, out);
   if (!cat) return out;
+  await renameShared(ctx, cat, out);
 
   for (const spec of COMMON) {
     if (outOfTime(ctx, out)) break;
@@ -217,6 +222,125 @@ async function buildTeams(ctx) {
   });
 
   return out;
+}
+
+/* ── wrap-up: clear out finished tournaments ─────────────────────────────── */
+
+// Deletes every team role, team room and team category belonging to a settled
+// tournament. Deleting a role takes it off everyone, so nobody keeps last
+// tournament's colour or a view into its rooms.
+//
+// Covers every settled tournament in the league, not just one, so a missed
+// wrap-up (or one that ran out of time) is caught by the next.
+//
+// Never touches: the shared channels, the league's player role, or anything a
+// tournament that isn't settled is using — a team called CHAOS this time can
+// share last time's role name, and that role must survive.
+async function wrapUp(ctx) {
+  const out = { deleted: 0, already: 0, errors: [], tournaments: 0 };
+  ctx.deadline = Date.now() + BUDGET_MS;
+
+  const events = await sb(`/rest/v1/events?community_id=eq.${ctx.community}&select=id,phase`);
+  const settled = new Set(events.filter((e) => e.phase === "settled").map((e) => e.id));
+  const all = await sb(`/rest/v1/discord_objects?community_id=eq.${ctx.community}` +
+    `&select=kind,ref,discord_id,event_id`);
+
+  // Anything the league or a running tournament has claimed.
+  const protectedIds = new Set(all.filter((r) => !r.event_id || !settled.has(r.event_id)).map((r) => r.discord_id));
+  if (ctx.c.discord_role_id) protectedIds.add(ctx.c.discord_role_id);
+
+  // Team names on each board. Settled boards name the roles made by the team
+  // DM step, which never went into the registry; live boards name roles that
+  // must be kept even if an old tournament used the same name.
+  const boards = await sb(`/rest/v1/community_kv?community_id=eq.${ctx.community}` +
+    `&k=like.volt-auction-v2::*&shared=eq.true&select=k,val`);
+  const oldNames = new Set(), liveNames = new Set();
+  for (const b of boards || []) {
+    const evId = String(b.k).split("::")[1];
+    let teams = [];
+    try { teams = JSON.parse(b.val)?.teams || []; } catch { /* unreadable board */ }
+    for (const t of teams) if (t?.name) (settled.has(evId) ? oldNames : liveNames).add(`VOLT ${t.name}`);
+  }
+
+  const roles = await listRoles(ctx);
+  const channelIds = new Set(ctx.channels.map((c) => c.id));
+  const roleIds = new Set(roles.map((r) => r.id));
+
+  // Rooms before categories before roles: the rooms' permissions name the
+  // roles, and a category is only empty once its rooms are gone.
+  const finished = all.filter((r) => r.event_id && settled.has(r.event_id));
+  const rows = finished.filter((r) => !protectedIds.has(r.discord_id));
+  out.tournaments = new Set(rows.map((r) => r.event_id)).size;
+  // Something a running tournament took over stays in Discord; only the old
+  // tournament's claim on it goes.
+  for (const r of finished) if (protectedIds.has(r.discord_id)) await forget(ctx, r);
+  const targets = [];
+  const seen = new Set();
+  const add = (kind, id, row) => {
+    if (seen.has(id)) { if (row) targets.find((t) => t.id === id).rows.push(row); return; }
+    seen.add(id); targets.push({ kind, id, rows: row ? [row] : [] });
+  };
+  for (const r of rows) if (r.kind === "text" || r.kind === "voice") add("channel", r.discord_id, r);
+  for (const r of rows) if (r.kind === "category") add("category", r.discord_id, r);
+  for (const r of rows) if (r.kind === "role") add("role", r.discord_id, r);
+  for (const role of roles) {
+    if (oldNames.has(role.name) && !liveNames.has(role.name) && !protectedIds.has(role.id)) add("role", role.id, null);
+  }
+
+  const del = async (t) => {
+    const exists = t.kind === "role" ? roleIds.has(t.id) : channelIds.has(t.id);
+    if (!exists) out.already++;
+    else {
+      const path = t.kind === "role" ? `/guilds/${ctx.guild}/roles/${t.id}` : `/channels/${t.id}`;
+      const r = await call(ctx.token, path, "DELETE");
+      if (r.ok || /unknown (channel|role)/i.test(r.reason || "")) out.deleted++;
+      else {
+        if (!out.errors.includes(r.reason)) out.errors.push(r.reason);
+        return;                                    // keep the row so a re-run retries it
+      }
+    }
+    for (const row of t.rows) await forget(ctx, row);
+  };
+
+  // One kind at a time, a few deletes in flight within each.
+  for (const kind of ["channel", "category", "role"]) {
+    const queue = targets.filter((t) => t.kind === kind);
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+      while (queue.length) {
+        if (outOfTime(ctx, out)) return;
+        await del(queue.shift());
+      }
+    }));
+    if (out.partial) break;
+  }
+
+  // Older builds named the shared category after whichever tournament was on.
+  const shared = all.find((r) => !r.event_id && r.kind === "category" && r.ref === "category");
+  if (shared && !out.partial) await renameShared(ctx, shared.discord_id, out);
+  return out;
+}
+
+// Keep the shared category named after the league.
+async function renameShared(ctx, id, out) {
+  const ch = (ctx.channels || []).find((c) => c.id === id);
+  const want = String(ctx.c.name || "").slice(0, 100);
+  if (!ch || !want || ch.name === want) return;
+  const r = await call(ctx.token, `/channels/${id}`, "PATCH", { name: want });
+  if (r.ok) { ch.name = want; out.renamed = want; }
+  else if (!out.errors.includes(`rename: ${r.reason}`)) out.errors.push(`rename: ${r.reason}`);
+}
+
+async function forget(ctx, row) {
+  try {
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/discord_objects` +
+      `?community_id=eq.${ctx.community}&event_id=eq.${row.event_id}` +
+      `&kind=eq.${encodeURIComponent(row.kind)}&ref=eq.${encodeURIComponent(row.ref)}`, {
+      method: "DELETE",
+      headers: { apikey: process.env.SUPABASE_SERVICE_KEY,
+                 Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`, Prefer: "return=minimal" },
+    });
+    if (!r.ok) console.error("forget failed", row.kind, row.ref, r.status);
+  } catch (e) { console.error("forget", e); }
 }
 
 /* ── results + standings ─────────────────────────────────────────────────── */
@@ -391,7 +515,10 @@ async function ensureChannel(ctx, spec, out) {
     out.reused.push(spec.name);
     return known;
   }
-  const found = ctx.channels.find((x) => x.type === spec.type && x.name === want);
+  // Tournament rooms are only adopted from their own category. A new team
+  // called CHAOS used to take over last tournament's #chaos-room.
+  const found = ctx.channels.find((x) => x.type === spec.type && x.name === want &&
+    (!spec.eventScoped || !spec.parent_id || x.parent_id === spec.parent_id));
   if (found) {
     await remember(ctx, kind, spec.ref, found.id, spec.eventScoped, null, out);
     out.reused.push(spec.name);
@@ -410,7 +537,7 @@ async function ensureChannel(ctx, spec, out) {
   const made = await call(ctx.token, `/guilds/${ctx.guild}/channels`, "POST", body);
   if (!made.ok) { out.errors.push(`${spec.name}: ${made.reason}`); return null; }
   // Keep the in-memory list current so a later spec in the same run sees it.
-  ctx.channels.push({ id: made.body.id, type: spec.type, name: want });
+  ctx.channels.push({ id: made.body.id, type: spec.type, name: want, parent_id: spec.parent_id || null });
   await remember(ctx, kind, spec.ref, made.body.id, spec.eventScoped, null, out);
   out.created.push(spec.name);
   return made.body.id;

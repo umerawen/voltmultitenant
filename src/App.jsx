@@ -10095,6 +10095,24 @@ function JoinGuideCard({ community, current }) {
   );
 }
 
+// Delete finished tournaments' team roles and rooms in Discord. Runs by itself
+// when a tournament is settled; best-effort, so a league without Discord (or a
+// missing bot permission) never gets in the way of settling. Resolves to the
+// server's result, or null when there was nothing it could do.
+async function discordWrapUp(eventId) {
+  try {
+    const { data: sess } = await __sb.auth.getSession();
+    const jwt = sess?.session?.access_token;
+    if (!jwt) return null;
+    const r = await fetch("/api/discord-arena", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ eventId, mode: "wrapup" }),
+    });
+    return r.ok ? await r.json().catch(() => null) : null;
+  } catch { return null; }
+}
+
 // ── Discord arena ────────────────────────────────────────────────────────
 // Builds the tournament's home inside Discord. Split into two steps because
 // they have different prerequisites: the common channels need nothing and are
@@ -10108,6 +10126,11 @@ function DiscordArenaCard({ eventId, phase }) {
   const drafted = ["drafting", "matches_live", "settled"].includes(phase);
 
   async function run(mode, label) {
+    if (mode === "wrapup" && !(await voltConfirm(
+      "Deletes the team roles, team text rooms and team voice rooms from every finished tournament. " +
+      "Their chat history goes with them.\n\n" +
+      "The shared channels (#results, #standings and the rest) and anything the current tournament uses are kept.",
+      { title: "Clear old tournaments from Discord?", confirmLabel: "Delete them", cancelLabel: "Keep", danger: true }))) return;
     setBusy(mode); setErr(""); setMsg(""); setWarn("");
     try {
       const { data: sess } = await __sb.auth.getSession();
@@ -10129,6 +10152,16 @@ function DiscordArenaCard({ eventId, phase }) {
       }
       const made = b.created?.length || 0, kept = b.reused?.length || 0;
       const label = mode === "teams" ? "Team rooms" : mode === "common" ? "Channels" : "";
+      if (mode === "wrapup") {
+        const n = b.deleted || 0;
+        setMsg((b.partial
+          ? `Deleted ${n} so far — ran out of time, press again to finish.`
+          : n ? `Deleted ${n} old team role${n === 1 ? "" : "s"} and room${n === 1 ? "" : "s"}.`
+              : "Nothing to clear — no old team roles or rooms left.") +
+          (b.renamed ? ` Shared category renamed to “${b.renamed}”.` : ""));
+        if (b.errors?.length) setWarn(b.errors.slice(0, 3).join(" · "));
+        setBusy(""); return;
+      }
       if (b.partial) {
         setMsg(`${label}: ${made} created, ${kept} already there — ran out of time, press again to finish the rest.`);
         setBusy(""); return;
@@ -10198,6 +10231,8 @@ function DiscordArenaCard({ eventId, phase }) {
             {busy === "predictions" ? "Posting…" : "◈ Open predictions"}
           </button>
           <B mode="standings" label="⟳ Post standings" />
+          <B mode="wrapup" label="🧹 Clear old tournaments"
+             tip="Delete team roles and rooms left over from finished tournaments" />
         </div>
         <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 11, lineHeight: 1.65 }}>
           <b style={{ color: "rgba(200,215,255,0.7)" }}>Set up channels</b> is safe to run now — nothing in it
@@ -10205,7 +10240,9 @@ function DiscordArenaCard({ eventId, phase }) {
           team a role, a private text channel and its own voice room, visible only to that team and staff.
           Both are safe to re-run: existing channels are reused, never duplicated.
           Post fixtures once the schedule is locked — re-run it after any reschedule and it edits
-          the same message rather than posting a second one.
+          the same message rather than posting a second one. Team roles and rooms are deleted
+          automatically when you settle a tournament; <b style={{ color: "rgba(200,215,255,0.7)" }}>Clear
+          old tournaments</b> does the same by hand.
         </div>
         {msg && <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 10 }}>✓ {msg}</div>}
         {warn && <div style={{ fontSize: 11.5, color: "rgba(245,196,83,0.9)", marginTop: 8 }}>⚠ {warn}</div>}
@@ -14472,6 +14509,12 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       if (error) throw error;
       if (!data) throw new Error("The tournament wasn't changed — you may not have permission.");
       setEv(data);
+      // The tournament is over, so its team roles and rooms go. In the
+      // background: settling is already done and mustn't wait on Discord.
+      if (next === "settled") discordWrapUp(ev.id).then((b) => {
+        if (b?.deleted) voltToast(`Discord tidied up: ${b.deleted} team role${b.deleted === 1 ? "" : "s"} and room${b.deleted === 1 ? "" : "s"} deleted.`);
+        else if (b?.errors?.length) voltToast(`Couldn't clear the team rooms in Discord: ${b.errors[0]}`, "warn");
+      });
     } catch (e) {
       console.error(e);
       voltAlert(e.message || "Couldn't move the tournament on. Nothing was changed.", { title: "Nothing changed" });
