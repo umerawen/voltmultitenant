@@ -9302,12 +9302,22 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
   );
 }
 
-function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide }) {
+// Pages worth showing for a tournament in each phase. Anything that has
+// nothing to show yet is left out rather than greyed out.
+const RAIL_PHASE_VIEWS = {
+  registration_open:   ["lobby", "scout", "warroom", "leaderboard"],
+  registration_closed: ["lobby", "scout", "warroom", "leaderboard"],
+  drafting:            ["lobby", "block", "scout", "reserve", "locker", "warroom"],
+  matches_live:        ["lobby", "bracket", "locker", "reserve", "leaderboard", "veto"],
+  settled:             ["lobby", "bracket", "locker", "leaderboard"],
+};
+function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide, hasPast, onCreate }) {
   const [tip, setTip] = useState(null);
   const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("volt_sound") !== "0"; } catch { return true; } });
   useEffect(() => { try { localStorage.setItem("volt_sound", soundOn ? "1" : "0"); } catch {} }, [soundOn]);
   const W = wide ? 224 : 60;
-  const enterable = !!target; // a tournament you can actually open (draft/matches/reg-closed)
+  const enterable = !!target;
+  const finished = target?.phase === "settled";
   const mark = (community?.name || "V").slice(0, 1).toUpperCase();
 
   const item = (glyph, label, { onClick, disabled, accent, liveDot } = {}) => (
@@ -9325,8 +9335,19 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
   const secLabel = (t) => wide && <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "2px 12px 6px" }}>// {t}</div>;
 
   const go = (view) => enterable && onEnter(target, view);
-  const leagueViews = NAV.map(n => item(n.glyph, n.label, { onClick: () => go(n.id), disabled: !enterable, liveDot: n.id === "block" && target?.phase === "drafting" }));
-  const tourneyViews = TOURNEY_NAV.filter(n => !n.adminOnly || isHost).map(n => item(n.glyph, n.label, { onClick: () => go(n.id), disabled: !enterable }));
+  // This page's own sections: always live, they just scroll.
+  const jump = (id) => id ? document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }) : window.scrollTo({ top: 0, behavior: "smooth" });
+  const leagueViews = [
+    item("⌂", "Overview", { onClick: () => jump(null) }),
+    item("≣", "Season race", { onClick: () => jump("volt-league-boards") }),
+    hasPast && item("◷", "Past tournaments", { onClick: () => jump("volt-past") }),
+    isHost && item("◈", "Discord", { onClick: () => jump("volt-discord-console") }),
+  ].filter(Boolean);
+  const byId = Object.fromEntries([...NAV, ...TOURNEY_NAV].map(n => [n.id, n]));
+  const tourneyViews = enterable ? (RAIL_PHASE_VIEWS[target.phase] || []).map(id => byId[id])
+    .filter(n => n && (!n.adminOnly || isHost))
+    .map(n => item(n.glyph, n.id === "lobby" ? "Tournament home" : n.label, { onClick: () => go(n.id), liveDot: n.id === "block" && target.phase === "drafting" })) : [];
+  const tLabel = enterable ? (finished ? "Last tournament" : weekendName(target)) : null;
 
   return (
     <nav aria-label="League" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: W, display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", padding: wide ? "12px 8px 14px" : "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif", transition: "width .18s cubic-bezier(.2,.8,.3,1)", overflowY: "auto", overflowX: "hidden" }}>
@@ -9348,14 +9369,30 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide 
           clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}><span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>»</span></button>}
       <div style={{ width: wide ? "auto" : 26, height: 1, margin: wide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
 
-      {/* live-tournament entry — the inverse of the in-tournament portal button */}
-      {item(enterable ? "▸" : "○", enterable ? "Live tournament" : "No live tournament", { onClick: () => enterable && onEnter(target), disabled: !enterable, accent: enterable ? "#af9aec" : undefined })}
-
-      {divider()}
       {secLabel("League")}
       <div style={{ display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", gap: 2 }}>{leagueViews}</div>
-      {tourneyViews.length > 0 && <>{divider()}{secLabel("Tournament")}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", gap: 2 }}>{tourneyViews}</div></>}
+
+      {divider(10, 8)}
+      {enterable ? <>
+        {/* The tournament by name, with its phase, so it's clear what these open. */}
+        {wide ? (
+          <div style={{ padding: "2px 12px 8px", minWidth: 0 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700 }}>// {finished ? "Last tournament" : "Tournament"}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5, minWidth: 0 }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: PHASE_COLOR[target.phase], boxShadow: finished ? "none" : `0 0 8px ${PHASE_COLOR[target.phase]}` }} />
+              <span style={{ fontSize: 13.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#eaf1ff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{finished ? weekendName(target) : tLabel}</span>
+            </div>
+            <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: PHASE_COLOR[target.phase], fontWeight: 700, marginTop: 3, paddingLeft: 14 }}>{PHASE_LABEL[target.phase]}</div>
+          </div>
+        ) : (
+          <span title={`${weekendName(target)} · ${PHASE_LABEL[target.phase]}`} style={{ width: 8, height: 8, borderRadius: "50%", margin: "2px auto 8px", background: PHASE_COLOR[target.phase], boxShadow: finished ? "none" : `0 0 8px ${PHASE_COLOR[target.phase]}` }} />
+        )}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: wide ? "stretch" : "center", gap: 2 }}>{tourneyViews}</div>
+      </> : onCreate ? (
+        item("+", "Create tournament", { onClick: onCreate, accent: "#7da6ff" })
+      ) : (
+        wide && <div style={{ padding: "4px 12px", fontSize: 12, color: "rgba(200,215,255,0.4)", lineHeight: 1.5 }}>No tournament yet. You'll get a notification when sign-ups open.</div>
+      )}
 
       <div style={{ marginTop: "auto" }} />
       {divider()}
@@ -13860,9 +13897,13 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // Tournament to route the rail's view shortcuts into: the furthest-along
   // enterable tournament (matches/draft/reg-closed — reg-open lands on the gate).
-  const RANK_ENTER = { matches_live: 4, drafting: 3, registration_closed: 2 };
+  // The furthest-along running tournament, sign-ups included (it opens on the
+  // page asked for, not the registration gate). With nothing running, the last
+  // finished one, so its fixtures and rosters stay a click away.
+  const RANK_ENTER = { matches_live: 4, drafting: 3, registration_closed: 2, registration_open: 1 };
   const railTarget = HAS_SUPABASE && Array.isArray(events)
-    ? events.filter(e => RANK_ENTER[e.phase]).sort((a, b) => (RANK_ENTER[b.phase] - RANK_ENTER[a.phase]) || (new Date(a.created_at) - new Date(b.created_at)))[0] || null
+    ? events.filter(e => RANK_ENTER[e.phase]).sort((a, b) => (RANK_ENTER[b.phase] - RANK_ENTER[a.phase]) || (new Date(a.created_at) - new Date(b.created_at)))[0]
+      || events.find(e => e.phase === "settled") || null
     : null;
   const showRail = HAS_SUPABASE && hubDesk;
   const railPad = showRail ? (railWideHub ? 224 : 60) : 0;
@@ -13870,7 +13911,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   const wrap = (inner, hideHeader) => (
     <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px", paddingLeft: railPad, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
       <ShellStyles />
-      {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={() => setShowProfile(true)} isHost={isHost} wide={railWideHub} setWide={setRailWide} />}
+      {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={() => setShowProfile(true)} isHost={isHost} wide={railWideHub} setWide={setRailWide}
+        hasPast={(events || []).some(e => e.phase === "settled")} onCreate={isHost ? () => setSetupWeekend({ mode: "create", ev: null }) : null} />}
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
         {HAS_SUPABASE && <NotifBell />}
         {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? () => setShowProfile(true) : null} />}
@@ -14214,7 +14256,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           })()}
           {upcoming.filter(e => !(current?.phase !== "registration_open" && e.phase === "registration_open")).map(ev => <div key={ev.id} className="volt-lg-full">{strip(ev, false)}</div>)}
           {past.length > 0 && (
-            <div className="volt-lg-full volt-cell" style={{ ...PANEL(null, "15px 17px"), position: "relative", overflow: "hidden" }}>
+            <div id="volt-past" className="volt-lg-full volt-cell" style={{ ...PANEL(null, "15px 17px"), position: "relative", overflow: "hidden", scrollMarginTop: 20 }}>
               {/* Cell's chrome, drawn here because this panel carries its own
                   header controls (the jump-to select). */}
               <span aria-hidden style={{ position: "absolute", right: 0, top: 0, width: 130, height: 86, pointerEvents: "none",
