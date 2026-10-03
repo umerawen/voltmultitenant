@@ -9902,11 +9902,14 @@ function buildJoinGuide({ community, current, connected, origin }) {
 
   if (connected) {
     add("## Commands you can use here", "");
-    add("`/me` — your rank, stats and season points");
+    add("`/signup` · `/withdraw` — get in, or pull out before the draft");
+    add("`/schedule` — upcoming matches, yours first");
+    add("`/standings` — the tournament table");
     add("`/roster` — your team and teammates this tournament");
+    add("`/me` — your rank, stats and season points");
     add("`/leaderboard` — the season race");
-    add("`/subs` — who's free to sub in");
-    add("`/scout` — look up any player in the league", "");
+    add("`/scout` — look up any player in the league");
+    add("`/help` — everything else", "");
   }
 
   add("-# We store your Discord name and ID, your display name, the stats you enter, and a WhatsApp " +

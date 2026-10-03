@@ -63,8 +63,8 @@ export default async function handler(req, res) {
       // in front of it.
       const tagP = guild ? tagFor(guild) : Promise.resolve(null);
       if (body.type === COMPONENT) await onButton(out, body.data?.custom_id, guild, discordId, origin, body);
-      else if (body.type === APP_COMMAND) await onCommand(out, body, guild, discordId);
-      ctx.tag = await tagP;
+      else if (body.type === APP_COMMAND) await onCommand(out, body, guild, discordId, origin);
+      out.tag = await tagP;
     } catch (e) {
       console.error("interaction failed", e);
       out.content = "Something went wrong. Try again in a moment.";
@@ -112,7 +112,7 @@ async function followUp(body, out) {
 
 /* ── slash commands ──────────────────────────────────────────────────────── */
 
-async function onCommand(out, body, guild, discordId) {
+async function onCommand(out, body, guild, discordId, origin) {
   const name = body.data?.name;
   const opt = (k) => body.data?.options?.find((o) => o.name === k)?.value;
 
@@ -134,18 +134,44 @@ async function onCommand(out, body, guild, discordId) {
       "**Connect Discord** for a fresh one, or just use the one-click button there instead.");
   }
 
+  if (name === "help") return reply(out, HELP);
+
   // These read a league from the server they're run in, so they can't work in a DM.
-  if (!guild && ["status", "leaderboard", "subs", "scout"].includes(name)) {
+  if (!guild && ["status", "leaderboard", "subs", "scout", "standings", "schedule",
+                 "predictions", "rollcall", "signup", "withdraw"].includes(name)) {
     return reply(out, "Run that one in your league's Discord server — I can't tell which league you mean from a DM.");
   }
+
+  if (name === "signup") return doRegister(out, guild, discordId, origin, opt("captain") === true);
+  if (name === "withdraw") return doWithdraw(out, guild, discordId);
 
   if (name === "status") {
     const s = await rpc("volt_discord_status", { p_guild: guild || null });
     if (s?.error) return reply(out, s.error);
-    if (!s?.weekend) return reply(out, "No weekend is open right now.");
+    if (!s?.weekend) return reply(out, "No tournament is open right now.");
     return reply(out,
       `**${s.weekend}** — ${s.phase.replace(/_/g, " ")}\n` +
-      `Registered: **${s.approved}** · Awaiting review: **${s.pending}**`);
+      `Registered: **${s.approved}** · Awaiting review: **${s.pending}**` +
+      (s.draftAt ? `\nDraft: <t:${s.draftAt}:f> (<t:${s.draftAt}:R>)` : "") +
+      (s.phase === "registration_open" ? "\n-# `/signup` to get in." : ""));
+  }
+
+  if (name === "standings") {
+    const b = await rpc("volt_dc_board", { p_guild: guild });
+    const miss = boardError(b);
+    if (miss) return reply(out, miss);
+    return reply(out, standingsText(b));
+  }
+
+  if (name === "schedule") {
+    const b = await rpc("volt_dc_board", { p_guild: guild });
+    const miss = boardError(b);
+    if (miss) return reply(out, miss);
+    // Not being linked isn't an error here — you just don't get "your" match
+    // pulled to the top.
+    const u = await rpc("volt_dc_user", { p_guild: guild, p_discord_id: discordId }).catch(() => null);
+    const uid = Array.isArray(u) ? u[0]?.user_id : u?.user_id;
+    return reply(out, scheduleText(b, uid ? String(uid) : null));
   }
 
   if (name === "me") {
@@ -267,6 +293,188 @@ async function onCommand(out, body, guild, discordId) {
   return reply(out, "Unknown command.");
 }
 
+const HELP =
+  "**VOLT bot** — what you can ask me\n\n" +
+  "**Playing**\n" +
+  "`/signup` — get in the next tournament (add `captain:True` to put your hand up)\n" +
+  "`/withdraw` — pull out before the draft, no strike\n" +
+  "`/roster` — your team and teammates\n" +
+  "`/schedule` — upcoming matches, yours first\n\n" +
+  "**Following along**\n" +
+  "`/status` — sign-ups and draft time\n" +
+  "`/standings` — the tournament table\n" +
+  "`/leaderboard` — season leaderboard (`sort:` ACS or points)\n" +
+  "`/predictions` — who's calling matches best\n" +
+  "`/scout` — anyone's rank, stats and record\n" +
+  "`/me` — your own card\n\n" +
+  "**Hosts & captains**\n" +
+  "`/subs` — who's free to sub in\n" +
+  "`/rollcall` — ping players who haven't connected Discord\n\n" +
+  "-# Not linked yet? VOLT → your account → **Connect Discord**, or `/link` with a code.";
+
+/* ── tournament board (/standings, /schedule) ────────────────────────────── */
+
+// The board is the draft room's own JSON, so these mirror the app's rules:
+// 3 points a win, then round difference, then rounds won, then head-to-head,
+// with the host's manual overrides on top.
+function boardError(b) {
+  if (b?.error === "unlinked") return "This server isn't linked to a VOLT league yet.";
+  if (b?.error === "noweekend") return "No tournament is running right now.";
+  if (b?.error === "nofixtures" || !b?.tournament) return "Fixtures aren't out yet — they're made after the draft.";
+  return null;
+}
+
+function allMatches(t) {
+  const out = [];
+  const push = (m, stage) => m && out.push({ ...m, stage });
+  if (Array.isArray(t.matches)) t.matches.forEach((m) => push(m, m.round ? `Round ${m.round}` : "League"));
+  else if (t.matches && typeof t.matches === "object") {
+    for (const [gid, ms] of Object.entries(t.matches)) {
+      const g = (t.groups || []).find((x) => x.id === gid);
+      (ms || []).forEach((m) => push(m, g?.name || "Group"));
+    }
+  }
+  (t.semis || []).forEach((m) => push(m, "Semifinal"));
+  if (t.final) push(t.final, "Final");
+  const R = (t.rounds || []).length;
+  (t.rounds || []).forEach((r, i) => (r || []).forEach((m) =>
+    !m?.bye && push(m, i === R - 1 ? "Final" : i === R - 2 ? "Semifinal" : `Round ${i + 1}`)));
+  return out;
+}
+
+function tally(m, id) {
+  let rf = 0, ra = 0;
+  for (const mp of m.maps || []) {
+    if (mp.a == null || mp.b == null) continue;
+    if (m.teamA === id) { rf += mp.a; ra += mp.b; } else if (m.teamB === id) { rf += mp.b; ra += mp.a; }
+  }
+  return { rf, ra };
+}
+
+function tableFor(teamIds, matches, overrides) {
+  const row = {};
+  (teamIds || []).forEach((id) => { row[id] = { id, p: 0, w: 0, l: 0, pts: 0, rf: 0, ra: 0 }; });
+  for (const m of matches || []) {
+    if (!m?.done || !row[m.teamA] || !row[m.teamB]) continue;
+    const a = tally(m, m.teamA), b = tally(m, m.teamB);
+    row[m.teamA].rf += a.rf; row[m.teamA].ra += a.ra;
+    row[m.teamB].rf += b.rf; row[m.teamB].ra += b.ra;
+    row[m.teamA].p++; row[m.teamB].p++;
+    const [win, lose] = m.winner === m.teamA ? [m.teamA, m.teamB] : m.winner === m.teamB ? [m.teamB, m.teamA] : [];
+    if (win) { row[win].w++; row[win].pts += 3; row[lose].l++; }
+  }
+  const rows = (teamIds || []).map((id) => {
+    const r = { ...row[id], diff: row[id].rf - row[id].ra };
+    const ov = overrides?.[id];
+    return ov ? { ...r, ...ov } : r;
+  });
+  const h2h = (x, y) => {
+    for (const m of matches || []) {
+      if (!m?.done) continue;
+      if ((m.teamA === x && m.teamB === y) || (m.teamA === y && m.teamB === x))
+        return m.winner === x ? -1 : m.winner === y ? 1 : 0;
+    }
+    return 0;
+  };
+  return rows.sort((a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf || h2h(a.id, b.id));
+}
+
+// Monospace so the columns line up on phones as well as desktop.
+function renderTable(rows, nameOf) {
+  const pad = (s, n) => String(s).slice(0, n).padEnd(n);
+  const lines = rows.map((r, i) =>
+    `${String(i + 1).padStart(2)} ${pad(nameOf(r.id), 14)} ${String(r.p).padStart(2)} ${String(r.w).padStart(2)} ${String(r.l).padStart(2)} ${String(r.pts).padStart(3)} ${(r.diff > 0 ? "+" : "") + r.diff}`);
+  return "```\n" + ` # ${pad("Team", 14)}  P  W  L Pts +/-\n` + lines.join("\n") + "\n```";
+}
+
+function resultLine(m, nameOf) {
+  const A = nameOf(m.teamA), B = nameOf(m.teamB);
+  if (!m.done) return `${A} vs ${B}`;
+  const maps = (m.maps || []).filter((mp) => mp.a != null && mp.b != null);
+  let score = "";
+  if ((m.bo || 1) === 1 && maps[0]) score = ` ${maps[0].a}–${maps[0].b} `;
+  else if (maps.length) {
+    const aw = maps.filter((mp) => mp.a > mp.b).length, bw = maps.filter((mp) => mp.b > mp.a).length;
+    score = ` ${aw}–${bw} `;
+  }
+  const a = m.winner === m.teamA ? `**${A}**` : A, b = m.winner === m.teamB ? `**${B}**` : B;
+  if (score) return `${a}${score}${b}`;
+  return m.winner === m.teamB ? `**${B}** beat ${A}` : `**${A}** beat ${B}`;
+}
+
+function standingsText(b) {
+  const t = b.tournament;
+  const names = Object.fromEntries((b.teams || []).map((x) => [x.id, x.name]));
+  const nameOf = (id) => names[id] || "TBD";
+  const parts = [`**Standings — ${b.tag || "this tournament"}**`];
+
+  if (t.format === "group") {
+    if (!t.locked || !(t.groups || []).some((g) => (t.matches?.[g.id] || []).length))
+      return "Groups aren't drawn yet — they're set after the draft.";
+    for (const g of t.groups || [])
+      parts.push(`**${g.name}**\n` + renderTable(tableFor(g.teamIds, t.matches?.[g.id], t.overrides), nameOf));
+  } else if (t.format === "league" || t.format === "roundrobin") {
+    if (!(t.matches || []).length) return "Fixtures aren't out yet — they're made after the draft.";
+    parts.push(renderTable(tableFor(t.teamIds, t.matches, t.overrides), nameOf));
+  } else if (t.format === "single") {
+    if (!(t.rounds || []).length) return "The bracket isn't drawn yet — it's set after the draft.";
+    const R = t.rounds.length;
+    t.rounds.forEach((r, i) => {
+      const real = (r || []).filter((m) => m && !m.bye && (m.teamA || m.teamB));
+      if (!real.length) return;
+      parts.push(`**${i === R - 1 ? "Final" : i === R - 2 ? "Semifinals" : `Round ${i + 1}`}**\n` +
+        real.map((m) => `• ${resultLine(m, nameOf)}`).join("\n"));
+    });
+  }
+
+  // Playoffs after a table stage.
+  const ko = [...(t.semis || []).map((m) => ["Semifinal", m]), ...(t.final ? [["Final", t.final]] : [])]
+    .filter(([, m]) => m && (m.teamA || m.teamB));
+  if (ko.length) parts.push("**Playoffs**\n" + ko.map(([s, m]) => `• ${s}: ${resultLine(m, nameOf)}`).join("\n"));
+
+  const champ = t.final?.done ? t.final.winner
+    : t.format === "single" && t.rounds?.length ? t.rounds[t.rounds.length - 1]?.[0]?.done && t.rounds[t.rounds.length - 1][0].winner : null;
+  if (champ) parts.push(`🏆 **${nameOf(champ)}** won it.`);
+  else if (t.format !== "single") parts.push("-# 3 points a win · ties split on round difference");
+  return parts.join("\n\n");
+}
+
+function scheduleText(b, uid) {
+  const t = b.tournament;
+  const names = Object.fromEntries((b.teams || []).map((x) => [x.id, x.name]));
+  const nameOf = (id) => names[id] || "TBD";
+  const mine = uid && (b.teams || []).find((x) =>
+    String(x.captainUserId || "") === uid || (x.roster || []).map(String).includes(uid));
+
+  const upcoming = allMatches(t)
+    .filter((m) => !m.done && m.teamA && m.teamB)
+    .sort((x, y) => (x.scheduledAt ? Date.parse(x.scheduledAt) : Infinity) - (y.scheduledAt ? Date.parse(y.scheduledAt) : Infinity));
+  if (!upcoming.length) {
+    return allMatches(t).some((m) => m.teamA && m.teamB)
+      ? "Every match so far has been played. `/standings` for the table."
+      : "Fixtures aren't out yet — they're made after the draft.";
+  }
+
+  const when = (m) => {
+    if (!m.scheduledAt) return "time TBC";
+    const s = Math.floor(Date.parse(m.scheduledAt) / 1000);
+    return `<t:${s}:f> (<t:${s}:R>)`;
+  };
+  const line = (m) => `• ${m.stage}: **${nameOf(m.teamA)}** vs **${nameOf(m.teamB)}** — ${when(m)}`;
+
+  const parts = [`**Schedule — ${b.tag || "this tournament"}**`];
+  if (mine) {
+    const next = upcoming.find((m) => m.teamA === mine.id || m.teamB === mine.id);
+    parts.push(next
+      ? `**Your next match** (${mine.name})\n${line(next)}`
+      : `**${mine.name}** has no matches left to play right now.`);
+  }
+  parts.push("**Coming up**\n" + upcoming.slice(0, 10).map(line).join("\n") +
+    (upcoming.length > 10 ? `\n-# …and ${upcoming.length - 10} more` : ""));
+  parts.push("-# Times show in your own timezone. Keep 7PM–2AM free on match days.");
+  return parts.join("\n\n");
+}
+
 /* ── autocomplete ────────────────────────────────────────────────────────── */
 
 // Fires as the user types, so they pick a real name instead of guessing spelling.
@@ -287,57 +495,13 @@ async function onButton(out, customId, guild, discordId, origin, body) {
   // The whole point: registering is one tap, with no link to follow and nothing
   // to log into. Every failure says exactly what to do next.
   if (customId === "volt_register" || customId === "volt_register_captain") {
-    const wantsCaptain = customId === "volt_register_captain";
-    const r = await rpc("volt_dc_register", {
-      p_guild: guild || null, p_discord_id: discordId, p_captain: wantsCaptain });
-
-    // A newcomer pressing this button is the most common first contact anyone
-    // has with VOLT. Bouncing them with "I don't know who you are" wastes it —
-    // so every failure hands back the exact link that fixes it. The reply is
-    // ephemeral, so the channel stays clean however many people tap it.
-    if (r?.error === "link") {
-      const j = joinUrl(origin, r.league);
-      return reply(out,
-        `**Welcome!** You're not in ${r.league?.name || "the league"} yet — it takes about a minute.\n\n` +
-        `**1.** Sign up here: ${j}\n` +
-        `**2.** Fill in your rank, role and a WhatsApp number.\n` +
-        `**3.** Press **Connect Discord** on your profile.\n\n` +
-        `Then come back and tap the button again — it'll put you straight in the pool.`);
-    }
-    if (r?.error === "closed") return reply(out,
-      "There's no tournament open for sign-ups at the moment. I'll post in here the moment there is.");
-    if (r?.error === "already") return reply(out,
-      "✅ **You're already in — nothing more to do.**\n" +
-      "You signed up on the site, so I've got you. I'll DM you the day before the draft to check " +
-      "you're still free, and again when the draft is about to start.");
-    if (r?.error === "suspended") return reply(out, `You're suspended for ${r.n} more tournament${r.n === 1 ? "" : "s"}.`);
-    if (r?.error === "profile") {
-      const miss = (r.missing || []).join(", ") || "a few details";
-      return reply(out,
-        `Almost — your profile still needs **${miss}**.\n\n` +
-        `Finish it here: ${joinUrl(origin, r.league)}\n` +
-        `Captains see your profile when they bid, so this is what gets you a fair price.\n\n` +
-        `Then tap the button again.`);
-    }
-    if (!r?.ok) return reply(out, "Couldn't sign you up. Try again in a moment.");
-
-    // Grant the player role immediately rather than waiting for the host's
-    // next sync — someone who just signed up should be pingable now, and show
-    // up in the member list as playing.
-    await setPlayerRole(guild, discordId, true);
-
-    return reply(out,
-      (r.status === "approved"
-        ? `You're in for **${r.weekend}**. I'll DM you the day before to check you're still free, and again when the draft is about to start.`
-        : `Application sent for **${r.weekend}** — the host will review it shortly, and I'll let you know either way.`) +
-      (r.pool ? "" : "\n_The draft pool has closed, so you're signed up as a reserve._") +
-      (wantsCaptain ? "\nYou've put your hand up to captain — the host decides." : ""));
+    return doRegister(out, guild, discordId, origin, customId === "volt_register_captain");
   }
   if (customId === "volt_confirm") {
     const r = await rpc("volt_dc_confirm", { p_guild: guild || null, p_discord_id: discordId });
     if (r?.error === "link") return needsLink(out);
-    if (r?.error === "noweekend") return reply(out, "No weekend is running.");
-    if (r?.error === "notin") return reply(out, "You're not signed up for this weekend.");
+    if (r?.error === "noweekend") return reply(out, "No tournament is running.");
+    if (r?.error === "notin") return reply(out, "You're not signed up for this tournament.");
     // A reserve confirming stays a reserve — pool membership is the host's
     // call. Saying "locked in" to them would be a lie.
     if (r.inPool === false) {
@@ -364,22 +528,79 @@ async function onButton(out, customId, guild, discordId, origin, body) {
       `-# Can't make it? No problem, you'll still be drafted and I'll DM you your team.`);
   }
 
-  if (customId === "volt_withdraw") {
-    const r = await rpc("volt_dc_withdraw", { p_guild: guild || null, p_discord_id: discordId });
-    if (r?.error === "link") return needsLink(out);
-    if (r?.error === "noweekend") return reply(out, "No weekend is running.");
-    if (r?.error === "notin") return reply(out, "You weren't signed up for this weekend.");
-    if (r?.error === "toolate") return reply(out,
-      "The draft has already started, so I can't pull you out from here — message your host directly.");
-    // Pulling out drops the role too, so the next ping doesn't reach someone
-    // who already said they can't make it.
-    await setPlayerRole(guild, discordId, false);
-    return reply(out,
-      `Thanks for telling us — you're out of **${r.weekend}**. No strike, and no hard feelings.\n` +
-      `You're on the reserve list, so if your weekend frees up you can still be subbed into a match.\n\n` +
-      `-# Changed your mind? Flip "I'm playing this tournament" back on in VOLT.`);
-  }
+  if (customId === "volt_withdraw") return doWithdraw(out, guild, discordId);
 
+  return onButtonRest(out, customId, guild, discordId, body);
+}
+
+// Sign-up, shared by the announcement buttons and /signup so both say the same
+// thing in every case.
+async function doRegister(out, guild, discordId, origin, wantsCaptain) {
+  const r = await rpc("volt_dc_register", {
+    p_guild: guild || null, p_discord_id: discordId, p_captain: wantsCaptain });
+
+  // A newcomer pressing this button is the most common first contact anyone
+  // has with VOLT. Bouncing them with "I don't know who you are" wastes it —
+  // so every failure hands back the exact link that fixes it. The reply is
+  // ephemeral, so the channel stays clean however many people tap it.
+  if (r?.error === "link") {
+    const j = joinUrl(origin, r.league);
+    return reply(out,
+      `**Welcome!** You're not in ${r.league?.name || "the league"} yet — it takes about a minute.\n\n` +
+      `**1.** Sign up here: ${j}\n` +
+      `**2.** Fill in your rank, role and a WhatsApp number.\n` +
+      `**3.** Press **Connect Discord** on your profile.\n\n` +
+      `Then come back and tap the button again (or run \`/signup\`) — it'll put you straight in the pool.`);
+  }
+  if (r?.error === "closed") return reply(out,
+    "There's no tournament open for sign-ups at the moment. I'll post in here the moment there is.");
+  if (r?.error === "already") return reply(out,
+    "✅ **You're already in — nothing more to do.**\n" +
+    "You signed up on the site, so I've got you. I'll DM you the day before the draft to check " +
+    "you're still free, and again when the draft is about to start.");
+  if (r?.error === "suspended") return reply(out, `You're suspended for ${r.n} more tournament${r.n === 1 ? "" : "s"}.`);
+  if (r?.error === "profile") {
+    const miss = (r.missing || []).join(", ") || "a few details";
+    return reply(out,
+      `Almost — your profile still needs **${miss}**.\n\n` +
+      `Finish it here: ${joinUrl(origin, r.league)}\n` +
+      `Captains see your profile when they bid, so this is what gets you a fair price.\n\n` +
+      `Then tap the button again (or run \`/signup\`).`);
+  }
+  if (!r?.ok) return reply(out, "Couldn't sign you up. Try again in a moment.");
+
+  // Grant the player role immediately rather than waiting for the host's
+  // next sync — someone who just signed up should be pingable now, and show
+  // up in the member list as playing.
+  await setPlayerRole(guild, discordId, true);
+
+  return reply(out,
+    (r.status === "approved"
+      ? `You're in for **${r.weekend}**. I'll DM you the day before to check you're still free, and again when the draft is about to start.`
+      : `Application sent for **${r.weekend}** — the host will review it shortly, and I'll let you know either way.`) +
+    (r.pool ? "" : "\n_The draft pool has closed, so you're signed up as a reserve._") +
+    (wantsCaptain ? "\nYou've put your hand up to captain — the host decides." : ""));
+}
+
+// Pulling out, shared by the DM button and /withdraw.
+async function doWithdraw(out, guild, discordId) {
+  const r = await rpc("volt_dc_withdraw", { p_guild: guild || null, p_discord_id: discordId });
+  if (r?.error === "link") return needsLink(out);
+  if (r?.error === "noweekend") return reply(out, "No tournament is open right now.");
+  if (r?.error === "notin") return reply(out, "You weren't signed up for this tournament.");
+  if (r?.error === "toolate") return reply(out,
+    "The draft has already started, so I can't pull you out from here — message your host directly.");
+  // Pulling out drops the role too, so the next ping doesn't reach someone
+  // who already said they can't make it.
+  await setPlayerRole(guild, discordId, false);
+  return reply(out,
+    `Thanks for telling us — you're out of **${r.weekend}**. No strike, and no hard feelings.\n` +
+    `You're on the reserve list, so if your weekend frees up you can still be subbed into a match.\n\n` +
+    `-# Changed your mind? Run \`/signup\`, or flip "I'm playing this tournament" back on in VOLT.`);
+}
+
+// Predictions and sub offers.
+async function onButtonRest(out, customId, guild, discordId, body) {
   // A prediction. The kick-off cutoff is enforced in volt_dc_predict rather
   // than here: the message stays in the channel indefinitely, so someone can
   // always tap it after the match has started.
@@ -430,10 +651,6 @@ async function onButton(out, customId, guild, discordId, origin, body) {
 
 const num = (v, d = 2) => (v == null ? "—" : Number(v).toFixed(d));
 
-// Per-request scratch space. Vercel gives each invocation its own module
-// instance, so there's no cross-request bleed between different leagues.
-const ctx = { tag: null };
-
 // Add or remove the league's player role for one person. Best-effort by
 // design: a missing permission must never turn a successful sign-up into an
 // error, and the host's next full sync will correct it either way.
@@ -461,7 +678,10 @@ async function tagFor(guild) {
 
 // `-#` is Discord's subtext: small and grey, so the tag labels the message
 // without competing with it. Prepended in one place so every reply carries it.
-const stamp = (content) => (ctx.tag ? `-# ◈ ${ctx.tag}\n${content}` : content);
+// The tag rides on the per-request `out`, never module state: Vercel can run
+// several interactions in one instance at once, and a shared slot stamped one
+// league's replies with another league's tournament.
+const stamp = (content, tag) => (tag ? `-# ◈ ${tag}\n${content}` : content);
 
 // Records the reply rather than sending it. The deferred flow above does the
 // sending, which means every existing `return reply(...)` call site keeps
@@ -478,7 +698,7 @@ function reply(out, content, extra) {
 // Build a reply payload the same way whether it goes out as an immediate
 // response or as a followup edit, so the two paths can't drift apart.
 function payloadFor(out, ephemeral) {
-  const d = { content: stamp(out.content || "Done.").slice(0, 1900) };
+  const d = { content: stamp(out.content || "Done.", out.tag).slice(0, 1990) };
   if (out.embeds) d.embeds = out.embeds;
   if (out.allowedMentions) d.allowed_mentions = out.allowedMentions;
   if (ephemeral) d.flags = EPHEMERAL;

@@ -8,22 +8,38 @@
 //
 // Env vars: DISCORD_BOT_TOKEN, VOLT_NOTIFY_SECRET
 
+// Option types: 3 = string, 5 = boolean.
 const COMMANDS = [
+  { name: "help",        description: "Everything the VOLT bot can do" },
   {
-    name: "link",
-    description: "Connect your Discord account to your VOLT profile",
-    options: [{ name: "code", description: "The 6-character code from VOLT", type: 3, required: true }],
+    name: "signup",
+    description: "Sign up for the next tournament",
+    options: [{ name: "captain", description: "Put your hand up to captain (the host decides)", type: 5, required: false }],
   },
-  { name: "status",      description: "How this weekend's registration is going" },
+  { name: "withdraw",    description: "Pull out of the tournament before the draft — no strike" },
+  { name: "status",      description: "How this tournament's sign-ups are going" },
+  { name: "schedule",    description: "Upcoming matches — your team's first" },
+  { name: "standings",   description: "The current tournament table" },
   { name: "me",          description: "Your rank, stats and season points" },
-  { name: "roster",      description: "Your team and teammates this weekend" },
-  { name: "leaderboard", description: "Season leaderboard" },
+  { name: "roster",      description: "Your team and teammates this tournament" },
+  {
+    name: "leaderboard",
+    description: "Season leaderboard",
+    options: [{ name: "sort", description: "What to rank by", type: 3, required: false,
+      choices: [{ name: "Average combat score", value: "acs" }, { name: "Season points", value: "points" }] }],
+  },
+  { name: "predictions", description: "Who's calling matches best this season" },
   { name: "subs",        description: "Who's available to sub in" },
   { name: "rollcall",    description: "Show who hasn't connected Discord yet" },
   {
     name: "scout",
     description: "Look up any player's rank, stats and record",
     options: [{ name: "player", description: "Start typing a name", type: 3, required: true, autocomplete: true }],
+  },
+  {
+    name: "link",
+    description: "Connect your Discord account to your VOLT profile",
+    options: [{ name: "code", description: "The 6-character code from VOLT", type: 3, required: true }],
   },
 ];
 

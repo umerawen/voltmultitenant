@@ -7,7 +7,8 @@
 // Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY, VOLT_NOTIFY_SECRET
 
 const API = "https://discord.com/api/v10";
-const WINDOW_MINS = 60;
+const WINDOW_MINS = 60;        // last-call reminder
+const AUTO_OPEN_MINS = 180;    // post any unopened card this close to kick-off
 
 export default async function handler(req, res) {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -45,13 +46,22 @@ export default async function handler(req, res) {
       if (!eventId) return res.status(400).json({ error: "eventId is required" });
       due = await rpcAs(jwt, "volt_pred_open_all", { p_event: eventId });
     } else {
-      due = await rpc("volt_pred_due", { p_mins: WINDOW_MINS, p_mode: "remind" });
+      // The timer does two jobs. It opens any card still unposted 3 hours
+      // before kick-off (opening was manual only, so a match whose teams were
+      // settled late — the final, after the semis — never got one), and it
+      // sends the last call an hour out.
+      const [opens, reminds] = await Promise.all([
+        rpc("volt_pred_due", { p_mins: AUTO_OPEN_MINS, p_mode: "autoopen" }),
+        rpc("volt_pred_due", { p_mins: WINDOW_MINS, p_mode: "remind" }),
+      ]);
+      due = [...(opens || []).map((m) => ({ ...m, kind: "open" })), ...(reminds || []).map((m) => ({ ...m, kind: "remind" }))];
     }
     if (!Array.isArray(due) || !due.length) return res.status(200).json({ posted: 0, mode });
 
     let posted = 0;
     const errors = [];
     for (const m of due) {
+      const kind = m.kind || mode;
       // Where to post. Falls back to the announcements channel if the league
       // hasn't built a #predictions channel yet — better a slightly noisy
       // announcement than a silently skipped match.
@@ -59,7 +69,7 @@ export default async function handler(req, res) {
         || (await community(m.communityId))?.discord_channel_id;
       if (!ch) { errors.push(`${m.a} vs ${m.b}: no channel`); continue; }
 
-      const body = mode === "open"
+      const body = kind === "open"
         ? [
             `## ${m.a}  vs  ${m.b}`,
             "",
@@ -80,7 +90,7 @@ export default async function handler(req, res) {
       };
       // The reminder pings the role; the opening card doesn't, so posting six
       // at once doesn't notify everyone six times.
-      if (mode === "remind") {
+      if (kind === "remind") {
         const role = (await community(m.communityId))?.discord_role_id;
         if (role) {
           payload.content = `<@&${role}>  ${payload.content}`;
@@ -92,7 +102,7 @@ export default async function handler(req, res) {
 
       // Stamp only after a successful post, so a failure retries next tick.
       await rpc("volt_pred_mark", { p_event: m.eventId, p_match: m.matchId,
-        p_field: mode === "open" ? "predictedAt" : "remindedAt" });
+        p_field: kind === "open" ? "predictedAt" : "remindedAt" });
       posted++;
     }
     return res.status(200).json({ posted, mode, errors });
