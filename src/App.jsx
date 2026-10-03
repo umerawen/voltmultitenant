@@ -6025,8 +6025,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
   /* ── desktop rail — persistent primary nav, collapsible ↔ wide ── */
   const railSections = [
-    { title: "League", items: NAV },
-    { title: "Tournament", items: TOURNEY_NAV },
+    { title: "Tournament", items: NAV },
+    { title: "Matches", items: TOURNEY_NAV },
   ].map(s => ({ ...s, items: s.items.filter(n => !n.adminOnly || isAdmin) })).filter(s => s.items.length);
   const RAIL_W = railWide ? 224 : 60;
   const railItem = (key, glyph, label, { active = false, liveDot = false, onClick, color } = {}) => (
@@ -6049,12 +6049,14 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     <nav aria-label="Primary" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: RAIL_W, display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", padding: railWide ? "12px 8px 14px" : "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif", transition: "width .18s cubic-bezier(.2,.8,.3,1)", overflowY: "auto", overflowX: "hidden" }}>
       {/* league mark + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: railWide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: railWide ? 4 : 0 }}>
-        <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
+        {/* The league mark doubles as the way home, as logos usually do. */}
+        <button onClick={chrome?.onHub || undefined} disabled={!chrome?.onHub} aria-label="Back to the league page" title="League home"
+          className="flex items-center gap-2" style={{ minWidth: 0, background: "none", border: "none", padding: 0, cursor: chrome?.onHub ? "pointer" : "default" }}>
           <span className="grid place-items-center shrink-0" style={{ width: 42, height: 42, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)" }}>
             <span style={{ fontSize: 19, fontWeight: 700, color: "#3d7bff", textShadow: "0 0 12px rgba(61,123,255,0.8)" }}>{(window.__VOLT.communityName || "V").slice(0, 1).toUpperCase()}</span>
           </span>
           {railWide && <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#3d7bff", textShadow: "0 0 14px rgba(61,123,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{window.__VOLT.communityName || "VOLT"}</span>}
-        </div>
+        </button>
         {railWide && (
           <button onClick={() => setRailWide(false)} aria-label="Collapse navigation" title="Collapse"
             style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}>«</button>
@@ -6072,7 +6074,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </button>
       )}
       <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
-      {/* the portal/registration entry now lives in the top bar */}
+      {/* Back to the league page, first in the list so it's never hunted for. */}
+      {chrome?.onHub && <>
+        {railItem("__hub", "‹", "League home", { onClick: chrome.onHub, color: "#7da6ff" })}
+        <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "6px 6px 8px" : "6px auto 8px", background: "rgba(120,150,220,0.2)" }} />
+      </>}
       {railSections.map((sec, si) => (
         <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", gap: 2 }}>
           {si > 0 && <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px" : "8px auto", background: "rgba(120,150,220,0.2)" }} />}
@@ -14957,6 +14963,8 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       isHost,
       portalLabel: inReg ? "Registration" : "League hub",
       onBack: inReg ? () => setRegView("gate") : onBack,
+      // Always the league page, whatever the phase — the rail's way home.
+      onHub: onBack,
       phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
       draftAt: ev?.draft_at || null,
       // Confirmed captain for this tournament, from the registration record. The
