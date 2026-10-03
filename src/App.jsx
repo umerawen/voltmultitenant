@@ -164,6 +164,22 @@ const AGENT_ART = {
 };
 const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 const IMG_HERO = "/img/hero.webp";
+// Stock art (Pexels licence: free for commercial use, no credit needed).
+const IMG_ARENA = "/img/stock-arena.webp";   // competition PCs, red chairs, blue light
+const IMG_CROWD = "/img/stock-crowd.webp";   // crowd under blue stage lights
+const IMG_KEYS = "/img/stock-keys.webp";     // backlit keyboard close-up
+const VID_LINES = { src: "/video/lines.mp4", poster: "/video/lines-poster.webp" };          // Nicola Narracci, Pexels
+const VID_PARTICLES = { src: "/video/particles.mp4", poster: "/video/particles-poster.webp" }; // Nicola Narracci, Pexels
+
+// A muted looping background clip. With reduced motion it's the poster frame
+// only, and it never steals focus or sound. The poster shows while it loads.
+function BgVideo({ video, style, className }) {
+  const still = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const base = { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none", ...style };
+  if (still) return <img src={video.poster} alt="" aria-hidden className={className} style={base} />;
+  return <video src={video.src} poster={video.poster} autoPlay muted loop playsInline preload="metadata"
+    aria-hidden tabIndex={-1} disablePictureInPicture className={className} style={base} />;
+}
 
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1721,9 +1737,11 @@ function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVot
 function TChampion({ team }) {
   if (!team) return null;
   return (
-    <div className="relative flex flex-col items-center gap-1 py-5 px-8 mx-auto" style={{ maxWidth: 420, background: `linear-gradient(160deg, ${team.hue}22, rgba(10,15,28,0.6))`, border: `1px solid ${team.hue}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", boxShadow: `0 0 50px ${team.hue}33` }}>
-      <p className="uppercase text-xs font-bold tracking-[0.3em]" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Champion ★</p>
-      <p className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.4rem", lineHeight: 1, color: team.hue, letterSpacing: "0.03em" }}>{team.name}</p>
+    <div className="relative flex flex-col items-center gap-1 py-7 px-8 mx-auto overflow-hidden" style={{ maxWidth: 560, background: `linear-gradient(160deg, ${team.hue}22, rgba(10,15,28,0.6))`, border: `1px solid ${team.hue}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", boxShadow: `0 0 50px ${team.hue}33` }}>
+      <img src={IMG_CROWD} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.35, pointerEvents: "none",
+        maskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)", WebkitMaskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)" }} />
+      <p className="uppercase text-xs font-bold tracking-[0.3em] relative" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Champion ★</p>
+      <p className="font-bold uppercase relative" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.8rem", lineHeight: 1, color: team.hue, letterSpacing: "0.03em", textShadow: `0 0 30px ${team.hue}88` }}>{team.name}</p>
     </div>
   );
 }
@@ -1976,6 +1994,9 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
     <div className="view-in page-wrap py-8">
       <style>{FX_CSS}</style>
       <div style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
+        {/* A real competition floor behind the agent, faded into the panel. */}
+        <img src={champion ? IMG_CROWD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "75%", height: "100%", objectFit: "cover", objectPosition: "center 45%",
+          opacity: 0.32, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
         <CardArt hue={H} agent={BANNER_AGENT[t.format] || "Jett"} />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
@@ -3738,18 +3759,22 @@ function Leaderboard({ isAdmin }) {
 
   return (
     <div className="view-in page-wrap py-8">
-      <div className="flex items-center gap-3 mb-1">
-        <span style={{ width: 26, height: 3, background: "#3d7bff" }} />
-        <span className="uppercase text-xs tracking-[0.3em]" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>Season standings · every match counts</span>
-      </div>
-      <h1 className="text-5xl font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.02em" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
-      <p className="text-sm mb-4" style={{ color: "rgba(200,215,255,0.5)" }}>
+      {/* Same banner as the home and fixtures pages, with its own picture. */}
+      <div style={{ ...PANEL("rgba(61,123,255,0.4)", "24px 28px 20px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18 }}>
+        <img src={IMG_KEYS} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "70%", height: "100%", objectFit: "cover", objectPosition: "center 60%",
+          opacity: 0.5, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+        <div style={{ position: "relative" }}>
+      <div style={{ ...SEC_LABEL, color: "#7da6ff", marginBottom: 6 }}>// Season standings · every match counts</div>
+      <h1 className="font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.01em", fontSize: "clamp(34px, 4.6vw, 52px)", lineHeight: 0.95, textShadow: "0 0 36px rgba(61,123,255,0.35)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
+      <p className="text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
         {sortBy === "acs"
           ? "Ranked by average combat score — output per game, wins aside."
           : "Ranked by season points — 50 a win, plus ACS÷4 and kills."}
         {isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}
       </p>
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2">
         {[["acs", "Top ACS"], ["pts", "Top points"]].map(([k, label]) => (
           <button key={k} onClick={() => setSortBy(k)}
             className="text-xs uppercase tracking-widest px-4 py-2"
@@ -3761,6 +3786,8 @@ function Leaderboard({ isAdmin }) {
             {label}
           </button>
         ))}
+      </div>
+        </div>
       </div>
 
       <style>{DASH_CSS}</style>
@@ -7454,6 +7481,8 @@ function VoltGate() {
         <img src={IMG_GATE_BG} alt="" className="volt-bg-img"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%",
             opacity: 0.38, filter: "brightness(0.62) saturate(1.08)" }} />
+        {/* Slow particle drift over the art, screened in so only the light shows. */}
+        <BgVideo video={VID_PARTICLES} style={{ opacity: 0.55, mixBlendMode: "screen" }} />
 
         {/* circuit grid — perspective floor with pulses running up its lines */}
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "42%", overflow: "hidden",
@@ -11279,6 +11308,8 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
                : phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
       {phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
       {gold && <span aria-hidden className="volt-shimmer" />}
+      {(phase === "matches_live" || gold) && <img src={gold ? IMG_CROWD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "62%", height: "100%", objectFit: "cover",
+        opacity: 0.3, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 65%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 65%)" }} />}
       {/* Both brackets, matching the auction block — one alone reads as a
           rendering glitch rather than a deliberate frame. */}
       <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
@@ -13894,8 +13925,9 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <div className="volt-lg-hero" style={{ ...PANEL(`${H}55`, "30px 34px 28px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(18),
               marginBottom: 14, minHeight: 300, display: "flex", flexDirection: "column" }}>
               <CardArt hue={H} bare />
-              <img className="volt-lg-art" src={IMG_HERO} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "68%", height: "100%",
-                objectFit: "cover", objectPosition: "70% 30%", pointerEvents: "none", opacity: 0.9,
+              {/* Moving neon behind the league name — the one place the league
+                  itself gets motion; agent art is kept for players' own cards. */}
+              <BgVideo video={VID_LINES} className="volt-lg-art" style={{ left: "auto", right: 0, width: "70%", opacity: 0.85,
                 maskImage: "linear-gradient(90deg, transparent 0%, #000 45%)", WebkitMaskImage: "linear-gradient(90deg, transparent 0%, #000 45%)" }} />
               <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%", pointerEvents: "none",
                 background: `repeating-linear-gradient(105deg, transparent 0 46px, ${H}14 46px 52px, transparent 52px 110px, ${H}0c 110px 140px)`,
