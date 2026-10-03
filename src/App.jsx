@@ -262,15 +262,25 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Tally win/loss/points across all of a tournament's tournament matches (+3 per win),
 // used to snapshot standings into the season log at settle time.
+// Every match in a tournament, whatever the format: group matches (stored as
+// { groupId: [...] }), semis and final; league/round-robin matches and final;
+// bracket rounds. Module scope so the draft room and the settle flow agree.
+function tournamentMatches(t) {
+  if (!t) return [];
+  const out = [];
+  if (Array.isArray(t.matches)) t.matches.forEach((m) => out.push(m));
+  else if (t.matches && typeof t.matches === "object") Object.values(t.matches).forEach((a) => Array.isArray(a) && a.forEach((m) => out.push(m)));
+  (t.semis || []).forEach((m) => out.push(m));
+  if (t.final) out.push(t.final);
+  (t.rounds || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
+  return out.filter(Boolean);
+}
+
 function computeSeasonPoints(s) {
   const t = s.tournament; if (!t) return [];
   const acc = {};
   const ensure = (id) => { if (id && !acc[id]) acc[id] = { teamId: id, won: 0, lost: 0, pts: 0 }; };
-  const allMatches = [];
-  if (t.groups) Object.values(t.groups).forEach(g => (g.matches || []).forEach(m => allMatches.push(m)));
-  if (Array.isArray(t.matches)) t.matches.forEach(m => allMatches.push(m));
-  else if (t.matches && typeof t.matches === "object") Object.values(t.matches).forEach(a => Array.isArray(a) && a.forEach(m => allMatches.push(m)));
-  if (t.rounds) t.rounds.forEach(r => (r || []).forEach(m => allMatches.push(m)));
+  const allMatches = tournamentMatches(t);
   for (const m of allMatches) {
     if (!m || !m.done || m.teamA == null || m.teamB == null) continue;
     ensure(m.teamA); ensure(m.teamB);
@@ -4513,19 +4523,16 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const load = async () => {
       let s = await readState();
       if (!s) {
-        // First boot for this community: build teams from real registered captains.
-        let captains = null;
-        if (HAS_SUPABASE && window.__VOLT.communityId) {
-          try {
-            const { data } = await __sb
-              .from("users")
-              .select("id, display_name, wants_captain, role")
-              .eq("community_id", window.__VOLT.communityId);
-            const caps = (data || []).filter(u => u.wants_captain || u.role === "captain");
-            if (caps.length >= 2) captains = caps.map(u => ({ userId: u.id, name: u.display_name }));
-          } catch (e) { console.error("load captains", e); }
+        // No board yet: build it from THIS tournament's registrations — the
+        // same source the host's "open draft" uses. This used to pull anyone
+        // in the league who'd ever ticked wants_captain, so the teams didn't
+        // match who had actually signed up.
+        let captains = null, pool = null;
+        if (HAS_SUPABASE && window.__VOLT.weekendId) {
+          try { ({ captains, pool } = await fetchRosterForEvent(window.__VOLT.weekendId)); }
+          catch (e) { console.error("load roster", e); }
         }
-        s = await writeState(freshState(captains));
+        s = await writeState(freshState(captains, pool));
       }
 
       // Fold in anyone approved since the board was built, ONCE, on open.
@@ -13669,21 +13676,18 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       // WeekendApp has no board in scope, so read it. A minimal flatten is
       // enough here — we only need played fixtures, whatever the format.
       const board = await readState();
-      const t = board?.tournament || null;
-      const all = [];
-      if (t) {
-        if (t.groups) Object.values(t.groups).forEach(g => (g?.matches || []).forEach(m => m && all.push(m)));
-        if (Array.isArray(t.matches)) t.matches.forEach(m => m && all.push(m));
-        else if (t.matches) Object.values(t.matches).forEach(a => Array.isArray(a) && a.forEach(m => m && all.push(m)));
-        if (t.rounds) t.rounds.forEach(r => (r || []).forEach(m => m && all.push(m)));
-        if (t.final) all.push(t.final);
-      }
+      const all = tournamentMatches(board?.tournament);
+      // Refresh first: the cached labels can be minutes old by the time the
+      // host settles.
+      await refreshReported();
       const reported = window.__VOLT?.reportedLabels || new Set();
       const missing = all.filter(m => {
         if (!m.done || m.teamA == null || m.teamB == null) return false;
         const A = (board.teams || []).find(x => x.id === m.teamA);
         const B = (board.teams || []).find(x => x.id === m.teamB);
-        return A && B && !reported.has(`${A.name} vs ${B.name}`);
+        // Same label the report writes (it carries a match-id suffix). Matching
+        // on "A vs B" alone flagged every match as unreported.
+        return A && B && !reported.has(fxLabel(A, B, m));
       });
       if (missing.length && !window.confirm(
         `${missing.length} match${missing.length === 1 ? " has" : "es have"} a score but no player stats recorded.\n\n` +
@@ -13750,11 +13754,10 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         } catch (e) { /* standings optional */ }
       }
       const payload = { weekendId: ev.id, label: ev.weekend_label, at: Date.now(), rows };
-      // Season key is community-wide; one row per tournament.
-      const prevWin = window.__VOLT.weekendId;
-      window.__VOLT.weekendId = null; // write to the community-level season log, not the tournament board
+      // Season key is community-wide; one row per tournament. storage.set is
+      // keyed by its own name, so there's no need to blank weekendId — doing so
+      // pointed every board poll at the wrong board for the length of the write.
       await window.storage.set("season-standings::" + ev.id, JSON.stringify(payload), true);
-      window.__VOLT.weekendId = prevWin;
     } catch (e) { console.error("snapshotStandings", e); }
   }
 
@@ -13782,7 +13785,10 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
           if (fm?.done && fm.winner) { champTeamId = fm.winner; decidedByFinal = true; }
         }
         if (champTeamId) kind = t.format === "single" ? "bracket" : "tournament";
-        const standings = computeStandings(t.teamIds || s.teams.map(x => x.id), t.matches || [], t.overrides);
+        // Group matches live in an object keyed by group, so hand computeStandings
+        // a flat list — iterating the object threw, and settle died here.
+        const teamIds = t.teamIds || (t.groups ? t.groups.flatMap(g => g.teamIds || []) : s.teams.map(x => x.id));
+        const standings = computeStandings(teamIds, tournamentMatches(t), t.overrides);
         const champ = champTeamId
           ? { teamId: champTeamId }
           : (standings.find(r => r.played > 0) ? standings[0] : null);
@@ -13805,7 +13811,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         const { data: mrs } = await __sb.from("match_results").select("user_id, points_computed, team_won, stat_payload").eq("event_id", ev.id);
         const rows = mrs || [];
         // MVP: single highest-scoring match line.
-        let mvp = null; rows.forEach(r => { if (!mvp || Number(r.points_computed || 0) > mvp.pts) mvp = { name: r.stat_payload?.name || "Player", pts: Number(r.points_computed || 0) }; });
+        let mvp = null; rows.forEach(r => { if (!mvp || Number(r.points_computed || 0) > mvp.pts) mvp = { name: r.stat_payload?.name || "Player", pts: Math.round(Number(r.points_computed || 0)) }; });
         // Top fragger: most kills summed across the tournament.
         const kills = {};
         rows.forEach(r => { const nm = r.stat_payload?.name || "Player"; kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0); });
@@ -13838,7 +13844,12 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         }));
         await voltNotify(notes);
       } catch (e) { console.error("settle notify", e); }
-    } catch (e) { console.error("settleTrophies", e); }
+    } catch (e) {
+      // Rethrow so advance() aborts the phase change. Swallowing this let a
+      // tournament flip to "settled" with no champion, trophies or recap.
+      console.error("settleTrophies", e);
+      throw e;
+    }
   }
 
   // Force a rebuild from current registered captains (wipes the tournament board).
@@ -14575,14 +14586,23 @@ function MatchReport({ ev, onDone, prefill }) {
       // blank form used to stack a second set of rows and double every player's
       // points — silently, because nothing in the UI showed the duplicate.
       const clearKey = editing || ml;   // `ml` is the label these rows are saved under
+      // Keep a copy: delete-then-insert isn't atomic, and a failed insert used
+      // to leave the match with no stats at all.
+      const { data: before } = await __sb.from("match_results").select("*").eq("event_id", ev.id).eq("match_label", clearKey);
       const { error: delErr } = await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", clearKey);
       if (delErr) throw delErr;
       const { error } = await __sb.from("match_results").insert(rows);
-      // The DB also enforces one row per (event, player, match). If that trips,
-      // say what happened rather than surfacing a constraint name.
-      if (error) throw new Error(/match_results_uniq|duplicate key/i.test(error.message || "")
-        ? "That match is already recorded. Open it from the bracket to edit it instead."
-        : error.message);
+      if (error) {
+        if (before?.length) {
+          const { error: restoreErr } = await __sb.from("match_results").insert(before);
+          if (restoreErr) console.error("restore after failed save", restoreErr);
+        }
+        // The DB also enforces one row per (event, player, match). If that trips,
+        // say what happened rather than surfacing a constraint name.
+        throw new Error(/match_results_uniq|duplicate key/i.test(error.message || "")
+          ? "That match name is already used by another recorded match. Change the label, or open that match to edit it."
+          : error.message);
+      }
       // Push the result to Discord. Deliberately after the save and outside the
       // failure path: a Discord outage must never make a recorded match look
       // like it didn't save. Worst case the host presses "Post standings".
