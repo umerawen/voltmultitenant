@@ -3488,7 +3488,7 @@ const MAP_IMG = {
 const MAP_TINT = {
   Ascent: "#6b8cff", Bind: "#d9a441", Breeze: "#4fc4d6", Corrode: "#b56ad9",
   Fracture: "#7a8a55", Haven: "#c4773f", Icebox: "#73b4e6", Lotus: "#5fae7a",
-  Pearl: "#4f8fd9", Split: "#8a93a8", Summit: "#8fb9c9", Sunset: "#e08a5a", Abyss: "#5566aa",
+  Pearl: "#4f8fd9", Split: "#8a93a8", Summit: "#5fc9b8", Sunset: "#e08a5a", Abyss: "#5566aa",
 };
 
 // One card. `state` = "active" | "off" (setup, toggled out) | "banned" | "decider" | "live".
