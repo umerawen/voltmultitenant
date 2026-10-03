@@ -2645,17 +2645,22 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
                 onKeyDown={(e) => e.key === "Enter" && save()}
                 className="w-full px-2 py-1 rounded text-xs outline-none"
                 style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }} />
-              <div className="flex gap-2 mt-1">
+              <div className="flex flex-wrap gap-2 mt-1">
                 <button onClick={save} className="px-3 py-1 text-xs font-bold uppercase tracking-widest rounded" style={{ background: "rgba(61,220,132,0.18)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>Save</button>
                 <button onClick={() => setEditing(false)} className="px-3 py-1 text-xs uppercase tracking-widest rounded" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>Cancel</button>
                 {canRemove && (
                   <button onClick={() => { if (confirmDel) { onRemove(team.id); } else { setConfirmDel(true); setTimeout(() => setConfirmDel(false), 4000); } }}
                     className="ml-auto px-3 py-1 text-xs uppercase tracking-widest rounded"
                     style={{ background: confirmDel ? "rgba(255,70,85,0.25)" : "transparent", border: "1px solid rgba(255,70,85,0.5)", color: "#ff8a94" }}>
-                    {confirmDel ? "Confirm?" : "Remove"}
+                    {confirmDel ? "Tap to confirm" : "Delete team"}
                   </button>
                 )}
               </div>
+              {confirmDel && (
+                <p className="text-[11px] leading-snug" style={{ color: "#ff8a94" }}>
+                  Deletes this roster.{rosterPlayers.length ? " Its players go back to the pool." : ""} The captain returns to the draw.
+                </p>
+              )}
             </div>
           ) : (
             <>
@@ -4972,17 +4977,32 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     s.log.unshift(`New team added — ${s.teams.length} teams in the draft`); s.log = s.log.slice(0, 8);
     return s;
   }, true, true);
-  const removeTeam = (teamId) => mutate((s) => {
-    if (s.teams.length <= MIN_TEAMS) return null;
-    if (s.block?.leaderId === teamId) return null; // can't remove the team holding the live bid
-    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
-    // return any drafted players to the pool
-    t.roster.forEach((pid) => { const p = s.players.find((x) => x.id === pid); if (p) { p.status = "pool"; p.soldTo = null; p.soldPrice = null; } });
-    s.teams = s.teams.filter((x) => x.id !== teamId);
-    if (s.teamCodes) delete s.teamCodes[teamId];
-    s.log.unshift(`${t.name} removed — ${t.roster.length ? "drafted players returned to pool" : "had no draftees"}`); s.log = s.log.slice(0, 8);
-    return s;
-  }, true, true);
+  // No minimum: a board with fewer than two teams is a normal state (it's how
+  // every draft starts before captains sign up).
+  const removeTeam = (teamId) => {
+    const t0 = stateRef.current?.teams?.find((x) => x.id === teamId);
+    if (!t0 || stateRef.current?.block?.leaderId === teamId) return; // can't remove the team holding the live bid
+    mutate((s) => {
+      if (s.block?.leaderId === teamId) return null;
+      const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+      // return any drafted players to the pool
+      t.roster.forEach((pid) => { const p = s.players.find((x) => x.id === pid); if (p) { p.status = "pool"; p.soldTo = null; p.soldPrice = null; } });
+      // The captain goes back into the draw too. Left tagged, they'd sit outside
+      // the auction with no team, and the next rebuild would recreate this roster.
+      const cap = s.players.find((p) => p.isCaptain && ((t.captainUserId && p.id === t.captainUserId) || p.name === t.captain));
+      if (cap) cap.isCaptain = false;
+      s.teams = s.teams.filter((x) => x.id !== teamId);
+      if (s.teamCodes) delete s.teamCodes[teamId];
+      s.log.unshift(`${t.name} removed — ${t.roster.length ? "drafted players returned to pool" : "had no draftees"}`); s.log = s.log.slice(0, 8);
+      return s;
+    }, true, true);
+    // Keep the registration panel + future board rebuilds in agreement.
+    if (HAS_SUPABASE && t0.captainUserId && window.__VOLT.weekendId) {
+      __sb.from("registrations").update({ is_captain: false })
+        .eq("event_id", window.__VOLT.weekendId).eq("user_id", t0.captainUserId)
+        .then(({ error }) => { if (error) console.error("captain sync:", error.message); });
+    }
+  };
 
   /* ── manual roster edits (Host only) — add deducts the price, remove refunds it, so budget stays correct ── */
   const adminAddToRoster = (teamId, playerId, price) => mutate((s) => {
@@ -6778,7 +6798,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   /* ════════ VIEW: LOCKER ROOM ════════ */
-  const canRemoveTeam = state.teams.length > MIN_TEAMS;
   const LockerView = (
     <div className="view-in page-wrap py-6">
       <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
@@ -6796,7 +6815,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {state.teams.map((t) => (
-          <TeamCard key={t.id} team={t} players={state.players} lead={block?.leaderId === t.id} isAdmin={isAdmin} onRename={renameTeam} onScout={setScouted} onRemove={removeTeam} canRemove={canRemoveTeam} onAddToRoster={adminAddToRoster} onRemoveFromRoster={adminRemoveFromRoster} onSetBudget={setTeamBudget} />
+          <TeamCard key={t.id} team={t} players={state.players} lead={block?.leaderId === t.id} isAdmin={isAdmin} onRename={renameTeam} onScout={setScouted} onRemove={removeTeam} canRemove={block?.leaderId !== t.id} onAddToRoster={adminAddToRoster} onRemoveFromRoster={adminRemoveFromRoster} onSetBudget={setTeamBudget} />
         ))}
         {isAdmin && (
           <button onClick={addTeam} className="flex flex-col items-center justify-center gap-2 py-10 transition-all hover:scale-[1.02] min-h-[220px]"
