@@ -3416,7 +3416,7 @@ create policy regs_self_insert on public.registrations as PERMISSIVE for INSERT 
    FROM users
   WHERE (users.id = auth.uid())) = 0)));
 
--- regs_self_update existed here; dropped by migration 20261003000000_security_fixes.sql.
+-- regs_self_update existed here; dropped by migration 20261003093210_security_fixes.sql.
 
 create policy regs_staff_write on public.registrations as PERMISSIVE for ALL to public
   using (((community_id = auth_community_id()) AND auth_is_staff()))
@@ -3440,7 +3440,7 @@ create policy sub_requests_read on public.sub_requests as PERMISSIVE for SELECT 
 create policy tp_read on public.team_players as PERMISSIVE for SELECT to public
   using ((community_id = auth_community_id()));
 
--- tp_staff_write is recreated with a league check by migration 20261003000000.
+-- tp_staff_write is recreated with a league check by migration 20261003093210.
 create policy tp_staff_write on public.team_players as PERMISSIVE for ALL to public
   using (auth_is_staff())
   with check (auth_is_staff());
