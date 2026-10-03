@@ -2393,10 +2393,11 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
             )
           )}
           {isAdmin && onMoveReserve && !player.isCaptain && (
-            <button onClick={() => {
+            <button onClick={async () => {
                 const toReserve = player.poolEligible !== false;
-                if (toReserve && player.status === "sold" && !window.confirm(
-                  `Move ${player.name} to the reserves? ${fmt(Number(player.soldPrice) || 0)} goes back to their team and the roster slot reopens.`)) return;
+                if (toReserve && player.status === "sold" && !(await voltConfirm(
+                  `${fmt(Number(player.soldPrice) || 0)} goes back to their team and the roster slot reopens.`,
+                  { title: `Move ${player.name} to reserves?`, confirmLabel: "Move to reserves" }))) return;
                 onMoveReserve(player.id, !toReserve);
                 onClose();
               }}
@@ -5533,7 +5534,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
   const fonts = (
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap');
+      /* Fonts load once from index.html. */
       /* Global UI scale — bumps the whole app up a notch, like a light browser zoom. */
       html { zoom: 1.1; }
       /* Keyboard focus — visible ring for keyboard users only (not mouse clicks). */
@@ -6626,7 +6627,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 { p_event: window.__VOLT.weekendId, p_user: v });
               if (error) throw new Error(error.message);
               loadAuctioneer();
-            } catch (err) { alert(err.message || "Couldn't hand over the auction."); }
+            } catch (err) { voltAlert(err.message || "Couldn't hand over the auction.", { title: "Auctioneer" }); }
           }} className="text-xs uppercase tracking-widest px-3 py-2"
             title="Whoever holds this calls SOLD. Hand it over to free yourself up to bid."
             style={{ background: "rgba(10,16,30,0.8)",
@@ -7013,6 +7014,7 @@ function VoltGate() {
   const [pendingProfile, setPendingProfile] = useState(null); // open a player profile after routing to the hub
   const [hostNote, setHostNote] = useState("");
   const [noteSaved, setNoteSaved] = useState(false);
+  const [pendingChecked, setPendingChecked] = useState(null); // last "check again" on the pending screen
 
   // ?join=<code> lets a host post one link instead of asking people to copy a
   // code between two apps. Read once on mount and stripped from the URL, so a
@@ -7173,7 +7175,8 @@ function VoltGate() {
         if (existing.role === "host") {
           throw new Error("This account hosts another league. Hosts can't move — create a separate account to join as a player.");
         }
-        if (!window.confirm(`This account is already in another league. Joining "${c.name}" will move you out of it. Continue?`)) {
+        if (!(await voltConfirm(`This account is already in another league. Joining "${c.name}" will move you out of it.`,
+            { title: "Switch leagues?", confirmLabel: `Join ${c.name}` }))) {
           setBusy(false); return;
         }
       }
@@ -7359,6 +7362,26 @@ function VoltGate() {
     <button disabled={busy || noteSaved} onClick={saveHostNote} style={btn(!noteSaved)}>
       {noteSaved ? "✓ Sent — thanks" : busy ? "…" : "Send"}
     </button>
+    {/* There was no way off this screen: no refresh, no sign-out. */}
+    <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap", alignItems: "center" }}>
+      <button disabled={busy} onClick={async () => {
+          setBusy(true); setErr("");
+          try {
+            const { data } = await __sb.auth.getSession();
+            if (data?.session) await loadProfile(data.session.user.id);
+            setPendingChecked(Date.now());
+          } catch (e) { setErr(e.message || "Couldn't check right now."); }
+          setBusy(false);
+        }}
+        style={{ ...btn(false), width: "auto", flex: 1, minWidth: 140 }}>{busy ? "…" : "↻ Check again"}</button>
+      <button disabled={busy} onClick={async () => { try { await __sb.auth.signOut(); } catch (e) { console.error(e); } }}
+        style={{ ...btn(false), width: "auto", flex: 1, minWidth: 140 }}>Sign out</button>
+    </div>
+    {pendingChecked && (
+      <p style={{ margin: "10px 0 0", color: "rgba(200,215,255,0.5)", fontSize: 12.5 }}>
+        Still under review as of {new Date(pendingChecked).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}.
+      </p>
+    )}
   </>);
 
   // Join a league.
@@ -7477,6 +7500,8 @@ function ShellStyles() {
          way to reach it. Applied to the shared overlay's child, so it covers
          every dialog without each one needing its own class. */
       .volt-overlay { padding: 10px !important; align-items: start !important; }
+      /* Short confirm/alert dialogs read better centred. */
+      .volt-overlay.volt-overlay-center { align-items: center !important; }
       .volt-overlay > * {
         max-height: calc(100dvh - 20px) !important;
         overflow-y: auto !important;
@@ -7945,18 +7970,81 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied }) {
 // Flipping on IS the application (availability implied); veterans with 2+
 // ── Modal shell — portals to <body> so a parent's clip-path (our notched
 //    cards) can never clip it. Every full-screen overlay should use this.
-function VoltOverlay({ onClose, zIndex = 140, children, dim = "rgba(4,6,12,0.86)" }) {
+function VoltOverlay({ onClose, zIndex = 140, children, dim = "rgba(4,6,12,0.86)", center = false }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape" && onClose) onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return createPortal(
-    <div className="volt-overlay" onClick={onClose}
+    <div className={"volt-overlay" + (center ? " volt-overlay-center" : "")} onClick={onClose}
       style={{ position: "fixed", inset: 0, zIndex, background: dim, display: "grid", placeItems: "center", padding: 20 }}>
       {children}
     </div>,
     document.body
+  );
+}
+
+// ── In-app dialogs — replace window.confirm / alert / prompt, which render as
+//    an unstyled grey browser box (and a cramped one on phones). Call from
+//    anywhere: `if (!(await voltConfirm("Delete it?"))) return;`. One
+//    <VoltDialogHost/> at the app root renders whichever is open.
+const __dlg = { cur: null, subs: new Set() };
+function __openDialog(d) {
+  return new Promise((resolve) => {
+    // A second dialog while one is open: resolve the first as cancelled.
+    if (__dlg.cur) __dlg.cur.resolve(__dlg.cur.kind === "prompt" ? null : false);
+    __dlg.cur = { ...d, resolve: (v) => { __dlg.cur = null; __dlg.subs.forEach((f) => f()); resolve(v); } };
+    __dlg.subs.forEach((f) => f());
+  });
+}
+// opts: { title, confirmLabel, cancelLabel, danger }
+const voltConfirm = (message, opts = {}) => __openDialog({ kind: "confirm", message, ...opts });
+const voltAlert = (message, opts = {}) => __openDialog({ kind: "alert", message, ...opts });
+// opts.match: the text the person must type to enable the confirm button.
+const voltPrompt = (message, opts = {}) => __openDialog({ kind: "prompt", message, ...opts });
+
+function VoltDialogHost() {
+  const [, bump] = useState(0);
+  const [text, setText] = useState("");
+  useEffect(() => { const f = () => { bump((n) => n + 1); setText(""); }; __dlg.subs.add(f); return () => __dlg.subs.delete(f); }, []);
+  const d = __dlg.cur;
+  if (!d) return null;
+  const isPrompt = d.kind === "prompt", isAlert = d.kind === "alert";
+  const cancel = () => d.resolve(isPrompt ? null : isAlert ? undefined : false);
+  const matchOk = !isPrompt || !d.match || text.trim().toLowerCase() === String(d.match).trim().toLowerCase();
+  const ok = () => { if (!matchOk) return; d.resolve(isPrompt ? text : isAlert ? undefined : true); };
+  const accent = d.danger ? "#ff4655" : "#3d7bff";
+  return (
+    <VoltOverlay onClose={cancel} zIndex={400} center>
+      <div role="alertdialog" aria-modal="true" aria-label={d.title || "Confirm"} onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 440, padding: "22px 22px 18px", fontFamily: "'Rajdhani',sans-serif",
+          background: "linear-gradient(160deg, rgba(20,26,42,0.99), rgba(10,13,22,0.99))",
+          border: `1px solid ${accent}77`, clipPath: SHELL_NOTCH(14), boxShadow: "0 24px 60px rgba(0,0,0,0.6)" }}>
+        {d.title && (
+          <div style={{ fontSize: 11.5, letterSpacing: "0.28em", textTransform: "uppercase", fontWeight: 700, color: accent, marginBottom: 10 }}>
+            {d.title}
+          </div>
+        )}
+        <div style={{ fontSize: 15, lineHeight: 1.6, color: "rgba(226,234,255,0.9)", whiteSpace: "pre-line" }}>{d.message}</div>
+        {isPrompt && (
+          <input autoFocus value={text} onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") ok(); }}
+            placeholder={d.placeholder || (d.match ? `Type ${d.match}` : "")}
+            style={{ width: "100%", marginTop: 14, padding: "10px 12px", outline: "none", fontSize: 15,
+              background: "rgba(10,16,30,0.9)", border: `1px solid ${accent}66`, color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif" }} />
+        )}
+        <div style={{ display: "flex", gap: 10, marginTop: 18, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          {!isAlert && (
+            <button onClick={cancel} style={shellBtn("ghost", { padding: "10px 18px", fontSize: 12.5 })}>{d.cancelLabel || "Cancel"}</button>
+          )}
+          <button autoFocus={!isPrompt} onClick={ok} disabled={!matchOk}
+            style={shellBtn(d.danger ? "danger" : "primary", { padding: "10px 20px", fontSize: 12.5, opacity: matchOk ? 1 : 0.45 })}>
+            {d.confirmLabel || (isAlert ? "OK" : "Confirm")}
+          </button>
+        </div>
+      </div>
+    </VoltOverlay>
   );
 }
 
@@ -8151,7 +8239,8 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
       setTerms(true);                                     // must accept the commitment each tournament
       return;
     } else {
-      if (status === "approved" && !window.confirm(`Drop out of ${weekendName(ev)}? Your spot opens up — captains won't be able to draft you.`)) return;
+      if (status === "approved" && !(await voltConfirm("Your spot opens up — captains won't be able to draft you.",
+        { title: `Drop out of ${weekendName(ev)}?`, confirmLabel: "Drop out", danger: true }))) return;
       setBusy(true);
       try { const { error } = await __sb.rpc("volt_withdraw", { p_event: ev.id }); if (error) throw error; onChanged && await onChanged(); }
       catch (e) { setNote(e.message || "Could not withdraw."); }
@@ -8362,9 +8451,10 @@ function ModeratorToggle({ userId, role, name, onChanged }) {
   const isMod = role === "moderator";
   async function flip() {
     const next = isMod ? "player" : "moderator";
-    if (!window.confirm(isMod
-      ? `Remove ${name} as moderator? They'll go back to being a player.`
-      : `Make ${name} a moderator? They'll be able to approve players, assign captains, build brackets and report scores — but not settle or delete tournaments, run the live auction, or change roles.`)) return;
+    if (!(await voltConfirm(isMod
+      ? "They'll go back to being a player."
+      : "They'll be able to approve players, assign captains, build brackets and report scores — but not settle or delete tournaments, run the live auction, or change roles.",
+      { title: isMod ? `Remove ${name} as moderator?` : `Make ${name} a moderator?`, confirmLabel: isMod ? "Remove" : "Make moderator", danger: isMod }))) return;
     setBusy(true); setErr("");
     try {
       const { error } = await __sb.from("users").update({ role: next }).eq("id", userId);
@@ -8619,7 +8709,8 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
                       </span>
                       {isStaffViewer && (
                         <button onClick={async () => {
-                            if (!window.confirm("Discount this strike? It stops counting toward a suspension and lifts any active ban.")) return;
+                            if (!(await voltConfirm("It stops counting toward a suspension and lifts any active ban.",
+                              { title: "Discount this strike?", confirmLabel: "Discount strike" }))) return;
                             try { await __sb.from("registrations").update({ no_show: false }).eq("id", s.id); setD(null); }
                             catch (e) { console.error(e); }
                           }}
@@ -8823,7 +8914,7 @@ function DiscordServerCard() {
               {busy ? "…" : connected ? "Update" : "Connect"}
             </button>
             {connected && (
-              <button disabled={busy} onClick={() => { if (window.confirm("Disconnect Discord? Players stop getting DMs and announcements.")) save(true); }}
+              <button disabled={busy} onClick={async () => { if (await voltConfirm("Players stop getting DMs and announcements.", { title: "Disconnect Discord?", confirmLabel: "Disconnect", danger: true })) save(true); }}
                 style={shellBtn("ghost", { padding: "9px 14px", fontSize: 12 })}>Disconnect</button>
             )}
           </div>
@@ -10161,7 +10252,8 @@ function SubDesk({ eventId, onChanged }) {
                 </div>
               )}
               <button disabled={!!busy} onClick={async () => {
-                  if (!window.confirm(`Cancel the sub request for ${r.outName}?`)) return;
+                  if (!(await voltConfirm("Nobody else can offer for it once it's cancelled. You can ask again any time.",
+                    { title: `Cancel the sub request for ${r.outName}?`, confirmLabel: "Cancel request", cancelLabel: "Keep it", danger: true }))) return;
                   setBusy(r.id); setErr(""); setMsg("");
                   try { await cancel(r.id); setMsg("Request cancelled."); load(); }
                   catch (e) { setErr(e.message || "Couldn't cancel it."); }
@@ -12652,12 +12744,13 @@ function StaffPanel({ onOpenPlayer }) {
   // can't reverse on their own — only the new owner can give it back.
   async function transferOwnership(u) {
     const name = u.display_name || "this player";
-    const typed = window.prompt(
-      `Transfer ownership of this league to ${name}?\n\n` +
+    // The confirm button stays disabled until the name matches.
+    const typed = await voltPrompt(
       `They become the host with full control. You become a moderator — you keep ` +
       `approvals, brackets and scores, but you can no longer settle or delete tournaments, ` +
       `run the auction, or change roles. Only ${name} can give it back.\n\n` +
-      `Type their name to confirm:`);
+      `Type their name to confirm:`,
+      { title: `Transfer ownership to ${name}?`, match: name, confirmLabel: "Transfer ownership", danger: true });
     if (typed === null) return;
     if (typed.trim().toLowerCase() !== name.trim().toLowerCase()) {
       setErr("That name didn't match — nothing changed.");
@@ -12722,10 +12815,10 @@ function StaffPanel({ onOpenPlayer }) {
                   )}
                   {!isOwner && (
                     <button disabled={busyId === u.id}
-                      onClick={() => { if (window.confirm(
-                        `Make ${u.display_name || "this player"} a host?\n\n` +
+                      onClick={async () => { if (await voltConfirm(
                         `They get full control: settling and deleting tournaments, resetting the auction, league settings, and changing anyone's role — including yours.\n\n` +
-                        `You stay a host too. Do this before handing the league over, since a league can't be left without one.`
+                        `You stay a host too. Do this before handing the league over, since a league can't be left without one.`,
+                        { title: `Make ${u.display_name || "this player"} a host?`, confirmLabel: "Make host", danger: true }
                       )) setRole(u, "host"); }}
                       title="Give this player full control of the league"
                       style={shellBtn("ghost", { padding: "6px 11px", fontSize: 10.5, opacity: busyId === u.id ? 0.5 : 1 })}>
@@ -12817,9 +12910,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       setMyProf(await loadProfileGate(window.__VOLT.userId));
       const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", window.__VOLT.userId).maybeSingle();
       setMySusp(u?.suspension_remaining || 0);
-      const { data: ns } = await __sb.from("registrations").select("id")
-        .eq("community_id", window.__VOLT.communityId).eq("user_id", window.__VOLT.userId).eq("no_show", true);
-      setMyStrikes((ns || []).length);
+      setMyStrikes(await activeStrikeCount(window.__VOLT.userId));
     } catch (e) { console.error(e); }
   }
 
@@ -12948,7 +13039,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       setErr(`${weekendName(ev)} has ${count} reported stat line${count === 1 ? "" : "s"}. Deleting it would erase those season points — settle it instead, or delete its matches in Report match first.`);
       return;
     }
-    if (!window.confirm(`Delete ${weekendName(ev)}? This removes the tournament and its registrations.`)) return;
+    if (!(await voltConfirm("This removes the tournament and its registrations. It can't be undone.",
+      { title: `Delete ${weekendName(ev)}?`, confirmLabel: "Delete tournament", danger: true }))) return;
     try {
       // Registrations, notifications and the draft row cascade with the event,
       // in one statement — deleting registrations first left them gone if the
@@ -13507,6 +13599,16 @@ async function fetchRosterForEvent(eventId) {
   };
 }
 
+// Strikes that still count: no-shows in the last 90 days — the same window
+// volt_strike_count uses for suspensions and auto-approval.
+async function activeStrikeCount(userId) {
+  const since = new Date(Date.now() - 90 * 864e5).toISOString();
+  const { data } = await __sb.from("registrations").select("id")
+    .eq("community_id", window.__VOLT.communityId).eq("user_id", userId).eq("no_show", true)
+    .or(`no_show_at.gte."${since}",and(no_show_at.is.null,created_at.gte."${since}")`);
+  return (data || []).length;
+}
+
 // ── SEASON SCORING — per-match player points ────────────────────────────
 //   +50 win bonus (heaviest) · ACS÷4 (middle) · K + ⅓A (lightest)
 //   Season total = sum of every match's points across all tournaments.
@@ -13546,8 +13648,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       setMyProfile(await loadProfileGate(auth.userId));
       const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", auth.userId).maybeSingle();
       setMySusp2(u?.suspension_remaining || 0);
-      const { data: ns } = await __sb.from("registrations").select("id").eq("community_id", window.__VOLT.communityId).eq("user_id", auth.userId).eq("no_show", true);
-      setMyStrikes2((ns || []).length);
+      setMyStrikes2(await activeStrikeCount(auth.userId));
     } catch (e) { console.error(e); }
   }
   useEffect(() => { loadMyReg(); }, [phase, ev?.id]);
@@ -13636,11 +13737,11 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     // trophy streaks, wins and bracket counts that settling overwrote. Only the
     // host can do it, and only if that settle recorded an undo snapshot.
     if (phase === "settled") {
-      if (!isTrueHost) { window.alert("Only the host can reopen a settled tournament."); return; }
-      if (!window.confirm(
-        `Reopen ${weekendName(ev)}?\n\n` +
+      if (!isTrueHost) { voltAlert("Only the host can reopen a settled tournament."); return; }
+      if (!(await voltConfirm(
         `Trophy streaks, tournaments won and bracket wins go back to what they were before it was settled, ` +
-        `and the recap is cleared. Match results and season points are kept, so you can fix a report and settle again.`)) return;
+        `and the recap is cleared. Match results and season points are kept, so you can fix a report and settle again.`,
+        { title: `Reopen ${weekendName(ev)}?`, confirmLabel: "Reopen" }))) return;
       setBusy(true);
       try {
         const { error } = await __sb.rpc("volt_unsettle", { p_event: ev.id });
@@ -13649,19 +13750,20 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         if (data) setEv(data);
       } catch (e) {
         console.error(e);
-        window.alert(e.message || "Could not reopen that tournament.");
+        voltAlert(e.message || "Could not reopen that tournament.", { title: "Couldn't reopen" });
       }
       setBusy(false);
       return;
     }
-    if (!window.confirm(`Move ${weekendName(ev)} back to "${PREV[phase].replace(/_/g, " ")}"? The draft board is kept.`)) return;
+    if (!(await voltConfirm("The draft board is kept.",
+      { title: `Move back to "${PREV[phase].replace(/_/g, " ")}"?`, confirmLabel: "Move back" }))) return;
     setBusy(true);
     try {
       const { data, error } = await __sb.from("events").update({ phase: PREV[phase] }).eq("id", ev.id).select().maybeSingle();
       if (error) throw error;
       if (!data) throw new Error("The tournament wasn't changed — you may not have permission.");
       setEv(data);
-    } catch (e) { console.error(e); window.alert(e.message || "Couldn't move the tournament back."); }
+    } catch (e) { console.error(e); voltAlert(e.message || "Couldn't move the tournament back.", { title: "Nothing changed" }); }
     setBusy(false);
   }
 
@@ -13710,6 +13812,14 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     // Settling crowns champions and writes season points, and there's no undo.
     // The DB enforces this too (events_staff_update forbids phase='settled'
     // unless auth_is_host()), so this is the friendly message, not the lock.
+    if (NEXT[phase] === "settled" && !isTrueHost) {
+      // Belt and braces — events_staff_update also refuses phase='settled'
+      // unless auth_is_host(), so this is the explanation, not the lock.
+      // Checked first, so a moderator isn't walked through the stats check only
+      // to be told they can't settle.
+      voltAlert("Only the host can settle a tournament. Ask them to close it out.");
+      return;
+    }
     if (NEXT[phase] === "settled") {
       // Settling freezes season points. The commonest way to get burned is
       // settling with matches still unreported, so surface that first.
@@ -13729,16 +13839,10 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         // on "A vs B" alone flagged every match as unreported.
         return A && B && !reported.has(fxLabel(A, B, m));
       });
-      if (missing.length && !window.confirm(
+      if (missing.length && !(await voltConfirm(
         `${missing.length} match${missing.length === 1 ? " has" : "es have"} a score but no player stats recorded.\n\n` +
-        `Settling banks season points from what's been reported — those players get nothing for ${missing.length === 1 ? "that match" : "those matches"}.\n\n` +
-        `Settle anyway?`)) return;
-    }
-    if (NEXT[phase] === "settled" && !isTrueHost) {
-      // Belt and braces — events_staff_update also refuses phase='settled'
-      // unless auth_is_host(), so this is the explanation, not the lock.
-      window.alert("Only the host can settle a tournament. Ask them to close it out.");
-      return;
+        `Settling banks season points from what's been reported — those players get nothing for ${missing.length === 1 ? "that match" : "those matches"}.`,
+        { title: "Settle anyway?", confirmLabel: "Settle anyway", cancelLabel: "Go back", danger: true }))) return;
     }
     // Closing registration and opening the draft are one step now, so this is
     // the last moment pending applications can be approved. Don't let them be
@@ -13746,10 +13850,10 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     if (phase === "registration_closed") {
       const n = await loadPending();
       if (n > 0) {
-        const ok = window.confirm(
+        const ok = await voltConfirm(
           `${n} application${n === 1 ? " is" : "s are"} still awaiting review.\n\n` +
-          `Opening the draft closes registration — ${n === 1 ? "that player" : "those players"} won't be in the pool.\n\n` +
-          `Open the draft anyway?`
+          `Opening the draft closes registration — ${n === 1 ? "that player" : "those players"} won't be in the pool.`,
+          { title: "Open the draft anyway?", confirmLabel: "Open the draft", cancelLabel: "Review applications" }
         );
         if (!ok) { setRegView("gate"); return; }
       }
@@ -13772,7 +13876,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       setEv(data);
     } catch (e) {
       console.error(e);
-      alert(e.message || "Couldn't move the tournament on. Nothing was changed.");
+      voltAlert(e.message || "Couldn't move the tournament on. Nothing was changed.", { title: "Nothing changed" });
     }
     setBusy(false);
   }
@@ -13898,7 +14002,8 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
   // Force a rebuild from current registered captains (wipes the tournament board).
   async function rebuildNow() {
     if (!isHost || !HAS_SUPABASE) return;
-    if (!window.confirm("Rebuild the teams from the currently registered captains? This clears the current draft board for this tournament.")) return;
+    if (!(await voltConfirm("This clears the current draft board for this tournament and rebuilds it from the registered captains.",
+      { title: "Rebuild the teams?", confirmLabel: "Rebuild", danger: true }))) return;
     setBusy(true);
     try {
       const { captains, pool } = await fetchWeekendRoster();
@@ -14656,7 +14761,8 @@ function MatchReport({ ev, onDone, prefill }) {
   }
 
   async function removeMatch(labelKey) {
-    if (!window.confirm(`Delete "${labelKey}" and its points?`)) return;
+    if (!(await voltConfirm("Every player's stats and season points for this match are removed.",
+      { title: `Delete "${labelKey}"?`, confirmLabel: "Delete match", danger: true }))) return;
     await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", labelKey);
     await load();
   }
@@ -14998,9 +15104,7 @@ function WeekendRegistration({ ev, auth, phase }) {
     try {
       const { data: u } = await __sb.from("users").select("suspension_remaining, wants_captain").eq("id", window.__VOLT.userId).maybeSingle();
       setSusp(u?.suspension_remaining || 0);
-      const { data: ns } = await __sb.from("registrations").select("id")
-        .eq("community_id", window.__VOLT.communityId).eq("user_id", window.__VOLT.userId).eq("no_show", true);
-      setMyStrikes((ns || []).length);
+      setMyStrikes(await activeStrikeCount(window.__VOLT.userId));
     } catch (e) { console.error(e); }
   }
   useEffect(() => { load(); const stop = visInterval(load, 10000); return () => stop(); }, [ev?.id]);
@@ -15284,7 +15388,8 @@ function WeekendRegistration({ ev, auth, phase }) {
                       <button disabled={busy} title="Remove from this tournament's pool"
                         onClick={async e => {
                           e.stopPropagation();
-                          if (!window.confirm(`Remove ${r.name} from this tournament's pool? They'll move to the rejected list (you can re-approve).`)) return;
+                          if (!(await voltConfirm("They'll move to the rejected list — you can re-approve them later.",
+                            { title: `Remove ${r.name} from the pool?`, confirmLabel: "Remove", danger: true }))) return;
                           setBusy(true);
                           try { await __sb.from("registrations").update({ status: "rejected", is_captain: false }).eq("id", r.regId); await load(); }
                           catch (err) { console.error(err); }
@@ -15307,4 +15412,4 @@ function WeekendRegistration({ ev, auth, phase }) {
   </div>;
 }
 
-export default function App() { return <VoltGate />; }
+export default function App() { return <><VoltGate /><VoltDialogHost /></>; }
