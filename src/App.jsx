@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useId } from "react";
 import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 
@@ -164,12 +164,45 @@ const AGENT_ART = {
 };
 const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 const IMG_HERO = "/img/hero.webp";
-// Stock art (Pexels licence: free for commercial use, no credit needed).
-const IMG_ARENA = "/img/stock-arena.webp";   // competition PCs, red chairs, blue light
-const IMG_KEYS = "/img/stock-keys.webp";     // backlit keyboard close-up
-const IMG_ARENA_GOLD = "/img/stock-arena-gold.webp"; // the competition floor, graded gold for champions
-// All stock is graded into the brand palette (navy → VOLT blue, or gold) so it
-// reads as broadcast graphics rather than stock photography.
+
+// Designed banner art in the language of esports broadcast graphics: angled
+// light planes, one thin accent stripe, a huge outlined watermark and a fine
+// grid. Drawn in code, so it is always on-brand and never looks like stock.
+function BroadcastArt({ hue = "#3d7bff", accent = "#ff4655", mark = "" }) {
+  const id = useId().replace(/[^a-zA-Z0-9]/g, "");
+  return (
+    <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0,
+        background: `radial-gradient(ellipse 50% 90% at 88% 40%, ${hue}30, transparent 70%), radial-gradient(ellipse 35% 60% at 60% 110%, ${hue}1c, transparent 70%)` }} />
+      <svg viewBox="0 0 1000 300" preserveAspectRatio="xMaxYMid slice" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+        <defs>
+          <linearGradient id={`p1${id}`} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor={hue} stopOpacity="0" /><stop offset="1" stopColor={hue} stopOpacity="0.22" /></linearGradient>
+          <linearGradient id={`p2${id}`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor={hue} stopOpacity="0.16" /><stop offset="1" stopColor={hue} stopOpacity="0.02" /></linearGradient>
+          <linearGradient id={`p3${id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ffffff" stopOpacity="0.07" /><stop offset="1" stopColor="#ffffff" stopOpacity="0" /></linearGradient>
+        </defs>
+        {/* planes, all cut on the same 28° diagonal the notched corners use */}
+        <polygon points="520,0 700,0 540,300 360,300" fill={`url(#p1${id})`} />
+        <polygon points="700,0 1000,0 1000,300 540,300" fill={`url(#p2${id})`} />
+        <polygon points="860,0 1000,0 1000,300 700,300" fill={`url(#p3${id})`} />
+        <line x1="700" y1="0" x2="540" y2="300" stroke={hue} strokeOpacity="0.55" strokeWidth="1.2" />
+        <line x1="860" y1="0" x2="700" y2="300" stroke="#ffffff" strokeOpacity="0.12" strokeWidth="1" />
+        {/* the accent stripe */}
+        <polygon points="772,0 780,0 620,300 612,300" fill={accent} fillOpacity="0.85" />
+        <polygon points="790,0 792,0 632,300 630,300" fill={accent} fillOpacity="0.45" />
+        {/* broadcast tick marks */}
+        {[0, 1, 2, 3, 4].map((i) => <rect key={i} x={930 + i * 9} y="24" width="4" height="12" fill={hue} fillOpacity={0.35 + i * 0.12} transform={`skewX(-28)`} />)}
+      </svg>
+      {mark && (
+        <div style={{ position: "absolute", right: "-1%", bottom: "-18%", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+          fontSize: "clamp(120px, 18vw, 250px)", lineHeight: 1, letterSpacing: "-0.02em", textTransform: "uppercase", whiteSpace: "nowrap",
+          color: "transparent", WebkitTextStroke: `1.5px ${hue}38`, maskImage: "linear-gradient(90deg, transparent, #000 40%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 40%)" }}>{mark}</div>
+      )}
+      <div style={{ position: "absolute", inset: 0,
+        backgroundImage: "radial-gradient(rgba(170,200,255,0.16) 1px, transparent 1.2px)", backgroundSize: "18px 18px",
+        maskImage: "linear-gradient(100deg, transparent 45%, #000 85%)", WebkitMaskImage: "linear-gradient(100deg, transparent 45%, #000 85%)" }} />
+    </div>
+  );
+}
 
 // Broadcast finish for a photo banner: fine scanlines plus a slow light
 // sweep. Restrained on purpose — motion that loops visibly looks cheap.
@@ -1739,8 +1772,7 @@ function TChampion({ team }) {
   if (!team) return null;
   return (
     <div className="relative flex flex-col items-center gap-1 py-7 px-8 mx-auto overflow-hidden" style={{ maxWidth: 560, background: `linear-gradient(160deg, ${team.hue}22, rgba(10,15,28,0.6))`, border: `1px solid ${team.hue}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", boxShadow: `0 0 50px ${team.hue}33` }}>
-      <img src={IMG_ARENA_GOLD} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.55, pointerEvents: "none",
-        maskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)", WebkitMaskImage: "radial-gradient(ellipse 80% 90% at 50% 40%, #000, transparent)" }} />
+      <BroadcastArt hue={team.hue} accent="#ffd166" />
       <p className="uppercase text-xs font-bold tracking-[0.3em] relative" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Champion ★</p>
       <p className="font-bold uppercase relative" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.8rem", lineHeight: 1, color: team.hue, letterSpacing: "0.03em", textShadow: `0 0 30px ${team.hue}88` }}>{team.name}</p>
     </div>
@@ -1996,8 +2028,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
       <style>{FX_CSS + SWEEP_CSS}</style>
       <div style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
         {/* A real competition floor behind the agent, faded into the panel. */}
-        <img src={champion ? IMG_ARENA_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "75%", height: "100%", objectFit: "cover", objectPosition: "center 45%",
-          opacity: 0.7, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
+        <BroadcastArt hue={H} accent={champion ? "#ffffff" : "#ff4655"} />
         <span aria-hidden className="volt-scan" />
         <span aria-hidden className="volt-sweep" />
         <CardArt hue={H} agent={BANNER_AGENT[t.format] || "Jett"} />
@@ -3764,8 +3795,7 @@ function Leaderboard({ isAdmin }) {
     <div className="view-in page-wrap py-8">
       {/* Same banner as the home and fixtures pages, with its own picture. */}
       <div style={{ ...PANEL("rgba(61,123,255,0.4)", "24px 28px 20px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18 }}>
-        <img src={IMG_KEYS} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "70%", height: "100%", objectFit: "cover", objectPosition: "center 60%",
-          opacity: 0.85, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 60%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 60%)" }} />
+        <BroadcastArt hue="#3d7bff" mark="Season" />
         <span aria-hidden className="volt-scan" />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
@@ -11310,8 +11340,7 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
                : phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
       {phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
       {gold && <span aria-hidden className="volt-shimmer" />}
-      {(phase === "matches_live" || gold) && <img src={gold ? IMG_ARENA_GOLD : IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "62%", height: "100%", objectFit: "cover",
-        opacity: 0.65, pointerEvents: "none", maskImage: "linear-gradient(90deg, transparent, #000 65%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 65%)" }} />}
+      {(phase === "matches_live" || gold) && <BroadcastArt hue={gold ? "#ffd166" : "#3d7bff"} accent={gold ? "#ffffff" : "#ff4655"} />}
       {/* Both brackets, matching the auction block — one alone reads as a
           rendering glitch rather than a deliberate frame. */}
       <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
@@ -13927,10 +13956,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <div className="volt-lg-hero" style={{ ...PANEL(`${H}55`, "30px 34px 28px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(18),
               marginBottom: 14, minHeight: 300, display: "flex", flexDirection: "column" }}>
               <CardArt hue={H} bare />
-              {/* A competition floor, graded into the league's blue, behind the name. */}
-              <img className="volt-lg-art" src={IMG_ARENA} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0, width: "72%", height: "100%",
-                objectFit: "cover", objectPosition: "70% 55%", pointerEvents: "none", opacity: 0.95,
-                maskImage: "linear-gradient(90deg, transparent 0%, #000 50%)", WebkitMaskImage: "linear-gradient(90deg, transparent 0%, #000 50%)" }} />
+              {/* Designed broadcast art, with the league's own name as the watermark. */}
+              <BroadcastArt hue={H} mark={community?.name || "VOLT"} />
               <span aria-hidden className="volt-scan" />
               <span aria-hidden className="volt-sweep" />
               <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%", pointerEvents: "none",
