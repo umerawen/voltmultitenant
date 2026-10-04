@@ -268,7 +268,17 @@ const ART = {
   reyna: "/img/art-reyna.webp",       // leaderboard, auction live
   sageGold: "/img/art-sage-gold.webp", // champions
 };
-function KeyArt({ src, pos = "72% 10%", width = "68%", fade = 48, opacity = 1, center = false }) {
+// How each piece frames in a short, wide banner: the point to keep in view
+// (the face) and how far the left fade reaches before the art is solid.
+const ART_FRAME = {
+  "/img/league-hero.webp":    { pos: "72% 4%",  fade: 48 },
+  "/img/art-jett.webp":       { pos: "70% 18%", fade: 48 },
+  "/img/art-reyna.webp":      { pos: "50% 18%", fade: 30 },
+  "/img/art-sage-gold.webp":  { pos: "70% 25%", fade: 48 },
+};
+function KeyArt({ src, pos: posIn, width = "68%", fade: fadeIn, opacity = 1, center = false }) {
+  const pos = posIn || ART_FRAME[src]?.pos || "72% 10%";
+  const fade = fadeIn ?? ART_FRAME[src]?.fade ?? 48;
   const mask = center
     ? "radial-gradient(ellipse 75% 95% at 50% 45%, #000 30%, transparent 85%)"
     : `linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.55) ${fade * 0.45}%, #000 ${fade}%)`;
@@ -2107,7 +2117,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
     <div className="view-in page-wrap py-8">
       <style>{FX_CSS + SWEEP_CSS}</style>
       <div style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
-        <KeyArt src={champion ? ART.sageGold : ART.jett} pos={champion ? "70% 25%" : "70% 18%"} />
+        <KeyArt src={champion ? ART.sageGold : ART.jett} />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
         <div style={{ position: "relative", maxWidth: 640 }}>
@@ -3871,7 +3881,7 @@ function Leaderboard({ isAdmin }) {
     <div className="view-in page-wrap py-8">
       {/* Same banner as the home and fixtures pages, with its own picture. */}
       <div style={{ ...PANEL("rgba(61,123,255,0.4)", "24px 28px 20px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18 }}>
-        <KeyArt src={ART.reyna} pos="70% 20%" />
+        <KeyArt src={ART.reyna} />
         <span aria-hidden className="volt-scan" />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
@@ -14075,7 +14085,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
               <CardArt hue={H} bare />
               {/* The league's key art: mirrored so the figure stands on the right
                   facing the name, graded into VOLT blue, fading out behind the text. */}
-              <KeyArt src={ART.omen} pos="72% 4%" />
+              <KeyArt src={ART.omen} />
               <span aria-hidden className="volt-scan" />
               <span aria-hidden className="volt-sweep" />
               <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%", pointerEvents: "none",
