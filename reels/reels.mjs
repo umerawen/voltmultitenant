@@ -56,15 +56,15 @@ export const REELS = [
         ],
         plate: [{ at: 0, rx: 14, ry: -16 }, { at: 8.0, rx: 12, ry: 15, dur: 1.1 }],
         pieces: [
-          { at: 0.45, d: 1.5, rect: [852, 90, 462, 602], w: 560, y: 1080 },                     // Zephyr's card
+          { at: 0.45, d: 1.5, rect: [852, 90, 462, 602], w: 560, y: 1080, shape: "notch", cut: 24 },                     // Zephyr's card
           { at: 1.95, d: 1.9, rect: [268, 88, 254, 634], w: 360, x: 295, y: 1070 },              // captains, left
           { at: 2.05, d: 1.8, rect: [1645, 88, 254, 634], w: 360, x: 785, y: 1070 },             // captains, right
-          { at: 3.95, d: 4.15, rect: [892, 715, 384, 85], w: 970, y: 1010,                       // the bid, ticking up
+          { at: 3.95, d: 4.15, rect: [890, 714, 388, 87], w: 970, y: 1010, shape: "slant", cut: 20,                       // the bid, ticking up
             live: [
               { rect: [915, 742, 165, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$2,300" }, { at: 4.26, text: "$2,500" }, { at: 5.72, text: "$2,700" }, { at: 7.05, text: "$2,900" }] },
               { rect: [1105, 750, 150, 30], size: 20, font: "raj", steps: [{ at: 0, text: "VIPERS", color: "#ff4655" }, { at: 4.26, text: "EMBERFALL", color: "#5ad1ff" }, { at: 5.72, text: "FROSTBYTE", color: "#ff8a3d" }, { at: 7.05, text: "NOVA STRIKE", color: "#9d6bff" }] },
             ] },
-          { at: 8.45, d: 4.75, rect: [836, 822, 494, 72], w: 970, y: 1080 },                     // SOLD / PASS
+          { at: 8.45, d: 4.75, rect: [836, 822, 494, 72], w: 970, y: 1080, shape: "slant", cut: 22 },                     // SOLD / PASS
         ],
         toasts: [{ at: 4.26, k: "EMBERFALL", v: "BIDS |$2,500|", color: C.money, y: 1230 }, { at: 5.72, k: "FROSTBYTE", v: "BIDS |$2,700|", color: C.money, side: "left", y: 1230 }, { at: 7.05, k: "NOVA STRIKE", v: "BIDS |$2,900|", color: C.money, y: 1230, d: 1.0 }],
         cursor: [{ at: 9.95, x: 426, y: 1082, d: 2.2 }],
@@ -73,8 +73,8 @@ export const REELS = [
       { kind: "stage", t: 15.8, d: 3.4, shot: "rosters", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "THE LOCKER ROOM", lines: ["SPEND SMART.", "BUDGETS ARE {REAL}."], size: 96 }],
         plate: [{ at: 0, rx: 14, ry: 16 }],
-        pieces: [{ at: 0.35, rect: [1092, 233, 357, 535], w: 580, y: 1110,
-          focus: [{ at: 0.9, rect: [1110, 313, 155, 68], tag: "BUDGET LEFT", color: C.money }, { at: 2.0, rect: [1110, 515, 285, 52], tag: "ZEPHYR · $2,520", color: C.volt }] }] },
+        pieces: [{ at: 0.35, rect: [1092, 233, 357, 535], w: 580, y: 1110, shape: "notch", cut: 24,
+          focus: [{ at: 0.9, rect: [1110, 313, 155, 68], tag: "BUDGET LEFT", color: C.money, tagBelow: true }, { at: 2.0, rect: [1110, 515, 285, 52], tag: "ZEPHYR · $2,520", color: C.volt }] }] },
       // "Twenty-four players. Six captains. One draft night."
       { kind: "stat", t: 19.2, d: 4.6, label: "ONE DRAFT NIGHT",
         items: [{ to: 24, label: "Players", at: 0.28, dur: 0.9 }, { to: 6, label: "Captains", color: C.voltHi, at: 1.75, dur: 0.8 }, { to: 1, label: "Draft night", color: C.money, at: 3.25, dur: 0.5 }] },

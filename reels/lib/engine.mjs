@@ -394,9 +394,14 @@ export function reel(spec) {
         tw(`#${fid}`, { opacity: 0, scale: 1.15 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(1.6)" }, s.t + F.at);
         cue(s.t + F.at, "pop", { p: 4, g: 0.5 });
         const c = (p2) => `<i style="${p2};border-color:${col}"></i>`;
-        return `<div class="pc-focus" id="${fid}" style="left:${fr.x}px;top:${fr.y}px;width:${fr.w}px;height:${fr.h}px;box-shadow:0 0 30px ${col}66;background:${col}14">${c("left:0;top:0;border-right:0;border-bottom:0")}${c("right:0;top:0;border-left:0;border-bottom:0")}${c("left:0;bottom:0;border-right:0;border-top:0")}${c("right:0;bottom:0;border-left:0;border-top:0")}${F.tag ? `<b style="background:${col}">${rich(F.tag)}</b>` : ""}</div>`;
+        return `<div class="pc-focus" id="${fid}" style="left:${fr.x}px;top:${fr.y}px;width:${fr.w}px;height:${fr.h}px;box-shadow:0 0 30px ${col}66;background:${col}14">${c("left:0;top:0;border-right:0;border-bottom:0")}${c("right:0;top:0;border-left:0;border-bottom:0")}${c("left:0;bottom:0;border-right:0;border-top:0")}${c("right:0;bottom:0;border-left:0;border-top:0")}${F.tag ? `<b style="background:${col};${F.tagBelow ? "top:auto;bottom:-46px" : ""}">${rich(F.tag)}</b>` : ""}</div>`;
       }).join("");
-      return `<div class="piece" id="${id2}" style="left:${cx - W2 / 2}px;top:${cy - H2 / 2}px;width:${W2}px;height:${H2}px"><div class="piece-in" id="${id2}-f"><div class="piece-clip"><img src="${img}" style="width:${SW * S}px;height:${SH * S}px;left:${-r.x * S}px;top:${-r.y * S}px">${live}</div>${focus}</div></div>`;
+      // cut the card to the component's own outline so no stray page shows
+      const n = (pc.cut || 0) * S;
+      const shape = pc.shape === "slant" ? `clip-path:polygon(${n}px 0,100% 0,calc(100% - ${n}px) 100%,0 100%)`
+        : pc.shape === "notch" ? `clip-path:polygon(0 0,calc(100% - ${n}px) 0,100% ${n}px,100% 100%,0 100%)`
+        : "border-radius:14px";
+      return `<div class="piece" id="${id2}" style="left:${cx - W2 / 2}px;top:${cy - H2 / 2}px;width:${W2}px;height:${H2}px"><div class="piece-in" id="${id2}-f"><div class="piece-clip${pc.shape ? "" : " feather"}" style="${shape}"><img src="${img}" style="width:${SW * S}px;height:${SH * S}px;left:${-r.x * S}px;top:${-r.y * S}px">${live}</div>${focus}</div></div>`;
     }).join("");
     // dim the plane while a card is out
     (s.pieces || []).forEach((pc, i) => {
@@ -432,7 +437,7 @@ export function reel(spec) {
 
     const toasts = mkToasts(s, sid);
     const stamp = mkStamp(s, sid, `#${pos}`);
-    const plane = `<div class="p3-pos" id="${pos}"><div class="p3-floor" style="left:${CX - PW * 0.55}px;top:${CY + PH * 0.38}px;width:${PW * 1.1}px"></div><div class="p3" id="${pl}" style="left:${CX - PW / 2}px;top:${CY - PH / 2}px;width:${PW}px;height:${PH}px"><img src="${img}" width="${PW}" height="${PH}"><div class="p3-glare"></div>${hl.join("")}<div class="p3-dim" id="${sid}-dim"></div></div></div>`;
+    const plane = `<div class="p3-pos" id="${pos}"><div class="p3-floor" style="left:${CX - PW * 0.55}px;top:${CY + PH * 0.38}px;width:${PW * 1.1}px"></div><div class="p3" id="${pl}" style="left:${CX - PW / 2}px;top:${CY - PH / 2}px;width:${PW}px;height:${PH}px"><div class="p3-glow"></div><div class="p3-face"><img src="${img}" width="${PW}" height="${PH}"><div class="p3-glare"></div>${hl.join("")}<div class="p3-dim" id="${sid}-dim"></div></div></div></div>`;
     scene(s, `${plane}${heads}${pieces}${toasts}${cursors}${stamp}`, { enter: s.enter || "fade", exit: s.exit || "fade" });
   };
 
