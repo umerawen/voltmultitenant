@@ -127,7 +127,7 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 /* stage: the floating screen + lifted cards */
 .p3-pos { position: absolute; inset: 0; }
 .p3 { position: absolute; }
-.p3-glow { position: absolute; left: -12%; right: -12%; top: -18%; bottom: -18%; background: radial-gradient(ellipse at 50% 50%, rgba(61,123,255,0.22), rgba(61,123,255,0.06) 45%, rgba(61,123,255,0) 70%); }
+.p3-glow { position: absolute; left: -12%; right: -12%; top: -18%; bottom: -18%; background: radial-gradient(closest-side, rgba(61,123,255,0.22), rgba(61,123,255,0.06) 64%, rgba(61,123,255,0) 100%); }
 .p3-face { position: absolute; inset: 0; overflow: hidden; border-radius: 22px; background: #0d1324;
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8%, #000 92%, transparent 100%), linear-gradient(180deg, transparent 0, #000 11%, #000 86%, transparent 100%);
   -webkit-mask-composite: source-in; mask-image: linear-gradient(90deg, transparent 0, #000 8%, #000 92%, transparent 100%), linear-gradient(180deg, transparent 0, #000 11%, #000 86%, transparent 100%); mask-composite: intersect; }
@@ -135,7 +135,7 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 .p3-glare { position: absolute; inset: 0; background: linear-gradient(118deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0) 38%, rgba(255,255,255,0) 70%, rgba(125,166,255,0.06) 100%); }
 .p3-dim { position: absolute; inset: 0; background: #060912; opacity: 0; }
 .p3-hl { position: absolute; border: 2px solid #3d7bff; box-shadow: 0 0 24px rgba(61,123,255,0.8), inset 0 0 18px rgba(61,123,255,0.35); opacity: 0; z-index: 2; }
-.p3-floor { position: absolute; height: 260px; background: radial-gradient(ellipse at 50% 30%, rgba(61,123,255,0.28), rgba(61,123,255,0) 62%); }
+.p3-floor { position: absolute; height: 260px; background: radial-gradient(closest-side at 50% 30%, rgba(61,123,255,0.28), rgba(61,123,255,0) 100%); }
 .piece { position: absolute; }
 .piece-in { position: absolute; inset: 0; filter: drop-shadow(0 40px 50px rgba(0,0,0,0.6)) drop-shadow(0 0 34px rgba(61,123,255,0.32)); }
 .piece-clip { position: absolute; inset: 0; overflow: hidden; background: #0d1324; }
@@ -154,7 +154,7 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 /* the logo sting */
 .logo-wrap { position: relative; width: 653px; height: 249px; }
 .cta-logo { position: relative; display: block; overflow: visible; }
-.logo-glow { position: absolute; left: -60px; top: -80px; width: 480px; height: 420px; background: radial-gradient(ellipse at 45% 55%, rgba(61,123,255,0.55), rgba(61,123,255,0) 65%); opacity: 0; }
+.logo-glow { position: absolute; left: -244px; top: -239px; width: 800px; height: 780px; background: radial-gradient(closest-side, rgba(61,123,255,0.55), rgba(61,123,255,0.22) 40%, rgba(61,123,255,0.06) 70%, rgba(61,123,255,0) 100%); opacity: 0; pointer-events: none; }
 .logo-ring { position: absolute; left: 70px; top: -30px; width: 300px; height: 300px; border: 2px solid rgba(125,166,255,0.7); border-radius: 50%; opacity: 0; }
 .cta-tag { font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.42em; color: #6f9bff; margin-top: 30px; white-space: nowrap; }
 
