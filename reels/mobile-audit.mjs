@@ -11,17 +11,17 @@ const wi = args.indexOf("--w"), W = wi >= 0 ? +args.splice(wi, 2)[1] : 390;
 const only = args[0];
 const BASE = process.env.VOLT_URL || "http://localhost:5174/";
 const OUT = new URL("./mobile/", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1");
-fs.mkdirSync(OUT, { recursive: true });
+fs.mkdirSync(OUT + "view", { recursive: true });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// open the drawer, then the page
+// phones: a bottom tab (short label) or a tile in the More sheet (full label)
+const SHORT = { "Dashboard": "Home", "Player Pool": "Pool", "Live Auction": "Auction", "Rosters": "Rosters", "Fixtures": "Fixtures", "Leaderboard": "Ranks", "My Account": "My account" };
+const byText = (p, t) => p.evaluate((t) => { const b = [...document.querySelectorAll("button")].find((b) => b.textContent.trim().toLowerCase() === t.toLowerCase()); b?.click(); return !!b; }, t);
 const nav = (label) => async (p) => {
-  await p.evaluate((l) => {
-    if (!document.querySelector(`button[aria-label="${l}"]`)) document.querySelector('button[aria-label="Open navigation"]')?.click();
-  }, label);
-  await wait(500);
-  await p.evaluate((l) => (document.querySelector(`button[aria-label="${l}"]`)
-    || [...document.querySelectorAll("button")].find((b) => b.textContent.replace(/[◂⊞]/g, "").trim() === l))?.click(), label);
+  if (!(await byText(p, SHORT[label] || label)) && !(await byText(p, label))) {
+    await byText(p, "More"); await wait(500);
+    await byText(p, label) || await byText(p, SHORT[label] || label);
+  }
   await wait(2200);
 };
 const click = (sel) => async (p) => { await p.evaluate((s) => document.querySelector(s)?.click(), sel); await wait(1500); };
@@ -34,12 +34,12 @@ const clickText = (t) => async (p) => {
 };
 const hub = async (p) => { await p.evaluate(() => [...document.querySelectorAll("button")].find((b) => /league hub/i.test(b.textContent))?.click()); await wait(2500); };
 const hubPage = (label) => async (p) => { await p.evaluate((l) => [...document.querySelectorAll("button")].find((b) => b.textContent.trim().toLowerCase() === l)?.click(), label); await wait(1200); };
-const drawer = async (p) => { await p.evaluate(() => document.querySelector('button[aria-label="Open navigation"]')?.click()); await wait(700); };
+const drawer = async (p) => { await byText(p, "More"); await wait(700); };
 const menu = async (p) => { await p.evaluate(() => document.querySelector('button[aria-label="Account menu"]')?.click()); await wait(700); };
 
 const SHOTS = [
   ["01-dashboard", "auction", []],
-  ["02-drawer", "auction", [drawer]],
+  ["02-more-sheet", "auction", [drawer]],
   ["03-account-menu", "auction", [menu]],
   ["04-player-pool", "pool", [nav("Player Pool")]],
   ["05-scout-modal", "pool", [nav("Player Pool"), clickText("KAIRO")]],
@@ -55,8 +55,8 @@ const SHOTS = [
   ["15-map-veto", "bracket", [nav("Map Veto")]],
   ["16-account", "auction", [nav("My Account")]],
   ["17-hub-overview", "league", [hub]],
-  ["18-hub-season", "league", [hub, hubPage("season race")]],
-  ["19-hub-tournaments", "league", [hub, hubPage("tournaments")]],
+  ["18-hub-season", "league", [hub, hubPage("season")]],
+  ["19-hub-tournaments", "league", [hub, hubPage("events")]],
   ["20-welcome", "", []],
 ];
 
@@ -81,6 +81,8 @@ try {
       return { wide, culprits: culprits.slice(0, 6) };
     }, W);
     await page.screenshot({ path: `${OUT}${name}.png`, fullPage: true });
+    await page.evaluate(() => window.scrollTo(0, 0)); await wait(200);
+    await page.screenshot({ path: `${OUT}view/${name}.png` });   // what the phone shows first
     console.log(over.wide > W + 1 ? `⚠ ${name} scrolls sideways (${over.wide}px)\n    ` + over.culprits.join("\n    ") : `✓ ${name}`);
     await page.close();
   }

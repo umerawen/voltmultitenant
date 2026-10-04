@@ -1860,7 +1860,23 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onS
 // spans 2^r of them and centres in that span, so it always sits exactly
 // between the two matches that feed it, and the elbow connectors (drawn in
 // their own columns at 25% / 75% / 50%) always meet the card centres.
+// Is the screen at most `px` wide? Follows resizes and rotation.
+function useNarrow(px = 640) {
+  const q = `(max-width: ${px}px)`;
+  const [on, setOn] = useState(() => typeof window !== "undefined" && window.matchMedia ? window.matchMedia(q).matches : false);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(q), f = (e) => setOn(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", f) : mq.addListener(f);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", f) : mq.removeListener(f); };
+  }, [q]);
+  return on;
+}
+
 function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
+  const narrow = useNarrow(640);
+  const firstOpen = Math.max(0, rounds.findIndex((r) => !r.every((m) => m.done)));
+  const [phRound, setPhRound] = useState(null);
   const R = rounds.length;
   const N = rounds[0]?.length || 1;
   const roundName = (ri) => {
@@ -1878,6 +1894,32 @@ function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVot
   const LINE = "rgba(110,150,230,0.38)";
   const CONN = 44;
   const cols = rounds.map((_, ri) => (ri < R - 1 ? `minmax(230px, 1fr) ${CONN}px` : "minmax(230px, 1fr)")).join(" ");
+  // Phones: one round at a time, as a list, instead of a bracket you scroll sideways.
+  if (narrow) {
+    const cur = phRound ?? firstOpen;
+    return (
+      <div style={{ fontFamily: "'Rajdhani',sans-serif" }}>
+        <div className="volt-hscroll" style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 14 }}>
+          {rounds.map((round, ri) => {
+            const on = ri === cur, done = round.every((m) => m.done), fin = ri === R - 1;
+            return (
+              <button key={ri} onClick={() => setPhRound(ri)} style={{ flexShrink: 0, padding: "9px 14px", cursor: "pointer", fontSize: 12, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase",
+                color: on ? "#eaf1ff" : fin ? "#ffd166" : "rgba(200,215,255,0.6)", background: on ? (fin ? "rgba(255,209,102,0.16)" : "rgba(61,123,255,0.2)") : "rgba(255,255,255,0.03)",
+                border: `1px solid ${on ? (fin ? "rgba(255,209,102,0.6)" : "rgba(61,123,255,0.6)") : "rgba(120,150,220,0.2)"}`, clipPath: SHELL_NOTCH(7) }}>
+                {roundName(ri)}{done && <span style={{ color: "#3ddc84", marginLeft: 6 }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {rounds[cur].map((m, idx) => (
+            <TBracketMatch key={m.id} match={m} locator={{ kind: "elim", round: cur, idx }} teamOf={teamOf} isAdmin={isAdmin}
+              stage={roundName(cur)} tag={tagOf(cur, idx)} onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} />
+          ))}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ overflowX: "auto", paddingBottom: 6 }}>
       <div style={{ display: "grid", gridTemplateColumns: cols, gridTemplateRows: `auto repeat(${N}, ${BK_ROW_H}px)`,
@@ -2173,7 +2215,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
   return (
     <div className="view-in page-wrap py-8">
       <style>{FX_CSS + SWEEP_CSS}</style>
-      <div style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
+      <div className="volt-fxhero" style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
         <KeyArt src={champion ? ART.sageGold : ART.jett} />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
@@ -2188,7 +2230,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             {nextFx && !champion && <span style={{ color: "#9af5c2" }}>Next: {teamOf(nextFx.teamA)?.name} vs {teamOf(nextFx.teamB)?.name} · {fxWhen(new Date(nextFx.scheduledAt))}</span>}
           </div>
         </div>
-      <div className="flex items-center gap-3 flex-wrap" style={{ position: "relative", marginTop: 18 }}>
+      <div className="volt-fxhero-actions flex items-center gap-3 flex-wrap" style={{ position: "relative", marginTop: 18 }}>
         <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo} default</span>
         {isAdmin && t.format === "group" && t.groups?.length === 2 && actions.tSetPlayoff && (() => {
           // Two explicit options rather than one toggle. The old button showed
@@ -2634,6 +2676,46 @@ function PlayerCard({ player, lite = false }) {
   );
 }
 
+/* Phones: the player on the block as a header strip — crest, name, rank,
+   the three numbers — so the bid and the SOLD button are on the first screen.
+   The full card is a tap away (it opens the scout file). */
+function PlayerCardCompact({ player }) {
+  if (!player) return null;
+  const r = RANKS[player.rank] || RANKS.Iron;
+  const st = [
+    player.kda != null && ["KDA", Number(player.kda).toFixed(2), "#00e5ff"],
+    player.acs != null && ["ACS", player.acs, "#ff4655"],
+    player.hs != null && ["HS", player.hs + "%", "#9d6bff"],
+  ].filter(Boolean);
+  return (
+    <div className="relative w-full overflow-hidden text-left" style={{ padding: "14px 16px 14px",
+      clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))",
+      background: `linear-gradient(115deg, ${r.c}38, rgba(157,107,255,0.16) 55%, rgba(10,13,22,0.94))`, border: `1px solid ${r.c}66` }}>
+      <span className="absolute pointer-events-none select-none font-bold leading-none" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 96, right: -6, top: -14, color: "rgba(255,255,255,0.06)" }}>{player.acs}</span>
+      <div className="relative flex items-center gap-3">
+        <div style={{ width: 66, height: 66, position: "relative", flex: "0 0 auto" }}>
+          <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%) scale(0.62)" }}><RankCrest rank={player.rank} div={player.rankDiv} /></div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 30, fontWeight: 700, textTransform: "uppercase", lineHeight: 0.95, color: "#ecf3ff", textShadow: `0 0 20px ${r.glow}` }}>{player.name}</div>
+          <div className="truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 6, color: "rgba(236,243,255,0.6)" }}>
+            <span style={{ color: r.c }}>{rankLabel(player.rank, player.rankDiv)}</span>{player.role ? ` · ${player.role}` : ""}{player.agent ? ` · ${player.agent}` : ""}</div>
+        </div>
+      </div>
+      {st.length > 0 && (
+        <div className="relative grid gap-2 mt-3" style={{ gridTemplateColumns: `repeat(${st.length}, minmax(0, 1fr))` }}>
+          {st.map(([k, v, c]) => (
+            <div key={k} style={{ padding: "7px 8px", background: "rgba(8,11,20,0.55)", border: "1px solid rgba(255,255,255,0.07)", textAlign: "center" }}>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 17, color: c, lineHeight: 1 }}>{v}</div>
+              <div style={{ fontSize: 9.5, letterSpacing: "0.18em", color: "rgba(200,215,255,0.45)", marginTop: 4, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{k}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── full scouting modal with radar ── */
 function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain, onViewProfile, onMoveReserve }) {
   const [confirmDel, setConfirmDel] = useState(false);
@@ -2981,8 +3063,11 @@ function AddPlayerForm({ onAdd, editing, onSave, onCancel }) {
 }
 
 /* ════════════════ TEAM CARD (locker room, editable by admin) ══════ */
-function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, canRemove, onAddToRoster, onRemoveFromRoster, onSetBudget }) {
+function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, canRemove, onAddToRoster, onRemoveFromRoster, onSetBudget, collapsible = false, defaultOpen = false }) {
   const [editing, setEditing] = useState(false);
+  // Phones: a stack of collapsed headers you open one at a time.
+  const [open, setOpen] = useState(defaultOpen);
+  const shut = collapsible && !open && !editing;
   const [name, setName] = useState(team.name);
   const [cap, setCap] = useState(team.captain);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -3005,11 +3090,12 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
   const save = () => { onRename(team.id, name, cap); setEditing(false); };
 
   return (
-    <div className="relative overflow-hidden flex flex-col" style={{ background: `linear-gradient(165deg, ${team.hue}22, rgba(10,13,22,0.88) 55%)`, border: `1px solid ${lead ? "#3ddc84" : team.hue + "55"}`, boxShadow: lead ? "0 0 24px rgba(61,220,132,0.3)" : "0 14px 30px rgba(0,0,0,0.35)", clipPath: SHELL_NOTCH(16) }}>
+    <div className={"relative overflow-hidden flex flex-col" + (shut ? " volt-tc-shut" : "")} style={{ background: `linear-gradient(165deg, ${team.hue}22, rgba(10,13,22,0.88) 55%)`, border: `1px solid ${lead ? "#3ddc84" : team.hue + "55"}`, boxShadow: lead ? "0 0 24px rgba(61,220,132,0.3)" : "0 14px 30px rgba(0,0,0,0.35)", clipPath: SHELL_NOTCH(16) }}>
       <div style={{ height: 3, background: `linear-gradient(90deg, ${team.hue}, transparent)` }} />
       <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11, borderRight: `2px solid ${team.hue}`, borderBottom: `2px solid ${team.hue}` }} />
-      <div className="p-4 flex flex-col gap-3 flex-1">
-        <div className="flex items-start justify-between gap-2">
+      <div className={"volt-tc-body flex flex-col flex-1 " + (collapsible ? "px-3.5 py-3 gap-3" : "p-4 gap-3")}>
+        <div className="flex items-start justify-between gap-2" onClick={collapsible && !editing ? () => setOpen((o) => !o) : undefined}
+          style={collapsible && !editing ? { cursor: "pointer" } : undefined}>
           {editing ? (
             <div className="flex-1 flex flex-col gap-1.5">
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" maxLength={22}
@@ -3045,8 +3131,17 @@ function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, c
                   <p className="text-xs" style={{ color: "rgba(236,243,255,0.5)" }}>Capt. {team.captain}</p>
                 </div>
               </div>
-              {isAdmin && (
-                <button onClick={() => setEditing(true)} title="Rename team" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-xs"
+              {collapsible && (
+                <div className="ml-auto shrink-0 flex items-center gap-2.5 self-center" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                  <div className="text-right">
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#ecf3ff", lineHeight: 1 }}>{fmt(team.budget)}</div>
+                    <div style={{ fontSize: 9.5, color: "rgba(200,215,255,0.45)", marginTop: 3, letterSpacing: "0.08em" }}>{rosterPlayers.length}/4 · left</div>
+                  </div>
+                  <span style={{ color: team.hue, fontSize: 11, transform: open ? "rotate(180deg)" : "none", transition: "transform .18s" }}>▼</span>
+                </div>
+              )}
+              {isAdmin && (!collapsible || open) && (
+                <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Rename team" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-xs"
                   style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(236,243,255,0.6)" }}>✎</button>
               )}
             </>
@@ -3946,7 +4041,7 @@ function Leaderboard({ isAdmin }) {
         <div style={{ position: "relative" }}>
       <div style={{ ...SEC_LABEL, color: "#7da6ff", marginBottom: 6 }}>// Season standings · every match counts</div>
       <h1 className="font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.01em", fontSize: "clamp(34px, 4.6vw, 52px)", lineHeight: 0.95, textShadow: "0 0 36px rgba(61,123,255,0.35)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
-      <p className="text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
+      <p className="volt-desc text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
         {sortBy === "acs"
           ? "Ranked by average combat score — output per game, wins aside."
           : "Ranked by season points — 50 a win, plus ACS÷4 and kills."}
@@ -4133,7 +4228,7 @@ function MapVeto({ teams }) {
       </div>
       <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
       <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <p className="text-sm" style={{ color: "rgba(200,215,255,0.5)", margin: 0 }}>Flip the coin, assign who bans first, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
+        <p className="volt-desc text-sm" style={{ color: "rgba(200,215,255,0.5)", margin: 0 }}>Flip the coin, assign who bans first, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
         <button onClick={() => setShowRules(true)} title="How the veto works"
           className="uppercase shrink-0" style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(61,123,255,0.4)", background: "rgba(61,123,255,0.08)", padding: "5px 11px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
           ◈ Veto rules
@@ -4693,7 +4788,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const [view, setView] = useState(initialView || "lobby");
   const [tourneyOpen, setTourneyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false); // side nav
+  const [drawerOpen, setDrawerOpen] = useState(false); // phones: the "More" sheet
   const [isDesk, setIsDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
   // Expanded by default: the labels are the whole point of the rail, and a
   // first-time host shouldn't have to decode nine glyphs. A saved "0" still
@@ -6101,7 +6196,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       <style>{SHELL_CSS + MOBILE_CSS}</style>
       {fonts}
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
-      <div className="relative min-h-screen">
+      <div className="relative min-h-screen" style={isDesk ? undefined : { paddingBottom: "calc(76px + env(safe-area-inset-bottom))" }}>
         {children}
       </div>
     </div>
@@ -6275,22 +6370,23 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     )}
   </>, document.body);
 
+  // Phones: a bottom tab bar with the four views this phase is about.
+  const navById = Object.fromEntries([...NAV, ...TOURNEY_NAV].map((n) => [n.id, n]));
+  const TAB_LABEL = { lobby: "Home", scout: "Pool", block: "Auction", locker: "Rosters", bracket: "Fixtures", leaderboard: "Ranks", reserve: "Reserves", warroom: "Mock", veto: "Veto" };
+  const tabPhase = chrome?.phase || (state.tournament?.locked ? "matches_live" : "drafting");
+  const mobileTabs = ({
+    registration_open: ["lobby", "scout", "locker", "leaderboard"],
+    registration_closed: ["lobby", "scout", "locker", "leaderboard"],
+    drafting: ["lobby", "block", "scout", "locker"],
+    matches_live: ["lobby", "bracket", "locker", "leaderboard"],
+    settled: ["lobby", "bracket", "locker", "leaderboard"],
+  })[tabPhase] || ["lobby", "block", "scout", "locker"];
+
   /* ── top nav (transparent, hero-themed) ── */
   const TopNav = (
     <header className="sticky top-0 z-30" style={{ background: "rgba(6,9,16,0.94)", borderBottom: "1px solid rgba(61,123,255,0.14)", backdropFilter: "blur(12px)" }}>
       <div className="page-wrap flex items-center gap-2.5 sm:gap-4 py-3.5 flex-wrap" style={{ fontFamily: "'Rajdhani',sans-serif" }}>
-        {/* mobile: hamburger opens the floating drawer; desktop uses the rail */}
-        {!isDesk && (
-          <button onClick={() => setDrawerOpen(true)} aria-label="Open navigation"
-            className="shrink-0 grid place-items-center transition-all hover:scale-105"
-            style={{ width: 42, height: 38, clipPath: SHELL_NOTCH(9), background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.45)" }}>
-            <span className="flex flex-col gap-1">
-              <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
-              <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
-              <span style={{ width: 16, height: 2, background: "#7da6ff" }} />
-            </span>
-          </button>
-        )}
+        {/* phones: the bottom tab bar (below) replaces the rail */}
         {/* context — tournament · phase · view, one consistent breadcrumb line */}
         <div className="flex items-center gap-3 min-w-0 shrink">
           {/* tournament date — the anchor, in its own notched HUD frame */}
@@ -6363,95 +6459,87 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
       {/* ── side drawer — floating HUD panel, portaled to <body> because the
              sticky header's backdrop-filter traps fixed descendants ── */}
-      {drawerOpen && createPortal(<>
+      {!isDesk && createPortal(<>
         <style>{`
-          @keyframes voltDrawerIn { from { transform: translateX(-24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+          @keyframes voltSheetIn { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
           @keyframes voltFadeIn { from { opacity: 0; } to { opacity: 1; } }
-          .volt-drawer-item { transition: background .15s ease, color .15s ease, padding-left .15s ease; }
-          .volt-drawer-item:hover { background: rgba(61,123,255,0.1) !important; color: #eaf1ff !important; padding-left: 16px !important; }
+          .volt-tab { -webkit-tap-highlight-color: transparent; }
+          .volt-tab:active .volt-tab-ico { transform: scale(0.9); }
+          .volt-tile:active { transform: scale(0.97); }
         `}</style>
-        <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(3,5,10,0.65)", backdropFilter: "blur(3px)", animation: "voltFadeIn .18s ease" }} />
-        <aside style={{ position: "fixed", left: 16, top: 16, maxHeight: "calc(100vh - 32px)", zIndex: 96, width: 288, display: "flex", flexDirection: "column",
-          background: "linear-gradient(165deg, rgba(16,23,42,0.97), rgba(8,11,20,0.97))",
-          border: "1px solid rgba(61,123,255,0.4)",
-          clipPath: "polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px))",
-          boxShadow: "0 0 60px rgba(61,123,255,0.14), 24px 0 80px rgba(0,0,0,0.6)",
-          padding: "20px 14px 16px", overflowY: "auto", fontFamily: "'Rajdhani',sans-serif",
-          animation: "voltDrawerIn .22s cubic-bezier(.2,.8,.3,1)" }}>
-          <span style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
-          <span style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
-          <div className="flex items-center justify-between" style={{ padding: "0 8px 6px" }}>
-            <div>
-              <VoltTag color="rgba(120,150,220,0.75)" />
-              <div className="text-lg font-bold uppercase tracking-wide" style={{ color: "#3d7bff", textShadow: "0 0 16px rgba(61,123,255,0.65)" }}>{window.__VOLT.communityName || "VOLT"}</div>
-            </div>
-            <button onClick={() => setDrawerOpen(false)} aria-label="Close navigation"
-              style={{ color: "rgba(200,215,255,0.6)", fontSize: 14, width: 30, height: 30, display: "grid", placeItems: "center", clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)" }}>✕</button>
-          </div>
-          {chrome && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px 0" }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: chrome.phaseColor || "#5b8dff", boxShadow: `0 0 8px ${chrome.phaseColor || "#5b8dff"}` }} />
-              <span style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "rgba(200,215,255,0.75)" }}>{window.__VOLT.weekendLabel || "Tournament"}</span>
-              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.14em", color: chrome.phaseColor || "#5b8dff" }}>· {chrome.phaseTag}</span>
-            </div>
-          )}
-          <div style={{ height: 1, margin: "10px 6px 14px", background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
-          {[{ title: "League", items: NAV }, { title: "Tournament", items: TOURNEY_NAV }].map(sec => {
-            const items = sec.items.filter(n => !n.adminOnly || isAdmin);
-            if (!items.length) return null;
+        {/* The four places this phase is about, one tap each; the rest live in More. */}
+        <nav aria-label="Tournament" className="volt-tabbar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 90,
+          display: "grid", gridTemplateColumns: `repeat(${mobileTabs.length + 1}, minmax(0, 1fr))`,
+          padding: "6px 6px calc(6px + env(safe-area-inset-bottom))",
+          background: "linear-gradient(180deg, rgba(10,14,25,0.94), rgba(6,9,16,0.98))", backdropFilter: "blur(14px)",
+          borderTop: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 -10px 30px rgba(0,0,0,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>
+          {[...mobileTabs.map((id) => ({ id, glyph: navById[id]?.glyph, label: TAB_LABEL[id] || navById[id]?.label })), { id: "__more", glyph: null, label: "More" }].map((t) => {
+            const on = t.id === "__more" ? drawerOpen || (!mobileTabs.includes(view)) : view === t.id && !drawerOpen;
+            const live = t.id === "block" && (block || spinLive);
             return (
-              <div key={sec.title} style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 7px" }}>// {sec.title}</div>
-                {items.map(nav => {
-                  const active = view === nav.id;
-                  const live = nav.id === "block" && (block || spinLive);
-                  return (
-                    <button key={nav.id} onClick={() => { setView(nav.id); setDrawerOpen(false); }}
-                      className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left"
-                      style={{ paddingLeft: 12, paddingRight: 12, background: active ? "linear-gradient(90deg, rgba(61,123,255,0.18), rgba(61,123,255,0.03))" : "transparent", color: active ? "#eaf1ff" : "rgba(200,215,255,0.72)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))", borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
-                      <span className="text-base" style={{ color: active ? "#3d7bff" : "rgba(200,215,255,0.4)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none", display: "inline-flex" }}>{glyphNode(nav.glyph, 18)}</span>
-                      <span className="font-semibold uppercase tracking-[0.12em] text-sm">{nav.label}</span>
-                      {live && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
-                      {active && !live && <span className="ml-auto" style={{ fontSize: 9, letterSpacing: "0.2em", color: "#3d7bff", fontWeight: 700 }}>◂</span>}
-                    </button>
-                  );
-                })}
-              </div>
+              <button key={t.id} className="volt-tab" aria-current={on ? "page" : undefined}
+                onClick={() => { if (t.id === "__more") setDrawerOpen((o) => !o); else { setView(t.id); setDrawerOpen(false); window.scrollTo({ top: 0 }); } }}
+                style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, minHeight: 52, padding: "4px 0",
+                  background: "none", border: "none", cursor: "pointer", color: on ? "#eaf1ff" : "rgba(170,190,230,0.55)" }}>
+                {on && <span aria-hidden style={{ position: "absolute", top: -6, left: "22%", right: "22%", height: 2, background: "#3d7bff", boxShadow: "0 0 10px #3d7bff" }} />}
+                <span className="volt-tab-ico" style={{ position: "relative", display: "inline-flex", transition: "transform .12s", color: on ? "#7da6ff" : "inherit", filter: on ? "drop-shadow(0 0 6px rgba(61,123,255,0.7))" : "none" }}>
+                  {t.glyph ? glyphNode(t.glyph, 21) : (
+                    <span style={{ display: "grid", gridTemplateColumns: "repeat(2, 6px)", gap: 3, padding: 2 }}>
+                      {[0, 1, 2, 3].map((i) => <i key={i} style={{ width: 6, height: 6, border: "1.6px solid currentColor", display: "block" }} />)}
+                    </span>)}
+                  {live && <span style={{ position: "absolute", top: -2, right: -5, width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px #ff4655" }} />}
+                </span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{t.label}</span>
+              </button>
             );
           })}
-          <div style={{ marginTop: "auto", borderTop: "1px solid rgba(120,150,220,0.15)", paddingTop: 12 }}>
-            <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "0 8px 7px" }}>// You</div>
-            {chrome?.account && (
-              <button onClick={() => { setView("account"); setDrawerOpen(false); }}
-                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left"
-                style={{ paddingLeft: 12, paddingRight: 12, background: view === "account" ? "linear-gradient(90deg, rgba(61,123,255,0.18), rgba(61,123,255,0.03))" : "transparent", color: view === "account" ? "#eaf1ff" : "rgba(200,215,255,0.72)", borderLeft: view === "account" ? "2px solid #3d7bff" : "2px solid transparent" }}>
-                <span className="text-base" style={{ color: view === "account" ? "#3d7bff" : "rgba(200,215,255,0.4)", display: "inline-flex" }}><Icon name="account" /></span>
-                <span className="font-semibold uppercase tracking-[0.12em] text-sm">My Account</span>
-              </button>
-            )}
-            {!auth?.userId && (
-              <button onClick={() => { setDrawerOpen(false); setIdentity(null); }}
-                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
-                <span className="text-base" style={{ color: "rgba(200,215,255,0.4)", display: "inline-flex" }}><Icon name="swap" /></span>
-                <span className="font-semibold uppercase tracking-[0.12em] text-sm">Switch Seat</span>
-              </button>
-            )}
-            {!isDesk && (
-              <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)}
-                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "rgba(200,215,255,0.72)", borderLeft: "2px solid transparent" }}>
-                <span className="text-base" style={{ color: soundOn ? "#7da6ff" : "rgba(200,215,255,0.4)" }}><Icon name={soundOn ? "soundOn" : "soundOff"} size={18} /></span>
-                <span className="font-semibold uppercase tracking-[0.12em] text-sm">{soundOn ? "Sound on" : "Sound off"}</span>
-              </button>
-            )}
-            {chrome && (
-              <button onClick={() => { setDrawerOpen(false); chrome.onBack(); }}
-                className="volt-drawer-item w-full flex items-center gap-3 py-2.5 text-left" style={{ paddingLeft: 12, paddingRight: 12, color: "#aec6ff", borderLeft: "2px solid transparent" }}>
-                <span className="text-base" style={{ color: "#7da6ff" }}>⊞</span>
-                <span className="font-semibold uppercase tracking-[0.12em] text-sm">{chrome.portalLabel || ("Back to " + chrome.backLabel)}</span>
-              </button>
-            )}
+        </nav>
+
+        {drawerOpen && <>
+          <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 88, background: "rgba(3,5,10,0.6)", backdropFilter: "blur(3px)", animation: "voltFadeIn .18s ease" }} />
+          <div role="dialog" aria-label="More" style={{ position: "fixed", left: 8, right: 8, bottom: "calc(70px + env(safe-area-inset-bottom))", zIndex: 89, maxHeight: "72vh", overflowY: "auto",
+            background: "linear-gradient(165deg, rgba(16,23,42,0.98), rgba(8,11,20,0.98))", border: "1px solid rgba(61,123,255,0.4)",
+            clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))",
+            boxShadow: "0 -20px 60px rgba(0,0,0,0.55)", padding: "16px 14px 14px", fontFamily: "'Rajdhani',sans-serif", animation: "voltSheetIn .22s cubic-bezier(.2,.8,.3,1)" }}>
+            <div className="flex items-center gap-2.5" style={{ padding: "0 4px 12px" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: chrome?.phaseColor || "#5b8dff", boxShadow: `0 0 8px ${chrome?.phaseColor || "#5b8dff"}` }} />
+              <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#eaf1ff" }}>{window.__VOLT.weekendLabel || window.__VOLT.communityName || "Tournament"}</span>
+              {chrome?.phaseTag && <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.16em", color: chrome.phaseColor || "#5b8dff" }}>{chrome.phaseTag}</span>}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+              {[...NAV, ...TOURNEY_NAV].filter((n) => (!n.adminOnly || isAdmin) && !mobileTabs.includes(n.id)).map((n) => {
+                const on = view === n.id;
+                return (
+                  <button key={n.id} className="volt-tile" onClick={() => { setView(n.id); setDrawerOpen(false); window.scrollTo({ top: 0 }); }}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 7, minHeight: 78, padding: "10px 4px", cursor: "pointer", transition: "transform .12s",
+                      background: on ? "rgba(61,123,255,0.16)" : "rgba(255,255,255,0.03)", border: `1px solid ${on ? "rgba(61,123,255,0.6)" : "rgba(120,150,220,0.16)"}`,
+                      clipPath: SHELL_NOTCH(9), color: on ? "#eaf1ff" : "rgba(210,222,250,0.8)" }}>
+                    <span style={{ color: on ? "#7da6ff" : "rgba(160,185,235,0.7)", display: "inline-flex" }}>{glyphNode(n.glyph, 22)}</span>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", textAlign: "center", lineHeight: 1.1 }}>{n.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "grid", gap: 4, marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
+              {[
+                chrome?.account && { key: "acc", icon: <Icon name="account" />, label: "My account", on: view === "account", go: () => setView("account") },
+                chrome?.onReport && { key: "rep", icon: <Icon name="clipboard" />, label: "Report a match", go: () => chrome.onReport() },
+                !auth?.userId && { key: "seat", icon: <Icon name="swap" />, label: "Switch seat", go: () => setIdentity(null) },
+                { key: "snd", icon: <Icon name={soundOn ? "soundOn" : "soundOff"} />, label: soundOn ? "Sound on" : "Sound off", go: () => setSoundOn((v) => !v), keep: true, snd: true },
+                chrome && { key: "hub", icon: <span style={{ fontSize: 17 }}>⊞</span>, label: chrome.portalLabel || "League hub", go: () => chrome.onBack(), accent: true },
+              ].filter(Boolean).map((r) => (
+                <button key={r.key} data-snd={r.snd ? "off" : undefined} onClick={() => { if (!r.keep) setDrawerOpen(false); r.go(); }}
+                  className="flex items-center gap-3 text-left"
+                  style={{ minHeight: 46, padding: "0 12px", background: r.on ? "rgba(61,123,255,0.14)" : "transparent", border: "none", cursor: "pointer",
+                    color: r.accent ? "#aec6ff" : "rgba(210,222,250,0.85)" }}>
+                  <span style={{ color: r.accent ? "#7da6ff" : "rgba(160,185,235,0.7)", display: "inline-flex", width: 22, justifyContent: "center" }}>{r.icon}</span>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>{r.label}</span>
+                  {r.accent && <span style={{ marginLeft: "auto", color: "#7da6ff" }}>→</span>}
+                </button>
+              ))}
+            </div>
           </div>
-        </aside>
+        </>}
       </>, document.body)}
     </header>
   );
@@ -6778,12 +6866,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <input value={rQuery} onChange={(e) => setRQuery(e.target.value)} placeholder="Search reserves or agents…" className="flex-1 bg-transparent outline-none" style={{ color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15 }} />
       </div>
       <div className="flex flex-wrap gap-2 mb-3">
-        <button onClick={() => setRRank("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === "All", "#3ddc84")}>All ranks</button>
-        {RANK_LIST.map((r) => <button key={r} onClick={() => setRRank(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === r, RANKS[r].c)}>{r}</button>)}
+        <button onClick={() => setRRank("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === "All", "#3ddc84")}>All ranks</button>
+        {RANK_LIST.map((r) => <button key={r} onClick={() => setRRank(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === r, RANKS[r].c)}>{r}</button>)}
       </div>
       <div className="flex flex-wrap gap-2 mb-6">
-        <button onClick={() => setRRole("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === "All", "#3ddc84")}>All roles</button>
-        {ROLES.map((r) => <button key={r} onClick={() => setRRole(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === r, "#3ddc84")}>{ROLE_GLYPH[r]} {r}</button>)}
+        <button onClick={() => setRRole("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === "All", "#3ddc84")}>All roles</button>
+        {ROLES.map((r) => <button key={r} onClick={() => setRRole(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === r, "#3ddc84")}>{ROLE_GLYPH[r]} {r}</button>)}
       </div>
 
       {reserves.length === 0 ? (
@@ -6877,7 +6965,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </div>
         <span className="text-sm" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{filtered.length} / {state.players.length} players</span>
       </div>
-      <p className="text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>Tap any operator to open their full scouting file with a performance radar.</p>
+      <p className="hidden sm:block text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>Tap any operator to open their full scouting file with a performance radar.</p>
       <style>{DASH_CSS}</style>
       <PoolStrip players={state.players.filter((p) => p.poolEligible !== false)} />
 
@@ -6885,17 +6973,40 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search players or agents…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
       </div>
-      <div className="flex flex-wrap gap-2 mb-3">
-        <button onClick={() => setFilterRank("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === "All")}>All ranks</button>
-        {RANK_LIST.map((r) => <button key={r} onClick={() => setFilterRank(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === r, RANKS[r].c)}>{r}</button>)}
+      <div className="volt-hscroll flex flex-nowrap sm:flex-wrap overflow-x-auto gap-2 mb-2.5 sm:mb-3 -mx-[18px] px-[18px] sm:mx-0 sm:px-0">
+        <button onClick={() => setFilterRank("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === "All")}>All ranks</button>
+        {RANK_LIST.map((r) => <button key={r} onClick={() => setFilterRank(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === r, RANKS[r].c)}>{r}</button>)}
       </div>
-      <div className="flex flex-wrap gap-2 mb-6">
-        <button onClick={() => setFilterRole("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === "All")}>All roles</button>
-        {ROLES.map((r) => <button key={r} onClick={() => setFilterRole(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === r)}>{ROLE_GLYPH[r]} {r}</button>)}
+      <div className="volt-hscroll flex flex-nowrap sm:flex-wrap overflow-x-auto gap-2 mb-4 sm:mb-6 -mx-[18px] px-[18px] sm:mx-0 sm:px-0">
+        <button onClick={() => setFilterRole("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === "All")}>All roles</button>
+        {ROLES.map((r) => <button key={r} onClick={() => setFilterRole(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === r)}>{ROLE_GLYPH[r]} {r}</button>)}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-        {filtered.map((p) => { const r = rankOf(p.rank); const tm = p.soldTo ? teamOf(p.soldTo) : null; return (
+      <div className={"grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 " + (isDesk ? "gap-3" : "gap-2")}>
+        {filtered.map((p) => { const r = rankOf(p.rank); const tm = p.soldTo ? teamOf(p.soldTo) : null;
+          // Phones: one scannable row per player; the card is a tap away.
+          if (!isDesk) return (
+            <button key={p.id} onClick={() => setScouted(p.id)} className="relative w-full text-left flex items-center gap-3 px-3 py-2.5 active:scale-[0.99] transition-transform"
+              style={{ background: `linear-gradient(90deg, ${r.c}17, rgba(10,15,28,0.6) 55%)`, border: `1px solid ${r.c}30`, boxShadow: `inset 3px 0 0 ${r.c}`,
+                clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)" }}>
+              <div className="shrink-0"><RankBadge rank={p.rank} div={p.rankDiv} size="sm" /></div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 17, color: "#ecf3ff" }}>{p.name}</p>
+                <p className="uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", marginTop: 4, color: "rgba(200,215,255,0.55)" }}>
+                  <span style={{ color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span> · {p.role}{p.agent && p.agent !== "—" ? ` · ${p.agent}` : ""}</p>
+                <p className="uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", marginTop: 3,
+                  color: p.isCaptain ? "#f5c453" : tm ? tm.hue : "#3ddc84" }}>
+                  {p.isCaptain ? "★ Captain" : tm ? `${tm.name} · ${fmt(p.soldPrice)}` : `Available · opens ${fmt(r.bid)}`}</p>
+              </div>
+              {p.acs != null && (
+                <div className="shrink-0 text-right" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#ff4655", lineHeight: 1 }}>{p.acs}</div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.16em", color: "rgba(200,215,255,0.4)", marginTop: 4 }}>ACS</div>
+                </div>
+              )}
+            </button>
+          );
+          return (
           <button key={p.id} onClick={() => setScouted(p.id)} className="relative text-left p-4 transition-all hover:scale-[1.03] overflow-hidden"
             style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${r.c}44`, boxShadow: "0 12px 28px rgba(0,0,0,0.35)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
             <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
@@ -7031,7 +7142,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         }
       `}</style>
       {/* slim budget bar — narrow screens only; wide screens get the side rails */}
-      <div className={(railsOn ? "volt-auc-bar " : "") + "flex flex-wrap justify-center gap-2 px-5 md:px-8 pt-5 pb-3"}>
+      <div className={(railsOn ? "volt-auc-bar " : "") + "volt-hscroll flex flex-nowrap sm:flex-wrap sm:justify-center overflow-x-auto gap-2 px-4 sm:px-5 md:px-8 pt-4 sm:pt-5 pb-3"}>
         {state.teams.map((t) => { const lead = block?.leaderId === t.id; return (
           <div key={t.id} className="shrink-0 flex items-center gap-2.5 px-3.5 py-2 rounded-lg" style={{ background: lead ? "rgba(255,70,85,0.16)" : "rgba(255,255,255,0.04)", border: `1px solid ${lead ? "#ff4655" : t.hue + "44"}` }}>
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.hue, boxShadow: `0 0 8px ${t.hue}` }} />
@@ -7050,7 +7161,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           {blockPlayer && !spinLive ? (
             <>
               <button onClick={() => setScouted(blockPlayer.id)} className="group relative w-full max-w-[420px] transition-transform hover:scale-[1.015] active:scale-[0.99]" style={{ cursor: "pointer" }} title="View full scouting file">
-                <PlayerCard player={blockPlayer} />
+                {isDesk ? <PlayerCard player={blockPlayer} /> : <PlayerCardCompact player={blockPlayer} />}
                 <span className="absolute left-1/2 -translate-x-1/2 -bottom-3 px-3 py-1 text-[10px] uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(7,12,22,0.9)", border: "1px solid rgba(61,123,255,0.4)", color: "#7da6ff", clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>Tap for performance radar</span>
               </button>
               <div className={"flex items-center gap-6 px-8 py-3 " + (flash ? "bid-pop" : "")} style={{ clipPath: "polygon(18px 0,100% 0,calc(100% - 18px) 100%,0 100%)", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.45)", backdropFilter: "blur(10px)", boxShadow: "0 0 26px rgba(61,123,255,0.2)" }}>
@@ -7261,12 +7372,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </div>
         <span className="text-sm px-3 py-1" style={{ background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.3)", color: "#7da6ff", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", fontFamily: "'IBM Plex Mono',monospace" }}>{state.teams.length} teams</span>
       </div>
-      <p className="text-sm mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>
+      <p className="volt-desc text-sm mb-4 sm:mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>
         Every roster, budget and the roles still missing — scout your rivals.{isAdmin && " Tap ✎ on a card to rename or remove a team."}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {state.teams.map((t) => (
-          <TeamCard key={t.id} team={t} players={state.players} lead={block?.leaderId === t.id} isAdmin={isAdmin} onRename={renameTeam} onScout={setScouted} onRemove={removeTeam} canRemove={block?.leaderId !== t.id} onAddToRoster={adminAddToRoster} onRemoveFromRoster={adminRemoveFromRoster} onSetBudget={setTeamBudget} />
+          <TeamCard key={t.id} team={t} players={state.players} lead={block?.leaderId === t.id} isAdmin={isAdmin}
+            collapsible={!isDesk} defaultOpen={dashTeam?.id === t.id} onRename={renameTeam} onScout={setScouted} onRemove={removeTeam} canRemove={block?.leaderId !== t.id} onAddToRoster={adminAddToRoster} onRemoveFromRoster={adminRemoveFromRoster} onSetBudget={setTeamBudget} />
         ))}
         {isAdmin && (
           <button onClick={addTeam} className="flex flex-col items-center justify-center gap-2 py-10 transition-all hover:scale-[1.02] min-h-[220px]"
@@ -7345,7 +7457,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     <>
       {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onMoveReserve={setPoolEligible} onViewProfile={(uid) => { setScouted(null); setProfileFrom(view); setProfileUser(uid); setView("profile"); }} />}
       {saveErr && (
-        <div style={{ position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 210, maxWidth: "92vw",
+        <div style={{ position: "fixed", left: "50%", bottom: isDesk ? 22 : "calc(86px + env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 210, maxWidth: "92vw",
           display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", fontFamily: "'Rajdhani',sans-serif",
           background: "rgba(40,10,16,0.97)", border: "1px solid rgba(255,70,85,0.6)", clipPath: SHELL_NOTCH(10), boxShadow: "0 14px 40px rgba(0,0,0,0.5)" }}>
           <span style={{ color: "#ff8f9a", fontSize: 13, fontWeight: 700 }}>⚠ Not saved</span>
@@ -8019,6 +8131,16 @@ function CollapseHead({ title, hint, open, onToggle, tone }) {
 // them). Shared by the shell screens and the draft app, which renders without
 // the shell during the draft and the matches.
 const MOBILE_CSS = `
+    /* Collapsed roster card: header row only. */
+    .volt-tc-shut .volt-tc-body > :not(:first-child) { display: none !important; }
+    /* Swipeable strips: no scrollbar, momentum scroll. */
+    .volt-hscroll { scrollbar-width: none; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
+    .volt-hscroll::-webkit-scrollbar { display: none; }
+    .volt-hscroll > * { scroll-snap-align: start; }
+    /* Phones and small tablets have the bottom tab bar (below 768px). */
+    @media (max-width: 767px) {
+      .volt-toast { bottom: calc(86px + env(safe-area-inset-bottom)) !important; }
+    }
     @media (max-width: 720px) {
       /* iOS Safari zooms the whole page when a focused input's text is under
          16px, and never zooms back out — the single worst mobile bug here,
@@ -8050,6 +8172,13 @@ const MOBILE_CSS = `
       .volt-pod-val { font-size: 26px !important; }
       .volt-pod-val > span:last-child { display: block; margin: 4px 0 0 !important; font-size: 9.5px !important; }
       .volt-pod-meta { flex-direction: column; gap: 2px !important; font-size: 10px !important; }
+
+      /* Page intros: two lines at most on a phone. */
+      .volt-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      /* Fixtures hero: tighter, and its host controls as small chips. */
+      .volt-fxhero { padding: 18px 18px 16px !important; margin-bottom: 14px !important; }
+      .volt-fxhero-actions { margin-top: 12px !important; gap: 6px !important; }
+      .volt-fxhero-actions > *, .volt-fxhero-actions button { font-size: 10px !important; padding: 6px 9px !important; min-height: 32px !important; }
 
       /* Hub "last tournament" strip: label on its own line, button full width. */
       .volt-last-strip > :first-child { flex-basis: 100%; }
@@ -8654,7 +8783,7 @@ function VoltToastHost() {
   const col = t.tone === "warn" ? "#f5c453" : t.tone === "error" ? "#ff4655" : "#3ddc84";
   return createPortal(
     <div role="status" aria-live="polite" key={t.id} onClick={() => { __toast.cur = null; bump((n) => n + 1); }}
-      style={{ position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 450, maxWidth: "min(92vw, 460px)",
+      className="volt-toast" style={{ position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 450, maxWidth: "min(92vw, 460px)",
         padding: "12px 18px", background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))",
         border: `1px solid ${col}88`, clipPath: SHELL_NOTCH(9), boxShadow: "0 16px 40px rgba(0,0,0,0.55)",
         color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14.5, fontWeight: 600, cursor: "pointer",
@@ -11325,6 +11454,14 @@ const DASH_CSS = `
     .volt-yc-body > :not(:last-child) { margin-right: 0; }
     .volt-yc-form { margin-left: 0 !important; }
     .volt-yc-fig, .volt-yc-floor { display: none; }
+    /* Your card on a phone: no radar, the numbers in one row, no 460px floor. */
+    .volt-yc > .volt-cell { min-height: 0 !important; padding: 20px 18px 18px !important; }
+    .volt-yc-radar, .volt-yc-div { display: none !important; }
+    .volt-yc-mid { margin: 16px 0 4px !important; }
+    .volt-yc-stats { grid-template-columns: repeat(3, minmax(0, auto)); gap: 22px !important; }
+    .volt-yc-stats > div > div:first-child { font-size: 28px !important; }
+    /* The phase's main card first (on the block, next match, your entry), then yours. */
+    .volt-bento > :nth-child(2) { order: -1; }
   }
   @keyframes voltGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
   .volt-bar { transform-origin: left center; animation: voltGrow .8s cubic-bezier(.2,.8,.2,1) backwards; animation-delay: var(--d, 0ms); }
@@ -11993,8 +12130,8 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
         </div>
 
         {/* Radar | league rank + season points */}
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 26, flexWrap: "wrap", margin: "18px 0 10px" }}>
-          <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div className="volt-yc-mid" style={{ flex: 1, display: "flex", alignItems: "center", gap: 26, flexWrap: "wrap", margin: "18px 0 10px" }}>
+          <div className="volt-yc-radar" style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
             <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
               win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
               compare={lg?.compare || null} size={300} hue={hue} />
@@ -12008,9 +12145,9 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
               </div>
             )}
           </div>
-          <div style={{ alignSelf: "stretch", width: 1, margin: "18px 0",
+          <div className="volt-yc-div" style={{ alignSelf: "stretch", width: 1, margin: "18px 0",
             background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.28), transparent)" }} />
-          <div style={{ display: "grid", gap: 28 }}>
+          <div className="volt-yc-stats" style={{ display: "grid", gap: 28 }}>
             {!lg && <Skeleton rows={3} />}
             {/* Before a first league match there's no league rank or points to
                 show, so the card leads with the tracker numbers instead. */}
@@ -13874,6 +14011,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     window.scrollTo({ top: 0 });
   };
   const openAccount = () => setPage("account");
+  const [hubMoreOpen, setHubMoreOpen] = useState(false);
   const [editTime, setEditTime] = useState(false);
   const [draftAtDraft, setDraftAtDraft] = useState(null); // controlled value for the draft-time picker
   const [setupWeekend, setSetupWeekend] = useState(null); // { mode:"create"|"edit", ev }
@@ -14117,31 +14255,69 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     : null;
   const showRail = (HAS_SUPABASE || !!DEMO) && hubDesk;
   const showStaff = HAS_SUPABASE && (isTrueHost || isOperator);
-  const hubPages = [["overview", "Overview"], ["season", "Season race"], (events || []).length > 0 && ["tournaments", "Tournaments"],
-    isHost && ["discord", "Discord"], showStaff && ["staff", "Staff"], ["account", "My account"]].filter(Boolean);
+  const hubPages = [["overview", "Home", "overview"], ["season", "Season", "season"], (events || []).length > 0 && ["tournaments", "Events", "history"],
+    isHost && ["discord", "Discord", "discord"], showStaff && ["staff", "Staff", "settings"], ["account", "Me", "account"]].filter(Boolean);
+  // Five fit in a tab bar; with more, the first four stay and the rest go in More.
+  const hubTabs = hubPages.length <= 5 ? hubPages : hubPages.slice(0, 4);
+  const hubMore = hubPages.length <= 5 ? [] : hubPages.slice(4);
   const railPad = showRail ? (railWideHub ? 224 : 60) : 0;
 
   const wrap = (inner, hideHeader) => (
-    <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px", paddingLeft: railPad, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
+    <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px", paddingLeft: railPad,
+      ...(showRail ? null : { paddingBottom: "calc(90px + env(safe-area-inset-bottom))" }), transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
       <ShellStyles />
       {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={openAccount} isHost={isHost} wide={railWideHub} setWide={setRailWide}
         hasTournaments={(events || []).length > 0} onCreate={isHost ? () => setSetupWeekend({ mode: "create", ev: null }) : null}
         page={showPlayer ? null : page} onPage={setPage} showStaff={showStaff} />}
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: showRail ? "14px 20px" : "10px 14px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))",
+        ...(showRail ? null : { position: "sticky", top: 0, zIndex: 50, backdropFilter: "blur(12px)" }) }}>
+        {/* phones have no rail, so the league's mark sits here */}
+        {!showRail && <div style={{ marginRight: "auto", minWidth: 0 }}><LeagueLockup name={community?.name || window.__VOLT.communityName || "VOLT"} wide /></div>}
         {HAS_SUPABASE && <NotifBell />}
         {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? openAccount : null} />}
       </div>
-      {/* No rail on phones: the same pages as a strip of tabs. */}
-      {!showRail && (HAS_SUPABASE || DEMO) && (
-        <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "10px 14px", borderBottom: "1px solid rgba(61,123,255,0.15)", background: "rgba(9,12,21,0.9)" }}>
-          {hubPages.map(([k, label]) => {
-            const on = page === k && !showPlayer;
-            return <button key={k} onClick={() => setPage(k)} style={{ flexShrink: 0, padding: "8px 14px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", cursor: "pointer",
-              color: on ? "#eaf1ff" : "rgba(200,215,255,0.6)", background: on ? "rgba(61,123,255,0.2)" : "rgba(255,255,255,0.03)",
-              border: `1px solid ${on ? "rgba(61,123,255,0.6)" : "rgba(120,150,220,0.2)"}`, clipPath: SHELL_NOTCH(6), fontFamily: "'Rajdhani',sans-serif" }}>{label}</button>;
+      {/* No rail on phones: the same pages as a bottom tab bar (More holds the rest). */}
+      {!showRail && (HAS_SUPABASE || DEMO) && createPortal(<>
+        <nav aria-label="League" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 90,
+          display: "grid", gridTemplateColumns: `repeat(${hubTabs.length + (hubMore.length ? 1 : 0)}, minmax(0, 1fr))`,
+          padding: "6px 6px calc(6px + env(safe-area-inset-bottom))",
+          background: "linear-gradient(180deg, rgba(10,14,25,0.94), rgba(6,9,16,0.98))", backdropFilter: "blur(14px)",
+          borderTop: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 -10px 30px rgba(0,0,0,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>
+          {[...hubTabs, ...(hubMore.length ? [["__more", "More", null]] : [])].map(([k, label, glyph]) => {
+            const on = k === "__more" ? (hubMoreOpen || (!showPlayer && hubMore.some(([m]) => m === page))) : page === k && !showPlayer && !hubMoreOpen;
+            return (
+              <button key={k} aria-current={on ? "page" : undefined} onClick={() => { if (k === "__more") setHubMoreOpen((o) => !o); else { setHubMoreOpen(false); setPage(k); } }}
+                style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, minHeight: 52, padding: "4px 0",
+                  background: "none", border: "none", cursor: "pointer", color: on ? "#eaf1ff" : "rgba(170,190,230,0.55)", WebkitTapHighlightColor: "transparent" }}>
+                {on && <span aria-hidden style={{ position: "absolute", top: -6, left: "22%", right: "22%", height: 2, background: "#3d7bff", boxShadow: "0 0 10px #3d7bff" }} />}
+                <span style={{ display: "inline-flex", color: on ? "#7da6ff" : "inherit", filter: on ? "drop-shadow(0 0 6px rgba(61,123,255,0.7))" : "none" }}>
+                  {glyph ? glyphNode(glyph, 21) : (
+                    <span style={{ display: "grid", gridTemplateColumns: "repeat(2, 6px)", gap: 3, padding: 2 }}>
+                      {[0, 1, 2, 3].map((i) => <i key={i} style={{ width: 6, height: 6, border: "1.6px solid currentColor", display: "block" }} />)}
+                    </span>)}
+                </span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{label}</span>
+              </button>
+            );
           })}
-        </div>
-      )}
+        </nav>
+        {hubMoreOpen && <>
+          <div onClick={() => setHubMoreOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 88, background: "rgba(3,5,10,0.6)", backdropFilter: "blur(3px)" }} />
+          <div role="dialog" aria-label="More" style={{ position: "fixed", left: 8, right: 8, bottom: "calc(70px + env(safe-area-inset-bottom))", zIndex: 89,
+            background: "linear-gradient(165deg, rgba(16,23,42,0.98), rgba(8,11,20,0.98))", border: "1px solid rgba(61,123,255,0.4)",
+            clipPath: SHELL_NOTCH(16), padding: 12, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, fontFamily: "'Rajdhani',sans-serif" }}>
+            {hubMore.map(([k, label, glyph]) => (
+              <button key={k} onClick={() => { setHubMoreOpen(false); setPage(k); }}
+                style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 7, minHeight: 78, cursor: "pointer",
+                  background: page === k ? "rgba(61,123,255,0.16)" : "rgba(255,255,255,0.03)", border: `1px solid ${page === k ? "rgba(61,123,255,0.6)" : "rgba(120,150,220,0.16)"}`,
+                  clipPath: SHELL_NOTCH(9), color: "rgba(220,230,252,0.9)" }}>
+                <span style={{ color: "#7da6ff", display: "inline-flex" }}>{glyphNode(glyph, 22)}</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>{label}</span>
+              </button>
+            ))}
+          </div>
+        </>}
+      </>, document.body)}
       {setupWeekend && (
         <WeekendSetup
           mode={setupWeekend.mode}
@@ -14163,7 +14339,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             .volt-lg-grid { grid-template-columns: 1fr; }
           }
           @media (max-width: 560px) {
-            .volt-lg-hero { padding: 24px 20px 22px !important; }
+            .volt-lg-hero { padding: 22px 18px 20px !important; min-height: 0 !important; }
+            .volt-lg-stats { padding-top: 20px !important; }
             .volt-lg-stats { flex-wrap: wrap; gap: 16px 20px; }
             .volt-lg-rule { display: none; }
           }
@@ -15245,7 +15422,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       onBack: inReg ? () => setRegView("gate") : onBack,
       // Always the league page, whatever the phase — the rail's way home.
       onHub: onBack,
-      phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
+      phase, phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
       draftAt: ev?.draft_at || null,
       // Confirmed captain for this tournament, from the registration record. The
       // auction board doesn't exist until the draft starts, so during
