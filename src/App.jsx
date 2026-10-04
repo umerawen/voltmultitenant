@@ -9482,7 +9482,7 @@ const RAIL_PHASE_VIEWS = {
   matches_live:        ["lobby", "bracket", "locker", "reserve", "leaderboard", "veto"],
   settled:             ["lobby", "bracket", "locker", "leaderboard"],
 };
-function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide, hasPast, onCreate }) {
+function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide, hasTournaments, onCreate, page, onPage, showStaff }) {
   const [tip, setTip] = useState(null);
   const [soundOn, setSoundOn] = useState(() => { try { return localStorage.getItem("volt_sound") !== "0"; } catch { return true; } });
   useEffect(() => { try { localStorage.setItem("volt_sound", soundOn ? "1" : "0"); } catch {} }, [soundOn]);
@@ -9490,12 +9490,13 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
   const enterable = !!target;
   const finished = target?.phase === "settled";
 
-  const item = (glyph, label, { onClick, disabled, accent, liveDot } = {}) => (
-    <button key={label} disabled={disabled} onClick={disabled ? undefined : onClick}
-      className="volt-rail-item flex items-center"
+  const item = (glyph, label, { onClick, disabled, accent, liveDot, active } = {}) => (
+    <button key={label} disabled={disabled} onClick={disabled ? undefined : onClick} aria-current={active ? "page" : undefined}
+      className={"volt-rail-item flex items-center" + (active ? " is-active" : "")}
       onMouseEnter={e => { if (!wide) setTip({ label: disabled ? label + " — enter a live tournament first" : label, y: e.currentTarget.getBoundingClientRect().top + 21 }); }}
       onMouseLeave={() => setTip(null)}
-      style={{ width: wide ? W - 16 : 44, height: 42, justifyContent: wide ? "flex-start" : "center", gap: 10, paddingLeft: wide ? 12 : 0, paddingRight: wide ? 10 : 0, background: "none", border: "none", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.32 : 1, color: accent || "rgba(200,215,255,0.72)", position: "relative", margin: wide ? 0 : "0 auto" }}>
+      style={{ width: wide ? W - 16 : 44, height: 42, justifyContent: wide ? "flex-start" : "center", gap: 10, paddingLeft: wide ? 12 : 0, paddingRight: wide ? 10 : 0, background: "none", border: "none", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.32 : 1, color: active ? "#eaf1ff" : (accent || "rgba(200,215,255,0.72)"), position: "relative", margin: wide ? 0 : "0 auto",
+        ...(active ? { background: "linear-gradient(90deg, rgba(61,123,255,0.2), rgba(61,123,255,0.04))", boxShadow: "inset 2px 0 0 #3d7bff" } : null) }}>
       <span className="volt-rail-glyph" style={{ fontSize: 16, transition: "color .12s", position: "relative", display: "inline-flex" }}>{glyphNode(glyph, 19)}
         {liveDot && <span style={{ position: "absolute", top: -2, right: -4, width: 6, height: 6, borderRadius: "50%", background: "#af9aec", boxShadow: "0 0 6px #af9aec" }} />}</span>
       {wide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{label}</span>}
@@ -9505,13 +9506,14 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
   const secLabel = (t) => wide && <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "2px 12px 6px" }}>// {t}</div>;
 
   const go = (view) => enterable && onEnter(target, view);
-  // This page's own sections: always live, they just scroll.
-  const jump = (id) => id ? document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }) : window.scrollTo({ top: 0, behavior: "smooth" });
+  // The league's own pages.
+  const pg = (glyph, label, key) => item(glyph, label, { onClick: () => onPage(key), active: page === key });
   const leagueViews = [
-    item("overview", "Overview", { onClick: () => jump(null) }),
-    item("season", "Season race", { onClick: () => jump("volt-league-boards") }),
-    hasPast && item("history", "Past tournaments", { onClick: () => jump("volt-past") }),
-    isHost && item("discord", "Discord", { onClick: () => jump("volt-discord-console") }),
+    pg("overview", "Overview", "overview"),
+    pg("season", "Season race", "season"),
+    hasTournaments && pg("history", "Tournaments", "tournaments"),
+    isHost && pg("discord", "Discord", "discord"),
+    showStaff && pg("settings", "Staff", "staff"),
   ].filter(Boolean);
   const byId = Object.fromEntries([...NAV, ...TOURNEY_NAV].map(n => [n.id, n]));
   const tourneyViews = enterable ? (RAIL_PHASE_VIEWS[target.phase] || []).map(id => byId[id])
@@ -9563,7 +9565,7 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
 
       <div style={{ marginTop: "auto" }} />
       {divider()}
-      {onAccount && item("account", "My Account", { onClick: onAccount, accent: "rgba(200,215,255,0.72)" })}
+      {onAccount && item("account", "My Account", { onClick: onAccount, accent: "rgba(200,215,255,0.72)", active: page === "account" })}
       <button onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute" : "Unmute"}
         onMouseEnter={e => { if (!wide) setTip({ label: soundOn ? "Sound on" : "Sound off", y: e.currentTarget.getBoundingClientRect().top + 20 }); }} onMouseLeave={() => setTip(null)}
         style={{ width: wide ? W - 16 : 42, height: 40, justifyContent: wide ? "flex-start" : "center", gap: 10, paddingLeft: wide ? 12 : 0, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)", margin: wide ? 0 : "0 auto", background: "none", border: "none", cursor: "pointer" }}>
@@ -13831,7 +13833,15 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   const [season, setSeason] = useState(null); // aggregated captain standings across tournaments
   const [board, setBoard] = useState(null);   // player points leaderboard (match_results)
   const [live, setLive] = useState(null);     // { count, mine } — registrations for the current tournament
-  const [showProfile, setShowProfile] = useState(false);
+  // The league hub is a set of pages (the rail picks one), not one long scroll.
+  const HUB_PAGES = ["overview", "season", "tournaments", "discord", "staff", "account"];
+  const [page, setPageRaw] = useState(() => { try { const v = sessionStorage.getItem("volt_hub_page"); return HUB_PAGES.includes(v) ? v : "overview"; } catch { return "overview"; } });
+  const setPage = (v) => {
+    setPageRaw(v); setShowPlayer(null);
+    try { sessionStorage.setItem("volt_hub_page", v); } catch {}
+    window.scrollTo({ top: 0 });
+  };
+  const openAccount = () => setPage("account");
   const [editTime, setEditTime] = useState(false);
   const [draftAtDraft, setDraftAtDraft] = useState(null); // controlled value for the draft-time picker
   const [setupWeekend, setSetupWeekend] = useState(null); // { mode:"create"|"edit", ev }
@@ -13842,7 +13852,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   const [myStrikes, setMyStrikes] = useState(0);
   const [showPlayer, setShowPlayer] = useState(null); // public player-profile screen (full-screen, rail intact)
   // Back from connecting Discord while editing the profile → reopen it.
-  useEffect(() => { if (takeResume((r) => r.kind === "profile")) setShowProfile(true); }, []);
+  useEffect(() => { if (takeResume((r) => r.kind === "profile")) setPage("account"); }, []);
   useEffect(() => { if (openProfile) { setShowPlayer(openProfile); onProfileOpened && onProfileOpened(); } }, [openProfile]);
   const [expandPast, setExpandPast] = useState(null); // settled strip → recap card
   const [railWideHub, setRailWideHub] = useState(() => {
@@ -14073,18 +14083,33 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     ? events.filter(e => RANK_ENTER[e.phase]).sort((a, b) => (RANK_ENTER[b.phase] - RANK_ENTER[a.phase]) || (new Date(a.created_at) - new Date(b.created_at)))[0]
       || events.find(e => e.phase === "settled") || null
     : null;
-  const showRail = HAS_SUPABASE && hubDesk;
+  const showRail = (HAS_SUPABASE || !!DEMO) && hubDesk;
+  const showStaff = HAS_SUPABASE && (isTrueHost || isOperator);
+  const hubPages = [["overview", "Overview"], ["season", "Season race"], (events || []).length > 0 && ["tournaments", "Tournaments"],
+    isHost && ["discord", "Discord"], showStaff && ["staff", "Staff"], ["account", "My account"]].filter(Boolean);
   const railPad = showRail ? (railWideHub ? 224 : 60) : 0;
 
   const wrap = (inner, hideHeader) => (
     <div className="vg-shell" style={{ minHeight: "100vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "0 0 40px", paddingLeft: railPad, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)" }}>
       <ShellStyles />
-      {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={() => setShowProfile(true)} isHost={isHost} wide={railWideHub} setWide={setRailWide}
-        hasPast={(events || []).some(e => e.phase === "settled")} onCreate={isHost ? () => setSetupWeekend({ mode: "create", ev: null }) : null} />}
+      {showRail && <HubRail community={community} target={railTarget} onEnter={onEnter} onAccount={openAccount} isHost={isHost} wide={railWideHub} setWide={setRailWide}
+        hasTournaments={(events || []).length > 0} onCreate={isHost ? () => setSetupWeekend({ mode: "create", ev: null }) : null}
+        page={showPlayer ? null : page} onPage={setPage} showStaff={showStaff} />}
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: "14px 20px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))" }}>
         {HAS_SUPABASE && <NotifBell />}
-        {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? () => setShowProfile(true) : null} />}
+        {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? openAccount : null} />}
       </div>
+      {/* No rail on phones: the same pages as a strip of tabs. */}
+      {!showRail && (HAS_SUPABASE || DEMO) && (
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", padding: "10px 14px", borderBottom: "1px solid rgba(61,123,255,0.15)", background: "rgba(9,12,21,0.9)" }}>
+          {hubPages.map(([k, label]) => {
+            const on = page === k && !showPlayer;
+            return <button key={k} onClick={() => setPage(k)} style={{ flexShrink: 0, padding: "8px 14px", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", cursor: "pointer",
+              color: on ? "#eaf1ff" : "rgba(200,215,255,0.6)", background: on ? "rgba(61,123,255,0.2)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${on ? "rgba(61,123,255,0.6)" : "rgba(120,150,220,0.2)"}`, clipPath: SHELL_NOTCH(6), fontFamily: "'Rajdhani',sans-serif" }}>{label}</button>;
+          })}
+        </div>
+      )}
       {setupWeekend && (
         <WeekendSetup
           mode={setupWeekend.mode}
@@ -14095,20 +14120,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           }}
           onClose={() => setSetupWeekend(null)} />
       )}
-      {showProfile && (
-        <VoltOverlay onClose={() => setShowProfile(false)} zIndex={120} dim="rgba(4,6,12,0.8)">
-          <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "86vh", overflowY: "auto", background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(16), padding: "22px 24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-              <span style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// My scouting profile</span>
-              <button onClick={() => setShowProfile(false)} style={shellBtn("ghost", { padding: "5px 10px", fontSize: 11 })}>✕</button>
-            </div>
-            <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "0 0 6px" }}>Captains study this before bidding — keep it current between tournaments.</p>
-            <ScoutProfileCard userId={window.__VOLT.userId} onSaved={loadMyMeta} />
-            {HAS_SUPABASE && <DiscordLinkCard />}
-          </div>
-        </VoltOverlay>
-      )}
-      <div style={{ maxWidth: hideHeader ? 1000 : 1120, margin: "0 auto", padding: hideHeader ? "16px 20px 0" : "30px 20px 0" }}>
+      {/* hideHeader: true = a full-bleed screen (a profile), "page" = a hub page with its own heading */}
+      <div style={{ maxWidth: hideHeader === true ? 1000 : 1120, margin: "0 auto", padding: hideHeader === true ? "16px 20px 0" : "30px 20px 0" }}>
         <style>{DASH_CSS + SWEEP_CSS + `
           .volt-lg-stats { display: flex; gap: 22px; align-items: flex-start; }
           .volt-lg-stats > :not(.volt-lg-rule) { flex: 0 1 auto; }
@@ -14225,6 +14238,225 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     </div>
   );
 
+  // ── page chrome ──
+  const leagueName = community?.name || window.__VOLT.communityName || "League";
+  const PageHead = ({ title, sub, accent = "#3d7bff", right }) => (
+    <div style={{ position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+      padding: "4px 2px 20px", marginBottom: 20, borderBottom: "1px solid rgba(120,150,220,0.16)" }}>
+      <div style={{ minWidth: 0, animation: "voltRise .4s backwards" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: accent, fontWeight: 700 }}>// {leagueName}</div>
+        <div style={{ fontSize: "clamp(32px, 4.2vw, 48px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 0.95, marginTop: 8, letterSpacing: "0.01em", textShadow: `0 0 34px ${accent}40` }}>{title}</div>
+        {sub && <div style={{ fontSize: 13.5, color: "rgba(200,215,255,0.55)", marginTop: 9, maxWidth: 640, lineHeight: 1.5 }}>{sub}</div>}
+      </div>
+      {right}
+      <span aria-hidden style={{ position: "absolute", left: 0, bottom: -1, width: 90, height: 2, background: accent, boxShadow: `0 0 12px ${accent}` }} />
+    </div>
+  );
+  const recapStat = (label, value, color, extra) => (
+    <div style={{ minWidth: 0, padding: "9px 11px", background: "rgba(10,16,30,0.7)", border: `1px solid ${color}40`, clipPath: SHELL_NOTCH(6) }}>
+      <div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 14.5, fontWeight: 700, textTransform: "uppercase", marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}{extra}</div>
+    </div>
+  );
+  const hostEdit = (ev) => isHost && <>
+    <button onClick={() => setSetupWeekend({ mode: "edit", ev })} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
+    <button onClick={() => deleteWeekend(ev)} title="Delete tournament" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
+  </>;
+  const createBtn = isHost && (
+    <button disabled={busy} onClick={() => setSetupWeekend({ mode: "create", ev: null })}
+      style={shellBtn(current ? "ghost" : "primary", { padding: "11px 20px", fontSize: 12, whiteSpace: "nowrap" })}>{busy ? "…" : current ? "+ Next tournament" : "+ Create tournament"}</button>
+  );
+
+  // ── Season race ──
+  if (page === "season") return wrap(<>
+    <PageHead title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, ACS ÷ 4, and kills plus a third of assists." accent="#f5c453" />
+    {board && board.length > 0 && (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
+        {board.slice(0, 3).map((r, i) => {
+          const col = ["#f5c453", "#cfd8ea", "#d79a6b"][i];
+          return (
+            <div key={r.uid || i} onClick={() => r.uid && setShowPlayer(r.uid)} className="volt-cell" style={{ ...PANEL(`${col}55`, "16px 18px"), clipPath: SHELL_NOTCH(12), cursor: r.uid ? "pointer" : "default",
+              position: "relative", overflow: "hidden", animation: `voltRise .45s ${i * 80}ms backwards` }}>
+              <span aria-hidden style={{ position: "absolute", inset: 0, background: `radial-gradient(ellipse 70% 90% at 100% 0%, ${col}1f, transparent 70%)`, pointerEvents: "none" }} />
+              <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10 }}>
+                <Pip i={i} />
+                <span style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: col, fontWeight: 700 }}>{["Season leader", "Second", "Third"][i]}</span>
+              </div>
+              <div style={{ position: "relative", fontSize: 24, fontWeight: 700, textTransform: "uppercase", marginTop: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center" }}>{r.name}<TrophyChip n={r.trophies} /></div>
+              <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, color: col }}>{r.pts}</span>
+                <span style={{ fontSize: 11, letterSpacing: "0.14em", color: "rgba(200,215,255,0.5)", textTransform: "uppercase" }}>pts{r.matches != null ? ` · ${r.matches} played · ${r.wins}W` : ""}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+    {HAS_SUPABASE && (
+      <div>
+      <TabPanel label="League" tabs={[
+        { key: "race", label: "Season race",
+          hint: "+50 a win, ACS\u00f74, K+\u2153A. Every match counts, subs included.",
+          node: board ? (
+            <div style={{ display: "grid", gap: 6 }}>
+            {board.map((r, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 16px", background: i === 0 ? "linear-gradient(90deg, rgba(245,196,83,0.12), rgba(10,13,22,0.5) 70%)" : "rgba(10,13,22,0.5)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.12)"), clipPath: SHELL_NOTCH(8) }}>
+            <Pip i={i} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+            <span onClick={() => r.uid && setShowPlayer(r.uid)} title="View player profile" style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", cursor: r.uid ? "pointer" : "default", display: "inline-flex", alignItems: "center", color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.name}
+            <TrophyChip n={r.trophies} />
+            {r.move === "new" && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "#7da6ff", fontWeight: 700, marginLeft: 8, border: "1px solid rgba(61,123,255,0.4)", padding: "1px 6px", clipPath: SHELL_NOTCH(4) }}>NEW</span>}
+            {typeof r.move === "number" && r.move > 0 && <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▲{r.move}</span>}
+            {typeof r.move === "number" && r.move < 0 && <span style={{ fontSize: 11.5, color: "#ff8f9a", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▼{-r.move}</span>}
+            </span>
+            <Bar pct={board[0].pts ? (r.pts / board[0].pts) * 100 : 0} h={2} i={i} color={i === 0 ? "#f5c453" : "#3d7bff"} opacity={0.6} style={{ marginTop: 5, maxWidth: 280 }} />
+            </span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.5)", whiteSpace: "nowrap" }}>{r.matches} played · {r.wins}W</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.pts}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>PTS</span></span>
+            </div>
+            ))}
+            </div>
+          ) : null },
+        { key: "captains", label: "Captains",
+          hint: "How each captain's roster has performed",
+          node: season ? (
+            <div style={{ display: "grid", gap: 6 }}>
+            {season.map((r, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
+            <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}<span style={{ color: "rgba(200,215,255,0.45)", fontWeight: 500, textTransform: "none", marginLeft: 8, fontSize: 13 }}>· {r.captain}</span></span>
+            <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{r.tournaments}w · {r.won}-{r.lost}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 46, textAlign: "right" }}>{r.pts} pts</span>
+            </div>
+            ))}
+            </div>
+          ) : null },
+        { key: "crystal", label: "Crystal ball",
+          hint: "Call the winner before kick-off. Anyone in the league can play.",
+          node: <PredictionBoard bare /> },
+        { key: "ledger", label: "Transactions",
+          hint: "Every roster move, newest first",
+          node: <LeagueLedger bare onOpenPlayer={(uid) => setShowPlayer(uid)} /> },
+      ]} />
+      </div>
+    )}
+  </>, "page");
+
+  // ── Tournaments: what's on now, what's next, and every one before ──
+  if (page === "tournaments") return wrap(<>
+    <PageHead title="Tournaments" sub="The one running now, what's coming up, and the results of every tournament this league has played." right={createBtn} />
+    {(current || upcoming.length > 0) && (
+      <>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "0 0 10px" }}><span style={SEC_LABEL}>// Now and next</span><span style={SEC_RULE} /></div>
+        <div style={{ display: "grid", gap: 8, marginBottom: 26 }}>
+          {[current, ...upcoming].filter(Boolean).map((ev) => {
+            const isCur = ev.id === current?.id, pc = PHASE_COLOR[ev.phase] || "#3d7bff";
+            const pend = isCur ? live?.pending : pendingByEvent[ev.id];
+            return (
+              <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", flexWrap: "wrap",
+                background: isCur ? `linear-gradient(90deg, ${pc}14, rgba(10,13,22,0.6) 60%)` : "rgba(10,13,22,0.55)",
+                border: `1px solid ${isCur ? pc + "66" : "rgba(120,150,220,0.16)"}`, clipPath: SHELL_NOTCH(10) }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: pc, boxShadow: `0 0 8px ${pc}`, flexShrink: 0 }} />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 19, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{weekendName(ev)}</div>
+                  <div style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", marginTop: 3, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
+                    <span style={{ color: pc, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", fontSize: 11 }}>{PHASE_LABEL[ev.phase]}</span>
+                    {isCur && live && <span><b style={{ color: "#cfe0ff" }}>{live.count}</b> in the pool</span>}
+                    {isHost && pend > 0 && <span style={{ color: "#f5c453", fontWeight: 700 }}>{pend} awaiting review</span>}
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace" }}>Draft {ev.draft_at ? fmtDraftAt(ev.draft_at) : "not set"}</span>
+                  </div>
+                </div>
+                {hostEdit(ev)}
+                <button onClick={() => onEnter(ev)} style={shellBtn(isCur ? "primary" : "ghost", { padding: "9px 16px", fontSize: 11.5 })}>Enter →</button>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    )}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "0 0 10px" }}><span style={SEC_LABEL}>// Past tournaments</span><span style={SEC_RULE} />
+      <span style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>{past.length}</span></div>
+    {past.length === 0
+      ? <div style={{ ...PANEL(null, "20px 22px"), clipPath: SHELL_NOTCH(12) }}><Empty rows={1} shape="block" title="No finished tournaments yet" hint="Results land here when a tournament is settled." /></div>
+      : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+          {past.map((ev, i) => {
+            const rc = ev.recap || null;
+            return (
+              <div key={ev.id} className="volt-cell" style={{ ...PANEL(rc?.team ? "rgba(245,196,83,0.35)" : null, "16px 18px"), clipPath: SHELL_NOTCH(12), position: "relative", overflow: "hidden",
+                display: "flex", flexDirection: "column", gap: 12, animation: `voltRise .4s ${Math.min(i, 8) * 50}ms backwards` }}>
+                <span aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 60% 80% at 100% 0%, rgba(245,196,83,0.08), transparent 70%)", pointerEvents: "none" }} />
+                <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
+                  {rc?.team ? <TeamMono name={rc.team} hue="#f5c453" size={34} /> : <TeamMono name="?" hue="#4a5570" size={34} />}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{weekendName(ev)}</div>
+                    <div style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", marginTop: 2 }}>{rc?.team ? <>Won by <b style={{ color: "#f5c453" }}>{rc.team}</b></> : "No result recorded"}</div>
+                  </div>
+                </div>
+                {rc && (rc.team || rc.mvp || rc.topFrag) && (
+                  <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 7 }}>
+                    {rc.team && recapStat("Champion", rc.team, "#f5c453")}
+                    {rc.mvp && recapStat("MVP", rc.mvp, "#5b8dff", rc.mvpPts ? <span style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#7da6ff", marginLeft: 6, fontSize: 11 }}>{rc.mvpPts}</span> : null)}
+                    {rc.topFrag && recapStat("Top fragger", rc.topFrag, "#ff8f9a")}
+                  </div>
+                )}
+                <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, marginTop: "auto" }}>
+                  <span style={{ flex: 1 }} />
+                  {hostEdit(ev)}
+                  <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "7px 14px", fontSize: 11 })}>Bracket & rosters →</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>}
+  </>, "page");
+
+  // ── Discord ──
+  if (page === "discord" && isHost) return wrap(<>
+    <PageHead title="Discord" sub="Connect the server, then let the bot announce, build channels, hand out roles and post the moments." accent="#8b9cff" />
+    {/* Everything the bot does is one job with several tools, so it's one panel
+        with tabs rather than six stacked cards. Tabs suit this and not the
+        alerts above: switching between equal tools is what they're for. */}
+    {isHost && HAS_SUPABASE && (
+      <div><DiscordConsole tabs={[
+        { key: "server", label: "Server", hint: "Connection, channels and the player role",
+          node: (
+            <>
+              {isTrueHost && <DiscordServerCard />}
+              <JoinGuideCard community={community} current={current} />
+            </>
+          ) },
+        { key: "announce", label: "Announce", hint: "Message the league",
+          node: (
+            <DiscordAnnounce
+              eventId={(current || lastSettled)?.id || null}
+              communityId={window.__VOLT.communityId}
+              phase={(current || lastSettled)?.phase || "settled"} />
+          ) },
+        current && { key: "arena", label: "Channels", hint: "Build the tournament's home in Discord",
+          node: <DiscordArenaCard eventId={current.id} phase={current.phase} /> },
+        current && ["drafting","matches_live"].includes(current.phase) && {
+          key: "teams", label: "Teams", hint: "Tell every player who they're with",
+          node: <DiscordTeamsCard eventId={current.id} /> },
+        current && { key: "moments", label: "Moments", hint: "Draft recap and the server event",
+          node: <DiscordMomentsCard eventId={current.id} phase={current.phase} draftAt={current.draft_at} /> },
+      ].filter(Boolean)} /></div>
+    )}
+
+  </>, "page");
+
+  // ── Staff ──
+  if (page === "staff" && showStaff) return wrap(<>
+    <PageHead title="Staff" sub="Who helps you run the league, and the moderation tools that come with it." />
+    {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
+    {HAS_SUPABASE && isOperator && <AdminQueue />}
+  </>, "page");
+
+  // ── My account: the full profile page, the same one a tournament opens ──
+  if (page === "account" && HAS_SUPABASE) return wrap(
+    <AccountView auth={{ userId: window.__VOLT.userId, role: account?.role }} chrome={{ account, onSignOut }} />, true);
+
+  // ── Overview ──
+  const lastPast = past[0] || null;
   return wrap(<>
     {HAS_SUPABASE && (() => {
       // Which tournament is taking sign-ups: the current one, or the next one
@@ -14239,11 +14471,11 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           onCreate={() => setSetupWeekend({ mode: "create", ev: null })}
           onSetDraftTime={() => { if (!current) return; setDraftAtDraft(current.draft_at ? new Date(current.draft_at).toISOString() : null); setEditTime(true); jumpTo("volt-current-hero"); }}
           onPickCaptains={() => current && onEnter(current)}
-          onDiscord={() => jumpTo("volt-discord-console")} />}
+          onDiscord={() => setPage("discord")} />}
         <RoleWelcome userId={window.__VOLT.userId} isModerator={account?.role === "moderator"} captainEv={capEv}
           onWarRoom={() => capEv && onEnter(capEv, "warroom")} />
         <MatchReadyCard prof={myProf} ev={regEv} myReg={regEv ? myRegs[regEv.id] : null} susp={mySusp}
-          onOpenProfile={() => setShowProfile(true)} onChanged={load} />
+          onOpenProfile={openAccount} onChanged={load} />
         {/* The checklist above already covers Discord while setup is unfinished. */}
         {!needsSetup && <DiscordConnectBanner />}
       </>;
@@ -14261,6 +14493,16 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         </div>
       ) : null;
     })()}
+    {isHost && HAS_SUPABASE && current && (
+      <HostAlerts>
+        <BoardGapCard eventId={current.id} />
+        <IgnCheckCard eventId={current.id} />
+        <AvailabilityCard eventId={current.id} />
+        {["drafting","matches_live"].includes(current.phase)
+          ? <SubDesk eventId={current.id} onChanged={load} /> : null}
+      </HostAlerts>
+    )}
+
     {events.length === 0
       ? <div style={{ ...PANEL(null, "22px 24px"), clipPath: SHELL_NOTCH(16), marginBottom: 22 }}>
           <Empty rows={2} shape="block" title="No tournaments yet"
@@ -14338,16 +14580,17 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                       </div>
                       {live?.pending > 0
                         ? <span style={{ fontSize: 14.5, color: "#f5c453", fontWeight: 700, lineHeight: 1.35 }}>{live.pending} application{live.pending === 1 ? "" : "s"} awaiting your review</span>
-                        : <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", lineHeight: 1.5 }}>No applications waiting. Approvals show up here.</span>}
-                      <div style={{ display: "grid", gap: 8, marginTop: 2 }}>
-                        <button onClick={() => onEnter(current)} style={shellBtn(live?.pending > 0 ? "warn" : "ghost", { padding: "11px 16px", fontSize: 12, width: "100%" })}>Review applications →</button>
-                        <button onClick={() => onEnter(current, "lobby")} style={shellBtn("primary", { padding: "11px 16px", fontSize: 12, width: "100%" })}>⊞ Enter the tournament →</button>
-                      </div>
+                        : <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.5)", lineHeight: 1.5 }}>No applications waiting. New ones show up here.</span>}
+                      {/* One way in. With applications waiting it opens the review desk;
+                          otherwise the tournament itself, where the desk is a tab away. */}
+                      {live?.pending > 0
+                        ? <button onClick={() => onEnter(current)} style={shellBtn("warn", { padding: "11px 16px", fontSize: 12, width: "100%", marginTop: 2 })}>Review {live.pending} application{live.pending === 1 ? "" : "s"} →</button>
+                        : <button onClick={() => onEnter(current, "lobby")} style={shellBtn("primary", { padding: "11px 16px", fontSize: 12, width: "100%", marginTop: 2 })}>⊞ Enter the tournament →</button>}
                     </div>
                   : (current.phase === "registration_open" || current.phase === "registration_closed") && HAS_SUPABASE
                   ? <div style={{ display: "flex", flexDirection: "column", gap: 11, padding: "16px 17px", background: "rgba(8,12,24,0.6)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(10) }}>
                       <PlayToggle ev={current} mine={myRegs[current.id]} profileComplete={profileIsComplete(myProf)} susp={mySusp} strikes={myStrikes}
-                        onEditProfile={() => setShowProfile(true)} onChanged={load} />
+                        onEditProfile={openAccount} onChanged={load} />
                       <button onClick={() => onEnter(current, "lobby")} style={shellBtn("ghost", { padding: "9px 16px", fontSize: 11 })}>⊞ Enter the tournament →</button>
                     </div>
                   : <button onClick={() => onEnter(current)} style={shellBtn("primary", { padding: "15px 22px", fontSize: 13, width: "100%" })}>{heroCTA}</button>}
@@ -14369,7 +14612,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           {/* Right of the live tournament: the season in five lines. */}
           {board && board.length > 0 && (
             <Cell title="Season race" action="Full table"
-              onGo={() => document.getElementById("volt-league-boards")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+              onGo={() => setPage("season")}>
               <div style={{ display: "grid", gap: 9, marginTop: 2 }}>
                 {board.slice(0, 5).map((r, i) => (
                   <div key={i} onClick={(e) => { if (r.uid) { e.stopPropagation(); setShowPlayer(r.uid); } }} className={r.uid ? "volt-pname" : undefined}
@@ -14408,179 +14651,28 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                       </div>
                     ) : (
                       <PlayToggle ev={nextReg} mine={myRegs[nextReg.id]} profileComplete={profileIsComplete(myProf)} susp={mySusp} strikes={myStrikes}
-                        onEditProfile={() => setShowProfile(true)} onChanged={load} compact />
+                        onEditProfile={openAccount} onChanged={load} compact />
                     )}
                   </div>
                 </div>
               </div>
             ) : null;
           })()}
-          {upcoming.filter(e => !(current?.phase !== "registration_open" && e.phase === "registration_open")).map(ev => <div key={ev.id} className="volt-lg-full">{strip(ev, false)}</div>)}
-          {past.length > 0 && (
-            <div id="volt-past" className="volt-lg-full volt-cell" style={{ ...PANEL(null, "15px 17px"), position: "relative", overflow: "hidden", scrollMarginTop: 20 }}>
-              {/* Cell's chrome, drawn here because this panel carries its own
-                  header controls (the jump-to select). */}
-              <span aria-hidden style={{ position: "absolute", right: 0, top: 0, width: 130, height: 86, pointerEvents: "none",
-                background: "repeating-linear-gradient(135deg, rgba(125,166,255,0.09) 0 1px, transparent 1px 8px)",
-                maskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)", WebkitMaskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)" }} />
-              <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid rgba(61,123,255,0.5)", borderTop: "2px solid rgba(61,123,255,0.5)" }} />
-              <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
-                <span style={SEC_LABEL}>// Past tournaments</span>
-                <span style={SEC_RULE} />
-                {past.length > 4 && (
-                  <select value="" onChange={e => { const id = e.target.value; if (id) { setExpandPast(id); const el = document.getElementById("volt-past-" + id); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" }); } }}
-                    style={{ padding: "6px 28px 6px 11px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 600, clipPath: SHELL_NOTCH(6) }}>
-                    <option value="">Jump to a tournament</option>
-                    {[...past].reverse().map(ev => <option key={ev.id} value={ev.id}>{weekendName(ev)}{ev.recap?.team ? ", won by " + ev.recap.team : ""}</option>)}
-                  </select>
-                )}
+          {lastPast && (
+            <div className="volt-lg-full volt-cell" style={{ ...PANEL("rgba(245,196,83,0.28)", "14px 18px"), clipPath: SHELL_NOTCH(12), display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <span style={{ ...SEC_LABEL, flexShrink: 0 }}>// Last tournament</span>
+              {lastPast.recap?.team ? <TeamMono name={lastPast.recap.team} hue="#f5c453" size={26} /> : null}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", fontSize: 15 }}>{weekendName(lastPast)}</span>
+                <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginLeft: 10 }}>
+                  {lastPast.recap?.team ? <>Won by <b style={{ color: "#f5c453" }}>{lastPast.recap.team}</b></> : "No result recorded"}
+                  {lastPast.recap?.mvp && <> · MVP <b style={{ color: "#ecf3ff" }}>{lastPast.recap.mvp}</b></>}
+                </span>
               </div>
-              <div style={{ position: "relative", display: "grid", gap: 8 }}>
-              {past.map((ev, i) => {
-                const rc = ev.recap || null;
-                const openIt = expandPast === ev.id;
-                return (
-                  <div key={ev.id} id={"volt-past-" + ev.id} style={{ background: openIt ? "rgba(61,123,255,0.06)" : "rgba(10,13,22,0.5)", border: `1px solid ${openIt ? "rgba(61,123,255,0.35)" : "rgba(120,150,220,0.12)"}`, clipPath: SHELL_NOTCH(8), transition: "border-color .2s, background .2s", animation: `voltRise .4s ${i * 50}ms backwards` }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", flexWrap: "wrap" }}>
-                      {rc?.team ? <TeamMono name={rc.team} hue="#f5c453" size={22} /> : <TeamMono name="?" hue="#4a5570" size={22} />}
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", fontSize: 14 }}>{weekendName(ev)}</div>
-                        <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", marginTop: 2 }}>
-                          {rc?.team ? <>Won by <b style={{ color: "#f5c453" }}>{rc.team}</b></> : "No result recorded"}
-                          {rc?.mvp && <> <span style={{ color: "rgba(200,215,255,0.3)" }}>/</span> MVP <b style={{ color: "#ecf3ff" }}>{rc.mvp}</b>{rc.mvpPts ? ` ${rc.mvpPts}` : ""}</>}
-                        </div>
-                      </div>
-                      <span style={{ flex: 1 }} />
-                      {rc && <button onClick={() => setExpandPast(openIt ? null : ev.id)} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 10.5 })}>{openIt ? "Hide" : "Recap"}</button>}
-                      {isHost && <>
-                        <button onClick={() => setSetupWeekend({ mode: "edit", ev })} title="Edit date / nickname" style={shellBtn("ghost", { padding: "5px 8px", fontSize: 10 })}>✎</button>
-                        <button onClick={() => deleteWeekend(ev)} title="Delete tournament" style={shellBtn("danger", { padding: "5px 8px", fontSize: 10 })}>✕</button>
-                      </>}
-                      <button onClick={() => onEnter(ev)} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11 })}>View →</button>
-                    </div>
-                    {openIt && rc && (
-                      <div style={{ padding: "4px 14px 14px", borderTop: "1px solid rgba(120,150,220,0.12)" }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginTop: 12 }}>
-                          {rc.team && <div style={{ padding: "10px 12px", background: "rgba(245,196,83,0.06)", border: "1px solid rgba(245,196,83,0.3)", clipPath: SHELL_NOTCH(6) }}><div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#f5c453", fontWeight: 700 }}>Champion</div><div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 2 }}>{rc.team}</div></div>}
-                          {rc.mvp && <div style={{ padding: "10px 12px", background: "rgba(10,16,30,0.7)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(6) }}><div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>Tournament MVP</div><div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 2 }}>{rc.mvp}<span style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#7da6ff", marginLeft: 6, fontSize: 12 }}>{rc.mvpPts || ""}</span></div></div>}
-                          {rc.topFrag && <div style={{ padding: "10px 12px", background: "rgba(10,16,30,0.7)", border: "1px solid rgba(255,70,85,0.25)", clipPath: SHELL_NOTCH(6) }}><div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#ff8f9a", fontWeight: 700 }}>Top fragger</div><div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 2 }}>{rc.topFrag}</div></div>}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              </div>
+              <button onClick={() => setPage("tournaments")} style={shellBtn("ghost", { padding: "7px 14px", fontSize: 11 })}>All tournaments →</button>
             </div>
           )}
         </div>}
-
-
-    {/* Everything below is host machinery. One quiet divider separates it from
-        the league itself, so players' eyes stop here and hosts' don't. */}
-    {/* Anything that needs the host, first and loud. Every card in here hides
-        itself when there's nothing to report, and the section hides with them —
-        so a healthy league shows nothing at all. */}
-    {isHost && HAS_SUPABASE && current && (
-      <HostAlerts>
-        <BoardGapCard eventId={current.id} />
-        <IgnCheckCard eventId={current.id} />
-        <AvailabilityCard eventId={current.id} />
-        {["drafting","matches_live"].includes(current.phase)
-          ? <SubDesk eventId={current.id} onChanged={load} /> : null}
-      </HostAlerts>
-    )}
-
-    {/* Everything the bot does is one job with several tools, so it's one panel
-        with tabs rather than six stacked cards. Tabs suit this and not the
-        alerts above: switching between equal tools is what they're for. */}
-    {isHost && HAS_SUPABASE && (
-      <div id="volt-discord-console"><DiscordConsole tabs={[
-        { key: "server", label: "Server", hint: "Connection, channels and the player role",
-          node: (
-            <>
-              {isTrueHost && <DiscordServerCard />}
-              <JoinGuideCard community={community} current={current} />
-            </>
-          ) },
-        { key: "announce", label: "Announce", hint: "Message the league",
-          node: (
-            <DiscordAnnounce
-              eventId={(current || lastSettled)?.id || null}
-              communityId={window.__VOLT.communityId}
-              phase={(current || lastSettled)?.phase || "settled"} />
-          ) },
-        current && { key: "arena", label: "Channels", hint: "Build the tournament's home in Discord",
-          node: <DiscordArenaCard eventId={current.id} phase={current.phase} /> },
-        current && ["drafting","matches_live"].includes(current.phase) && {
-          key: "teams", label: "Teams", hint: "Tell every player who they're with",
-          node: <DiscordTeamsCard eventId={current.id} /> },
-        current && { key: "moments", label: "Moments", hint: "Draft recap and the server event",
-          node: <DiscordMomentsCard eventId={current.id} phase={current.phase} draftAt={current.draft_at} /> },
-      ].filter(Boolean)} /></div>
-    )}
-
-    {isHost && HAS_SUPABASE && (
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 38, marginBottom: 2 }}>
-        <span style={{ ...SEC_LABEL, color: "rgba(200,215,255,0.32)", letterSpacing: "0.34em" }}>// Running the league</span>
-        <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(120,150,220,0.22), rgba(120,150,220,0))" }} />
-      </div>
-    )}
-    {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
-    {HAS_SUPABASE && isOperator && <AdminQueue />}
-    {/* Public to every member, not staff-only — the feed is the league's own
-        record of itself, and that only works if players can read it. */}
-    {/* Four league boards that used to stack into an endless scroll. They're
-        alternative views of the same season, which is what tabs are for —
-        unlike the host alerts above, where hiding something is the failure. */}
-    {HAS_SUPABASE && (
-      <div id="volt-league-boards" style={{ scrollMarginTop: 20 }}>
-      <TabPanel label="League" tabs={[
-        { key: "race", label: "Season race",
-          hint: "+50 a win, ACS\u00f74, K+\u2153A. Every match counts, subs included.",
-          node: board ? (
-            <div style={{ display: "grid", gap: 6 }}>
-            {board.map((r, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 16px", background: i === 0 ? "linear-gradient(90deg, rgba(245,196,83,0.12), rgba(10,13,22,0.5) 70%)" : "rgba(10,13,22,0.5)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.12)"), clipPath: SHELL_NOTCH(8) }}>
-            <Pip i={i} />
-            <span style={{ flex: 1, minWidth: 0 }}>
-            <span onClick={() => r.uid && setShowPlayer(r.uid)} title="View player profile" style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", cursor: r.uid ? "pointer" : "default", display: "inline-flex", alignItems: "center", color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.name}
-            <TrophyChip n={r.trophies} />
-            {r.move === "new" && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "#7da6ff", fontWeight: 700, marginLeft: 8, border: "1px solid rgba(61,123,255,0.4)", padding: "1px 6px", clipPath: SHELL_NOTCH(4) }}>NEW</span>}
-            {typeof r.move === "number" && r.move > 0 && <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▲{r.move}</span>}
-            {typeof r.move === "number" && r.move < 0 && <span style={{ fontSize: 11.5, color: "#ff8f9a", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▼{-r.move}</span>}
-            </span>
-            <Bar pct={board[0].pts ? (r.pts / board[0].pts) * 100 : 0} h={2} i={i} color={i === 0 ? "#f5c453" : "#3d7bff"} opacity={0.6} style={{ marginTop: 5, maxWidth: 280 }} />
-            </span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.5)", whiteSpace: "nowrap" }}>{r.matches} played · {r.wins}W</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.pts}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>PTS</span></span>
-            </div>
-            ))}
-            </div>
-          ) : null },
-        { key: "captains", label: "Captains",
-          hint: "How each captain's roster has performed",
-          node: season ? (
-            <div style={{ display: "grid", gap: 6 }}>
-            {season.map((r, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", background: i === 0 ? "rgba(245,196,83,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.15)"), clipPath: SHELL_NOTCH(8) }}>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff", width: 24 }}>{String(i + 1).padStart(2, "0")}</span>
-            <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{r.name}<span style={{ color: "rgba(200,215,255,0.45)", fontWeight: 500, textTransform: "none", marginLeft: 8, fontSize: 13 }}>· {r.captain}</span></span>
-            <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{r.tournaments}w · {r.won}-{r.lost}</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#ecf3ff", width: 46, textAlign: "right" }}>{r.pts} pts</span>
-            </div>
-            ))}
-            </div>
-          ) : null },
-        { key: "crystal", label: "Crystal ball",
-          hint: "Call the winner before kick-off. Anyone in the league can play.",
-          node: <PredictionBoard bare /> },
-        { key: "ledger", label: "Transactions",
-          hint: "Every roster move, newest first",
-          node: <LeagueLedger bare onOpenPlayer={(uid) => setShowPlayer(uid)} /> },
-      ]} />
-      </div>
-    )}
   </>);
 }
 
