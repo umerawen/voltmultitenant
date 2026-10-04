@@ -81,3 +81,8 @@ bright transients; tune `sfx/synth.py`, not per reel.
   then time scenes to the printed phrase starts (`vo: { file, t }` in the spec).
   The bed and SFX duck under the voice automatically.
 - Reels render at `fps: 60`.
+- **The launch reel** (`volt-launch`, ~48s) uses its own voice, "Captain
+  Commercial" (`U0xH5XqH9N0NawL9bdEo`, multilingual_v2 with breaks), so the
+  brand launch sounds distinct from the feature reels. A mid-reel logo sting
+  is a `cta` with `button: false, exit: "fade", tag: "// INTRODUCING"`.
+- Prefer `stage` scenes over `montage`: the montage crops screens full-bleed.

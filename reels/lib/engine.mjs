@@ -138,7 +138,7 @@ export function reel(spec) {
       tw(`#${sid}-art`, { scale: 1.1 }, { scale: 1.0, duration: s.d, ease: "power1.out" }, s.t);
     } else if (s.agent) {
       const src = asset("img", s.agent + ".webp");
-      bgEl = `<div class="agent" style="${s.agentSide === "left" ? "left:-120px" : "right:-140px"}"><img id="${sid}-ag" src="${src}"><div class="agent-glow"></div></div>`;
+      bgEl = `<div class="agent${s.agentSide === "left" ? " left" : ""}" style="${s.agentSide === "left" ? "left:-120px" : "right:-140px"}"><img id="${sid}-ag" src="${src}"><div class="agent-glow"></div></div>`;
       tw(`#${sid}-ag`, { x: s.agentSide === "left" ? -80 : 80, opacity: 0 }, { x: 0, opacity: 0.95, duration: 0.9, ease: "power3.out" }, s.t);
       tto(`#${sid}-ag`, { y: -30, duration: s.d - 0.9, ease: "none" }, s.t + 0.9);
     }
@@ -516,14 +516,14 @@ export function reel(spec) {
     tw(`#${sid}-ring`, { scale: 0.5 }, { scale: 2.4, duration: 1.3, ease: "power2.out" }, at + 0.6);
     ["o", "l", "t"].forEach((c, i) => tw(`#${sid}-${c}`, { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power4.out" }, at + 0.7 + i * 0.07));
     tw(`#${sid}-tag`, { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, at + 1.0);
-    tw(`#${sid}-btn`, { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, at + 1.5);
-    tw(`#${sid}-btnsh`, { xPercent: -120 }, { xPercent: 220, duration: 1.0, ease: "power2.inOut" }, at + 2.0);
+    if (s.button !== false) tw(`#${sid}-btn`, { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, at + 1.5);
+    if (s.button !== false) tw(`#${sid}-btnsh`, { xPercent: -120 }, { xPercent: 220, duration: 1.0, ease: "power2.inOut" }, at + 2.0);
     tw(`#${sid}-feat`, { opacity: 0 }, { opacity: 1, duration: 0.6 }, at + 1.7);
     cue(at - 1.2, "swell", { d: 1.2, g: 0.5 });
     cue(at + 0.05, "air", { g: 0.5 });
     cue(at + 0.58, "boom", { g: 1 });
     cue(at + 0.62, "chime", { p: 0, g: 0.6, chord: true });
-    cue(at + 2.0, "shimmer", { g: 0.35 });
+    if (s.button !== false) cue(at + 2.0, "shimmer", { g: 0.35 });
     const ARM = "M344.811 140.139H0L273.118 552.012L436.988 278.57L344.811 140.139Z";
     const BOLT = "M392.606 466.561L689.622 0H1002L303.843 834L549.649 401.619L392.606 466.561Z";
     const logo = `<svg class="cta-logo" viewBox="0 0 1100 420" width="653" height="249"><defs>
@@ -531,8 +531,8 @@ export function reel(spec) {
       <linearGradient id="${sid}-ga" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9cbef"/></linearGradient></defs>
       <g transform="scale(0.5036)"><path id="${sid}-arm" d="${ARM}" fill="url(#${sid}-ga)"/><path id="${sid}-bolt" d="${BOLT}" fill="url(#${sid}-gb)"/></g>
       <g transform="translate(205 90) scale(6)" fill="#f4f8ff"><path id="${sid}-o" fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/><path id="${sid}-l" d="M80 0H89.5V31H105V40H80Z"/><path id="${sid}-t" d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/></g></svg>`;
-    const inner = `<div class="cta"><div class="logo-wrap"><div class="logo-glow" id="${sid}-glow"></div><div class="logo-ring" id="${sid}-ring"></div>${logo}</div><div class="cta-tag" id="${sid}-tag">// LEAGUE PLATFORM</div><div class="cta-lines">${lines(sid, s.lines, { size: s.size || 118, at: at + 0.9 })}</div>${s.feat ? `<div class="cta-feat" id="${sid}-feat">${rich(s.feat)}</div>` : ""}<div class="btn" id="${sid}-btn"><span>${rich(s.button || "START YOUR LEAGUE")}</span><i class="btn-sh" id="${sid}-btnsh"></i></div></div>`;
-    scene(s, inner, { enter: "fade", exit: "none" });
+    const inner = `<div class="cta"><div class="logo-wrap"><div class="logo-glow" id="${sid}-glow"></div><div class="logo-ring" id="${sid}-ring"></div>${logo}</div><div class="cta-tag" id="${sid}-tag">${esc(s.tag || "// LEAGUE PLATFORM")}</div><div class="cta-lines">${lines(sid, s.lines, { size: s.size || 118, at: at + 0.9 })}</div>${s.feat ? `<div class="cta-feat" id="${sid}-feat">${rich(s.feat)}</div>` : ""}${s.button === false ? "" : `<div class="btn" id="${sid}-btn"><span>${rich(s.button || "START YOUR LEAGUE")}</span><i class="btn-sh" id="${sid}-btnsh"></i></div>`}</div>`;
+    scene(s, inner, { enter: "fade", exit: s.exit || "none" });
   };
 
   // The auction draw, rebuilt natively from the app's own card stills
@@ -698,6 +698,6 @@ tl.seek(0);
   }
   fs.writeFileSync(path.join(dir, "index.html"), doc);
   cues.sort((a, b) => a.t - b.t);
-  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, fps: spec.fps || 30, bpm: 120, vo: spec.vo || null, outro: spec.outro ?? (spec.scenes.find((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
+  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, fps: spec.fps || 30, bpm: 120, vo: spec.vo || null, outro: spec.outro ?? (spec.scenes.findLast((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
   return { dir, cues: cues.length };
 }
