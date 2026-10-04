@@ -170,7 +170,7 @@ const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 // a mix of unicode symbols and emoji that rendered at different sizes and
 // weights on every platform. Colour comes from currentColor.
 const ICON_PATHS = {
-  dashboard:   "M3.8 17.5a8.5 8.5 0 1 1 16.4 0M12 15.5l4.2-5.3M12 17a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM7 20h10",
+  dashboard:   "M12 2.5l9.5 9.5-9.5 9.5L2.5 12zM12 8l4 4-4 4-4-4z",
   overview:    "M3 10.5L12 3l9 7.5V21h-6.5v-6h-5v6H3z",
   pool:        "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20v-.5A6.5 6.5 0 0 1 9 13a6.5 6.5 0 0 1 6.5 6.5v.5M16 4.3a3.5 3.5 0 0 1 0 6.4M21.5 20v-.5a6.5 6.5 0 0 0-3.8-5.9",
   auction:     "M13.5 3.5l7 7-3 3-7-7zM12 8L4 16l2 2 8-8M3 21h11",
