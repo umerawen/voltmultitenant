@@ -128,6 +128,40 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 /* transitions */
 .sweep { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; background: linear-gradient(100deg, transparent 34%, rgba(61,123,255,0.16) 46%, rgba(170,200,255,0.32) 50%, rgba(61,123,255,0.16) 54%, transparent 66%); mix-blend-mode: screen; }
 .ghost { position: absolute; right: -40px; top: 300px; font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 760px; line-height: 0.8; color: transparent; -webkit-text-stroke: 2px rgba(125,166,255,0.16); white-space: nowrap; }
+
+/* stage: the floating screen + lifted cards */
+.p3-pos { position: absolute; inset: 0; }
+.p3 { position: absolute; }
+.p3-glow { position: absolute; left: -12%; right: -12%; top: -18%; bottom: -18%; background: radial-gradient(ellipse at 50% 50%, rgba(61,123,255,0.22), rgba(61,123,255,0.06) 45%, rgba(61,123,255,0) 70%); }
+.p3-face { position: absolute; inset: 0; overflow: hidden; border-radius: 22px; background: #0d1324;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8%, #000 92%, transparent 100%), linear-gradient(180deg, transparent 0, #000 11%, #000 86%, transparent 100%);
+  -webkit-mask-composite: source-in; mask-image: linear-gradient(90deg, transparent 0, #000 8%, #000 92%, transparent 100%), linear-gradient(180deg, transparent 0, #000 11%, #000 86%, transparent 100%); mask-composite: intersect; }
+.p3 img { display: block; }
+.p3-glare { position: absolute; inset: 0; background: linear-gradient(118deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0) 38%, rgba(255,255,255,0) 70%, rgba(125,166,255,0.06) 100%); }
+.p3-dim { position: absolute; inset: 0; background: #060912; opacity: 0; }
+.p3-hl { position: absolute; border: 2px solid #3d7bff; box-shadow: 0 0 24px rgba(61,123,255,0.8), inset 0 0 18px rgba(61,123,255,0.35); opacity: 0; z-index: 2; }
+.p3-floor { position: absolute; height: 260px; background: radial-gradient(ellipse at 50% 30%, rgba(61,123,255,0.28), rgba(61,123,255,0) 62%); }
+.piece { position: absolute; }
+.piece-in { position: absolute; inset: 0; filter: drop-shadow(0 40px 50px rgba(0,0,0,0.6)) drop-shadow(0 0 34px rgba(61,123,255,0.32)); }
+.piece-clip { position: absolute; inset: 0; overflow: hidden; background: #0d1324; }
+.piece-clip.feather { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 3%, #000 97%, transparent 100%), linear-gradient(180deg, transparent 0, #000 2.5%, #000 97.5%, transparent 100%); -webkit-mask-composite: source-in; mask-image: linear-gradient(90deg, transparent 0, #000 3%, #000 97%, transparent 100%), linear-gradient(180deg, transparent 0, #000 2.5%, #000 97.5%, transparent 100%); mask-composite: intersect; }
+.piece-clip img { position: absolute; max-width: none; }
+.live { position: absolute; }
+.live-v { position: absolute; left: 0; right: 0; top: 50%; transform-origin: 50% 50%; margin-top: -0.6em; line-height: 1.2; text-align: center; white-space: nowrap; }
+.live-mono .live-v { font-family: "IBM Plex Mono", monospace; font-weight: 700; text-shadow: 0 0 18px rgba(61,123,255,0.6); }
+.live-raj .live-v { font-family: "Rajdhani", sans-serif; font-weight: 700; text-transform: uppercase; }
+.pc-focus { position: absolute; }
+.pc-focus i { position: absolute; display: block; width: 26px; height: 26px; border: 3px solid; }
+.pc-focus b { position: absolute; left: -3px; top: -46px; font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 28px; letter-spacing: 0.1em; color: #06101f; padding: 3px 12px; white-space: nowrap; }
+
+/* captured app clips */
+.vid { right: auto; bottom: auto; object-fit: cover; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(180deg, transparent 0, #000 5%, #000 93%, transparent 100%); -webkit-mask-composite: source-in; mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(180deg, transparent 0, #000 5%, #000 93%, transparent 100%); mask-composite: intersect; }
+/* the logo sting */
+.logo-wrap { position: relative; width: 760px; height: 249px; }
+.cta-logo { position: relative; display: block; overflow: visible; }
+.logo-glow { position: absolute; left: -60px; top: -80px; width: 480px; height: 420px; background: radial-gradient(ellipse at 45% 55%, rgba(61,123,255,0.55), rgba(61,123,255,0) 65%); opacity: 0; }
+.logo-ring { position: absolute; left: 70px; top: -30px; width: 300px; height: 300px; border: 2px solid rgba(125,166,255,0.7); border-radius: 50%; opacity: 0; }
+.cta-tag { font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.42em; color: #6f9bff; margin-top: 30px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -150,7 +184,11 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 <div id="mw14" class="clip" data-start="8" data-duration="1" data-track-index="5"><div class="mo-word" id="mw14-w">CLIMB</div></div>
 <div id="mo15" class="clip scene" data-start="9" data-duration="1" data-track-index="1"><div class="sc-in" id="mo15-in"><div class="sc-out" id="mo15-out"><div class="frame-pos" ><div class="view full" style="width:1080px;height:1920px"><div class="plate" id="mo15-pl"><img src="assets/fixtures-champion.webp" width="1920" height="1080"></div><div class="full-shade"></div></div></div></div></div></div>
 <div id="mw16" class="clip" data-start="9" data-duration="1" data-track-index="5"><div class="mo-word" id="mw16-w"><span class="c-gold">WIN.</span></div></div>
-<div id="s3" class="clip scene" data-start="9.8" data-duration="4.7" data-track-index="1"><div class="sc-in" id="s3-in"><div class="sc-out" id="s3-out"><div class="cta"><div class="crest-wrap"><div class="ring" id="s3-ring"></div><div class="ring" id="s3-ring2"></div><div class="crest" id="s3-crest"><svg viewBox="0 0 40 44" width="230" height="253"><defs><linearGradient id="cf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f66e0"/><stop offset="1" stop-color="#0b1530"/></linearGradient><linearGradient id="cs" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9cbcff"/><stop offset="1" stop-color="#3d7bff" stop-opacity="0.35"/></linearGradient></defs><path d="M2.5 1.5h27l8 8v18.5L20 42.5 2.5 30z" fill="url(#cf)" stroke="url(#cs)" stroke-width="1.2"/><path d="M6.5 5.5h21.5l5.5 5.5v15.3L20 37.6 6.5 27.9z" fill="none" stroke="rgba(170,200,255,0.22)" stroke-width="0.8"/><path d="M30.6 3.4l4.9 4.9" stroke="#ff4655" stroke-width="2.2"/><text x="20" y="27.5" text-anchor="middle" font-family="Rajdhani" font-weight="700" font-size="21" fill="#f4f8ff">V</text></svg></div></div><div class="cta-word" id="s3-word">VOLT LEAGUE</div><div class="cta-lines"><div class="ln " style="font-size:104px"><span id="s3-l0" class="ln-i">RUN YOUR LEAGUE</span></div><div class="ln " style="font-size:104px"><span id="s3-l1" class="ln-i">ON <span class="c-hot">VOLT.</span></span></div></div><div class="cta-feat" id="s3-feat">Solo sign-ups · Live auction · Brackets · Stats</div><div class="btn" id="s3-btn"><span>START YOUR LEAGUE</span><i class="btn-sh" id="s3-btnsh"></i></div></div></div></div></div>
+<div id="s3" class="clip scene" data-start="9.8" data-duration="4.7" data-track-index="1"><div class="sc-in" id="s3-in"><div class="sc-out" id="s3-out"><div class="cta"><div class="logo-wrap"><div class="logo-glow" id="s3-glow"></div><div class="logo-ring" id="s3-ring"></div><svg class="cta-logo" viewBox="0 0 1280 420" width="760" height="249"><defs>
+      <linearGradient id="s3-gb" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8db3ff"/><stop offset="0.55" stop-color="#3d7bff"/><stop offset="1" stop-color="#1f47c9"/></linearGradient>
+      <linearGradient id="s3-ga" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9cbef"/></linearGradient></defs>
+      <g transform="scale(0.5036)"><path id="s3-arm" d="M344.811 140.139H0L273.118 552.012L436.988 278.57L344.811 140.139Z" fill="url(#s3-ga)"/><path id="s3-bolt" d="M392.606 466.561L689.622 0H1002L303.843 834L549.649 401.619L392.606 466.561Z" fill="url(#s3-gb)"/></g>
+      <g transform="translate(156 100) scale(7.6)" fill="#f4f8ff"><path id="s3-o" fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/><path id="s3-l" d="M80 0H89.5V31H105V40H80Z"/><path id="s3-t" d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/></g></svg></div><div class="cta-tag" id="s3-tag">// LEAGUE PLATFORM</div><div class="cta-lines"><div class="ln " style="font-size:104px"><span id="s3-l0" class="ln-i">RUN YOUR LEAGUE</span></div><div class="ln " style="font-size:104px"><span id="s3-l1" class="ln-i">ON <span class="c-hot">VOLT.</span></span></div></div><div class="cta-feat" id="s3-feat">Solo sign-ups · Live auction · Brackets · Stats</div><div class="btn" id="s3-btn"><span>START YOUR LEAGUE</span><i class="btn-sh" id="s3-btnsh"></i></div></div></div></div></div>
 <div id="sw17" class="clip sweep-c" data-start="9.7" data-duration="0.8" data-track-index="9"><div class="sweep" id="sw17-b"></div></div>
 <div id="fadein-c" class="clip" data-start="0" data-duration="0.5" data-track-index="10"><div id="fadein"></div></div>
 </div>
@@ -198,17 +236,20 @@ tl.set("#mo15-pl",{"transformOrigin":"0 0","x":-1380,"y":0,"scale":1.67111111111
 tl.fromTo("#mo15-pl",{"x":-1347.6,"y":57.599999999999994,"scale":1.671111111111111},{"x":-1380,"y":0,"scale":1.7777777777777777,"duration":1,"ease":"power3.out","immediateRender":true},9);
 tl.fromTo("#mo15-in",{"opacity":0,"scale":1.12},{"opacity":1,"scale":1,"duration":0.6,"ease":"expo.out","immediateRender":true},9);
 tl.fromTo("#mw16-w",{"scale":1.35,"opacity":0},{"scale":1,"opacity":1,"duration":0.32,"ease":"expo.out","immediateRender":true},9);
-tl.fromTo("#s3-crest",{"scale":0.4,"opacity":0,"rotation":-20},{"scale":1,"opacity":1,"rotation":0,"duration":0.9,"ease":"expo.out","immediateRender":true},10);
-tl.fromTo("#s3-ring",{"opacity":0},{"keyframes":{"opacity":[0,0.9,0]},"duration":1.4,"ease":"none","immediateRender":true},10.1);
-tl.fromTo("#s3-ring",{"scale":0.6,"rotation":45},{"scale":2.2,"rotation":45,"duration":1.4,"ease":"power2.out","immediateRender":true},10.1);
-tl.fromTo("#s3-ring2",{"opacity":0},{"keyframes":{"opacity":[0,0.6,0]},"duration":1.8,"ease":"none","immediateRender":true},10.3);
-tl.fromTo("#s3-ring2",{"scale":0.6,"rotation":45},{"scale":2.8,"rotation":45,"duration":1.8,"ease":"power2.out","immediateRender":true},10.3);
-tl.fromTo("#s3-word",{"opacity":0,"scale":1.25},{"opacity":1,"scale":1,"duration":0.9,"ease":"power3.out","immediateRender":true},10.3);
-tl.fromTo("#s3-btn",{"opacity":0,"y":40},{"opacity":1,"y":0,"duration":0.5,"ease":"power3.out","immediateRender":true},11.1);
-tl.fromTo("#s3-btnsh",{"xPercent":-120},{"xPercent":220,"duration":1,"ease":"power2.inOut","immediateRender":true},11.6);
-tl.fromTo("#s3-feat",{"opacity":0},{"opacity":1,"duration":0.6,"immediateRender":true},11.3);
-tl.fromTo("#s3-l0",{"yPercent":115,"opacity":1},{"yPercent":0,"duration":0.55,"ease":"power4.out","immediateRender":true},10.5);
-tl.fromTo("#s3-l1",{"yPercent":115,"opacity":1},{"yPercent":0,"duration":0.55,"ease":"power4.out","immediateRender":true},10.59);
+tl.fromTo("#s3-arm",{"x":-260,"opacity":0},{"x":0,"opacity":1,"duration":0.55,"ease":"expo.out","immediateRender":true},10);
+tl.fromTo("#s3-bolt",{"x":240,"y":-320,"opacity":0},{"x":0,"y":0,"opacity":1,"duration":0.42,"ease":"expo.in","immediateRender":true},10.18);
+tl.fromTo("#s3-glow",{"opacity":0},{"keyframes":{"opacity":[0,1,0.55]},"duration":0.9,"ease":"power2.out","immediateRender":true},10.58);
+tl.fromTo("#s3-ring",{"opacity":0},{"keyframes":{"opacity":[0,0.8,0]},"duration":1.3,"ease":"none","immediateRender":true},10.6);
+tl.fromTo("#s3-ring",{"scale":0.5},{"scale":2.4,"duration":1.3,"ease":"power2.out","immediateRender":true},10.6);
+tl.fromTo("#s3-o",{"y":16,"opacity":0},{"y":0,"opacity":1,"duration":0.5,"ease":"power4.out","immediateRender":true},10.7);
+tl.fromTo("#s3-l",{"y":16,"opacity":0},{"y":0,"opacity":1,"duration":0.5,"ease":"power4.out","immediateRender":true},10.77);
+tl.fromTo("#s3-t",{"y":16,"opacity":0},{"y":0,"opacity":1,"duration":0.5,"ease":"power4.out","immediateRender":true},10.84);
+tl.fromTo("#s3-tag",{"opacity":0,"x":-30},{"opacity":1,"x":0,"duration":0.5,"ease":"power3.out","immediateRender":true},11);
+tl.fromTo("#s3-btn",{"opacity":0,"y":40},{"opacity":1,"y":0,"duration":0.5,"ease":"power3.out","immediateRender":true},11.5);
+tl.fromTo("#s3-btnsh",{"xPercent":-120},{"xPercent":220,"duration":1,"ease":"power2.inOut","immediateRender":true},12);
+tl.fromTo("#s3-feat",{"opacity":0},{"opacity":1,"duration":0.6,"immediateRender":true},11.7);
+tl.fromTo("#s3-l0",{"yPercent":115,"opacity":1},{"yPercent":0,"duration":0.55,"ease":"power4.out","immediateRender":true},10.9);
+tl.fromTo("#s3-l1",{"yPercent":115,"opacity":1},{"yPercent":0,"duration":0.55,"ease":"power4.out","immediateRender":true},10.99);
 tl.fromTo("#s3-in",{"opacity":0},{"opacity":1,"duration":0.5,"ease":"power2.out","immediateRender":true},9.8);
 tl.fromTo("#sw17-b",{"xPercent":-160,"opacity":0.9},{"xPercent":160,"duration":0.7,"ease":"power2.inOut","immediateRender":true},9.7);
 tl.fromTo("#fadein",{opacity:1},{opacity:0,duration:0.35,ease:"power1.out",immediateRender:true},0);
