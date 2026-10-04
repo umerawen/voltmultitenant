@@ -62,8 +62,13 @@ export const REELS = [
         plate: [{ at: 0, rx: 14, ry: -16 }, { at: 7.25, rx: 12, ry: 15, dur: 1.1 }],
         pieces: [
           { at: 0.0, d: 0.85, rect: [852, 90, 462, 602], w: 560, y: 1080, shape: "notch", cut: 24 },     // Kamijeee's card
-          { at: 0.9, d: 1.9, rect: [268, 88, 254, 634], w: 360, x: 295, y: 1070 },                      // captains, left
-          { at: 1.0, d: 1.8, rect: [1645, 88, 254, 634], w: 360, x: 785, y: 1070 },                     // captains, right
+          // the six captains and their purses, one card each
+          { at: 0.9, d: 1.9, rect: [268, 88, 254, 206], w: 380, x: 290, y: 742 },
+          { at: 0.97, d: 1.83, rect: [268, 303, 254, 206], w: 380, x: 290, y: 1070 },
+          { at: 1.04, d: 1.76, rect: [268, 517, 254, 206], w: 380, x: 290, y: 1398 },
+          { at: 1.0, d: 1.8, rect: [1645, 88, 254, 206], w: 380, x: 790, y: 742 },
+          { at: 1.07, d: 1.73, rect: [1645, 303, 254, 206], w: 380, x: 790, y: 1070 },
+          { at: 1.14, d: 1.66, rect: [1645, 517, 254, 206], w: 380, x: 790, y: 1398 },
           { at: 2.9, d: 4.5, rect: [916, 714, 334, 87], w: 900, y: 1010, shape: "slant", cut: 22,       // the bid, ticking up
             live: [
               { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$800" }, { at: 3.23, text: "$1,200" }, { at: 4.57, text: "$1,400" }, { at: 5.93, text: "$1,600" }] },
