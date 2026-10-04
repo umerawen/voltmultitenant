@@ -491,6 +491,68 @@ export const REELS = [
 
 ];
 
+// 12 ── "Watch the number": Nia on the block, every $100 from $2,000 to $4,100.
+//       The board kept the opening price, the 12+ bid count, the winner (VANGUARD) and
+//       the price; who placed each step in between is a reconstruction.
+{
+  const TEAM = [["MISFITS", "#ff4655"], ["CHAOS", "#00e5ff"], ["PATIENCE", "#9d6bff"], ["VANGUARD", "#5ad1ff"], ["DOOM", "#ff8a3d"], ["IN&OUT", "#3ddc84"]];
+  const SEQ = [2, 4, 0, 1, 5, 2, 3, 4, 0, 1, 2, 3, 4, 5, 0, 3, 4, 0, 3, 4, 3];
+  // gaps shrink from 0.42s to 0.12s, so the last bid lands on "forty-one hundred" (9.69s)
+  const LAST = 9.69, N = SEQ.length, gap = (i) => 0.42 - (0.30 * i) / (N - 2);
+  const T = []; let t = LAST;
+  for (let i = N - 1; i >= 0; i--) { T[i] = +t.toFixed(2); if (i) t -= gap(i - 1); }
+  const money = (v) => "$" + v.toLocaleString("en-US");
+  const bids = SEQ.map((k, i) => ({ at: T[i], v: 2100 + 100 * i, team: TEAM[k] }));
+  REELS.push({
+    id: "volt-watch-the-number", duration: 26.5, fps: 60,
+    vo: { file: "vo/nia.flac", t: 0.3, gain: 0.85 },
+    hush: [{ t: 12.95, d: 1.72 }],           // silence between "going…" and "SOLD"
+    scenes: [
+      // "Watch the number.  Nia. Diamond Jett. Opens at two thousand. And six captains want her.
+      //  …forty-one hundred. Going… going…  Sold. To Vanguard."
+      { kind: "stage", t: 0, d: 16.45, shot: "nia-auction-block", plateW: 1040, plateY: 1040, sweep: false,
+        heads: [
+          { at: 0, label: "LIVE AUCTION", lines: ["WATCH THE", "[NUMBER.]"], size: 140 },
+          { at: 2.15, label: "ON THE BLOCK", lines: ["NIA · DIAMOND JETT", "OPENS AT |$2,000|."], size: 88 },
+          { at: 5.05, label: "BIDDING WAR", lines: ["{6 CAPTAINS}", "WANT HER."], size: 120 },
+          { at: 11.05, label: "HAMMER DOWN", lines: ["GOING…", "GOING…"], size: 130 },
+        ],
+        plate: [{ at: 0, rx: 14, ry: -16 }, { at: 10.9, rx: 12, ry: 15, dur: 1.2 }],
+        pieces: [
+          { at: 0.1, rect: [916, 714, 334, 87], w: 900, y: 1400, shape: "slant", cut: 22,          // the bid
+            live: [
+              { rect: [928, 745, 182, 49], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$2,000" }, ...bids.map((b) => ({ at: b.at, text: money(b.v) }))] },
+              { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "—", color: "rgba(200,215,255,0.4)" }, ...bids.map((b) => ({ at: b.at, text: b.team[0], color: b.team[1] }))] },
+            ] },
+          { at: 1.95, d: 9.1, rect: [852, 90, 462, 602], w: 440, y: 815, shape: "notch", cut: 24 },  // Nia's card
+          { at: 11.2, shot: "nia-sold-auction-block", rect: [836, 822, 494, 72], w: 970, y: 1080, shape: "slant", cut: 22 },  // SOLD / PASS, from the end state
+        ],
+        toasts: bids.map((b, i) => ({ at: b.at, k: b.team[0], v: `BIDS |${money(b.v)}|`, color: b.team[1], y: 1640,
+          p: Math.min(7, Math.floor((i * 8) / N)), g: 0.55, ...(i === N - 1 ? { d: 1.3 } : {}) })),
+        cursor: [{ at: 13.6, x: 426, y: 1082, d: 1.4 }],
+        stamp: { at: 14.69, text: "SOLD", sub: "VANGUARD · $4,100", color: C.money, y: 840 } },
+      // "Then she topped the entire season. Five hundred and eighty-eight points."
+      { kind: "stage", t: 16.45, d: 4.2, shot: "kami-leaderboard", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "THE SEASON", lines: ["THEN SHE TOPPED", "THE {LEADERBOARD.}"], size: 92 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.25, rect: [843, 357, 483, 281], w: 640, y: 990,
+            focus: [{ at: 2.05, rect: [1100, 594, 72, 26], tag: "588 PTS · #1", color: C.gold, tagBelow: true }] },
+          { at: 0.6, rect: [345, 420, 483, 218], w: 420, x: 300, y: 1360 },
+          { at: 0.7, rect: [1340, 420, 483, 218], w: 420, x: 780, y: 1360 },
+        ] },
+      // "Worth it?"
+      { kind: "hook", t: 20.65, d: 1.4, ghost: "?", label: "VANGUARD PAID $4,100", lines: ["WORTH", "|IT?|"], size: 190 },
+      // "Get drafted… on VOLT."
+      { kind: "cta", t: 22.05, d: 4.45, lines: ["GET", "[DRAFTED.]"], size: 130, feat: FEAT, button: "FIND A LEAGUE" },
+    ],
+    cues: [
+      ...[1.0, 1.95, 2.9, 3.8].map((t) => ({ t, k: "heart", g: 0.55 })),
+      ...[13.05, 13.85].map((t) => ({ t, k: "heart", g: 0.8 })),
+    ],
+  });
+}
+
 const only = process.argv[2];
 if (only === "--list") { REELS.forEach((r, i) => console.log(String(i + 1).padStart(2, "0") + " " + r.id)); process.exit(0); }
 for (const spec of REELS) {

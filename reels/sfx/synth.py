@@ -273,7 +273,21 @@ def s_shimmer(g=1.0, **_):
     return stereo(x, 0, 0.018) * g, 0.55
 
 
-SOUNDS = {"whoosh": s_whoosh, "air": s_air, "swell": s_swell, "thump": s_thump, "boom": s_boom,
+def s_heart(g=1.0, **_):
+    """A soft heartbeat: two muffled low pulses (lub-dub), no click on the attack."""
+    d = 0.9
+    t = t_axis(d)
+    x = np.zeros(len(t))
+    for off, amp in ((0.0, 1.0), (0.24, 0.7)):
+        tt = np.clip(t - off, 0, None)
+        f = 48 + 22 * np.exp(-tt / 0.05)
+        e = np.where(t >= off, (1 - np.exp(-tt / 0.012)) * np.exp(-tt / 0.11), 0)
+        x += amp * np.sin(2 * np.pi * np.cumsum(f) / SR) * e
+    x = lowpass(x, 260) * 0.8
+    return stereo(x, 0, 0.0) * g, 0.12
+
+
+SOUNDS = {"heart": s_heart, "whoosh": s_whoosh, "air": s_air, "swell": s_swell, "thump": s_thump, "boom": s_boom,
           "chime": s_chime, "pop": s_pop, "click": s_click, "rise": s_rise, "shimmer": s_shimmer}
 
 
@@ -421,6 +435,13 @@ def main(cue_path, out):
         lvl = np.clip(env_s / 0.05, 0, 1)
         duck_bed = 1 - 0.62 * lvl
         duck_sfx = 1 - 0.4 * lvl
+    # hush: the bed fades right out for a beat of silence (e.g. before a SOLD)
+    for h in spec.get("hush") or []:
+        t0, t1 = float(h["t"]), float(h["t"]) + float(h["d"])
+        ramp = float(h.get("ramp", 0.35))
+        tt = np.arange(len(duck_bed)) / SR
+        g = np.clip(np.maximum((t0 - tt) / ramp, (tt - t1) / 0.08), 0, 1)
+        duck_bed = duck_bed * g
     mix[:n] += b * 0.42 * duck_bed[:n, None]
     mix += sfx * 0.9 * duck_sfx[:, None]
     mix += vo_track

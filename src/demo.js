@@ -84,9 +84,11 @@ export function demoBoard(scene, h) {
     }
     if (scene === "auction" && REAL.block) {
       const p = byName(REAL.block.name), now = Date.now();
-      const bids = REAL.block.bids;
+      // showBids: capture the block part-way (0 = just opened, no leader yet)
+      const bids = REAL.block.bids.slice(0, REAL.block.showBids ?? REAL.block.bids.length);
+      const top = bids[bids.length - 1];
       p.status = "block";
-      s.block = { playerId: p.id, startingBid: REAL.block.start, currentBid: bids[bids.length - 1][1], leaderId: s.teams[bids[bids.length - 1][0]].id, ts: now };
+      s.block = { playerId: p.id, startingBid: REAL.block.start, currentBid: top ? top[1] : REAL.block.start, leaderId: top ? s.teams[top[0]].id : null, ts: now };
       s.bidHistory = bids.map(([ti, amount], i) => ({ teamId: s.teams[ti].id, amount, ts: now - (bids.length - i) * 1500 }));
       s.recentSales = s.recentSales.slice(0, 6);
     }

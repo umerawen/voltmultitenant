@@ -160,8 +160,10 @@ export function reel(spec) {
     const at = s.t + o.at, side = o.side || (i % 2 ? "left" : "right");
     const y = o.y ?? 1400;
     if (o.d == null && s.toasts[i + 1]) o.d = s.toasts[i + 1].at - o.at - 0.05;
-    tw(`#${id2}`, { x: side === "right" ? 160 : -160, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "expo.out" }, at);
-    if (o.d) tto(`#${id2}`, { opacity: 0, x: side === "right" ? 60 : -60, duration: 0.3 }, at + o.d);
+    // a toast that is replaced quickly gets a short entrance, so it can't outlive its exit
+    const tin = o.d ? Math.min(0.5, Math.max(0.1, o.d * 0.7)) : 0.5;
+    tw(`#${id2}`, { x: side === "right" ? 160 : -160, opacity: 0 }, { x: 0, opacity: 1, duration: tin, ease: "expo.out" }, at);
+    if (o.d) tto(`#${id2}`, { opacity: 0, x: side === "right" ? 60 : -60, duration: Math.min(0.3, Math.max(0.1, o.d * 0.6)) }, at + Math.max(o.d, tin));
     cue(at, o.sound || "pop", { p: o.p ?? i + 1, g: 0.7 });
     return `<div class="toast ${side}" id="${id2}" style="top:${y}px;border-left-color:${o.color || C.volt}"><div class="toast-k" style="color:${o.color || C.voltHi}">${rich(o.k || "")}</div><div class="toast-v">${rich(o.v)}</div></div>`;
   }).join("");
@@ -383,8 +385,10 @@ export function reel(spec) {
         const lr = { x: (L.rect[0] - r.x) * S, y: (L.rect[1] - r.y) * S, w: L.rect[2] * S, h: L.rect[3] * S };
         const spans = L.steps.map((st, q) => {
           const sidq = `${id2}-l${j}-${q}`;
-          if (q > 0) tw(`#${sidq}`, { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, s.t + st.at);
-          if (L.steps[q + 1]) tto(`#${sidq}`, { opacity: 0, duration: 0.08 }, s.t + L.steps[q + 1].at);
+          // fast steps get a fast pop, so a value never outlives the one that replaces it
+          const nx = L.steps[q + 1], gap = nx ? nx.at - st.at : 1, tin = Math.min(0.3, Math.max(0.06, gap * 0.6));
+          if (q > 0) tw(`#${sidq}`, { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: tin, ease: "back.out(2)" }, s.t + st.at);
+          if (nx) tto(`#${sidq}`, { opacity: 0, duration: 0.06 }, s.t + Math.max(nx.at, st.at + tin));
           return `<span id="${sidq}" class="live-v" style="${q > 0 ? "opacity:0;" : ""}color:${st.color || L.color || C.ink}">${esc(st.text)}</span>`;
         }).join("");
         return `<div class="live ${L.font === "raj" ? "live-raj" : "live-mono"}" style="left:${lr.x}px;top:${lr.y}px;width:${lr.w}px;height:${lr.h}px;font-size:${(L.size || 36) * S}px;background:${L.bg || "#0d1326"}">${spans}</div>`;
@@ -402,7 +406,7 @@ export function reel(spec) {
       const shape = pc.shape === "slant" ? `clip-path:polygon(${n}px 0,100% 0,calc(100% - ${n}px) 100%,0 100%)`
         : pc.shape === "notch" ? `clip-path:polygon(0 0,calc(100% - ${n}px) 0,100% ${n}px,100% 100%,0 100%)`
         : "border-radius:14px";
-      return `<div class="piece" id="${id2}" style="left:${cx - W2 / 2}px;top:${cy - H2 / 2}px;width:${W2}px;height:${H2}px"><div class="piece-in" id="${id2}-f"><div class="piece-clip${pc.shape ? "" : " feather"}" style="${shape}"><img src="${img}" style="width:${SW * S}px;height:${SH * S}px;left:${-r.x * S}px;top:${-r.y * S}px">${live}</div>${focus}</div></div>`;
+      return `<div class="piece" id="${id2}" style="left:${cx - W2 / 2}px;top:${cy - H2 / 2}px;width:${W2}px;height:${H2}px"><div class="piece-in" id="${id2}-f"><div class="piece-clip${pc.shape ? "" : " feather"}" style="${shape}"><img src="${pc.shot ? asset("screen", pc.shot) : img}" style="width:${SW * S}px;height:${SH * S}px;left:${-r.x * S}px;top:${-r.y * S}px">${live}</div>${focus}</div></div>`;
     }).join("");
     // dim the plane while a card is out
     (s.pieces || []).forEach((pc, i) => {
@@ -698,6 +702,6 @@ tl.seek(0);
   }
   fs.writeFileSync(path.join(dir, "index.html"), doc);
   cues.sort((a, b) => a.t - b.t);
-  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, fps: spec.fps || 30, bpm: 120, vo: spec.vo || null, outro: spec.outro ?? (spec.scenes.findLast((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
+  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, fps: spec.fps || 30, bpm: 120, vo: spec.vo || null, hush: spec.hush || null, outro: spec.outro ?? (spec.scenes.findLast((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
   return { dir, cues: cues.length };
 }
