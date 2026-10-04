@@ -288,8 +288,10 @@ function KeyArt({ src, pos: posIn, width = "68%", fade: fadeIn, opacity = 1, cen
       <img src={src} alt="" aria-hidden className={center ? undefined : "volt-key-art"} style={{ position: "absolute", top: 0, height: "100%",
         right: 0, width: center ? "100%" : width, objectFit: "cover", objectPosition: pos, opacity, pointerEvents: "none",
         maskImage: mask, WebkitMaskImage: mask }} />
-      <span aria-hidden className="volt-scan" />
-      <span aria-hidden className="volt-sweep" />
+      {/* Texture lives on the art only, masked the same way, so the copy and
+          buttons on the left sit on a clean panel. */}
+      <span aria-hidden className="volt-scan" style={center ? undefined : { left: "auto", width, maskImage: mask, WebkitMaskImage: mask }} />
+      <span aria-hidden className="volt-sweep" style={center ? undefined : { left: "auto", width, maskImage: mask, WebkitMaskImage: mask }} />
     </>
   );
 }
@@ -3882,7 +3884,6 @@ function Leaderboard({ isAdmin }) {
       {/* Same banner as the home and fixtures pages, with its own picture. */}
       <div style={{ ...PANEL("rgba(61,123,255,0.4)", "24px 28px 20px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18 }}>
         <KeyArt src={ART.reyna} />
-        <span aria-hidden className="volt-scan" />
         <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
         <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
         <div style={{ position: "relative" }}>
@@ -14082,16 +14083,9 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           return (
             <div className="volt-lg-hero" style={{ ...PANEL(`${H}55`, "30px 34px 28px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(18),
               marginBottom: 14, minHeight: 300, display: "flex", flexDirection: "column" }}>
-              <CardArt hue={H} bare />
               {/* The league's key art: mirrored so the figure stands on the right
                   facing the name, graded into VOLT blue, fading out behind the text. */}
               <KeyArt src={ART.omen} />
-              <span aria-hidden className="volt-scan" />
-              <span aria-hidden className="volt-sweep" />
-              <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%", pointerEvents: "none",
-                background: `repeating-linear-gradient(105deg, transparent 0 46px, ${H}14 46px 52px, transparent 52px 110px, ${H}0c 110px 140px)`,
-                maskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)",
-                WebkitMaskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)" }} />
               <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
               <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
 
