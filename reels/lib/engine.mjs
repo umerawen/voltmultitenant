@@ -466,13 +466,15 @@ export function reel(spec) {
     const sid = s._id, at = s.t - 0.1;
     const step = s.step || 0.32;
     const rows = s.items.map((it, i) => {
-      const rid = `${sid}-r${i}`, t0 = at + 0.55 + i * step;
+      // a row can name its own time (it.at, scene-relative) to land on a spoken word
+      const rid = `${sid}-r${i}`, t0 = it.at != null ? s.t + it.at : at + 0.55 + i * step;
+      const tx = s.strikeAt != null ? s.t + s.strikeAt + i * 0.1 : t0 + 0.3;
       tw(`#${rid}`, { opacity: 0, x: 90 }, { opacity: 1, x: 0, duration: 0.45, ease: "expo.out" }, t0);
       tw(`#${rid}-ic`, { scale: 0 }, { scale: 1, duration: 0.4, ease: "back.out(2.2)" }, t0 + 0.12);
       if (s.style === "strike") {
-        tw(`#${rid}-x`, { scaleX: 0 }, { scaleX: 1, duration: 0.35, ease: "power3.out" }, t0 + (s.strikeAt ? s.strikeAt - 0.55 - i * step + i * 0.12 : 0.3));
-        tto(`#${rid}`, { opacity: 0.45, duration: 0.3 }, t0 + (s.strikeAt ? s.strikeAt - 0.55 - i * step + i * 0.12 : 0.3) + 0.2);
-        cue(t0 + (s.strikeAt ? s.strikeAt - 0.55 - i * step + i * 0.12 : 0.3), "click", { g: 0.6 });
+        tw(`#${rid}-x`, { scaleX: 0 }, { scaleX: 1, duration: 0.35, ease: "power3.out" }, tx);
+        tto(`#${rid}`, { opacity: 0.45, duration: 0.3 }, tx + 0.2);
+        cue(tx, "click", { g: 0.6 });
       }
       cue(t0 + 0.1, "pop", { p: i, g: 0.65 });
       const icon = s.style === "strike"
@@ -487,8 +489,10 @@ export function reel(spec) {
   // Rapid word + screen cuts (each beat a different crop, full bleed).
   kinds.montage = (s) => {
     s.items.forEach((it, i) => {
-      const t = s.t + i * s.beat;
-      const d = it.d || s.beat;
+      // items may name their own time (it.at) so each cut lands on its word
+      const t = it.at != null ? s.t + it.at : s.t + i * s.beat;
+      const nx = s.items[i + 1];
+      const d = it.d || (nx?.at != null && it.at != null ? nx.at - it.at : s.beat);
       const sub = { ...it, _id: nid("mo"), t, d, frame: false, head: null, cam: it.cam || [{ at: 0, focus: it.focus, w: it.w || 640, center: it.center }], enter: i ? "zoom" : s.enter || "zoom", exit: "none" };
       kinds.screen(sub);
       // the word, over the shot

@@ -18,27 +18,40 @@ const QF2 = "[aria-label^='QF 2']", SF1 = "[aria-label^='SF 1']", FINAL = "[aria
 
 
 export const REELS = [
-  // 01 ── players: you don't need a team
+  // 01 ── players: you don't need a team (Kami Labs: Kamijeee signed solo, drafted by YONA)
   {
-    id: "volt-solo-to-signed", duration: 21,
+    id: "volt-solo-to-signed", duration: 20.5, fps: 60,
+    vo: { file: "vo/solo.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 3, agent: "jett", label: "FOR SOLO PLAYERS", lines: ["NO TEAM?", "[NO PROBLEM.]"], size: 156, sub: "Sign up alone. Get drafted by a captain." },
-      { kind: "screen", t: 3, d: 4, shot: "player-pool", url: "PLAYER POOL",
-        head: { label: "STEP 1 · SIGN UP", lines: ["JOIN THE POOL", "{SOLO}."] },
-        cam: [{ at: 0, w: 1000, center: [860, 600] }, { at: 1.4, focus: "KAIRO", w: 620 }],
-        marks: [{ at: 2.2, mark: "KAIRO", pad: 14, tag: "THAT'S YOU" }] },
-      { kind: "screen", t: 7, d: 3.5, shot: "scout-modal", url: "PLAYER POOL / KAIRO",
-        head: { label: "STEP 2 · GET SCOUTED", lines: ["YOUR STATS", "DO THE [TALKING]."] },
-        cam: [{ at: 0, w: 1000, center: [870, 520] }, { at: 1.2, center: [1080, 420], w: 640 }] },
-      { kind: "screen", t: 10.5, d: 4, shot: "auction-block", url: "LIVE AUCTION",
-        head: { label: "STEP 3 · GET BOUGHT", lines: ["CAPTAINS", "{BID ON YOU}."] },
-        cam: [{ at: 0, focus: "ZEPHYR", w: 900 }, { at: 1.3, focus: "CURRENT BID", w: 600 }],
-        toasts: [{ at: 1.3, k: "FROSTBYTE", v: "BIDS |$2,700|", color: C.money }, { at: 2.3, k: "NOVA STRIKE", v: "BIDS |$2,900|", color: C.money, side: "left" }] },
-      { kind: "screen", t: 14.5, d: 3, shot: "rosters", url: "ROSTERS",
-        head: { label: "STEP 4 · PLAY", lines: ["NOW YOU'RE", "ON A [TEAM]."] },
-        cam: [{ at: 0, w: 1000, center: [800, 500] }, { at: 1.0, center: [840, 540], w: 560 }],
-        marks: [{ at: 1.7, mark: "KAIRO", pad: 10, tag: "SIGNED", color: C.money }] },
-      { kind: "cta", t: 17.5, d: 3.5, lines: ["SIGN UP SOLO.", "[GET DRAFTED.]"], feat: FEAT, button: "FIND A LEAGUE" },
+      // "No team? No problem."
+      { kind: "hook", t: 0, d: 2.25, agent: "jett", label: "FOR SOLO PLAYERS", lines: ["NO TEAM?", "[NO PROBLEM.]"], size: 156 },
+      // "Sign up solo, and you land in the player pool."
+      { kind: "stage", t: 2.25, d: 2.6, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "SIGN UP SOLO", lines: ["YOU LAND IN", "THE {PLAYER POOL}."], size: 96 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [{ at: 0.45, rect: [1462, 578, 360, 180], w: 820, y: 1080,
+          focus: [{ at: 1.0, rect: [1482, 594, 138, 22], tag: "THAT'S YOU", color: C.volt }] }] },
+      // "Captains scout your stats…"
+      { kind: "stage", t: 4.85, d: 2.05, shot: "kami-scout-modal", plateW: 1040, plateY: 1060, sweep: false,
+        heads: [{ at: 0, label: "GET SCOUTED", lines: ["CAPTAINS SCOUT", "YOUR [STATS]."], size: 96 }],
+        plate: [{ at: 0, rx: 12, ry: 15 }],
+        pieces: [
+          { at: 0.2, rect: [510, 117, 435, 603], w: 420, x: 290, y: 1080, shape: "notch", cut: 24 },
+          { at: 0.35, rect: [1035, 195, 315, 270], w: 430, x: 790, y: 930 },
+          { at: 0.5, rect: [995, 522, 398, 146], w: 430, x: 790, y: 1230 },
+        ] },
+      // "then the draw spins — and lands on YOU."
+      { kind: "draw", t: 6.9, d: 3.4, draw: "kami-draw", spin: 2.75, delay: 0.1, y: 1010, cardW: 400,
+        reveal: { name: "KAMIJEEE", sub: "Silver · heads to the block at $800" },
+        head: { label: "DRAFT NIGHT", lines: ["THE DRAW SPINS…", "AND LANDS ON [YOU]."], size: 100 } },
+      // "Kamijee went for sixteen hundred, straight onto Yona's squad."
+      { kind: "stage", t: 10.3, d: 5.13, shot: "kami-rosters", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "SIGNED", lines: ["SOLD FOR |$1,600|.", "ONTO {YONA}."], size: 96 }],
+        plate: [{ at: 0, rx: 14, ry: 16 }],
+        pieces: [{ at: 0.3, rect: [343, 233, 357, 535], w: 580, y: 1110, shape: "notch", cut: 24,
+          focus: [{ at: 1.0, rect: [361, 516, 285, 50], tag: "KAMIJEEE · $1,600", color: C.money }] }] },
+      // "Sign up solo. Get drafted… on VOLT."
+      { kind: "cta", t: 15.43, d: 5.07, lines: ["SIGN UP SOLO.", "[GET DRAFTED.]"], feat: FEAT, button: "FIND A LEAGUE" },
     ],
   },
 
@@ -93,171 +106,264 @@ export const REELS = [
     ],
   },
 
-  // 03 ── hosts: hand it all to VOLT
+  // 03 ── hosts: hand it all to VOLT (Kami Labs ran a whole tournament on it)
   {
-    id: "volt-host-autopilot", duration: 24.5,
+    id: "volt-host-autopilot", duration: 26.5, fps: 60,
+    vo: { file: "vo/host.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 3, ghost: "?", label: "FOR LEAGUE HOSTS", lines: ["RUNNING A", "[LEAGUE?]"], size: 160, sub: "Here's what that usually looks like." },
-      { kind: "list", t: 3, d: 4.5, style: "strike", strikeAt: 2.6, step: 0.3, label: "THE OLD WAY", lines: ["SOUND", "[FAMILIAR?]"],
-        items: ["SPREADSHEETS", "SIGN-UPS IN DMS", "BRACKETS BY HAND", "CHASING SCORES", "SORTING ROLES"] },
-      { kind: "hook", t: 7.5, d: 2.5, agent: "sage", label: "ENTER VOLT", lines: ["MEET YOUR", "[CO-HOST.]"], size: 156 },
-      { kind: "list", t: 10, d: 4.5, step: 0.32, label: "VOLT HANDLES", lines: ["THE BORING", "{STUFF}."],
-        items: ["SIGN-UPS & APPROVALS", "AUCTION DRAFT", "BRACKETS & SCHEDULES", "SCORES & STATS", "DISCORD ROLES"] },
-      { kind: "screen", t: 14.5, d: 3.5, shot: "fixtures-bracket", url: "FIXTURES",
-        head: { label: "AUTO BRACKETS", lines: ["SEEDED. SCHEDULED.", "{DONE.}"], size: 92 },
-        cam: [{ at: 0, w: 1000, center: [900, 560] }, { at: 1.2, focus: SF1, w: 720 }],
-        marks: [{ at: 1.9, mark: SF1, pad: 8, tag: "AUTO-SCHEDULED" }] },
-      { kind: "screen", t: 18, d: 3, shot: "league-page", url: "LEAGUE",
-        head: { label: "YOUR LEAGUE HQ", lines: ["ONE LINK.", "[EVERYTHING.]"] },
-        cam: [{ at: 0, w: 1000, center: [870, 480] }, { at: 1.0, focus: "ENTER TOURNAMENT →", w: 760 }],
-        cursor: [{ at: 1.2, to: "ENTER TOURNAMENT →" }] },
-      { kind: "cta", t: 21, d: 3.5, lines: ["YOU HOST.", "[VOLT RUNS IT.]"], feat: "Sign-ups · Draft · Brackets · Stats · Discord", button: "START YOUR LEAGUE" },
+      // "Running a league?"
+      { kind: "hook", t: 0, d: 2.0, ghost: "?", label: "FOR LEAGUE HOSTS", lines: ["RUNNING A", "[LEAGUE?]"], size: 160 },
+      // "Spreadsheets. Sign-ups in DMs. Brackets by hand. Chasing scores. Stop."
+      { kind: "list", t: 2.0, d: 6.3, style: "strike", strikeAt: 5.76, label: "THE OLD WAY", lines: ["SOUND", "[FAMILIAR?]"],
+        items: [{ t: "SPREADSHEETS", at: 0.4 }, { t: "SIGN-UPS IN DMS", at: 1.4 }, { t: "BRACKETS BY HAND", at: 2.73 }, { t: "CHASING SCORES", at: 4.11 }] },
+      // "VOLT runs it for you."
+      { kind: "hook", t: 8.3, d: 1.7, agent: "sage", label: "ENTER VOLT", lines: ["VOLT RUNS IT", "[FOR YOU.]"], size: 140 },
+      // "Sign-ups and approvals. The auction draft. Groups and brackets. Scores, stats, and Discord roles."
+      { kind: "list", t: 10.0, d: 6.3, label: "VOLT HANDLES", lines: ["THE BORING", "{STUFF}."],
+        items: [{ t: "SIGN-UPS & APPROVALS", at: 0.18 }, { t: "AUCTION DRAFT", at: 1.3 }, { t: "GROUPS & BRACKETS", at: 2.84 }, { t: "SCORES & STATS", at: 4.12 }, { t: "DISCORD ROLES", at: 5.2 }] },
+      // "Kami Labs ran a full tournament on it: six teams, twenty-four players, one champion."
+      { kind: "stage", t: 16.3, d: 6.1, shot: "kami-fixtures-champion", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "KAMI LABS", lines: ["A FULL TOURNAMENT", "ON {VOLT}."], size: 92 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.4, d: 3.8, rect: [345, 513, 723, 282], w: 860, y: 860 },
+          { at: 0.55, d: 3.65, rect: [1100, 513, 723, 282], w: 860, y: 1230 },
+          { at: 4.6, rect: [775, 350, 617, 135], w: 900, y: 1040 },
+        ],
+        toasts: [{ at: 2.75, k: "KAMI LABS", v: "6 TEAMS", color: C.volt, y: 1420, d: 0.9 }, { at: 3.7, k: "KAMI LABS", v: "24 PLAYERS", color: C.volt, side: "left", y: 1420, d: 0.9 }] },
+      // "You host… VOLT runs it."
+      { kind: "cta", t: 22.4, d: 4.1, lines: ["YOU HOST.", "[VOLT RUNS IT.]"], feat: "Sign-ups · Draft · Brackets · Stats · Discord", button: "START YOUR LEAGUE" },
     ],
   },
 
   // 04 ── captains: scout before you spend
   {
-    id: "volt-scout-hub", duration: 20.5,
+    id: "volt-scout-hub", duration: 14.8, fps: 60,
+    vo: { file: "vo/scout.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2.5, art: ART.omen, label: "FOR CAPTAINS", lines: ["SCOUT BEFORE", "YOU [SPEND]."], size: 140 },
-      { kind: "screen", t: 2.5, d: 4.5, shot: "player-pool", url: "PLAYER POOL",
-        head: { label: "THE SCOUT HUB", lines: ["EVERY PLAYER.", "{ONE BOARD.}"] },
-        cam: [{ at: 0, w: 1000, center: [1000, 640] }, { at: 1.5, focus: "VANTA", w: 600 }, { at: 2.9, focus: "NYX", w: 600 }],
-        marks: [{ at: 2.2, mark: "VANTA", pad: 12, tag: "IMMORTAL 1 · DUELIST", d: 0.9 }, { at: 3.6, mark: "NYX", pad: 12, tag: "ASCENDANT 3 · CONTROLLER" }] },
-      { kind: "screen", t: 7, d: 4, shot: "scout-modal", url: "PLAYER POOL / KAIRO",
-        head: { label: "THE SCOUT FILE", lines: ["KNOW WHO", "YOU'RE [BUYING]."] },
-        cam: [{ at: 0, w: 1000, center: [870, 520] }, { at: 1.3, center: [1180, 330], w: 620 }] },
-      { kind: "stat", t: 11, d: 3, label: "KAIRO · IMMORTAL 2 · DUELIST", lines: ["THE NUMBERS", "DON'T [LIE]."], size: 104,
-        items: [{ to: 1.42, dec: 2, label: "KDA", color: C.voltHi }, { to: 286, label: "ACS" }, { to: 31, suffix: "%", label: "Headshot", color: C.money }] },
-      { kind: "screen", t: 14, d: 3, shot: "auction-block", url: "LIVE AUCTION",
-        head: { label: "DRAFT NIGHT", lines: ["THEN BID LIKE", "YOU [MEAN IT]."] },
-        cam: [{ at: 0, focus: "CURRENT BID", w: 700 }],
-        toasts: [{ at: 1.0, k: "VIPERS", v: "RAISE TO |$3,100|", color: C.money }] },
-      { kind: "cta", t: 17, d: 3.5, lines: ["SCOUT. BID.", "[WIN.]"], feat: FEAT, button: "START SCOUTING" },
+      // "Scout before you spend."
+      { kind: "hook", t: 0, d: 2.1, art: ART.omen, label: "FOR CAPTAINS", lines: ["SCOUT BEFORE", "YOU [SPEND]."], size: 140 },
+      // "Every player on one board: rank, role, and stats."
+      { kind: "stage", t: 2.1, d: 4.2, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "THE SCOUT HUB", lines: ["EVERY PLAYER.", "{ONE BOARD.}"], size: 96 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.35, rect: [345, 378, 360, 184], w: 440, x: 295, y: 830 },
+          { at: 0.45, rect: [1462, 378, 360, 184], w: 440, x: 785, y: 830,
+            focus: [{ at: 2.07, rect: [1480, 421, 110, 18], tag: "RANK" }, { at: 2.73, rect: [1480, 443, 170, 18], tag: "ROLE", tagBelow: true }, { at: 3.4, rect: [1480, 478, 250, 22], tag: "STATS", color: C.money, tagBelow: true }] },
+          { at: 0.55, rect: [1090, 578, 360, 180], w: 440, x: 295, y: 1120 },
+          { at: 0.65, rect: [717, 378, 360, 184], w: 440, x: 785, y: 1120 },
+        ] },
+      // "Open a scout file, and it's all there."
+      { kind: "stage", t: 6.3, d: 2.6, shot: "kami-scout-modal", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "THE SCOUT FILE", lines: ["OPEN A FILE.", "IT'S {ALL THERE}."], size: 96 }],
+        plate: [{ at: 0, rx: 12, ry: 15 }],
+        pieces: [
+          { at: 0.25, rect: [510, 117, 435, 603], w: 420, x: 290, y: 1080, shape: "notch", cut: 24 },
+          { at: 0.4, rect: [1035, 195, 315, 270], w: 430, x: 790, y: 930 },
+          { at: 0.55, rect: [995, 522, 398, 146], w: 430, x: 790, y: 1230 },
+        ] },
+      // "Then bid like you mean it."
+      { kind: "stage", t: 8.9, d: 2.0, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
+        heads: [{ at: 0, label: "DRAFT NIGHT", lines: ["THEN BID LIKE", "YOU [MEAN IT]."], size: 96 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [{ at: 0.15, rect: [916, 714, 334, 87], w: 900, y: 1010, shape: "slant", cut: 22,
+          live: [
+            { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$1,200" }, { at: 0.75, text: "$1,400" }, { at: 1.35, text: "$1,600" }] },
+            { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "RUMER", color: "#9d6bff" }, { at: 0.75, text: "NOVA", color: "#ff8a3d" }, { at: 1.35, text: "YONA", color: "#ff4655" }] },
+          ] }],
+        toasts: [{ at: 0.75, k: "NOVA", v: "BIDS |$1,400|", color: "#ff8a3d", y: 1230 }, { at: 1.35, k: "YONA", v: "BIDS |$1,600|", color: "#ff4655", side: "left", y: 1230 }] },
+      // "Know who you're buying… on VOLT."
+      { kind: "cta", t: 10.9, d: 3.9, lines: ["SCOUT. BID.", "[WIN.]"], feat: FEAT, button: "START SCOUTING" },
     ],
   },
 
-  // 05 ── players: your stats, all season
+  // 05 ── players: every match counts (Nia, 588 pts, top of the Kami Labs season)
   {
-    id: "volt-every-match-counts", duration: 21,
+    id: "volt-every-match-counts", duration: 18.2, fps: 60,
+    vo: { file: "vo/every.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2.5, agent: "reyna", label: "PLAYER STATS", lines: ["EVERY MATCH", "[COUNTS.]"], size: 150 },
-      { kind: "screen", t: 2.5, d: 4, shot: "match-modal", url: "FIXTURES / SEMIFINAL",
-        head: { label: "AFTER THE GAME", lines: ["DROP THE SCORE.", "{THAT'S IT.}"], size: 96 },
-        cam: [{ at: 0, w: 1000, center: [870, 540] }, { at: 1.2, focus: DIALOG, w: 700 }] },
-      { kind: "screen", t: 6.5, d: 4, shot: "leaderboard", url: "LEADERBOARD",
-        head: { label: "SEASON LEADERBOARD", lines: ["YOUR NAME.", "[UP HERE.]"] },
-        cam: [{ at: 0, w: 1000, center: [870, 560] }, { at: 1.3, center: [640, 540], w: 640 }],
-        marks: [{ at: 2.0, mark: "KAIRO", pad: 12, tag: "#2 THIS SEASON" }] },
-      { kind: "stat", t: 10.5, d: 3, label: "KAIRO · THIS SEASON", lines: ["TRACKED.", "{AUTOMATICALLY.}"], size: 104,
-        items: [{ to: 286, label: "Avg ACS" }, { to: 1.42, dec: 2, label: "KDA", color: C.voltHi }, { to: 61, suffix: "%", label: "Win rate", color: C.money }] },
-      { kind: "screen", t: 13.5, d: 4, shot: "league-page", url: "LEAGUE",
-        head: { label: "THE SEASON RACE", lines: ["EVERY POINT", "{STACKS UP}."] },
-        cam: [{ at: 0, w: 1000, center: [870, 480] }, { at: 1.2, center: [1380, 600], w: 620 }],
-        marks: [{ at: 1.9, mark: "// SEASON RACE", pad: 10, tag: "LIVE STANDINGS", fill: false }] },
-      { kind: "cta", t: 17.5, d: 3.5, lines: ["PLAY. TRACK.", "[CLIMB.]"], feat: FEAT, button: "JOIN A LEAGUE" },
+      // "Every match counts."
+      { kind: "hook", t: 0, d: 2.2, agent: "reyna", label: "PLAYER STATS", lines: ["EVERY MATCH", "[COUNTS.]"], size: 150 },
+      // "Drop the score after the game, and VOLT does the rest."
+      { kind: "stage", t: 2.2, d: 3.2, shot: "kami-final-modal", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "AFTER THE GAME", lines: ["DROP THE SCORE.", "{VOLT DOES THE REST.}"], size: 88 }],
+        plate: [{ at: 0, rx: 14, ry: 16 }],
+        pieces: [{ at: 0.2, rect: [652, 314, 616, 451], w: 860, y: 1060,
+          focus: [{ at: 0.6, rect: [826, 696, 265, 46], tag: "DROP THE SCORE", color: C.money }] }] },
+      // "Nia topped the Kami Labs season with 588 points. Every kill, every round, tracked automatically."
+      { kind: "stage", t: 5.4, d: 7.6, shot: "kami-leaderboard", plateW: 1040, plateY: 1060,
+        heads: [
+          { at: 0, label: "SEASON LEADERBOARD", lines: ["NIA TOPPED", "THE {SEASON}."], size: 100 },
+          { at: 4.1, label: "EVERY MATCH", lines: ["EVERY KILL.", "[TRACKED.]"], size: 100 },
+        ],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.3, d: 3.8, rect: [843, 357, 483, 281], w: 640, y: 990,
+            focus: [{ at: 2.6, rect: [1100, 594, 72, 26], tag: "588 PTS", color: C.gold, tagBelow: true }] },
+          { at: 1.1, d: 3.0, rect: [345, 420, 483, 218], w: 420, x: 300, y: 1360 },
+          { at: 1.2, d: 2.9, rect: [1340, 420, 483, 218], w: 420, x: 780, y: 1360 },
+          { at: 4.3, rect: [345, 705, 1478, 345], w: 1000, y: 1060 },
+        ] },
+      // "Play. Track. Climb… on VOLT."
+      { kind: "cta", t: 13.0, d: 5.2, lines: ["PLAY. TRACK.", "[CLIMB.]"], feat: FEAT, button: "JOIN A LEAGUE" },
     ],
   },
 
-  // 06 ── formats: league or knockout
+  // 06 ── formats: groups, then knockouts (how Kami Labs ran it)
   {
-    id: "volt-any-format", duration: 19,
+    id: "volt-any-format", duration: 17.8, fps: 60,
+    vo: { file: "vo/format.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2.5, ghost: "VS", label: "TOURNAMENT FORMATS", lines: ["LEAGUE OR", "[KNOCKOUT?]"], size: 160, sub: "Pick one. VOLT runs either." },
-      { kind: "screen", t: 2.5, d: 4.5, shot: "fixtures-league", url: "FIXTURES",
-        head: { label: "LEAGUE PLAY", lines: ["EVERYONE PLAYS", "{EVERYONE}."], size: 96 },
-        cam: [{ at: 0, w: 1000, center: [870, 450] }, { at: 1.4, w: 820, center: [800, 560] }] },
-      { kind: "screen", t: 7, d: 4, shot: "fixtures-league-rounds", url: "FIXTURES",
-        head: { label: "AUTO FIXTURES", lines: ["EVERY ROUND", "[SCHEDULED.]"] },
-        cam: [{ at: 0, w: 1000, center: [870, 420] }, { at: 1.3, center: [700, 420], w: 700 }] },
-      { kind: "screen", t: 11, d: 4, shot: "fixtures-bracket", url: "FIXTURES",
-        head: { label: "OR GO KNOCKOUT", lines: ["SINGLE", "{ELIMINATION}."] },
-        cam: [{ at: 0, w: 1000, center: [900, 560] }, { at: 1.2, focus: QF2, w: 640 }, { at: 2.5, focus: SF1, w: 640 }] },
-      { kind: "cta", t: 15, d: 4, lines: ["ANY FORMAT.", "[ZERO ADMIN.]"], feat: "League · Single elimination · Best-of", button: "START YOUR LEAGUE" },
+      // "Groups, then knockouts."
+      { kind: "hook", t: 0, d: 2.4, ghost: "VS", label: "TOURNAMENT FORMATS", lines: ["GROUPS, THEN", "[KNOCKOUTS.]"], size: 150 },
+      // "Kami Labs split six teams into two groups. Every fixture, scheduled automatically."
+      { kind: "stage", t: 2.4, d: 5.9, shot: "kami-fixtures-league", plateW: 1040, plateY: 1060,
+        heads: [
+          { at: 0, label: "KAMI LABS", lines: ["SIX TEAMS.", "{TWO GROUPS.}"], size: 100 },
+          { at: 3.3, label: "AUTO FIXTURES", lines: ["EVERY FIXTURE", "[SCHEDULED.]"], size: 100 },
+        ],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.45, d: 2.75, rect: [345, 352, 723, 285], w: 880, y: 850 },
+          { at: 0.6, d: 2.6, rect: [1100, 352, 723, 285], w: 880, y: 1220 },
+          { at: 3.5, rect: [345, 667, 723, 413], w: 880, y: 1080 },
+        ] },
+      // "The top teams go to the semis… and one team takes the final."
+      { kind: "stage", t: 8.3, d: 4.8, shot: "kami-playoffs-final", plateW: 1040, plateY: 1060,
+        heads: [
+          { at: 0, label: "PLAYOFFS", lines: ["TOP TEAMS", "TO THE {SEMIS}."], size: 100 },
+          { at: 2.5, label: "THE FINAL", lines: ["ONE TEAM", "TAKES IT [ALL]."], size: 100 },
+        ],
+        plate: [{ at: 0, rx: 12, ry: 15 }],
+        pieces: [
+          { at: 0.4, d: 2.1, rect: [366, 486, 713, 110], w: 960, y: 900 },
+          { at: 0.55, d: 1.95, rect: [1098, 486, 703, 110], w: 960, y: 1100 },
+          { at: 2.65, rect: [765, 700, 635, 130], w: 960, y: 1020 },
+        ] },
+      // "Any format. Zero admin. On VOLT."
+      { kind: "cta", t: 13.1, d: 4.7, lines: ["ANY FORMAT.", "[ZERO ADMIN.]"], feat: "Groups · Playoffs · Single elimination · League", button: "START YOUR LEAGUE" },
     ],
   },
 
-  // 07 ── the bracket, all the way to the trophy
+  // 07 ── the real Kami Labs run to the trophy
   {
-    id: "volt-road-to-the-final", duration: 19.5,
+    id: "volt-road-to-the-final", duration: 22.5, fps: 60,
+    vo: { file: "vo/final.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2.5, art: ART.sage, label: "THE BRACKET", lines: ["EIGHT TEAMS.", "~ONE CHAMPION.~"], size: 140, stripeColor: C.gold },
-      { kind: "screen", t: 2.5, d: 3, shot: "fixtures-bracket", frame: false, head: { label: "QUARTERFINALS", lines: ["WIN OR", "[GO HOME.]"], size: 130 },
-        cam: [{ at: 0, focus: QF2, w: 480 }] },
-      { kind: "screen", t: 5.5, d: 3, shot: "fixtures-bracket", frame: false, head: { label: "SEMIFINALS", lines: ["TWO STEPS", "{AWAY.}"], size: 130 },
-        cam: [{ at: 0, focus: SF1, w: 480 }] },
-      { kind: "screen", t: 8.5, d: 3, shot: "fixtures-champion", frame: false, head: { label: "THE FINAL", lines: ["ONE MATCH.", "[EVERYTHING.]"], size: 130 },
-        cam: [{ at: 0, focus: FINAL, w: 480 }] },
-      { kind: "screen", t: 11.5, d: 4.5, shot: "fixtures-champion", url: "FIXTURES",
-        head: { label: "CHAMPIONS", lines: ["VIPERS", "~TAKE IT ALL.~"] },
-        cam: [{ at: 0, w: 1000, center: [1080, 480] }, { at: 1.0, focus: "★ CHAMPION ★", w: 760 }],
-        stamp: { at: 2.0, text: "CHAMPIONS", size: 140, sub: "VIPERS · APEX LEAGUE", color: C.gold, y: 1000 },
-        cues: [] },
-      { kind: "cta", t: 16, d: 3.5, lines: ["WHO TAKES", "[YOURS?]"], feat: FEAT, button: "HOST A TOURNAMENT" },
+      // "Six teams. One champion."
+      { kind: "hook", t: 0, d: 3.6, art: ART.sage, label: "KAMI LABS TOURNAMENT", lines: ["SIX TEAMS.", "~ONE CHAMPION.~"], size: 140, stripeColor: C.gold },
+      // "Commander Saab went unbeaten in Group A. Rumer did the same in Group B."
+      { kind: "stage", t: 3.6, d: 5.0, shot: "kami-fixtures-league", plateW: 1040, plateY: 1060,
+        heads: [
+          { at: 0, label: "GROUP A", lines: ["COMMANDERSAAB", "{UNBEATEN.}"], size: 96 },
+          { at: 2.9, label: "GROUP B", lines: ["RUMER", "[UNBEATEN.]"], size: 96 },
+        ],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.4, d: 2.5, rect: [345, 352, 723, 285], w: 940, y: 1040,
+            focus: [{ at: 1.1, rect: [368, 450, 700, 48], tag: "2–0", color: C.volt }] },
+          { at: 3.0, rect: [1100, 352, 723, 285], w: 940, y: 1040,
+            focus: [{ at: 3.7, rect: [1122, 450, 700, 48], tag: "2–0", color: C.hot }] },
+        ] },
+      // "The semis… thirteen-ten. Thirteen-five."
+      { kind: "stage", t: 8.6, d: 4.0, shot: "kami-playoffs", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "SEMIFINALS", lines: ["THE {SEMIS}."], size: 110 }],
+        plate: [{ at: 0, rx: 12, ry: 15 }],
+        pieces: [
+          { at: 1.0, rect: [366, 486, 713, 110], w: 960, y: 900 },
+          { at: 2.4, rect: [1098, 486, 703, 110], w: 960, y: 1110 },
+        ] },
+      // "Then the final: Rumer, thirteen to four. Champions!"
+      { kind: "stage", t: 12.6, d: 5.6, shot: "kami-playoffs-final", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "GRAND FINAL", lines: ["THEN THE {FINAL}."], size: 110 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [{ at: 1.6, rect: [765, 700, 635, 130], w: 960, y: 1000 }],
+        stamp: { at: 4.18, text: "CHAMPIONS", size: 140, sub: "RUMER · KAMI LABS", color: C.gold, y: 1130 } },
+      // "Who takes yours? On VOLT."
+      { kind: "cta", t: 18.2, d: 4.3, lines: ["WHO TAKES", "[YOURS?]"], feat: FEAT, button: "HOST A TOURNAMENT" },
     ],
-    cues: [{ t: 13.6, k: "shimmer", g: 0.5 }],
+    cues: [{ t: 17.0, k: "shimmer", g: 0.5 }],
   },
 
-  // 08 ── predictions
+  // 08 ── predictions (every vote backed RUMER in the final; they won 13–4)
   {
-    id: "volt-call-it", duration: 20.5,
+    id: "volt-call-it", duration: 15.0, fps: 60,
+    vo: { file: "vo/call.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2.5, agent: "raze", label: "MATCH NIGHT", lines: ["CALL IT", "[BEFORE] IT", "HAPPENS."], size: 140 },
-      { kind: "screen", t: 2.5, d: 4.5, shot: "fixtures-league-rounds", url: "FIXTURES",
-        head: { label: "PREDICTIONS", lines: ["PICK YOUR", "{WINNER.}"] },
-        cam: [{ at: 0, w: 1000, center: [870, 420] }, { at: 1.3, center: [560, 440], w: 600 }] },
-      { kind: "screen", t: 7, d: 4, shot: "match-modal", url: "FIXTURES / SEMIFINAL",
-        head: { label: "THE CROWD", lines: ["SEE WHO", "BACKS [WHO.]"] },
-        cam: [{ at: 0, focus: DIALOG, w: 760 }, { at: 1.3, center: [960, 600], w: 560 }] },
-      { kind: "stat", t: 11, d: 3, label: "SEMIFINAL 1 · CROWD PICKS", lines: ["VIPERS", "VS {EMBERFALL}"], size: 110,
-        items: [{ to: 64, suffix: "%", label: "Back Vipers", color: C.hot }, { to: 36, suffix: "%", label: "Back Emberfall", color: C.voltHi }] },
-      { kind: "screen", t: 14, d: 3, shot: "fixtures-bracket", url: "FIXTURES",
-        head: { label: "THEN WATCH", lines: ["PROVE YOU", "[CALLED IT.]"] },
-        cam: [{ at: 0, focus: SF1, w: 720 }],
-        marks: [{ at: 1.0, mark: SF1, pad: 8, tag: "UP NEXT", color: C.hot }] },
-      { kind: "cta", t: 17, d: 3.5, lines: ["PICK. WATCH.", "[GLOAT.]"], feat: FEAT, button: "JOIN A LEAGUE" },
+      // "Call it before it happens."
+      { kind: "hook", t: 0, d: 2.3, agent: "raze", label: "MATCH NIGHT", lines: ["CALL IT", "[BEFORE] IT", "HAPPENS."], size: 140 },
+      // "Every match, the crowd picks a side."
+      { kind: "stage", t: 2.3, d: 2.3, shot: "kami-fixtures-league", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "PREDICTIONS", lines: ["THE CROWD", "{PICKS A SIDE.}"], size: 100 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [{ at: 0.3, rect: [345, 667, 723, 413], w: 900, y: 1080 }] },
+      // "Before the Kami Labs final, every single vote backed Rumer."
+      { kind: "stage", t: 4.6, d: 3.9, shot: "kami-final-modal", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "THE FINAL", lines: ["EVERY VOTE", "BACKED [RUMER.]"], size: 100 }],
+        plate: [{ at: 0, rx: 12, ry: 15 }],
+        pieces: [{ at: 0.25, rect: [652, 314, 616, 451], w: 860, y: 1060,
+          focus: [{ at: 2.6, rect: [679, 610, 562, 45], tag: "4 OF 4 VOTES · RUMER", color: C.hot }] }] },
+      // "They won thirteen to four."
+      { kind: "stage", t: 8.5, d: 2.1, shot: "kami-playoffs-final", plateW: 1040, plateY: 1060, sweep: false,
+        heads: [{ at: 0, label: "RESULT", lines: ["THEY WON", "|13–4|."], size: 110 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [{ at: 0.1, rect: [765, 700, 635, 130], w: 960, y: 1000 }],
+        stamp: { at: 0.9, text: "CALLED IT", size: 150, sub: "RUMER · 13–4", color: C.money, y: 1140 } },
+      // "Pick. Watch. Gloat… on VOLT."
+      { kind: "cta", t: 10.6, d: 4.4, lines: ["PICK. WATCH.", "[GLOAT.]"], feat: FEAT, button: "JOIN A LEAGUE" },
     ],
   },
 
-  // 09 ── captains: run the team
+  // 09 ── captains: run the team (YONA: limonataa for $4,100, the rest for $5,400)
   {
-    id: "volt-captain-mode", duration: 21,
+    id: "volt-captain-mode", duration: 16.8, fps: 60,
+    vo: { file: "vo/captain.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2.5, agent: "phoenix", agentSide: "right", label: "CAPTAIN MODE", lines: ["YOU'RE THE", "[CAPTAIN.]"], size: 156 },
-      { kind: "screen", t: 2.5, d: 4, shot: "dashboard", url: "DASHBOARD",
-        head: { label: "DRAFT DASHBOARD", lines: ["EVERYTHING", "AT A {GLANCE.}"] },
-        cam: [{ at: 0, w: 1000, center: [870, 540] }, { at: 1.3, focus: "$2,900", w: 620, center: [1560, 480] }],
-        marks: [{ at: 2.0, mark: "$2,900", pad: 10, tag: "ON THE BLOCK", color: C.money }] },
-      { kind: "screen", t: 6.5, d: 4, shot: "rosters", url: "ROSTERS",
-        head: { label: "YOUR SQUAD", lines: ["FOUR PICKS.", "{ONE BUDGET.}"] },
-        cam: [{ at: 0, w: 1000, center: [800, 520] }, { at: 1.3, w: 560, center: [520, 560] }] },
-      { kind: "stat", t: 10.5, d: 3, label: "STARTING PURSE", value: { from: 0, to: 10000, prefix: "$", color: C.money }, valueLabel: "Per captain", sub: "Blow it on a star, or build deep." },
-      { kind: "screen", t: 13.5, d: 4, shot: "auction-block", url: "LIVE AUCTION",
-        head: { label: "DRAFT NIGHT", lines: ["OUTBID YOUR", "[RIVALS.]"] },
-        cam: [{ at: 0, focus: "CURRENT BID", w: 640 }],
-        toasts: [{ at: 0.9, k: "EMBERFALL", v: "BIDS |$3,000|", color: C.money }, { at: 1.9, k: "YOU", v: "RAISE TO |$3,200|", color: C.volt, side: "left" }] },
-      { kind: "cta", t: 17.5, d: 3.5, lines: ["LEAD YOUR", "[SQUAD.]"], feat: FEAT, button: "CLAIM YOUR TEAM" },
+      // "You're the captain."
+      { kind: "hook", t: 0, d: 1.6, agent: "phoenix", label: "CAPTAIN MODE", lines: ["YOU'RE THE", "[CAPTAIN.]"], size: 156, delay: 0.05 },
+      // "Ten thousand to spend. Four players to buy."
+      { kind: "stat", t: 1.6, d: 2.7, label: "EVERY CAPTAIN GETS",
+        items: [{ to: 10000, prefix: "$", label: "To spend", color: C.money, at: 0.1, dur: 0.9 }, { to: 4, label: "Players to buy", color: C.voltHi, at: 1.5, dur: 0.5 }] },
+      // "Watch every purse on the board."
+      { kind: "stage", t: 4.3, d: 2.5, shot: "kami-dashboard", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "DRAFT DASHBOARD", lines: ["WATCH EVERY", "{PURSE.}"], size: 100 }],
+        plate: [{ at: 0, rx: 14, ry: 16 }],
+        pieces: [{ at: 0.3, rect: [1340, 795, 483, 273], w: 900, y: 1060 }] },
+      // "Yona went big on limonata: forty-one hundred. Then built the rest for under fifty-five hundred."
+      { kind: "stage", t: 6.8, d: 6.1, shot: "kami-rosters", plateW: 1040, plateY: 1060,
+        heads: [
+          { at: 0, label: "YONA", lines: ["WENT BIG.", "|$4,100|."], size: 110 },
+          { at: 3.8, label: "YONA", lines: ["THEN BUILT", "{DEEP.}"], size: 110 },
+        ],
+        plate: [{ at: 0, rx: 14, ry: 16 }],
+        pieces: [{ at: 0.3, rect: [343, 233, 357, 535], w: 580, y: 1110, shape: "notch", cut: 24,
+          focus: [{ at: 2.4, rect: [361, 457, 285, 50], tag: "LIMONATAA · $4,100", color: C.money }, { at: 4.2, rect: [361, 516, 285, 168], tag: "3 MORE · $5,400", color: C.volt, tagBelow: true }] }] },
+      // "Lead your squad… on VOLT."
+      { kind: "cta", t: 12.9, d: 3.9, lines: ["LEAD YOUR", "[SQUAD.]"], feat: FEAT, button: "CLAIM YOUR TEAM" },
     ],
   },
 
-  // 10 ── the whole thing in 14 seconds
+  // 10 ── the whole thing in 14 seconds, every cut on its word
   {
-    id: "volt-this-is-volt", duration: 14.5,
+    id: "volt-this-is-volt", duration: 14.2, fps: 60,
+    vo: { file: "vo/this.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2, ghost: "V", lines: ["THIS IS", "[VOLT.]"], size: 190, delay: 0.05 },
-      { kind: "montage", t: 2, beat: 1, items: [
-        { shot: "player-pool", center: [1171, 760], word: "SIGN UP", small: "SOLO OR SQUAD" },
-        { shot: "scout-modal", center: [760, 440], word: "GET SCOUTED" },
-        { shot: "auction-block", center: [1027, 700], word: "GET DRAFTED", small: "LIVE AUCTION" },
-        { shot: "rosters", center: [840, 560], word: "BUILD TEAMS" },
-        { shot: "fixtures-league-rounds", center: [560, 440], word: "PREDICT" },
-        { shot: "fixtures-bracket", center: [1083, 575], word: "COMPETE" },
-        { shot: "leaderboard", center: [1080, 560], word: "CLIMB" },
-        { shot: "fixtures-champion", center: [1080, 440], word: "~WIN.~" },
+      { kind: "hook", t: 0, d: 1.5, ghost: "V", lines: ["THIS IS", "[VOLT.]"], size: 190, delay: 0.05 },
+      { kind: "montage", t: 1.5, beat: 1, items: [
+        { at: 0.06, shot: "kami-pool-scrolled", center: [1642, 668], word: "SIGN UP", small: "SOLO OR SQUAD" },
+        { at: 1.09, shot: "kami-scout-modal", center: [727, 420], word: "GET SCOUTED" },
+        { at: 2.3, shot: "kami-auction-block", center: [1083, 757], word: "GET DRAFTED", small: "LIVE AUCTION" },
+        { at: 3.58, shot: "kami-rosters", center: [520, 500], word: "BUILD TEAMS" },
+        { at: 4.82, shot: "kami-final-modal", center: [960, 600], word: "PREDICT" },
+        { at: 5.73, shot: "kami-playoffs", center: [1082, 540], word: "COMPETE" },
+        { at: 6.65, shot: "kami-leaderboard", center: [1083, 470], word: "CLIMB" },
+        { at: 7.61, d: 0.89, shot: "kami-fixtures-champion", center: [1083, 417], word: "~WIN.~" },
       ] },
-      { kind: "cta", t: 10, d: 4.5, lines: ["RUN YOUR LEAGUE", "ON [VOLT.]"], size: 104, feat: FEAT, button: "START YOUR LEAGUE" },
+      { kind: "cta", t: 10.0, d: 4.2, lines: ["RUN YOUR LEAGUE", "ON [VOLT.]"], size: 104, feat: FEAT, button: "START YOUR LEAGUE" },
     ],
   },
+
 ];
 
 const only = process.argv[2];

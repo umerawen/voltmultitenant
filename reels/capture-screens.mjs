@@ -41,13 +41,23 @@ const portal = async (page) => {
   await wait(3600);
 };
 
+const args = process.argv.slice(2);
+const flag = (f) => { const i = args.indexOf(f); return i >= 0 ? args.splice(i, 2)[1] : null; };
+const realFile = flag("--real"), prefix = flag("--prefix") || "";
+const real = realFile ? JSON.parse(fs.readFileSync(new URL(realFile, import.meta.url), "utf8")) : null;
+const only = args[0];
+// A real league opens its own player's scout file, and plays its fixtures as groups.
+const SCOUT = real?.block?.name?.toUpperCase() || "KAIRO";
+const sceneFor = (sc) => (real && sc === "league" ? "groups" : sc);
+
 // Text marks: the smallest visible element whose text is exactly this
 // (case-insensitive). Selector marks: "sel:<css>" → first match.
 const SHOTS = [
   // [file, scene, steps[], marks[]]
   ["dashboard", "auction", [], ["KAIRO#1000", "sel:.volt-yc .volt-cell", "$2,900", "ZEPHYR", "LATEST SALES", "CAPTAINS' PURSES"]],
   ["player-pool", "pool", [nav("Player Pool")], ["KAIRO", "ZEPHYR", "VANTA", "NYX", "SCOUT HUB", "24"]],
-  ["scout-modal", "pool", [nav("Player Pool"), clickText("KAIRO")], ["KAIRO"]],
+  ["scout-modal", "pool", [nav("Player Pool"), clickText(SCOUT)], [SCOUT]],
+  ["pool-scrolled", "pool", [nav("Player Pool"), scrollTo(520)], [SCOUT]],
   ["auction-block", "auction", [nav("Live Auction")], ["$2,900", "NOVA STRIKE", "SOLD", "PASS", "ZEPHYR", "VIPERS", "PHANTOMS", "EMBERFALL", "FROSTBYTE", "TITANS", "// BIDDING WAR", "// AUCTION FEED", "CURRENT BID"]],
   ["rosters", "drafted", [nav("Rosters")], ["VIPERS", "PHANTOMS", "NOVA STRIKE", "EMBERFALL", "FROSTBYTE", "TITANS", "KAIRO"]],
   ["reserve-pool", "drafted", [nav("Reserve Pool")], []],
@@ -57,15 +67,13 @@ const SHOTS = [
   ["fixtures-champion", "final", [nav("Fixtures")], ["sel:[aria-label^='Final']", "★ CHAMPION ★"]],
   ["fixtures-league", "league", [nav("Fixtures")], ["// STANDINGS", "LEAGUE PLAY"]],
   ["fixtures-league-rounds", "league", [nav("Fixtures"), scrollTo(760)], []],
+  ["playoffs", "bracket", [nav("Fixtures"), scrollTo(1080)], []],
+  ["playoffs-final", "final", [nav("Fixtures"), scrollTo(1240)], []],
+  ["final-modal", "bracket", [nav("Fixtures"), scrollTo(1080), clickText("GRAND FINAL")], ["sel:[role=dialog]"]],
   ["leaderboard", "league", [nav("Leaderboard")], ["LEADERBOARD", "VANTA", "KAIRO", "ZEPHYR"]],
   ["league-page", "league", [portal], ["APEX LEAGUE", "YOU'RE IN ✓", "ENTER TOURNAMENT →", "// SEASON RACE", "OCT 10–11", "// PAST TOURNAMENTS"]],
 ];
 
-const args = process.argv.slice(2);
-const flag = (f) => { const i = args.indexOf(f); return i >= 0 ? args.splice(i, 2)[1] : null; };
-const realFile = flag("--real"), prefix = flag("--prefix") || "";
-const real = realFile ? JSON.parse(fs.readFileSync(new URL(realFile, import.meta.url), "utf8")) : null;
-const only = args[0];
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: "new", args: ["--hide-scrollbars", "--force-color-profile=srgb"] });
 try {
   for (const [file, scene, steps, marks] of SHOTS) {
@@ -73,7 +81,7 @@ try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 2 });
     if (real) await page.evaluateOnNewDocument((r) => { window.__demoReal = r; }, real);
-    await page.goto(`${BASE}?demo=${scene}`, { waitUntil: "networkidle2" });
+    await page.goto(`${BASE}?demo=${sceneFor(scene)}`, { waitUntil: "networkidle2" });
     await wait(3500);
     for (const step of steps) await step(page);
     await wait(600);

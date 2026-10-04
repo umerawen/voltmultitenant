@@ -102,6 +102,19 @@ export function demoBoard(scene, h) {
       s.spin = { playerId: p.id, pool: order, startTs: Date.now() + 4000, duration: 7200 };
       s.bidHistory = [];
     }
+    if (REAL.tournament && ["groups", "bracket", "final"].includes(scene)) {
+      // The real tournament. "final" is how it finished; "bracket" stops before
+      // the final; "groups" stops before the semis.
+      const t = JSON.parse(JSON.stringify(REAL.tournament));
+      const expand = (m) => { m.votes = Object.fromEntries((m.votes || []).map(([name, side], i) => ["v" + i, { name, side }])); return m; };
+      Object.values(t.matches).forEach((ms) => ms.forEach(expand));
+      t.semis.forEach(expand); expand(t.final);
+      const unplay = (m) => { m.done = false; m.maps = []; m.winner = null; };
+      if (scene !== "final") unplay(t.final);
+      if (scene === "groups") { t.semis.forEach(unplay); t.final.teamA = t.final.teamB = null; }
+      t.createdAt = Date.now();
+      s.tournament = t;
+    }
     return s;
   }
 
@@ -161,19 +174,26 @@ export function demoBoard(scene, h) {
 }
 
 // The viewer's own card on the tournament dashboard.
-export const demoProfile = {
+export const demoProfile = REAL?.me || {
   user_id: "demo-me", display_name: "Kairo", ign: "Kairo#1000", rank: "Immortal", rank_div: 2, peak_rank: "Immortal", peak_rank_div: 3,
   role: "Duelist", agent: "Jett", kda: 1.42, acs: 286, hs: 31, win: 61, linked: true, discord: "kairo", whatsapp: "x",
 };
 
 // Season leaderboard rows (the view sorts them).
-export const demoLeaderboard = PLAYERS.slice(0, 16).map(([name, rank, rankDiv, role, , , acs], i) => {
-  const m = 4 + (i % 3), w = Math.max(0, 3 - (i % 4));
-  return { id: "demo-l-" + i, name, rank, rankDiv, role, m, w, k: 40 + ((i * 13) % 45), as: 10 + ((i * 7) % 18), pts: Math.round(acs / 4 * m + w * 50), avgAcs: acs };
-});
+export const demoLeaderboard = REAL?.leaderboard
+  ? REAL.leaderboard.map(([name, rank, rankDiv, role, m, w, k, as, pts, avgAcs], i) => ({ id: "real-l-" + i, name, rank, rankDiv, role, m, w, k, as, pts, avgAcs }))
+  : PLAYERS.slice(0, 16).map(([name, rank, rankDiv, role, , , acs], i) => {
+    const m = 4 + (i % 3), w = Math.max(0, 3 - (i % 4));
+    return { id: "demo-l-" + i, name, rank, rankDiv, role, m, w, k: 40 + ((i * 13) % 45), as: 10 + ((i * 7) % 18), pts: Math.round(acs / 4 * m + w * 50), avgAcs: acs };
+  });
 
 // The league page.
-export const demoLeague = {
+export const demoLeague = REAL?.leagueEvents ? {
+  name: REAL.league,
+  events: REAL.leagueEvents,
+  live: REAL.live,
+  board: demoLeaderboard.map((r) => ({ name: r.name, pts: r.pts })),
+} : {
   name: "APEX LEAGUE",
   events: [
     { id: "demo-ev-2", phase: "registration_open", weekend_label: null, starts_on: "2026-10-10", ends_on: "2026-10-11", created_at: "2026-10-01", draft_at: "2026-10-10T19:00:00" },
