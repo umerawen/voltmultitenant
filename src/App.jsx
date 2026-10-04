@@ -1732,12 +1732,12 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
 
           {/* active round → full cards with context */}
           {!isDone(k) && k === active && (
-            <div className="grid sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {rounds[k].map(m => {
                 const a = teamOf(m.teamA), b = teamOf(m.teamB);
                 const st = b ? stakesOf(m) : null;
                 return (
-                  <div key={m.id} className="flex flex-col gap-1.5">
+                  <div key={m.id} className="flex flex-col gap-1.5 min-w-0">
                     {st && <div className="text-center uppercase" style={{ fontSize: 10, letterSpacing: "0.22em", color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>⚡ {st}</div>}
                     {b && (
                       <div className="flex items-center justify-between px-1">
@@ -1754,7 +1754,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
 
           {/* future rounds → quiet schedule */}
           {!isDone(k) && k !== active && (
-            <div className="grid sm:grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               {rounds[k].map(m => {
                 const a = teamOf(m.teamA), b = teamOf(m.teamB);
                 return (
@@ -1777,7 +1777,7 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
   const rows = computeStandings(teamIds, matches, overrides);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full" style={{ borderCollapse: "collapse", fontFamily: "'Rajdhani',sans-serif" }}>
+      <table className="w-full volt-stand" style={{ borderCollapse: "collapse", fontFamily: "'Rajdhani',sans-serif" }}>
         <thead>
           <tr style={{ color: "rgba(200,215,255,0.5)" }}>
             {["#", "Team", "P", "W", "L", "RF", "RA", "DIFF", "PTS"].map((h, i) => (
@@ -1961,7 +1961,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
         <div className="w-full max-w-2xl flex flex-col gap-5">
           <TPanel>
             <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>1 · Format</p>
-            <div className="grid sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
                 { id: "group", name: "Group Stage", desc: "Split into groups, round-robin each, then semifinals and a final." },
                 { id: "roundrobin", name: "Round Robin", desc: "One table — every team plays every other team once." },
@@ -2649,8 +2649,9 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
   const r = rankOf(player.rank);
   const drafted = player.status === "sold";
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Scouting report for ${player.name}`} className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(5,6,12,0.84)", backdropFilter: "blur(8px)" }} onClick={onClose}>
-      <div className="relative w-full grid md:grid-cols-2 gap-6 items-stretch" style={{ maxWidth: 820 }} onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" aria-label={`Scouting report for ${player.name}`} className="fixed inset-0 z-50 flex overflow-y-auto overflow-x-hidden p-4" style={{ background: "rgba(5,6,12,0.84)", backdropFilter: "blur(8px)", overscrollBehavior: "contain" }} onClick={onClose}>
+      {/* m-auto: centred when it fits, scrolls from the top when it doesn't (phones). */}
+      <div className="relative w-full grid md:grid-cols-2 gap-6 items-stretch m-auto" style={{ maxWidth: 820 }} onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} aria-label="Close" className="absolute -top-2 right-0 md:-right-2 z-10 w-9 h-9 grid place-items-center rounded-full"
           style={{ background: "rgba(61,123,255,0.12)", border: "1px solid rgba(61,123,255,0.4)", color: "#ecf3ff" }}>✕</button>
         <PlayerCard player={player} />
@@ -3836,13 +3837,13 @@ function LbPodium({ rows, metric }) {
   const MED = ["#f5c453", "#d7e1ee", "#c08a52"];
   const order = rows.length === 3 ? [1, 0, 2] : rows.map((_, i) => i);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))`, gap: 12,
+    <div className="volt-podium" style={{ display: "grid", gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))`, gap: 12,
       alignItems: "end", marginBottom: 18 }}>
       {order.map((idx, k) => {
         const r = rows[idx]; const c = MED[idx]; const first = idx === 0;
         const val = metric === "acs" ? r.avgAcs : r.pts;
         return (
-          <div key={r.id || idx} style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
+          <div key={r.id || idx} className="volt-pod" style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
             position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(14),
             background: `linear-gradient(170deg, ${c}${first ? "26" : "18"}, rgba(10,13,22,0.9) 60%)`,
             animation: `voltRise .5s ${k * 90}ms backwards`, textAlign: "center" }}>
@@ -3854,17 +3855,17 @@ function LbPodium({ rows, metric }) {
             <div style={{ display: "flex", justifyContent: "center" }}>
               <RankBadge rank={r.rank || "Iron"} div={r.rankDiv} size={first ? "lg" : "md"} solidDiv />
             </div>
-            <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
+            <div className="volt-pod-name" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
               fontSize: first ? 26 : 20, marginTop: 10, lineHeight: 1,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-            <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: RANKS[r.rank]?.c || "rgba(200,215,255,0.5)",
+            <div className="volt-pod-role" style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: RANKS[r.rank]?.c || "rgba(200,215,255,0.5)",
               marginTop: 5, fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ") || "—"}</div>
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
+            <div className="volt-pod-val" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
               color: c, marginTop: 14, textShadow: `0 0 24px ${c}55` }}>
               <CountUp to={val} dur={1000} delay={k * 90} />
               <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "acs" ? "ACS" : "PTS"}</span>
             </div>
-            <div style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 12, fontFamily: "'IBM Plex Mono',monospace",
+            <div className="volt-pod-meta" style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 12, fontFamily: "'IBM Plex Mono',monospace",
               fontSize: 11, color: "rgba(200,215,255,0.5)" }}>
               <span>{r.m} played</span><span style={{ color: "#3ddc84" }}>{r.w}W</span>
               <span>{metric === "acs" ? `${r.pts} pts` : `${r.avgAcs} ACS`}</span>
@@ -4275,7 +4276,7 @@ function MapVeto({ teams }) {
           {/* map pool toggles */}
           <div>
             <HudLabel>Map Pool · {remaining.length} active — tap to toggle out</HudLabel>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 sm:gap-3">
               {ALL_MAPS.map((m) => (
                 <MapTile key={m} m={m} onClick={() => toggleActive(m)} state={active.has(m) ? "active" : "off"} />
               ))}
@@ -4311,7 +4312,7 @@ function MapVeto({ teams }) {
           </HudPanel>
 
           {/* maps grid */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 sm:gap-3">
             {pool.map((m) => {
               const by = banned[m];
               const isDecider = decider === m;
@@ -6097,7 +6098,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const shell = (children) => (
     <div className="min-h-screen volt-shell-box" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)", containerType: "inline-size" }}>
       {/* Shell CSS lives here, not in the desktop rail: the rail is not drawn on phones, and the home grid's phone layout was going missing with it. */}
-      <style>{SHELL_CSS}</style>
+      <style>{SHELL_CSS + MOBILE_CSS}</style>
       {fonts}
       <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
       <div className="relative min-h-screen">
@@ -6277,7 +6278,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   /* ── top nav (transparent, hero-themed) ── */
   const TopNav = (
     <header className="sticky top-0 z-30" style={{ background: "rgba(6,9,16,0.94)", borderBottom: "1px solid rgba(61,123,255,0.14)", backdropFilter: "blur(12px)" }}>
-      <div className="page-wrap flex items-center gap-4 py-3.5 flex-wrap" style={{ fontFamily: "'Rajdhani',sans-serif" }}>
+      <div className="page-wrap flex items-center gap-2.5 sm:gap-4 py-3.5 flex-wrap" style={{ fontFamily: "'Rajdhani',sans-serif" }}>
         {/* mobile: hamburger opens the floating drawer; desktop uses the rail */}
         {!isDesk && (
           <button onClick={() => setDrawerOpen(true)} aria-label="Open navigation"
@@ -6297,7 +6298,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             style={{ height: 36, padding: "0 14px", clipPath: SHELL_NOTCH(9), background: "linear-gradient(180deg, rgba(61,123,255,0.12), rgba(61,123,255,0.04))", border: "1px solid rgba(61,123,255,0.4)" }}>
             {chrome?.phaseTag && <span title={chrome.phaseTag} style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: chrome.phaseColor || "#5b8dff", boxShadow: `0 0 9px ${chrome.phaseColor || "#5b8dff"}` }} />}
             <span style={{ fontSize: 14.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#eaf1ff", whiteSpace: "nowrap", textShadow: "0 0 12px rgba(61,123,255,0.35)" }}>{window.__VOLT.weekendLabel || "Draft"}</span>
-            {chrome?.phaseTag && <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: chrome.phaseColor || "#5b8dff", whiteSpace: "nowrap", paddingLeft: 9, marginLeft: 2, borderLeft: "1px solid rgba(120,150,220,0.25)" }}>{chrome.phaseTag}</span>}
+            {chrome?.phaseTag && <span className="hidden sm:inline" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: chrome.phaseColor || "#5b8dff", whiteSpace: "nowrap", paddingLeft: 9, marginLeft: 2, borderLeft: "1px solid rgba(120,150,220,0.25)" }}>{chrome.phaseTag}</span>}
           </div>
           {/* current view — quiet trail, clearly secondary */}
           {viewLabel && (
@@ -8014,23 +8015,10 @@ function CollapseHead({ title, hint, open, onToggle, tone }) {
     </button>
   );
 }
-function ShellStyles() {
-  return <style>{`
-    html { zoom: 1.1; }
-
-    /* ── Phones ────────────────────────────────────────────────────────────
-       Everything below is inside a max-width query, so the desktop layout is
-       untouched. These fix things that are broken rather than merely tight. */
-    /* The 1.1 page zoom costs ~33px of usable width on a 360px phone — the
-       difference between the widest rows fitting and being clipped.
-       Keyed on pointer type, NOT width, on purpose: zoom on <html> changes the
-       viewport width that media queries are measured against, so resetting it
-       inside a width query can flip a tablet back and forth between matching
-       and not matching. Pointer type doesn't move when zoom does. */
-    @media (pointer: coarse) {
-      html { zoom: 1; }
-    }
-
+// Phone-only rules (every one sits in a max-width query, so desktop never sees
+// them). Shared by the shell screens and the draft app, which renders without
+// the shell during the draft and the matches.
+const MOBILE_CSS = `
     @media (max-width: 720px) {
       /* iOS Safari zooms the whole page when a focused input's text is under
          16px, and never zooms back out — the single worst mobile bug here,
@@ -8047,14 +8035,39 @@ function ShellStyles() {
          rank + name + points, and drop the per-stat columns. */
       .volt-lb-head { display: none !important; }
       .volt-lb-row {
-        grid-template-columns: 34px minmax(0,1fr) auto !important;
+        grid-template-columns: 30px minmax(0,1fr) auto auto !important;
         gap: 10px; padding-left: 12px !important; padding-right: 12px !important;
       }
-      .volt-lb-row > *:nth-child(n+4):not(:last-child) { display: none; }
+      /* keep rank, name, points and ACS; drop matches, W, K, A */
+      .volt-lb-row > *:nth-child(n+3):nth-child(-n+6) { display: none; }
+
+      /* Leaderboard podium: three cards in ~110px each — smaller type, the
+         unit under the number, the meta line stacked. */
+      .volt-podium { gap: 6px !important; }
+      .volt-pod { padding: 14px 8px 12px !important; }
+      .volt-pod-name { font-size: 16px !important; }
+      .volt-pod-role { font-size: 8.5px !important; letter-spacing: 0.06em !important; }
+      .volt-pod-val { font-size: 26px !important; }
+      .volt-pod-val > span:last-child { display: block; margin: 4px 0 0 !important; font-size: 9.5px !important; }
+      .volt-pod-meta { flex-direction: column; gap: 2px !important; font-size: 10px !important; }
+
+      /* Hub "last tournament" strip: label on its own line, button full width. */
+      .volt-last-strip > :first-child { flex-basis: 100%; }
+      .volt-last-strip > button:last-child { width: 100%; }
+
+      /* Standings: RF/RA go, so points stay on screen without sideways scroll. */
+      .volt-stand th:nth-child(6), .volt-stand td:nth-child(6),
+      .volt-stand th:nth-child(7), .volt-stand td:nth-child(7) { display: none; }
+      .volt-stand th, .volt-stand td { padding-left: 6px !important; padding-right: 6px !important; }
+      .volt-stand th { letter-spacing: 0.08em !important; }
+      .volt-stand td { font-size: 14px !important; }
+      .volt-stand td:nth-child(2) .truncate { font-size: 15px !important; max-width: 30vw; display: inline-block; }
 
       /* Long unbroken strings — Discord handles, join codes, tracker URLs —
          would otherwise force the page wider than the screen. */
-      .page-wrap { overflow-wrap: anywhere; }
+      /* break-word, not anywhere: "anywhere" also shrinks min-content widths,
+         so tight cards (the leaderboard podium) split numbers mid-digit. */
+      .page-wrap { overflow-wrap: break-word; }
 
       /* Modals: full height minus the notch, and scrollable. Several were
          taller than the viewport with the save button off the bottom and no
@@ -8087,8 +8100,27 @@ function ShellStyles() {
        the desktop scale overhangs a phone; shrink the stage rather than letting
        it get clipped by the shell. */
     @media (max-width: 480px) {
-      .volt-reel-stage { transform: translate(-50%, -50%) scale(0.62) !important; }
+      .volt-reel-stage { transform: translate(-50%, -50%) scale(0.8) !important; }
     }
+`;
+function ShellStyles() {
+  return <style>{`
+    html { zoom: 1.1; }
+
+    /* ── Phones ────────────────────────────────────────────────────────────
+       Everything below is inside a max-width query, so the desktop layout is
+       untouched. These fix things that are broken rather than merely tight. */
+    /* The 1.1 page zoom costs ~33px of usable width on a 360px phone — the
+       difference between the widest rows fitting and being clipped.
+       Keyed on pointer type, NOT width, on purpose: zoom on <html> changes the
+       viewport width that media queries are measured against, so resetting it
+       inside a width query can flip a tablet back and forth between matching
+       and not matching. Pointer type doesn't move when zoom does. */
+    @media (pointer: coarse) {
+      html { zoom: 1; }
+    }
+
+    ${MOBILE_CSS}
     .volt-expand-btn { transition: background .15s, border-color .15s, transform .15s; }
     .volt-expand-btn:hover { background: rgba(61,123,255,0.3); border-color: #6fa0ff; transform: scale(1.08); }
     /* Expandable list rows — the whole row is the control, so it has to look
@@ -14378,7 +14410,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <span style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>{past.length}</span></div>
     {past.length === 0
       ? <div style={{ ...PANEL(null, "20px 22px"), clipPath: SHELL_NOTCH(12) }}><Empty rows={1} shape="block" title="No finished tournaments yet" hint="Results land here when a tournament is settled." /></div>
-      : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+      : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(320px, 100%), 1fr))", gap: 12 }}>
           {past.map((ev, i) => {
             const rc = ev.recap || null;
             return (
@@ -14659,7 +14691,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             ) : null;
           })()}
           {lastPast && (
-            <div className="volt-lg-full volt-cell" style={{ ...PANEL("rgba(245,196,83,0.28)", "14px 18px"), clipPath: SHELL_NOTCH(12), display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div className="volt-lg-full volt-cell volt-last-strip" style={{ ...PANEL("rgba(245,196,83,0.28)", "14px 18px"), clipPath: SHELL_NOTCH(12), display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
               <span style={{ ...SEC_LABEL, flexShrink: 0 }}>// Last tournament</span>
               {lastPast.recap?.team ? <TeamMono name={lastPast.recap.team} hue="#f5c453" size={26} /> : null}
               <div style={{ minWidth: 0, flex: 1 }}>
