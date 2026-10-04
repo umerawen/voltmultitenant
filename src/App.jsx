@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useId } from "react";
 import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 
@@ -228,7 +228,56 @@ function Icon({ name, size = 18, strokeWidth = 1.75, style, className, title }) 
 // The league's crest: a shield cut on the same corner as every panel, with a
 // red accent along the cut and the league's initial. Used wherever the league
 // is named in the chrome, so every league gets a proper mark without a logo upload.
+// The VOLT brand: the owner's bolt-V mark, and the wordmark where the bolt
+// stands in as the V of VOLT. Files in public/brand/ (reels/logo/build.mjs).
+const VOLT_ARM = "M344.811 140.139H0L273.118 552.012L436.988 278.57L344.811 140.139Z";
+const VOLT_BOLT = "M392.606 466.561L689.622 0H1002L303.843 834L549.649 401.619L392.606 466.561Z";
+function VoltGrads({ id }) {
+  return (
+    <defs>
+      <linearGradient id={`${id}b`} x1="1" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#8db3ff" /><stop offset="0.55" stopColor="#3d7bff" /><stop offset="1" stopColor="#1f47c9" /></linearGradient>
+      <linearGradient id={`${id}a`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#ffffff" /><stop offset="1" stopColor="#b9cbef" /></linearGradient>
+    </defs>
+  );
+}
+function VoltMark({ size = 24, glow = false, style }) {
+  const id = "vm" + useId().replace(/[^a-zA-Z0-9]/g, "");
+  return (
+    <svg viewBox="0 0 1002 834" width={size} height={Math.round(size * 0.832)} aria-hidden
+      style={{ display: "block", flex: "0 0 auto", filter: glow ? "drop-shadow(0 0 8px rgba(61,123,255,0.45))" : undefined, ...style }}>
+      <VoltGrads id={id} />
+      <path d={VOLT_ARM} fill={`url(#${id}a)`} />
+      <path d={VOLT_BOLT} fill={`url(#${id}b)`} />
+    </svg>
+  );
+}
+function VoltWordmark({ height = 40, style }) {
+  const id = "vw" + useId().replace(/[^a-zA-Z0-9]/g, "");
+  return (
+    <svg viewBox="0 0 1280 420" height={height} width={Math.round((height * 1280) / 420)} role="img" aria-label="VOLT"
+      style={{ display: "block", filter: "drop-shadow(0 0 14px rgba(61,123,255,0.35))", ...style }}>
+      <VoltGrads id={id} />
+      <g transform="scale(0.5036)"><path d={VOLT_ARM} fill={`url(#${id}a)`} /><path d={VOLT_BOLT} fill={`url(#${id}b)`} /></g>
+      <g transform="translate(156 100) scale(7.6)" fill="#f4f8ff">
+        <path fillRule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z" />
+        <path d="M80 0H89.5V31H105V40H80Z" />
+        <path d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z" />
+      </g>
+    </svg>
+  );
+}
+// "Powered by VOLT" line under a league's name.
+function VoltTag({ color = "#5b8dff", size = 9 }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: "'Rajdhani',sans-serif", fontSize: size, fontWeight: 700, letterSpacing: "0.32em", textTransform: "uppercase", color, whiteSpace: "nowrap" }}>
+      <VoltMark size={Math.round(size * 1.35)} />VOLT LEAGUE
+    </span>
+  );
+}
+
 function LeagueMark({ name, size = 38 }) {
+  // The platform itself (no league yet) wears the VOLT mark, not a letter crest.
+  if (!name || name.trim().toUpperCase() === "VOLT") return <VoltMark size={Math.round(size * 1.05)} glow />;
   const ch = (name || "V").trim().charAt(0).toUpperCase() || "V";
   const g = "lmk";   // same gradients everywhere, so one id is fine
   return (
@@ -246,6 +295,8 @@ function LeagueMark({ name, size = 38 }) {
 }
 // Crest plus name: the league's name in white with the platform line beneath.
 function LeagueLockup({ name, wide = true, size = 34 }) {
+  // No league yet: the platform's own wordmark (the bolt is the V).
+  if (wide && (!name || name.trim().toUpperCase() === "VOLT")) return <VoltWordmark height={Math.round(size * 0.95)} />;
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 0 }}>
       <LeagueMark name={name} size={size} />
@@ -253,7 +304,7 @@ function LeagueLockup({ name, wide = true, size = 34 }) {
         <span style={{ display: "flex", flexDirection: "column", minWidth: 0, lineHeight: 1, textAlign: "left" }}>
           <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 15.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#f1f5ff",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name || "VOLT"}</span>
-          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.32em", textTransform: "uppercase", color: "#5b8dff", marginTop: 4 }}>// Volt league</span>
+          <span style={{ marginTop: 4 }}><VoltTag /></span>
         </span>
       )}
     </span>
@@ -6330,7 +6381,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           <span style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
           <div className="flex items-center justify-between" style={{ padding: "0 8px 6px" }}>
             <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.34em", textTransform: "uppercase", color: "rgba(120,150,220,0.6)", fontWeight: 700 }}>// VOLT LEAGUE</div>
+              <VoltTag color="rgba(120,150,220,0.75)" />
               <div className="text-lg font-bold uppercase tracking-wide" style={{ color: "#3d7bff", textShadow: "0 0 16px rgba(61,123,255,0.65)" }}>{window.__VOLT.communityName || "VOLT"}</div>
             </div>
             <button onClick={() => setDrawerOpen(false)} aria-label="Close navigation"
@@ -7655,8 +7706,8 @@ function VoltGate() {
       </div>
       <div style={{ position: "relative", width: "100%", maxWidth: 420 }}>
         <div style={{ textAlign: "center", marginBottom: 26 }}>
-          <div style={{ fontSize: 13, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// VOLT PROTOCOL</div>
-          <div style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 4 }}>VOLT <span style={{ color: "#3d7bff" }}>LEAGUE</span></div>
+          <VoltWordmark height={64} style={{ margin: "0 auto" }} />
+          <div style={{ fontSize: 13, letterSpacing: "0.42em", color: "#6f9bff", fontWeight: 700, textTransform: "uppercase", marginTop: 14 }}>// League platform</div>
         </div>
         <div style={{ position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.9),rgba(10,13,22,0.9))", border: "1px solid rgba(61,123,255,0.3)", clipPath: SHELL_NOTCH(18), padding: 26 }}>
           <span style={{ position: "absolute", left: 0, top: 0, width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
@@ -14102,7 +14153,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
               <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
 
               <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, maxWidth: 620 }}>
-                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>// VOLT league</div>
+                <VoltTag color="#7da6ff" size={10} />
                 <div style={{ fontSize: "clamp(40px, 6vw, 72px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.01em",
                   lineHeight: 0.92, marginTop: 10, textShadow: `0 0 40px ${H}55`, overflowWrap: "anywhere" }}>{community?.name || window.__VOLT.communityName || "Community"}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
