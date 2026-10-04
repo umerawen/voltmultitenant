@@ -14,7 +14,8 @@ while read -r num id <&3; do
   node reels.mjs "$id" > /dev/null
   dir="videos/$id"
   mkdir -p "$dir/renders"
-  (cd "$dir" && npx hyperframes render --quality high --fps 30 --output "renders/$id-silent.mp4" < /dev/null > "renders/render.log" 2>&1) || { echo "render failed: $dir/renders/render.log"; exit 1; }
+  fps=$(python -c "import json;print(json.load(open('$dir/cues.json')).get('fps',30))")
+  (cd "$dir" && npx hyperframes render --quality high --fps "$fps" --output "renders/$id-silent.mp4" < /dev/null > "renders/render.log" 2>&1) || { echo "render failed: $dir/renders/render.log"; exit 1; }
   python sfx/synth.py "$dir/cues.json" "$dir/renders/$id.wav"
   "$FFMPEG" -nostdin -y -loglevel error -i "$dir/renders/$id-silent.mp4" -i "$dir/renders/$id.wav" \
     -map 0:v -map 1:a -c:v copy -af "loudnorm=I=-14:TP=-1.5:LRA=9" -ar 48000 -c:a aac -b:a 192k -shortest -movflags +faststart \

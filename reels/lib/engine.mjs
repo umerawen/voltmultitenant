@@ -531,6 +531,84 @@ export function reel(spec) {
     scene(s, inner, { enter: "fade", exit: "none" });
   };
 
+  // The auction draw, rebuilt natively from the app's own card stills
+  // (capture-cards.mjs): the strip moves on the app's REEL_EASE, the card under
+  // the marker grows, motion blur follows the speed, then the reveal.
+  //   draw: "kami-draw" (screens/<draw>/card-NN.png + draw.json), spin (s),
+  //   delay (s), y (strip centre), cardW, head, reveal: { name, sub, color }
+  kinds.draw = (s) => {
+    const sid = s._id;
+    const meta = JSON.parse(fs.readFileSync(path.join(SCREENS, s.draw, "draw.json"), "utf8"));
+    const n = meta.pool.length, loops = s.loops ?? 3, wi = meta.winnerIdx;
+    const winnerIndex = loops * n + wi, N = winnerIndex + n + 8;
+    const CW = s.cardW || 400, SLOT = Math.round(CW * (292 / 305)), CX = 540, Y = s.y ?? 1010;
+    const spin = s.spin || 3.2, at0 = s.t + (s.delay ?? 0.1), land = at0 + spin;
+    const total = winnerIndex * SLOT;
+    const srcs = meta.pool.map((_, k) => asset("video", `${s.draw}/card-${String(k).padStart(2, "0")}.png`));
+    const cards = Array.from({ length: N }, (_, i) => `<img class="dr-card" id="${sid}-c${i}" src="${srcs[i % n]}" style="left:${i * SLOT - CW / 2}px;width:${CW}px">`).join("");
+    const rv = s.reveal || { name: meta.winner.toUpperCase(), sub: "" };
+    const head = s.head ? `<div class="head">${s.head.label ? label(sid, s.head.label, s.t + 0.05) : ""}${lines(sid, s.head.lines, { size: s.head.size || 110, at: s.t + 0.13 })}${stripe(sid, s.t + 0.55, { w: 220 })}</div>` : "";
+    const inner = `<div class="dr-glow" id="${sid}-glow" style="top:${Y - 420}px"></div>`
+      + `<div class="dr-band" style="top:${Y - 330}px;height:660px">`
+      + `<svg width="0" height="0" style="position:absolute"><filter id="${sid}-mb" x="-20%" y="0" width="140%" height="100%"><feGaussianBlur id="${sid}-mbg" stdDeviation="0 0"/></filter></svg>`
+      + `<div class="dr-strip" id="${sid}-strip" style="top:330px">${cards}</div>`
+      + `<div class="dr-fade l"></div><div class="dr-fade r"></div>`
+      + `<div class="dr-marker"><i class="t"></i><i class="b"></i><i class="ln"></i></div></div>`
+      + `<div class="dr-count" id="${sid}-count" style="top:${Y + 352}px">${n} CANDIDATES IN THE DRAW…</div>`
+      + `<div class="dr-reveal" style="top:${Y + 346}px"><div class="dr-name" id="${sid}-rn" style="color:${rv.color || "#dbe4f2"}">${esc(rv.name)}</div><div class="dr-sub" id="${sid}-rs">${esc(rv.sub || "")}</div></div>`
+      + head;
+    js.push(`(function(){
+      const N=${N},SLOT=${SLOT},CX=${CX},TOTAL=${total},SPIN=${spin};
+      const T1=0.45,D1=(3*T1)/(1+2*T1);
+      const ease=(t)=>t<=0?0:t>=1?1:t<=T1?(D1/T1)*t:D1+(1-D1)*(1-Math.pow(1-(t-T1)/(1-T1),3));
+      const dease=(t)=>t<=0||t>=1?0:t<=T1?D1/T1:3*(1-D1)*Math.pow(1-(t-T1)/(1-T1),2)/(1-T1);
+      const strip=document.getElementById(${J(sid + "-strip")}), g=document.getElementById(${J(sid + "-mbg")});
+      const cards=[...Array(N)].map((_,i)=>document.getElementById(${J(sid + "-c")}+i));
+      const apply=(t)=>{
+        const pos=CX-ease(t)*TOTAL;
+        strip.style.transform='translate3d('+pos.toFixed(2)+'px,0,0)';
+        const v=dease(t)*TOTAL/SPIN;
+        const blur=Math.min(22,v/720);
+        g.setAttribute('stdDeviation',blur.toFixed(2)+' 0');
+        strip.style.filter=blur>0.3?'url(#${sid}-mb)':'none';
+        const c=Math.round((CX-pos)/SLOT);
+        for(let i=0;i<N;i++){
+          const el=cards[i];
+          if(Math.abs(i-c)>3){ if(el.style.display!=='none') el.style.display='none'; continue; }
+          el.style.display='block';
+          let k=Math.max(0,1-Math.abs(pos+i*SLOT-CX)/SLOT); k=k*k*(3-2*k);
+          el.style.transform='translateY(-50%) scale('+(0.9+0.2*k).toFixed(4)+')';
+          el.style.opacity=(0.4+0.6*k).toFixed(3);
+          el.style.zIndex=k>0.5?3:1;
+        }
+      };
+      apply(0);
+      const o={p:0};
+      tl.fromTo(o,{p:0},{p:1,duration:SPIN,ease:'none',immediateRender:false,onUpdate:function(){apply(this.progress());}},${r2(at0)});
+    })();`);
+    // the landing: glow flares, the count gives way to the reveal
+    tw(`#${sid}-glow`, { opacity: 0.55 }, { keyframes: { opacity: [0.55, 1, 0.8] }, duration: 0.8, ease: "power2.out", immediateRender: false }, land);
+    tto(`#${sid}-count`, { opacity: 0, duration: 0.2 }, land - 0.05);
+    tw(`#${sid}-rn`, { scale: 0.55, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(2.4)" }, land + 0.05);
+    tw(`#${sid}-rs`, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, land + 0.2);
+    // a soft tick each time a card crosses the marker (dropped when closer than 70ms)
+    {
+      const T1 = 0.45, D1 = (3 * T1) / (1 + 2 * T1);
+      const ease = (t) => (t <= T1 ? (D1 / T1) * t : D1 + (1 - D1) * (1 - Math.pow(1 - (t - T1) / (1 - T1), 3)));
+      let last = -1;
+      for (let k = 1; k <= winnerIndex; k++) {
+        let lo = 0, hi = 1;
+        for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (ease(m) < k / winnerIndex) lo = m; else hi = m; }
+        const t = hi * spin;
+        if (t - last >= 0.07) { cue(at0 + t, "click", { g: 0.42 }); last = t; }
+      }
+    }
+    cue(land - 0.9, "swell", { d: 0.9, g: 0.45 });
+    cue(land, "thump", { g: 0.9 });
+    cue(land + 0.04, "chime", { p: 2, g: 0.6 });
+    scene(s, inner, { enter: s.enter || "fade", exit: s.exit || "fade" });
+  };
+
   // A captured clip from the app (e.g. the auction draw), framed and faded,
   // with a headline above and a hit when it lands.
   //   video, y, h, head, landAt, ticks: [t...] (scene-relative)
@@ -606,6 +684,7 @@ tl.seek(0);
       const src = cachedWebp(path.join(SCREENS, name + ".png"), "screen-" + name + ".webp");
       fs.copyFileSync(src, path.join(dir, "assets", name + ".webp"));
     } else if (kind === "video") {
+      fs.mkdirSync(path.dirname(path.join(dir, "assets", name)), { recursive: true });
       fs.copyFileSync(path.join(SCREENS, name), path.join(dir, "assets", name));
     } else {
       const flat = name.replace(/\//g, "-").replace(/\.\w+$/, "");
@@ -615,6 +694,6 @@ tl.seek(0);
   }
   fs.writeFileSync(path.join(dir, "index.html"), doc);
   cues.sort((a, b) => a.t - b.t);
-  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, bpm: 120, vo: spec.vo || null, outro: spec.outro ?? (spec.scenes.find((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
+  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, fps: spec.fps || 30, bpm: 120, vo: spec.vo || null, outro: spec.outro ?? (spec.scenes.find((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
   return { dir, cues: cues.length };
 }

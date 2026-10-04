@@ -16,22 +16,6 @@ const FEAT = "Solo sign-ups · Live auction · Brackets · Stats";
 const QF2 = "[aria-label^='QF 2']", SF1 = "[aria-label^='SF 1']", FINAL = "[aria-label^='Final']", DIALOG = "[role=dialog]";
 
 
-// When each card crosses the draw's marker (the app's REEL_EASE), as clip
-// time: the spin is captured at `speed`x, so it lasts 7.2s / speed. Ticks
-// closer than minGap are dropped so the fast start stays soft, not a buzz.
-function spinTicks(cards, spinSec, minGap = 0.075) {
-  const T1 = 0.45, D1 = (3 * T1) / (1 + 2 * T1);
-  const ease = (t) => (t <= T1 ? (D1 / T1) * t : D1 + (1 - D1) * (1 - Math.pow(1 - (t - T1) / (1 - T1), 3)));
-  const out = [];
-  let last = -1;
-  for (let k = 1; k <= cards; k++) {
-    let lo = 0, hi = 1;
-    for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (ease(m) < k / cards) lo = m; else hi = m; }
-    const t = hi * spinSec;
-    if (t - last >= minGap) { out.push(+t.toFixed(3)); last = t; }
-  }
-  return out;
-}
 
 export const REELS = [
   // 01 ── players: you don't need a team
@@ -59,15 +43,15 @@ export const REELS = [
   },
 
   // 02 ── the auction draft, Kami Labs' real draft night. Opens on the app's
-  //       draw (screens/kami-spin-v.mp4 from capture-spin.mjs), voiceover
+  //       draw, rebuilt from its card stills (capture-cards.mjs, screens/kami-draw), voiceover
   //       vo/bidding-war-kami.flac at t=1.0 so "Kamijee" lands with the card.
   {
-    id: "volt-bidding-war", duration: 28.3,
+    id: "volt-bidding-war", duration: 28.3, fps: 60,
     vo: { file: "vo/bidding-war-kami.flac", t: 1.0, gain: 0.85 },
     scenes: [
       // the draw: 119 cards fly past, it lands on Kamijeee at 3.3s
-      { kind: "video", t: 0, d: 4.1, video: "kami-spin-v.mp4", y: 480, h: 1172, landAt: 3.3,
-        ticks: spinTicks(119, 3.2).map((t) => +(t + 0.1).toFixed(3)),
+      { kind: "draw", t: 0, d: 4.1, draw: "kami-draw", spin: 3.2, delay: 0.1, y: 1010, cardW: 400,
+        reveal: { name: "KAMIJEEE", sub: "Silver · heads to the block at $800" },
         head: { label: "LIVE AUCTION DRAFT", lines: ["EVERY PLAYER", "HAS A [PRICE]."], size: 118 } },
       // "Kamijee's on the block — and six captains want him. 1200… 1400… 1600!  Going… going… SOLD!"
       { kind: "stage", t: 4.1, d: 12.5, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,

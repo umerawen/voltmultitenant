@@ -153,3 +153,21 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 .logo-glow { position: absolute; left: -60px; top: -80px; width: 480px; height: 420px; background: radial-gradient(ellipse at 45% 55%, rgba(61,123,255,0.55), rgba(61,123,255,0) 65%); opacity: 0; }
 .logo-ring { position: absolute; left: 70px; top: -30px; width: 300px; height: 300px; border: 2px solid rgba(125,166,255,0.7); border-radius: 50%; opacity: 0; }
 .cta-tag { font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.42em; color: #6f9bff; margin-top: 30px; white-space: nowrap; }
+
+/* the auction draw */
+.dr-glow { position: absolute; left: 0; right: 0; height: 840px; background: radial-gradient(ellipse 34% 46% at 50% 50%, rgba(61,123,255,0.34), rgba(61,123,255,0) 70%); opacity: 0.55; }
+.dr-band { position: absolute; left: 0; right: 0; overflow: hidden; }
+.dr-strip { position: absolute; left: 0; height: 0; will-change: transform; }
+.dr-card { position: absolute; top: 0; height: auto; display: block; transform-origin: 50% 50%; clip-path: polygon(0 0, 93.5% 0, 100% 5%, 100% 100%, 6.5% 100%, 0 95%); }
+.dr-fade { position: absolute; top: 0; bottom: 0; width: 150px; z-index: 5; }
+.dr-fade.l { left: 0; background: linear-gradient(90deg, #0a0d18, rgba(10,13,24,0)); }
+.dr-fade.r { right: 0; background: linear-gradient(270deg, #0a0d18, rgba(10,13,24,0)); }
+.dr-marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 0; z-index: 6; }
+.dr-marker .t, .dr-marker .b { position: absolute; left: -15px; width: 0; height: 0; border-left: 15px solid transparent; border-right: 15px solid transparent; filter: drop-shadow(0 0 10px rgba(255,70,85,0.9)); }
+.dr-marker .t { top: 6px; border-top: 24px solid #ff4655; }
+.dr-marker .b { bottom: 6px; border-bottom: 24px solid #ff4655; }
+.dr-marker .ln { position: absolute; left: -1px; top: 0; bottom: 0; width: 2px; background: linear-gradient(180deg, transparent, rgba(255,70,85,0.5), transparent); }
+.dr-count { position: absolute; left: 0; right: 0; text-align: center; font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 26px; letter-spacing: 0.24em; color: rgba(236,243,255,0.45); }
+.dr-reveal { position: absolute; left: 0; right: 0; text-align: center; }
+.dr-name { font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 96px; line-height: 1; text-transform: uppercase; text-shadow: 0 0 40px rgba(200,215,255,0.45); opacity: 0; }
+.dr-sub { font-family: "Rajdhani", sans-serif; font-weight: 600; font-size: 30px; letter-spacing: 0.16em; color: rgba(236,243,255,0.6); margin-top: 10px; text-transform: uppercase; opacity: 0; }
