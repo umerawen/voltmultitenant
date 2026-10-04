@@ -171,7 +171,7 @@ const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
 // weights on every platform. Colour comes from currentColor.
 const ICON_PATHS = {
   dashboard:   "M12 2.5l9.5 9.5-9.5 9.5L2.5 12zM12 8l4 4-4 4-4-4z",
-  overview:    "M3 10.5L12 3l9 7.5V21h-6.5v-6h-5v6H3z",
+  overview:    "M12 2.5l9.5 9.5-9.5 9.5L2.5 12zM12 8l4 4-4 4-4-4z",   // same as dashboard: each is its page's main view
   pool:        "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20v-.5A6.5 6.5 0 0 1 9 13a6.5 6.5 0 0 1 6.5 6.5v.5M16 4.3a3.5 3.5 0 0 1 0 6.4M21.5 20v-.5a6.5 6.5 0 0 0-3.8-5.9",
   auction:     "M13.5 3.5l7 7-3 3-7-7zM12 8L4 16l2 2 8-8M3 21h11",
   reserve:     "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20v-.5A6.5 6.5 0 0 1 9 13a6.5 6.5 0 0 1 6.5 6.5v.5M19 8v6M16 11h6",
