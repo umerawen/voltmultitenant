@@ -532,14 +532,14 @@ export function reel(spec) {
   };
 
   // The auction draw, rebuilt natively from the app's own card stills
-  // (capture-cards.mjs): the strip moves on the app's REEL_EASE, the card under
+  // (capture-cards.mjs): the strip eases up from rest, cruises, glides to a stop; the card under
   // the marker grows, motion blur follows the speed, then the reveal.
   //   draw: "kami-draw" (screens/<draw>/card-NN.png + draw.json), spin (s),
   //   delay (s), y (strip centre), cardW, head, reveal: { name, sub, color }
   kinds.draw = (s) => {
     const sid = s._id;
     const meta = JSON.parse(fs.readFileSync(path.join(SCREENS, s.draw, "draw.json"), "utf8"));
-    const n = meta.pool.length, loops = s.loops ?? 3, wi = meta.winnerIdx;
+    const n = meta.pool.length, loops = s.loops ?? 1, wi = meta.winnerIdx;
     const winnerIndex = loops * n + wi, N = winnerIndex + n + 8;
     const CW = s.cardW || 400, SLOT = Math.round(CW * (292 / 305)), CX = 540, Y = s.y ?? 1010;
     const spin = s.spin || 3.2, at0 = s.t + (s.delay ?? 0.1), land = at0 + spin;
@@ -559,9 +559,9 @@ export function reel(spec) {
       + head;
     js.push(`(function(){
       const N=${N},SLOT=${SLOT},CX=${CX},TOTAL=${total},SPIN=${spin};
-      const T1=0.45,D1=(3*T1)/(1+2*T1);
-      const ease=(t)=>t<=0?0:t>=1?1:t<=T1?(D1/T1)*t:D1+(1-D1)*(1-Math.pow(1-(t-T1)/(1-T1),3));
-      const dease=(t)=>t<=0||t>=1?0:t<=T1?D1/T1:3*(1-D1)*Math.pow(1-(t-T1)/(1-T1),2)/(1-T1);
+      const TA=0.12,T1=0.4,V=1/(TA/2+(T1-TA)+(1-T1)/3);
+      const ease=(t)=>t<=0?0:t>=1?1:t<TA?V*t*t/(2*TA):t<T1?V*TA/2+V*(t-TA):V*TA/2+V*(T1-TA)+(V*(1-T1)/3)*(1-Math.pow(1-(t-T1)/(1-T1),3));
+      const dease=(t)=>t<=0||t>=1?0:t<TA?V*t/TA:t<T1?V:V*Math.pow(1-(t-T1)/(1-T1),2);
       const strip=document.getElementById(${J(sid + "-strip")}), g=document.getElementById(${J(sid + "-mbg")});
       const cards=[...Array(N)].map((_,i)=>document.getElementById(${J(sid + "-c")}+i));
       const apply=(t)=>{
@@ -593,8 +593,8 @@ export function reel(spec) {
     tw(`#${sid}-rs`, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.35, ease: "power3.out" }, land + 0.2);
     // a soft tick each time a card crosses the marker (dropped when closer than 70ms)
     {
-      const T1 = 0.45, D1 = (3 * T1) / (1 + 2 * T1);
-      const ease = (t) => (t <= T1 ? (D1 / T1) * t : D1 + (1 - D1) * (1 - Math.pow(1 - (t - T1) / (1 - T1), 3)));
+      const TA = 0.12, T1 = 0.4, V = 1 / (TA / 2 + (T1 - TA) + (1 - T1) / 3);
+      const ease = (t) => (t < TA ? (V * t * t) / (2 * TA) : t < T1 ? (V * TA) / 2 + V * (t - TA) : (V * TA) / 2 + V * (T1 - TA) + ((V * (1 - T1)) / 3) * (1 - Math.pow(1 - (t - T1) / (1 - T1), 3)));
       let last = -1;
       for (let k = 1; k <= winnerIndex; k++) {
         let lo = 0, hi = 1;
