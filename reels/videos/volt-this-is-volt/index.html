@@ -157,11 +157,29 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 /* captured app clips */
 .vid { right: auto; bottom: auto; object-fit: cover; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(180deg, transparent 0, #000 5%, #000 93%, transparent 100%); -webkit-mask-composite: source-in; mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(180deg, transparent 0, #000 5%, #000 93%, transparent 100%); mask-composite: intersect; }
 /* the logo sting */
-.logo-wrap { position: relative; width: 760px; height: 249px; }
+.logo-wrap { position: relative; width: 653px; height: 249px; }
 .cta-logo { position: relative; display: block; overflow: visible; }
 .logo-glow { position: absolute; left: -60px; top: -80px; width: 480px; height: 420px; background: radial-gradient(ellipse at 45% 55%, rgba(61,123,255,0.55), rgba(61,123,255,0) 65%); opacity: 0; }
 .logo-ring { position: absolute; left: 70px; top: -30px; width: 300px; height: 300px; border: 2px solid rgba(125,166,255,0.7); border-radius: 50%; opacity: 0; }
 .cta-tag { font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.42em; color: #6f9bff; margin-top: 30px; white-space: nowrap; }
+
+/* the auction draw */
+.dr-glow { position: absolute; left: 0; right: 0; height: 840px; background: radial-gradient(ellipse 34% 46% at 50% 50%, rgba(61,123,255,0.34), rgba(61,123,255,0) 70%); opacity: 0.55; }
+.dr-band { position: absolute; left: 0; right: 0; overflow: hidden; }
+.dr-strip { position: absolute; left: 0; height: 0; will-change: transform; }
+.dr-card { position: absolute; top: 0; height: auto; display: block; transform-origin: 50% 50%; clip-path: polygon(0 0, 93.5% 0, 100% 5%, 100% 100%, 6.5% 100%, 0 95%); }
+.dr-fade { position: absolute; top: 0; bottom: 0; width: 150px; z-index: 5; }
+.dr-fade.l { left: 0; background: linear-gradient(90deg, #0a0d18, rgba(10,13,24,0)); }
+.dr-fade.r { right: 0; background: linear-gradient(270deg, #0a0d18, rgba(10,13,24,0)); }
+.dr-marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 0; z-index: 6; }
+.dr-marker .t, .dr-marker .b { position: absolute; left: -15px; width: 0; height: 0; border-left: 15px solid transparent; border-right: 15px solid transparent; filter: drop-shadow(0 0 10px rgba(255,70,85,0.9)); }
+.dr-marker .t { top: 6px; border-top: 24px solid #ff4655; }
+.dr-marker .b { bottom: 6px; border-bottom: 24px solid #ff4655; }
+.dr-marker .ln { position: absolute; left: -1px; top: 0; bottom: 0; width: 2px; background: linear-gradient(180deg, transparent, rgba(255,70,85,0.5), transparent); }
+.dr-count { position: absolute; left: 0; right: 0; text-align: center; font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 26px; letter-spacing: 0.24em; color: rgba(236,243,255,0.45); }
+.dr-reveal { position: absolute; left: 0; right: 0; text-align: center; }
+.dr-name { font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 96px; line-height: 1; text-transform: uppercase; text-shadow: 0 0 40px rgba(200,215,255,0.45); opacity: 0; }
+.dr-sub { font-family: "Rajdhani", sans-serif; font-weight: 600; font-size: 30px; letter-spacing: 0.16em; color: rgba(236,243,255,0.6); margin-top: 10px; text-transform: uppercase; opacity: 0; }
 </style>
 </head>
 <body>
@@ -184,11 +202,11 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 <div id="mw14" class="clip" data-start="8" data-duration="1" data-track-index="5"><div class="mo-word" id="mw14-w">CLIMB</div></div>
 <div id="mo15" class="clip scene" data-start="9" data-duration="1" data-track-index="1"><div class="sc-in" id="mo15-in"><div class="sc-out" id="mo15-out"><div class="frame-pos" ><div class="view full" style="width:1080px;height:1920px"><div class="plate" id="mo15-pl"><img src="assets/fixtures-champion.webp" width="1920" height="1080"></div><div class="full-shade"></div></div></div></div></div></div>
 <div id="mw16" class="clip" data-start="9" data-duration="1" data-track-index="5"><div class="mo-word" id="mw16-w"><span class="c-gold">WIN.</span></div></div>
-<div id="s3" class="clip scene" data-start="9.8" data-duration="4.7" data-track-index="1"><div class="sc-in" id="s3-in"><div class="sc-out" id="s3-out"><div class="cta"><div class="logo-wrap"><div class="logo-glow" id="s3-glow"></div><div class="logo-ring" id="s3-ring"></div><svg class="cta-logo" viewBox="0 0 1280 420" width="760" height="249"><defs>
+<div id="s3" class="clip scene" data-start="9.8" data-duration="4.7" data-track-index="1"><div class="sc-in" id="s3-in"><div class="sc-out" id="s3-out"><div class="cta"><div class="logo-wrap"><div class="logo-glow" id="s3-glow"></div><div class="logo-ring" id="s3-ring"></div><svg class="cta-logo" viewBox="0 0 1100 420" width="653" height="249"><defs>
       <linearGradient id="s3-gb" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8db3ff"/><stop offset="0.55" stop-color="#3d7bff"/><stop offset="1" stop-color="#1f47c9"/></linearGradient>
       <linearGradient id="s3-ga" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9cbef"/></linearGradient></defs>
       <g transform="scale(0.5036)"><path id="s3-arm" d="M344.811 140.139H0L273.118 552.012L436.988 278.57L344.811 140.139Z" fill="url(#s3-ga)"/><path id="s3-bolt" d="M392.606 466.561L689.622 0H1002L303.843 834L549.649 401.619L392.606 466.561Z" fill="url(#s3-gb)"/></g>
-      <g transform="translate(156 100) scale(7.6)" fill="#f4f8ff"><path id="s3-o" fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/><path id="s3-l" d="M80 0H89.5V31H105V40H80Z"/><path id="s3-t" d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/></g></svg></div><div class="cta-tag" id="s3-tag">// LEAGUE PLATFORM</div><div class="cta-lines"><div class="ln " style="font-size:104px"><span id="s3-l0" class="ln-i">RUN YOUR LEAGUE</span></div><div class="ln " style="font-size:104px"><span id="s3-l1" class="ln-i">ON <span class="c-hot">VOLT.</span></span></div></div><div class="cta-feat" id="s3-feat">Solo sign-ups · Live auction · Brackets · Stats</div><div class="btn" id="s3-btn"><span>START YOUR LEAGUE</span><i class="btn-sh" id="s3-btnsh"></i></div></div></div></div></div>
+      <g transform="translate(205 90) scale(6)" fill="#f4f8ff"><path id="s3-o" fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/><path id="s3-l" d="M80 0H89.5V31H105V40H80Z"/><path id="s3-t" d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/></g></svg></div><div class="cta-tag" id="s3-tag">// LEAGUE PLATFORM</div><div class="cta-lines"><div class="ln " style="font-size:104px"><span id="s3-l0" class="ln-i">RUN YOUR LEAGUE</span></div><div class="ln " style="font-size:104px"><span id="s3-l1" class="ln-i">ON <span class="c-hot">VOLT.</span></span></div></div><div class="cta-feat" id="s3-feat">Solo sign-ups · Live auction · Brackets · Stats</div><div class="btn" id="s3-btn"><span>START YOUR LEAGUE</span><i class="btn-sh" id="s3-btnsh"></i></div></div></div></div></div>
 <div id="sw17" class="clip sweep-c" data-start="9.7" data-duration="0.8" data-track-index="9"><div class="sweep" id="sw17-b"></div></div>
 <div id="fadein-c" class="clip" data-start="0" data-duration="0.5" data-track-index="10"><div id="fadein"></div></div>
 </div>
