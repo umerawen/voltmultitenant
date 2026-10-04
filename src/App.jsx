@@ -14203,12 +14203,12 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
           {current && (
             <div id="volt-current-hero" className="volt-cell" style={{ ...PANEL(`${PHASE_COLOR[current.phase] || "#3d7bff"}66`, "20px 24px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16),
               boxShadow: current.phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none", height: "100%" }}>
-              {/* Same backdrop as the tournament home's banner, in the phase's
-                  colour, so this card and the page it opens look like one thing. */}
-              <CardArt hue={PHASE_COLOR[current.phase] || "#3d7bff"} />
+              {/* Kept plain: the phase shows in the border and status line, and the
+                  animated stripes behind the text read as noise. A faint glow in the
+                  phase colour is all the card needs. */}
+              <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none",
+                background: `radial-gradient(ellipse 55% 80% at 100% 0%, ${PHASE_COLOR[current.phase] || "#3d7bff"}14, transparent 70%)` }} />
               {current.phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
-              <span aria-hidden className="volt-rays" style={{ position: "absolute", inset: "-20% 0 -20% 40%", pointerEvents: "none",
-                background: `repeating-linear-gradient(105deg, transparent 0 46px, ${PHASE_COLOR[current.phase] || "#3d7bff"}10 46px 52px, transparent 52px 110px)` }} />
               <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
               <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
               {/* Label rule spans the card and carries the host's edit/delete out
