@@ -40,21 +40,26 @@ const CAPTAINS = [
   ["Echo", "FROSTBYTE", "Diamond", 3, "Initiator", "Fade", 1.12, 214, 24, 55],
   ["Fury", "TITANS", "Ascendant", 1, "Duelist", "Neon", 1.29, 249, 28, 56],
 ];
-export const DEMO_LEAGUE_NAME = "APEX LEAGUE";
+// A real league can be handed in for marketing captures (reels/capture-screens.mjs
+// injects window.__demoReal from a git-ignored file), with the same tuple shapes
+// plus optional peak rank, a sale order and the player on the block.
+const REAL = typeof window !== "undefined" ? window.__demoReal : null;
+export const DEMO_LEAGUE_NAME = REAL?.league || "APEX LEAGUE";
 
 export function demoBoard(scene, h) {
-  const captains = CAPTAINS.map(([name, team, rank, rankDiv, role, agent, kda, acs, hs, win], i) => ({
-    userId: "demo-cap-" + i + "-0000-0000-0000-000000000000", name, teamName: team, rank, rankDiv, peakRank: rank, peakRankDiv: rankDiv,
-    role, agent, kda, acs, hs, win, discord: name.toLowerCase(), trophies: i === 1 ? 2 : 0 }));
-  const pool = PLAYERS.map(([name, rank, rankDiv, role, agent, kda, acs, hs, win], i) => ({
+  const CAPS = REAL?.captains || CAPTAINS, POOL = REAL?.players || PLAYERS;
+  const captains = CAPS.map(([name, team, rank, rankDiv, role, agent, kda, acs, hs, win, peak, peakDiv], i) => ({
+    userId: "demo-cap-" + i + "-0000-0000-0000-000000000000", name, teamName: team, rank, rankDiv, peakRank: peak || rank, peakRankDiv: peakDiv ?? rankDiv,
+    role, agent, kda, acs, hs, win, discord: REAL ? "" : name.toLowerCase(), trophies: !REAL && i === 1 ? 2 : 0 }));
+  const pool = POOL.map(([name, rank, rankDiv, role, agent, kda, acs, hs, win, peak, peakDiv], i) => ({
     userId: "demo-p-" + String(i).padStart(2, "0") + "-0000-0000-0000-000000000000",
-    name, ign: name + "#" + (1000 + i * 37), rank, rankDiv, peakRank: rank, peakRankDiv: Math.min(3, rankDiv + 1),
-    role, agent, kda, acs, hs, win, discord: name.toLowerCase(), trophies: i % 7 === 0 ? 1 : 0,
+    name, ign: REAL ? name : name + "#" + (1000 + i * 37), rank, rankDiv, peakRank: peak || rank, peakRankDiv: peakDiv ?? Math.min(3, rankDiv + 1),
+    role, agent, kda, acs, hs, win, discord: REAL ? "" : name.toLowerCase(), trophies: !REAL && i % 7 === 0 ? 1 : 0,
   }));
   const s = h.freshState(captains, pool);
   const players = s.players.filter((p) => !p.isCaptain);
   // Captains show their real names on teams
-  s.teams.forEach((t, i) => { t.captain = CAPTAINS[i][0]; });
+  s.teams.forEach((t, i) => { t.captain = CAPS[i][0]; if (REAL?.hues?.[i]) t.hue = REAL.hues[i]; });
 
   const sell = (pi, ti, price) => {
     const p = players[pi], t = s.teams[ti];
@@ -64,6 +69,29 @@ export function demoBoard(scene, h) {
   };
 
   if (scene === "pool") return s;
+
+  if (REAL) {
+    // Replay the real draft in order, up to the player on the block (auction)
+    // or to the end (drafted).
+    const byName = (n) => players.find((p) => p.name === n);
+    for (const [name, ti, price] of REAL.sales) {
+      if (scene === "auction" && name === REAL.block?.name) break;
+      const p = byName(name), t = s.teams[ti];
+      if (!p || !t) continue;
+      p.status = "sold"; p.soldTo = t.id; p.soldPrice = price;
+      t.roster.push(p.id); t.budget -= price;
+      s.recentSales.unshift({ playerId: p.id, name: p.name, teamId: t.id, price, bidCount: 3 + (price % 7), ts: Date.now() - 60000 });
+    }
+    if (scene === "auction" && REAL.block) {
+      const p = byName(REAL.block.name), now = Date.now();
+      const bids = REAL.block.bids;
+      p.status = "block";
+      s.block = { playerId: p.id, startingBid: REAL.block.start, currentBid: bids[bids.length - 1][1], leaderId: s.teams[bids[bids.length - 1][0]].id, ts: now };
+      s.bidHistory = bids.map(([ti, amount], i) => ({ teamId: s.teams[ti].id, amount, ts: now - (bids.length - i) * 1500 }));
+      s.recentSales = s.recentSales.slice(0, 6);
+    }
+    return s;
+  }
 
   if (scene === "auction") {
     // A third of the way through: some rosters filling, one bidding war live.

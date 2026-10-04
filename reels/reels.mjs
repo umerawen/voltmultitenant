@@ -42,44 +42,44 @@ export const REELS = [
 
   // 02 ── the auction draft (voiceover: vo/bidding-war.flac, phrases timed below)
   {
-    id: "volt-bidding-war", duration: 28,
-    vo: { file: "vo/bidding-war.flac", t: 0.35, gain: 0.85 },
+    id: "volt-bidding-war", duration: 27.6,
+    vo: { file: "vo/bidding-war-kami.flac", t: 0.35, gain: 0.85 },
     scenes: [
       // "Every player has a price."
-      { kind: "hook", t: 0, d: 2.45, art: ART.reyna, label: "LIVE AUCTION DRAFT", lines: ["EVERY PLAYER", "HAS A [PRICE]."], size: 140 },
+      { kind: "hook", t: 0, d: 2.4, art: ART.reyna, label: "LIVE AUCTION DRAFT", lines: ["EVERY PLAYER", "HAS A [PRICE]."], size: 140 },
       // "Zephyr's on the block — and six captains want him. 2500… 2700… 2900!  Going… going… SOLD!"
       // The full auction screen floats in 3D; each part lifts off it as it's named.
-      { kind: "stage", t: 2.45, d: 13.35, shot: "auction-block", plateW: 1040, plateY: 1040,
+      { kind: "stage", t: 2.4, d: 13.55, shot: "kami-auction-block", plateW: 1040, plateY: 1040,
         heads: [
-          { at: 0, label: "ON THE BLOCK", lines: ["ZEPHYR IS UP.", "{6 CAPTAINS} WANT HIM."], size: 92 },
-          { at: 8.25, label: "HAMMER DOWN", lines: ["GOING… GOING…"] },
+          { at: 0, label: "ON THE BLOCK", lines: ["KAMIJEEE IS UP.", "{6 CAPTAINS} WANT HIM."], size: 92 },
+          { at: 8.5, label: "HAMMER DOWN", lines: ["GOING… GOING…"] },
         ],
-        plate: [{ at: 0, rx: 14, ry: -16 }, { at: 8.0, rx: 12, ry: 15, dur: 1.1 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }, { at: 8.3, rx: 12, ry: 15, dur: 1.1 }],
         pieces: [
-          { at: 0.45, d: 1.5, rect: [852, 90, 462, 602], w: 560, y: 1080, shape: "notch", cut: 24 },                     // Zephyr's card
+          { at: 0.3, d: 1.6, rect: [852, 90, 462, 602], w: 560, y: 1080, shape: "notch", cut: 24 },                     // Zephyr's card
           { at: 1.95, d: 1.9, rect: [268, 88, 254, 634], w: 360, x: 295, y: 1070 },              // captains, left
           { at: 2.05, d: 1.8, rect: [1645, 88, 254, 634], w: 360, x: 785, y: 1070 },             // captains, right
-          { at: 3.95, d: 4.15, rect: [890, 714, 388, 87], w: 970, y: 1010, shape: "slant", cut: 20,                       // the bid, ticking up
+          { at: 3.95, d: 4.45, rect: [916, 714, 334, 87], w: 900, y: 1010, shape: "slant", cut: 22,                       // the bid, ticking up
             live: [
-              { rect: [915, 742, 165, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$2,300" }, { at: 4.26, text: "$2,500" }, { at: 5.72, text: "$2,700" }, { at: 7.05, text: "$2,900" }] },
-              { rect: [1105, 750, 150, 30], size: 20, font: "raj", steps: [{ at: 0, text: "VIPERS", color: "#ff4655" }, { at: 4.26, text: "EMBERFALL", color: "#5ad1ff" }, { at: 5.72, text: "FROSTBYTE", color: "#ff8a3d" }, { at: 7.05, text: "NOVA STRIKE", color: "#9d6bff" }] },
+              { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$1,000" }, { at: 4.28, text: "$1,200" }, { at: 5.62, text: "$1,400" }, { at: 6.98, text: "$1,600" }] },
+              { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "—", color: "rgba(200,215,255,0.4)" }, { at: 4.28, text: "RUMER", color: "#9d6bff" }, { at: 5.62, text: "NOVA", color: "#ff8a3d" }, { at: 6.98, text: "YONA", color: "#ff4655" }] },
             ] },
-          { at: 8.45, d: 4.75, rect: [836, 822, 494, 72], w: 970, y: 1080, shape: "slant", cut: 22 },                     // SOLD / PASS
+          { at: 8.55, d: 4.95, rect: [836, 822, 494, 72], w: 970, y: 1080, shape: "slant", cut: 22 },                     // SOLD / PASS
         ],
-        toasts: [{ at: 4.26, k: "EMBERFALL", v: "BIDS |$2,500|", color: C.money, y: 1230 }, { at: 5.72, k: "FROSTBYTE", v: "BIDS |$2,700|", color: C.money, side: "left", y: 1230 }, { at: 7.05, k: "NOVA STRIKE", v: "BIDS |$2,900|", color: C.money, y: 1230, d: 1.0 }],
-        cursor: [{ at: 9.95, x: 426, y: 1082, d: 2.2 }],
-        stamp: { at: 10.99, text: "SOLD", sub: "NOVA STRIKE · $2,900", y: 840 } },
+        toasts: [{ at: 4.28, k: "RUMER", v: "BIDS |$1,200|", color: "#9d6bff", y: 1230 }, { at: 5.62, k: "NOVA", v: "BIDS |$1,400|", color: "#ff8a3d", side: "left", y: 1230 }, { at: 6.98, k: "YONA", v: "BIDS |$1,600|", color: "#ff4655", y: 1230, d: 1.0 }],
+        cursor: [{ at: 10.2, x: 426, y: 1082, d: 2.2 }],
+        stamp: { at: 11.2, text: "SOLD", sub: "YONA · $1,600", y: 840 } },
       // "Every captain gets a budget — spend it smart."
-      { kind: "stage", t: 15.8, d: 3.4, shot: "rosters", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 15.95, d: 3.15, shot: "kami-rosters", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "THE LOCKER ROOM", lines: ["SPEND SMART.", "BUDGETS ARE {REAL}."], size: 96 }],
         plate: [{ at: 0, rx: 14, ry: 16 }],
-        pieces: [{ at: 0.35, rect: [1092, 233, 357, 535], w: 580, y: 1110, shape: "notch", cut: 24,
-          focus: [{ at: 0.9, rect: [1110, 313, 155, 68], tag: "BUDGET LEFT", color: C.money, tagBelow: true }, { at: 2.0, rect: [1110, 515, 285, 52], tag: "ZEPHYR · $2,520", color: C.volt }] }] },
+        pieces: [{ at: 0.35, rect: [343, 233, 357, 535], w: 580, y: 1110, shape: "notch", cut: 24,
+          focus: [{ at: 1.1, rect: [361, 313, 155, 68], tag: "BUDGET LEFT", color: C.money, tagBelow: true }, { at: 1.95, rect: [361, 515, 285, 52], tag: "KAMIJEEE · $1,600", color: C.volt }] }] },
       // "Twenty-four players. Six captains. One draft night."
-      { kind: "stat", t: 19.2, d: 4.6, label: "ONE DRAFT NIGHT",
-        items: [{ to: 24, label: "Players", at: 0.28, dur: 0.9 }, { to: 6, label: "Captains", color: C.voltHi, at: 1.75, dur: 0.8 }, { to: 1, label: "Draft night", color: C.money, at: 3.25, dur: 0.5 }] },
+      { kind: "stat", t: 19.1, d: 4.46, label: "ONE DRAFT NIGHT",
+        items: [{ to: 24, label: "Players", at: 0.31, dur: 0.9 }, { to: 6, label: "Captains", color: C.voltHi, at: 1.73, dur: 0.8 }, { to: 1, label: "Draft night", color: C.money, at: 3.14, dur: 0.5 }] },
       // "Build your dream team… on VOLT."
-      { kind: "cta", t: 23.8, d: 4.2, lines: ["BUILD YOUR", "[DREAM TEAM.]"], feat: FEAT, button: "JOIN THE DRAFT" },
+      { kind: "cta", t: 23.56, d: 4.04, lines: ["BUILD YOUR", "[DREAM TEAM.]"], feat: FEAT, button: "JOIN THE DRAFT" },
     ],
   },
 

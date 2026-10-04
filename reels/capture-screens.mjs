@@ -10,6 +10,9 @@
 //
 //   node capture-screens.mjs            → every shot
 //   node capture-screens.mjs auction    → only shots whose name contains "auction"
+//   node capture-screens.mjs auction --real data/kami-labs.json --prefix kami-
+//       → the same shots filled with a real league (a git-ignored JSON file,
+//         see src/demo.js), saved as screens/kami-<name>.png
 import puppeteer from "puppeteer-core";
 import fs from "node:fs";
 
@@ -58,13 +61,18 @@ const SHOTS = [
   ["league-page", "league", [portal], ["APEX LEAGUE", "YOU'RE IN ✓", "ENTER TOURNAMENT →", "// SEASON RACE", "OCT 10–11", "// PAST TOURNAMENTS"]],
 ];
 
-const only = process.argv[2];
+const args = process.argv.slice(2);
+const flag = (f) => { const i = args.indexOf(f); return i >= 0 ? args.splice(i, 2)[1] : null; };
+const realFile = flag("--real"), prefix = flag("--prefix") || "";
+const real = realFile ? JSON.parse(fs.readFileSync(new URL(realFile, import.meta.url), "utf8")) : null;
+const only = args[0];
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: "new", args: ["--hide-scrollbars", "--force-color-profile=srgb"] });
 try {
   for (const [file, scene, steps, marks] of SHOTS) {
     if (only && !file.includes(only)) continue;
     const page = await browser.newPage();
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 2 });
+    if (real) await page.evaluateOnNewDocument((r) => { window.__demoReal = r; }, real);
     await page.goto(`${BASE}?demo=${scene}`, { waitUntil: "networkidle2" });
     await wait(3500);
     for (const step of steps) await step(page);
@@ -85,9 +93,9 @@ try {
       }
       return out;
     }, marks);
-    await page.screenshot({ path: `${OUT}${file}.png` });
-    fs.writeFileSync(`${OUT}${file}.json`, JSON.stringify(rects, null, 1));
-    console.log("✓", file, Object.keys(rects).length + "/" + marks.length, "marks");
+    await page.screenshot({ path: `${OUT}${prefix}${file}.png` });
+    fs.writeFileSync(`${OUT}${prefix}${file}.json`, JSON.stringify(rects, null, 1));
+    console.log("✓", prefix + file, Object.keys(rects).length + "/" + marks.length, "marks");
     await page.close();
   }
 } finally {

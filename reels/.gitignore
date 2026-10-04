@@ -9,3 +9,4 @@ renders/
 .cache/
 videos/*/assets/
 videos/*/cues.json
+data/
