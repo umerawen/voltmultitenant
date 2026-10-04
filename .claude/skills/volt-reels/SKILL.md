@@ -5,59 +5,56 @@ description: Make VOLT marketing reels (Instagram Reels / TikTok / Shorts) from 
 
 # VOLT reels
 
-Short vertical videos that sell VOLT using the product's real web screens,
-never mock-ups, and never real players' names. Built with HyperFrames (HTML +
-GSAP compositions rendered to MP4). HyperFrames' own skills are installed
-globally (`/hyperframes`, `/product-launch-video`, `/hyperframes-core`, …);
-read `/hyperframes` first for any new video, then follow this file for the
-VOLT-specific parts.
+Vertical 1080x1920 videos that sell VOLT using the product's real web screens
+(never mock-ups, never real players' names), soft synthesised SFX and no
+voiceover. Built with HyperFrames (HTML + GSAP rendered to MP4) through a small
+engine, so a new reel is a spec, not hand-written HTML.
 
 ## Where things live
 
-- `reels/` — the video workspace (own package.json with `hyperframes`).
-- `reels/frame.md` — VOLT's design system for video (copied into each project).
-  Not a HyperFrames preset: none of them fit a dark esports product.
-- `reels/videos/<project>/` — one HyperFrames project per reel
-  (`BRIEF.md`, `STORYBOARD.md`, `frame.md`, `compositions/`, `renders/`).
-- `reels/screens/` — 2x desktop captures (git-ignored; regenerate).
-- `reels/storyboard/` — the review sheet (`node storyboard/build.mjs`).
-- `reels/music/` — tracks the user downloaded (git-ignored).
+- `reels/reels.mjs` — every reel as a spec (scenes on a timeline). Start here.
+- `reels/lib/engine.mjs` + `reel.css` — scene kinds, camera, overlays,
+  transitions; writes `videos/<id>/index.html`, `assets/`, `cues.json`.
+- `reels/sfx/synth.py` — numpy-only soft SFX + 120 BPM ambient bed, mixed from
+  `cues.json`.
+- `reels/render.sh [filter]` — build → `hyperframes render` → synth → mux with
+  loudnorm (-14 LUFS) → `reels/renders/NN-<id>.mp4`.
+- `reels/snap.sh [filter] [n]` — contact sheet per reel for review.
+- `reels/capture-screens.mjs` — the screens, `reels/screens/` (git-ignored).
+- `reels/frame.md` — the visual rules (navy, VOLT blue, one red hit per frame,
+  Rajdhani / IBM Plex Mono, notched corners).
 
-## 1. Get real screens with invented data
+## 1. Screens with invented data
 
-The app has a demo mode: in the **offline preview** (no Supabase keys) add
-`?demo=<scene>` and it fills the board, your player card, the leaderboard and
-the league page from `src/demo.js`. Scenes: `pool`, `auction`, `drafted`,
-`bracket`, `league`. It is compiled out of production builds.
+The offline preview (no Supabase keys) has a demo mode: `?demo=<scene>` fills
+the app from `src/demo.js` (scenes `pool`, `auction`, `drafted`, `bracket`,
+`final`, `league`; compiled out of production).
 
-1. Start the offline preview: launch config `volt-offline` (port 5174).
-2. `cd reels && node capture-screens.mjs [filter]` → `screens/*.png`
-   (1920x1080 at 2x, so a reel can push in up to 2x and stay sharp).
-3. Need a new screen? Add a row to `SHOTS` in `capture-screens.mjs`; need new
-   data? Extend `src/demo.js` (keep every name invented).
+1. Start launch config `volt-offline` (port 5174).
+2. `cd reels && node capture-screens.mjs [filter]` → `screens/<name>.png`
+   (1920x1080 at 2x) plus `screens/<name>.json`, the rects of named marks.
+3. New screen: add a row to `SHOTS` (steps + marks). New data: extend
+   `src/demo.js`, invented names only.
 
-Web screens only, shown in a browser frame. Never capture the live site with a
-real league: those are real people.
+## 2. Write the reel
 
-## 2. Plan
+Add a spec to `REELS` in `reels.mjs`. Scene kinds:
 
-Per reel: `BRIEF.md` (message, audience, length, assets) and `STORYBOARD.md`
-in HyperFrames' storyboard format (`/hyperframes` → references/storyboard-format.md).
-Keep reels 15–22s, 6–8 frames, one idea per frame, words on screen instead of
-narration. Then add the reel to `reels/storyboard/build.mjs` and send the user
-`storyboard/index.html` for approval before building motion.
+- `hook` — kinetic statement; optional `art` (landscape key art band),
+  `agent` (cut-out from public/img) or `ghost` (huge outlined word).
+- `screen` — a screen in a browser frame (or `frame: false` full bleed) with
+  `cam` keyframes (`focus` a mark or `center` + `w` visible width in screen
+  px), `marks` (brackets + tags), `cursor`, `toasts`, `stamp`, `count`.
+- `stat` — count-up numbers. `list` — rows that tick or get struck through.
+- `montage` — one-beat full-bleed cuts with a word each. `cta` — crest + ask.
 
-## 3. Music
+Keep cuts on the 0.5s grid, 15–25s per reel, end on a `cta`. Markup in text:
+`[red] {blue} |green| ~gold~`. Every scene adds its own SFX cues; extra cues go
+in the spec's `cues`.
 
-Royalty-free only (Pixabay Content License or similar). Pixabay blocks scripted
-downloads, so the user downloads the chosen tracks into `reels/music/`; then
-`npx hyperframes beats` maps the downbeats so cuts land on them.
+## 3. Review and render
 
-## 4. Build and render
-
-Follow `/product-launch-video` Steps 4–6 inside `reels/videos/<project>/`,
-with `frame.md` as the visual source of truth: navy canvas, VOLT blue, one red
-accent hit per frame, Rajdhani display, IBM Plex Mono numbers, notched corners.
-`npx hyperframes check` and `snapshot` before showing the user; render with
-`npx hyperframes render --quality high --output renders/<project>.mp4` only
-after they approve.
+`bash snap.sh <id>` and look at `videos/<id>/snapshots/contact-sheet.jpg`;
+`npx hyperframes lint` inside the project (structural warnings are expected).
+Then `FFMPEG=<path> bash render.sh <id>`. Sound stays soft: no fast attacks, no
+bright transients; tune `sfx/synth.py`, not per reel.

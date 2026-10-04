@@ -5,3 +5,7 @@ storyboard/thumbs/
 videos/*/renders/
 videos/*/snapshots/
 videos/*/.hyperframes/cache/
+renders/
+.cache/
+videos/*/assets/
+videos/*/cues.json

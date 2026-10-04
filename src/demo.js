@@ -86,7 +86,7 @@ export function demoBoard(scene, h) {
 
   // Everything sold: four players a team.
   const order = [4, 0, 17, 1, 3, 13, 8, 21, 5, 2, 9, 10, 11, 12, 6, 7, 14, 15, 16, 18, 19, 20, 22, 23];
-  order.forEach((pi, k) => sell(pi, k % 6, Math.max(600, 4200 - k * 150)));
+  order.forEach((pi, k) => sell(pi, k % 6, Math.max(500, 3400 - k * 110)));
   if (scene === "drafted") return s;
 
   const ids = s.teams.map((t) => t.id);
@@ -95,7 +95,7 @@ export function demoBoard(scene, h) {
   const at = (hrs) => { const d = new Date(); d.setHours(19 + Math.floor(hrs / 2), (hrs % 2) * 30, 0, 0); return d.toISOString(); };
   const votes = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => ["v" + i, { name: PLAYERS[i][0], side: i % 3 ? "a" : "b" }]));
 
-  if (scene === "bracket") {
+  if (scene === "bracket" || scene === "final") {
     const eight = [...ids, null, null];
     const t = { format: "single", bo: 1, overrides: {}, locked: true, createdAt: Date.now(), slots: eight, rounds: h.buildSingleElim(eight, 1) };
     const real = t.rounds[0].filter((m) => !m.bye);
@@ -103,6 +103,11 @@ export function demoBoard(scene, h) {
     if (real[1]) { real[1].scheduledAt = at(2); real[1].votes = votes(14); }
     h.propagateElim(t);
     (t.rounds[1] || []).forEach((m, i) => { if (!m.done) { m.scheduledAt = at(4 + i); m.votes = votes(9 + i * 4); } });
+    if (scene === "final") {
+      // Play everything out: the rest of round one, the semis, then the final.
+      const finish = () => t.rounds.forEach((r) => r.forEach((m) => { if (!m.done && m.teamA && m.teamB) { play(m, 13, 6 + ((m.id.length * 3) % 6)); h.propagateElim(t); } }));
+      finish(); finish(); finish();
+    }
     s.tournament = t;
     return s;
   }
