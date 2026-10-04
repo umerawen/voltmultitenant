@@ -40,26 +40,33 @@ export const REELS = [
     ],
   },
 
-  // 02 ── the auction draft
+  // 02 ── the auction draft (voiceover: vo/bidding-war.flac, phrases timed below)
   {
-    id: "volt-bidding-war", duration: 20,
+    id: "volt-bidding-war", duration: 28,
+    vo: { file: "vo/bidding-war.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      { kind: "hook", t: 0, d: 2.5, art: ART.reyna, label: "LIVE AUCTION DRAFT", lines: ["EVERY PLAYER", "HAS A [PRICE]."], size: 140 },
-      { kind: "screen", t: 2.5, d: 5, shot: "auction-block", url: "LIVE AUCTION",
+      // "Every player has a price."
+      { kind: "hook", t: 0, d: 2.45, art: ART.reyna, label: "LIVE AUCTION DRAFT", lines: ["EVERY PLAYER", "HAS A [PRICE]."], size: 140 },
+      // "Zephyr's on the block — and six captains want him. 2500… 2700… 2900!"
+      { kind: "screen", t: 2.45, d: 8.25, shot: "auction-block", url: "LIVE AUCTION",
         head: { label: "ON THE BLOCK", lines: ["ZEPHYR IS UP.", "{6 CAPTAINS} WANT HIM."], size: 92 },
-        cam: [{ at: 0, focus: "ZEPHYR", w: 860 }, { at: 1.8, focus: "CURRENT BID", w: 560 }],
-        toasts: [{ at: 1.0, k: "EMBERFALL", v: "BIDS |$2,500|", color: C.money }, { at: 2.0, k: "FROSTBYTE", v: "BIDS |$2,700|", color: C.money, side: "left" }, { at: 3.0, k: "NOVA STRIKE", v: "BIDS |$2,900|", color: C.money }] },
-      { kind: "screen", t: 7.5, d: 3.5, shot: "auction-block", url: "LIVE AUCTION",
+        cam: [{ at: 0, focus: "ZEPHYR", w: 860 }, { at: 1.7, center: [430, 330], w: 620 }, { at: 3.4, focus: "CURRENT BID", w: 560 }],
+        toasts: [{ at: 4.26, k: "EMBERFALL", v: "BIDS |$2,500|", color: C.money }, { at: 5.72, k: "FROSTBYTE", v: "BIDS |$2,700|", color: C.money, side: "left" }, { at: 7.05, k: "NOVA STRIKE", v: "BIDS |$2,900|", color: C.money }] },
+      // "Going… going… SOLD! To Nova Strike."
+      { kind: "screen", t: 10.7, d: 5.1, shot: "auction-block", url: "LIVE AUCTION",
         head: { label: "HAMMER DOWN", lines: ["GOING… GOING…"] },
         cam: [{ at: 0, focus: "SOLD", w: 760 }],
-        cursor: [{ at: 0.2, to: "SOLD", fx: 0.45 }],
-        stamp: { at: 1.5, text: "SOLD", sub: "NOVA STRIKE · $2,900", y: 980 } },
-      { kind: "screen", t: 11, d: 3.5, shot: "rosters", url: "ROSTERS",
+        cursor: [{ at: 1.82, to: "SOLD", fx: 0.45, d: 2.6 }],
+        stamp: { at: 2.74, text: "SOLD", sub: "NOVA STRIKE · $2,900", y: 980 } },
+      // "Every captain gets a budget — spend it smart."
+      { kind: "screen", t: 15.8, d: 3.4, shot: "rosters", url: "ROSTERS",
         head: { label: "THE LOCKER ROOM", lines: ["SPEND SMART.", "BUDGETS ARE {REAL}."], size: 96 },
         cam: [{ at: 0, w: 640, center: [600, 560] }, { at: 1.4, w: 640, center: [1300, 560] }] },
-      { kind: "stat", t: 14.5, d: 2.5, label: "ONE DRAFT NIGHT",
-        items: [{ to: 24, label: "Players" }, { to: 6, label: "Captains", color: C.voltHi }, { to: 60000, prefix: "$", label: "In purses", color: C.money }] },
-      { kind: "cta", t: 17, d: 3, lines: ["BUILD YOUR", "[DREAM TEAM.]"], feat: FEAT, button: "JOIN THE DRAFT" },
+      // "Twenty-four players. Six captains. One draft night."
+      { kind: "stat", t: 19.2, d: 4.6, label: "ONE DRAFT NIGHT",
+        items: [{ to: 24, label: "Players", at: 0.28, dur: 0.9 }, { to: 6, label: "Captains", color: C.voltHi, at: 1.75, dur: 0.8 }, { to: 1, label: "Draft night", color: C.money, at: 3.25, dur: 0.5 }] },
+      // "Build your dream team… on VOLT."
+      { kind: "cta", t: 23.8, d: 4.2, lines: ["BUILD YOUR", "[DREAM TEAM.]"], feat: FEAT, button: "JOIN THE DRAFT" },
     ],
   },
 

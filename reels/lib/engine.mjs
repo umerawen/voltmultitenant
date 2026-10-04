@@ -312,9 +312,10 @@ export function reel(spec) {
     const big = items.length === 1;
     const cells = items.map((it, i) => {
       const cid = `${sid}-v${i}`;
-      counter(`#${cid}`, it.from ?? 0, it.to, at + 0.2 + i * 0.25, it.dur || 1.4, it);
-      tw(`#${sid}-c${i}`, { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, at + i * 0.25);
-      cue(at + 0.2 + i * 0.25, "pop", { p: i + 2, g: 0.6 });
+      const t0 = it.at != null ? s.t + it.at : at + i * 0.25; // item.at: when its line is spoken
+      counter(`#${cid}`, it.from ?? 0, it.to, t0 + 0.2, it.dur || 1.4, it);
+      tw(`#${sid}-c${i}`, { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, t0);
+      cue(t0 + 0.2, "pop", { p: i + 2, g: 0.6 });
       return `<div class="stat-c${big ? " big" : ""}" id="${sid}-c${i}"><div class="stat-v" id="${cid}" style="color:${it.color || C.ink}">${fmtNum(it.from ?? 0, it)}</div><div class="stat-l">${rich(it.label || "")}</div></div>`;
     }).join("");
     cue(at + 1.6, "chime", { p: 1, g: 0.55 });
@@ -438,6 +439,6 @@ tl.seek(0);
   }
   fs.writeFileSync(path.join(dir, "index.html"), doc);
   cues.sort((a, b) => a.t - b.t);
-  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, bpm: 120, outro: spec.outro ?? (spec.scenes.find((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
+  fs.writeFileSync(path.join(dir, "cues.json"), JSON.stringify({ id, duration, bpm: 120, vo: spec.vo || null, outro: spec.outro ?? (spec.scenes.find((x) => x.kind === "cta")?.t ?? null), cues }, null, 1));
   return { dir, cues: cues.length };
 }

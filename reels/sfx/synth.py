@@ -394,8 +394,36 @@ def main(cue_path, out):
         e = min(len(sfx), s + len(y))
         sfx[s:e] += y[: e - s]
     b = bed(dur, spec.get("outro"))
-    mix[:n] += b * 0.42
-    mix += sfx * 0.9
+    duck_bed = np.ones(len(mix))
+    duck_sfx = np.ones(len(mix))
+    vo_track = np.zeros_like(mix)
+    vo = spec.get("vo")
+    if vo:
+        # Voiceover: dry, peak-normalised, and everything else ducks under it.
+        v, vsr = sf.read(vo["file"])
+        if v.ndim > 1:
+            v = v.mean(1)
+        assert vsr == SR, "voiceover must be 48 kHz"
+        v = highpass(v, 70) / max(np.max(np.abs(v)), 1e-6) * vo.get("gain", 0.8)
+        s0 = int(vo.get("t", 0) * SR)
+        e0 = min(len(mix), s0 + len(v))
+        vo_track[s0:e0] += np.stack([v[: e0 - s0]] * 2, axis=1)
+        env = np.abs(vo_track[:, 0])
+        k = int(0.04 * SR)
+        env = np.convolve(env, np.ones(k) / k, mode="same")
+        # hold + slow release so the bed doesn't pump between words
+        rel = int(0.35 * SR)
+        env_s = np.copy(env)
+        a_r = np.exp(-1 / rel)
+        for i in range(1, len(env_s)):
+            if env_s[i] < env_s[i - 1] * a_r:
+                env_s[i] = env_s[i - 1] * a_r
+        lvl = np.clip(env_s / 0.05, 0, 1)
+        duck_bed = 1 - 0.62 * lvl
+        duck_sfx = 1 - 0.4 * lvl
+    mix[:n] += b * 0.42 * duck_bed[:n, None]
+    mix += sfx * 0.9 * duck_sfx[:, None]
+    mix += vo_track
     mix = mix[:n]
     mix = np.stack([highpass(mix[:, 0], 32), highpass(mix[:, 1], 32)], axis=1)
     # gentle glue: soft-knee saturation then normalise peak
