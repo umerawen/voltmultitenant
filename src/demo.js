@@ -75,7 +75,7 @@ export function demoBoard(scene, h) {
     // or to the end (drafted).
     const byName = (n) => players.find((p) => p.name === n);
     for (const [name, ti, price] of REAL.sales) {
-      if (scene === "auction" && name === REAL.block?.name) break;
+      if ((scene === "auction" || scene === "spin") && name === REAL.block?.name) break;
       const p = byName(name), t = s.teams[ti];
       if (!p || !t) continue;
       p.status = "sold"; p.soldTo = t.id; p.soldPrice = price;
@@ -89,6 +89,18 @@ export function demoBoard(scene, h) {
       s.block = { playerId: p.id, startingBid: REAL.block.start, currentBid: bids[bids.length - 1][1], leaderId: s.teams[bids[bids.length - 1][0]].id, ts: now };
       s.bidHistory = bids.map(([ti, amount], i) => ({ teamId: s.teams[ti].id, amount, ts: now - (bids.length - i) * 1500 }));
       s.recentSales = s.recentSales.slice(0, 6);
+    }
+    if (scene === "spin" && REAL.block) {
+      // The draw that picks who goes on the block. It starts a moment after
+      // load (the capture script freezes the clock and steps through it).
+      const p = byName(REAL.block.name);
+      const pool = players.filter((x) => x.status === "pool").map((x) => x.id);
+      // a fixed shuffle so every capture spins through the same order
+      const order = pool.map((id, i) => [id, ((i + 5) * 7919) % 31]).sort((a, b) => a[1] - b[1]).map((x) => x[0]);
+      p.status = "block";
+      s.block = { playerId: p.id, startingBid: REAL.block.start, currentBid: REAL.block.start, leaderId: null, ts: Date.now() };
+      s.spin = { playerId: p.id, pool: order, startTs: Date.now() + 4000, duration: 7200 };
+      s.bidHistory = [];
     }
     return s;
   }

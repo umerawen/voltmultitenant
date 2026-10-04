@@ -63,6 +63,7 @@ export function reel(spec) {
   const asset = (kind, name) => {
     // kind: "screen" | "img" | "agent"
     if (kind === "screen") { assets.add(["screen", name]); return `assets/${name}.webp`; }
+    if (kind === "video") { assets.add(["video", name]); return `assets/${name}`; }
     assets.add(["img", name]); return `assets/${name.replace(/\//g, "-").replace(/\.\w+$/, "")}.webp`;
   };
   const cue = (t, k, o = {}) => cues.push({ t: r2(t), k, ...o });
@@ -500,24 +501,61 @@ export function reel(spec) {
   };
 
   // The VOLT crest and the ask.
+  // The VOLT logo as a sting (the arm slides in, the bolt strikes, OLT rises),
+  // then the ask.
   kinds.cta = (s) => {
     const sid = s._id, at = s.t;
-    tw(`#${sid}-crest`, { scale: 0.4, opacity: 0, rotation: -20 }, { scale: 1, opacity: 1, rotation: 0, duration: 0.9, ease: "expo.out" }, at);
-    tw(`#${sid}-ring`, { opacity: 0 }, { keyframes: { opacity: [0, 0.9, 0] }, duration: 1.4, ease: "none" }, at + 0.1);
-    tw(`#${sid}-ring`, { scale: 0.6, rotation: 45 }, { scale: 2.2, rotation: 45, duration: 1.4, ease: "power2.out" }, at + 0.1);
-    tw(`#${sid}-ring2`, { opacity: 0 }, { keyframes: { opacity: [0, 0.6, 0] }, duration: 1.8, ease: "none" }, at + 0.3);
-    tw(`#${sid}-ring2`, { scale: 0.6, rotation: 45 }, { scale: 2.8, rotation: 45, duration: 1.8, ease: "power2.out" }, at + 0.3);
-    tw(`#${sid}-word`, { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: 0.9, ease: "power3.out" }, at + 0.3);
-    tw(`#${sid}-btn`, { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, at + 1.1);
-    tw(`#${sid}-btnsh`, { xPercent: -120 }, { xPercent: 220, duration: 1.0, ease: "power2.inOut" }, at + 1.6);
-    tw(`#${sid}-feat`, { opacity: 0 }, { opacity: 1, duration: 0.6 }, at + 1.3);
+    tw(`#${sid}-arm`, { x: -260, opacity: 0 }, { x: 0, opacity: 1, duration: 0.55, ease: "expo.out" }, at);
+    tw(`#${sid}-bolt`, { x: 240, y: -320, opacity: 0 }, { x: 0, y: 0, opacity: 1, duration: 0.42, ease: "expo.in" }, at + 0.18);
+    tw(`#${sid}-glow`, { opacity: 0 }, { keyframes: { opacity: [0, 1, 0.55] }, duration: 0.9, ease: "power2.out" }, at + 0.58);
+    tw(`#${sid}-ring`, { opacity: 0 }, { keyframes: { opacity: [0, 0.8, 0] }, duration: 1.3, ease: "none" }, at + 0.6);
+    tw(`#${sid}-ring`, { scale: 0.5 }, { scale: 2.4, duration: 1.3, ease: "power2.out" }, at + 0.6);
+    ["o", "l", "t"].forEach((c, i) => tw(`#${sid}-${c}`, { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power4.out" }, at + 0.7 + i * 0.07));
+    tw(`#${sid}-tag`, { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, at + 1.0);
+    tw(`#${sid}-btn`, { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, at + 1.5);
+    tw(`#${sid}-btnsh`, { xPercent: -120 }, { xPercent: 220, duration: 1.0, ease: "power2.inOut" }, at + 2.0);
+    tw(`#${sid}-feat`, { opacity: 0 }, { opacity: 1, duration: 0.6 }, at + 1.7);
     cue(at - 1.2, "swell", { d: 1.2, g: 0.5 });
-    cue(at, "boom", { g: 1 });
-    cue(at + 0.05, "chime", { p: 0, g: 0.6, chord: true });
-    cue(at + 1.6, "shimmer", { g: 0.35 });
-    const crest = `<svg viewBox="0 0 40 44" width="230" height="253"><defs><linearGradient id="cf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f66e0"/><stop offset="1" stop-color="#0b1530"/></linearGradient><linearGradient id="cs" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9cbcff"/><stop offset="1" stop-color="#3d7bff" stop-opacity="0.35"/></linearGradient></defs><path d="M2.5 1.5h27l8 8v18.5L20 42.5 2.5 30z" fill="url(#cf)" stroke="url(#cs)" stroke-width="1.2"/><path d="M6.5 5.5h21.5l5.5 5.5v15.3L20 37.6 6.5 27.9z" fill="none" stroke="rgba(170,200,255,0.22)" stroke-width="0.8"/><path d="M30.6 3.4l4.9 4.9" stroke="#ff4655" stroke-width="2.2"/><text x="20" y="27.5" text-anchor="middle" font-family="Rajdhani" font-weight="700" font-size="21" fill="#f4f8ff">V</text></svg>`;
-    const inner = `<div class="cta"><div class="crest-wrap"><div class="ring" id="${sid}-ring"></div><div class="ring" id="${sid}-ring2"></div><div class="crest" id="${sid}-crest">${crest}</div></div><div class="cta-word" id="${sid}-word">VOLT LEAGUE</div><div class="cta-lines">${lines(sid, s.lines, { size: s.size || 118, at: at + 0.5 })}</div>${s.feat ? `<div class="cta-feat" id="${sid}-feat">${rich(s.feat)}</div>` : ""}<div class="btn" id="${sid}-btn"><span>${rich(s.button || "START YOUR LEAGUE")}</span><i class="btn-sh" id="${sid}-btnsh"></i></div></div>`;
+    cue(at + 0.05, "air", { g: 0.5 });
+    cue(at + 0.58, "boom", { g: 1 });
+    cue(at + 0.62, "chime", { p: 0, g: 0.6, chord: true });
+    cue(at + 2.0, "shimmer", { g: 0.35 });
+    const ARM = "M344.811 140.139H0L273.118 552.012L436.988 278.57L344.811 140.139Z";
+    const BOLT = "M392.606 466.561L689.622 0H1002L303.843 834L549.649 401.619L392.606 466.561Z";
+    const logo = `<svg class="cta-logo" viewBox="0 0 1280 420" width="760" height="249"><defs>
+      <linearGradient id="${sid}-gb" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8db3ff"/><stop offset="0.55" stop-color="#3d7bff"/><stop offset="1" stop-color="#1f47c9"/></linearGradient>
+      <linearGradient id="${sid}-ga" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9cbef"/></linearGradient></defs>
+      <g transform="scale(0.5036)"><path id="${sid}-arm" d="${ARM}" fill="url(#${sid}-ga)"/><path id="${sid}-bolt" d="${BOLT}" fill="url(#${sid}-gb)"/></g>
+      <g transform="translate(156 100) scale(7.6)" fill="#f4f8ff"><path id="${sid}-o" fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/><path id="${sid}-l" d="M80 0H89.5V31H105V40H80Z"/><path id="${sid}-t" d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/></g></svg>`;
+    const inner = `<div class="cta"><div class="logo-wrap"><div class="logo-glow" id="${sid}-glow"></div><div class="logo-ring" id="${sid}-ring"></div>${logo}</div><div class="cta-tag" id="${sid}-tag">// LEAGUE PLATFORM</div><div class="cta-lines">${lines(sid, s.lines, { size: s.size || 118, at: at + 0.9 })}</div>${s.feat ? `<div class="cta-feat" id="${sid}-feat">${rich(s.feat)}</div>` : ""}<div class="btn" id="${sid}-btn"><span>${rich(s.button || "START YOUR LEAGUE")}</span><i class="btn-sh" id="${sid}-btnsh"></i></div></div>`;
     scene(s, inner, { enter: "fade", exit: "none" });
+  };
+
+  // A captured clip from the app (e.g. the auction draw), framed and faded,
+  // with a headline above and a hit when it lands.
+  //   video, y, h, head, landAt, ticks: [t...] (scene-relative)
+  kinds.video = (s) => {
+    const sid = s._id, src = asset("video", s.video);
+    const y = s.y ?? 560, h = s.h ?? 938;
+    html.push(`<video id="${sid}-v" class="clip vid" src="${src}" muted playsinline data-start="${r2(s.t)}" data-duration="${r2(s.d)}" data-track-index="2" style="left:0;top:${y}px;width:1080px;height:${h}px"></video>`);
+    tw(`#${sid}-v`, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "none" }, s.t);
+    if (s.d > 0.5) tto(`#${sid}-v`, { opacity: 0, duration: 0.3, ease: "power2.in" }, s.t + s.d - 0.3);
+    let head = "";
+    if (s.head) {
+      const at = s.t + 0.05;
+      head = `<div class="head">${s.head.label ? label(sid, s.head.label, at) : ""}${lines(sid, s.head.lines, { size: s.head.size || 110, at: at + 0.08 })}${s.head.stripe !== false ? stripe(sid, at + 0.5, { w: 220 }) : ""}</div>`;
+    }
+    for (const t of s.ticks || []) cue(s.t + t, "click", { g: 0.42 });
+    let land = "";
+    if (s.landAt != null) {
+      const at = s.t + s.landAt;
+      land = `<div class="flash" id="${sid}-fl"></div>`;
+      tw(`#${sid}-fl`, { opacity: 0 }, { keyframes: { opacity: [0, 0.3, 0] }, duration: 0.6, ease: "power2.out" }, at);
+      cue(at - 0.9, "swell", { d: 0.9, g: 0.45 });
+      cue(at, "thump", { g: 0.9 });
+      cue(at + 0.04, "chime", { p: 2, g: 0.6 });
+    }
+    scene(s, `${head}${land}`, { enter: s.enter || "fade", exit: s.exit || "fade" });
   };
 
   // ── assemble ─────────────────────────────────────────────────────────
@@ -567,6 +605,8 @@ tl.seek(0);
     if (kind === "screen") {
       const src = cachedWebp(path.join(SCREENS, name + ".png"), "screen-" + name + ".webp");
       fs.copyFileSync(src, path.join(dir, "assets", name + ".webp"));
+    } else if (kind === "video") {
+      fs.copyFileSync(path.join(SCREENS, name), path.join(dir, "assets", name));
     } else {
       const flat = name.replace(/\//g, "-").replace(/\.\w+$/, "");
       const src = cachedWebp(path.join(PUBLIC_IMG, name), "img-" + flat + ".webp");

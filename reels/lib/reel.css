@@ -144,3 +144,12 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 .pc-focus { position: absolute; }
 .pc-focus i { position: absolute; display: block; width: 26px; height: 26px; border: 3px solid; }
 .pc-focus b { position: absolute; left: -3px; top: -46px; font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 28px; letter-spacing: 0.1em; color: #06101f; padding: 3px 12px; white-space: nowrap; }
+
+/* captured app clips */
+.vid { right: auto; bottom: auto; object-fit: cover; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(180deg, transparent 0, #000 5%, #000 93%, transparent 100%); -webkit-mask-composite: source-in; mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent 100%), linear-gradient(180deg, transparent 0, #000 5%, #000 93%, transparent 100%); mask-composite: intersect; }
+/* the logo sting */
+.logo-wrap { position: relative; width: 760px; height: 249px; }
+.cta-logo { position: relative; display: block; overflow: visible; }
+.logo-glow { position: absolute; left: -60px; top: -80px; width: 480px; height: 420px; background: radial-gradient(ellipse at 45% 55%, rgba(61,123,255,0.55), rgba(61,123,255,0) 65%); opacity: 0; }
+.logo-ring { position: absolute; left: 70px; top: -30px; width: 300px; height: 300px; border: 2px solid rgba(125,166,255,0.7); border-radius: 50%; opacity: 0; }
+.cta-tag { font-family: "Rajdhani", sans-serif; font-weight: 700; font-size: 30px; letter-spacing: 0.42em; color: #6f9bff; margin-top: 30px; white-space: nowrap; }
