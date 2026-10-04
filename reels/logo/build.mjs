@@ -41,8 +41,8 @@ const files = {
   "volt-lockup.svg": svg(1640, 420, mark("url(#arm)", "url(#bolt)", "translate(0 0) scale(0.5036)") + word("#f4f8ff", "translate(600 60) scale(7)")),
   "volt-lockup-on-light.svg": svg(1640, 420, mark("#0a0f1e", "url(#bolt)", "scale(0.5036)") + word("#0a0f1e", "translate(600 60) scale(7)")),
   // the mark standing in as the V of VOLT
-  "volt-wordmark.svg": svg(1280, 420, mark("url(#arm)", "url(#bolt)", "scale(0.5036)") + olt("#f4f8ff", "translate(156 100) scale(7.6)")),
-  "volt-wordmark-on-light.svg": svg(1280, 420, mark("#0a0f1e", "url(#bolt)", "scale(0.5036)") + olt("#0a0f1e", "translate(156 100) scale(7.6)")),
+  "volt-wordmark.svg": svg(1100, 420, mark("url(#arm)", "url(#bolt)", "scale(0.5036)") + olt("#f4f8ff", "translate(205 90) scale(6)")),
+  "volt-wordmark-on-light.svg": svg(1100, 420, mark("#0a0f1e", "url(#bolt)", "scale(0.5036)") + olt("#0a0f1e", "translate(205 90) scale(6)")),
   // app / Discord / favicon tile
   "volt-icon.svg": svg(512, 512, tile + mark("url(#arm)", "url(#bolt)", "translate(76 112) scale(0.36)")),
 };
@@ -57,7 +57,7 @@ const PNG = [
   ["volt-icon.svg", "favicon-16.png", 16, 16],
   ["volt-lockup.svg", "volt-lockup.png", 1640, 420],
   ["volt-lockup-on-light.svg", "volt-lockup-on-light.png", 1640, 420],
-  ["volt-wordmark.svg", "volt-wordmark.png", 1280, 420],
+  ["volt-wordmark.svg", "volt-wordmark.png", 1100, 420],
   ["volt-mark.svg", "volt-mark.png", 1002, 834],
 ];
 const browser = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: "new" });

@@ -522,11 +522,11 @@ export function reel(spec) {
     cue(at + 2.0, "shimmer", { g: 0.35 });
     const ARM = "M344.811 140.139H0L273.118 552.012L436.988 278.57L344.811 140.139Z";
     const BOLT = "M392.606 466.561L689.622 0H1002L303.843 834L549.649 401.619L392.606 466.561Z";
-    const logo = `<svg class="cta-logo" viewBox="0 0 1280 420" width="760" height="249"><defs>
+    const logo = `<svg class="cta-logo" viewBox="0 0 1100 420" width="653" height="249"><defs>
       <linearGradient id="${sid}-gb" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8db3ff"/><stop offset="0.55" stop-color="#3d7bff"/><stop offset="1" stop-color="#1f47c9"/></linearGradient>
       <linearGradient id="${sid}-ga" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9cbef"/></linearGradient></defs>
       <g transform="scale(0.5036)"><path id="${sid}-arm" d="${ARM}" fill="url(#${sid}-ga)"/><path id="${sid}-bolt" d="${BOLT}" fill="url(#${sid}-gb)"/></g>
-      <g transform="translate(156 100) scale(7.6)" fill="#f4f8ff"><path id="${sid}-o" fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/><path id="${sid}-l" d="M80 0H89.5V31H105V40H80Z"/><path id="${sid}-t" d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/></g></svg>`;
+      <g transform="translate(205 90) scale(6)" fill="#f4f8ff"><path id="${sid}-o" fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/><path id="${sid}-l" d="M80 0H89.5V31H105V40H80Z"/><path id="${sid}-t" d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/></g></svg>`;
     const inner = `<div class="cta"><div class="logo-wrap"><div class="logo-glow" id="${sid}-glow"></div><div class="logo-ring" id="${sid}-ring"></div>${logo}</div><div class="cta-tag" id="${sid}-tag">// LEAGUE PLATFORM</div><div class="cta-lines">${lines(sid, s.lines, { size: s.size || 118, at: at + 0.9 })}</div>${s.feat ? `<div class="cta-feat" id="${sid}-feat">${rich(s.feat)}</div>` : ""}<div class="btn" id="${sid}-btn"><span>${rich(s.button || "START YOUR LEAGUE")}</span><i class="btn-sh" id="${sid}-btnsh"></i></div></div>`;
     scene(s, inner, { enter: "fade", exit: "none" });
   };

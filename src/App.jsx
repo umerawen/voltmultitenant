@@ -254,11 +254,11 @@ function VoltMark({ size = 24, glow = false, style }) {
 function VoltWordmark({ height = 40, style }) {
   const id = "vw" + useId().replace(/[^a-zA-Z0-9]/g, "");
   return (
-    <svg viewBox="0 0 1280 420" height={height} width={Math.round((height * 1280) / 420)} role="img" aria-label="VOLT"
+    <svg viewBox="0 0 1100 420" height={height} width={Math.round((height * 1100) / 420)} role="img" aria-label="VOLT"
       style={{ display: "block", filter: "drop-shadow(0 0 14px rgba(61,123,255,0.35))", ...style }}>
       <VoltGrads id={id} />
       <g transform="scale(0.5036)"><path d={VOLT_ARM} fill={`url(#${id}a)`} /><path d={VOLT_BOLT} fill={`url(#${id}b)`} /></g>
-      <g transform="translate(156 100) scale(7.6)" fill="#f4f8ff">
+      <g transform="translate(205 90) scale(6)" fill="#f4f8ff">
         <path fillRule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z" />
         <path d="M80 0H89.5V31H105V40H80Z" />
         <path d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z" />
