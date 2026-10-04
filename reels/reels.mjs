@@ -368,9 +368,9 @@ export const REELS = [
   },
 
   // 11 ── the launch: the first reel, the whole product on Kami Labs' real season.
-  //       A different voice ("Captain Commercial", vo/launch.flac at t=0.25).
+  //       Its own voice ("Jett", young and gritty; vo/launch.flac at t=0.25).
   {
-    id: "volt-launch", duration: 48.0, fps: 60,
+    id: "volt-launch", duration: 46.0, fps: 60,
     vo: { file: "vo/launch.flac", t: 0.25, gain: 0.85 },
     scenes: [
       // "Your Valorant league… just went pro."  (cold open on the draw)
@@ -378,9 +378,9 @@ export const REELS = [
         reveal: { name: "KAMIJEEE", sub: "Silver · heads to the block at $800" },
         head: { label: "VALORANT LEAGUES", lines: ["YOUR LEAGUE", "JUST WENT [PRO.]"], size: 118 } },
       // "Introducing VOLT."
-      { kind: "cta", t: 3.0, d: 1.85, tag: "// INTRODUCING", lines: ["{VALORANT} LEAGUES,", "[DONE RIGHT.]"], size: 92, button: false, exit: "fade" },
+      { kind: "cta", t: 3.0, d: 2.0, tag: "// INTRODUCING", lines: ["{VALORANT} LEAGUES,", "[DONE RIGHT.]"], size: 92, button: false, exit: "fade" },
       // "Players sign up solo, with their real rank and stats."
-      { kind: "stage", t: 4.85, d: 3.65, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 5.0, d: 3.6, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "SIGN UP SOLO", lines: ["REAL RANK.", "{REAL STATS.}"], size: 100 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
@@ -391,7 +391,7 @@ export const REELS = [
           { at: 0.65, rect: [717, 378, 360, 184], w: 440, x: 785, y: 1120 },
         ] },
       // "Captains scout every single one."
-      { kind: "stage", t: 8.5, d: 2.75, shot: "kami-scout-modal", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 8.6, d: 2.6, shot: "kami-scout-modal", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "FOR CAPTAINS", lines: ["SCOUT EVERY", "[PLAYER.]"], size: 100 }],
         plate: [{ at: 0, rx: 12, ry: 15 }],
         pieces: [
@@ -400,13 +400,13 @@ export const REELS = [
           { at: 0.55, rect: [995, 522, 398, 146], w: 430, x: 790, y: 1230 },
         ] },
       // "Then it's draft night. A live auction.  Kamijee's on the block. 1200… 1400… 1600! Sold!"
-      { kind: "stage", t: 11.25, d: 10.25, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
+      { kind: "stage", t: 11.2, d: 10.05, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
         heads: [
           { at: 0, label: "DRAFT NIGHT", lines: ["A LIVE", "[AUCTION.]"], size: 118 },
-          { at: 3.2, label: "ON THE BLOCK", lines: ["KAMIJEEE IS UP.", "{6 CAPTAINS} WANT HIM."], size: 92 },
-          { at: 7.6, label: "HAMMER DOWN", lines: ["GOING… GOING…"] },
+          { at: 3.15, label: "ON THE BLOCK", lines: ["KAMIJEEE IS UP.", "{6 CAPTAINS} WANT HIM."], size: 92 },
+          { at: 7.5, label: "HAMMER DOWN", lines: ["GOING… GOING…"] },
         ],
-        plate: [{ at: 0, rx: 14, ry: -16 }, { at: 7.4, rx: 12, ry: 15, dur: 1.1 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }, { at: 7.3, rx: 12, ry: 15, dur: 1.1 }],
         pieces: [
           { at: 0.2, d: 1.5, rect: [852, 90, 462, 602], w: 560, y: 1080, shape: "notch", cut: 24 },     // Kamijeee's card
           { at: 1.75, d: 1.5, rect: [268, 88, 254, 206], w: 380, x: 290, y: 742 },
@@ -417,24 +417,24 @@ export const REELS = [
           { at: 1.99, d: 1.26, rect: [1645, 517, 254, 206], w: 380, x: 790, y: 1398 },
           { at: 3.3, d: 4.4, rect: [916, 714, 334, 87], w: 900, y: 1010, shape: "slant", cut: 22,       // the bid, ticking up
             live: [
-              { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$800" }, { at: 5.02, text: "$1,200" }, { at: 6.26, text: "$1,400" }, { at: 7.27, text: "$1,600" }] },
-              { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "—", color: "rgba(200,215,255,0.4)" }, { at: 5.02, text: "PATIENCE", color: "#9d6bff" }, { at: 6.26, text: "DOOM", color: "#ff8a3d" }, { at: 7.27, text: "MISFITS", color: "#ff4655" }] },
+              { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$800" }, { at: 4.98, text: "$1,200" }, { at: 6.17, text: "$1,400" }, { at: 7.14, text: "$1,600" }] },
+              { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "—", color: "rgba(200,215,255,0.4)" }, { at: 4.98, text: "PATIENCE", color: "#9d6bff" }, { at: 6.17, text: "DOOM", color: "#ff8a3d" }, { at: 7.14, text: "MISFITS", color: "#ff4655" }] },
             ] },
-          { at: 7.75, rect: [836, 822, 494, 72], w: 970, y: 1080, shape: "slant", cut: 22 },     // SOLD / PASS
+          { at: 7.6, rect: [836, 822, 494, 72], w: 970, y: 1080, shape: "slant", cut: 22 },     // SOLD / PASS
         ],
-        toasts: [{ at: 5.02, k: "PATIENCE", v: "BIDS |$1,200|", color: "#9d6bff", y: 1230 }, { at: 6.26, k: "DOOM", v: "BIDS |$1,400|", color: "#ff8a3d", side: "left", y: 1230 }, { at: 7.27, k: "MISFITS", v: "BIDS |$1,600|", color: "#ff4655", y: 1230, d: 0.9 }],
-        cursor: [{ at: 8.0, x: 426, y: 1082, d: 1.9 }],
-        stamp: { at: 9.0, text: "SOLD", sub: "MISFITS · $1,600", y: 840 } },
+        toasts: [{ at: 4.98, k: "PATIENCE", v: "BIDS |$1,200|", color: "#9d6bff", y: 1230 }, { at: 6.17, k: "DOOM", v: "BIDS |$1,400|", color: "#ff8a3d", side: "left", y: 1230 }, { at: 7.14, k: "MISFITS", v: "BIDS |$1,600|", color: "#ff4655", y: 1230, d: 0.9 }],
+        cursor: [{ at: 7.8, x: 426, y: 1082, d: 1.8 }],
+        stamp: { at: 8.79, text: "SOLD", sub: "MISFITS · $1,600", y: 840 } },
       // "Teams lock in…"
-      { kind: "stage", t: 21.5, d: 1.75, shot: "kami-rosters", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 21.25, d: 1.7, shot: "kami-rosters", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "THE ROSTERS", lines: ["TEAMS", "[LOCK IN.]"], size: 118 }],
         plate: [{ at: 0, rx: 14, ry: 16 }],
         pieces: [{ at: 0.2, rect: [343, 233, 357, 535], w: 580, y: 1110, shape: "notch", cut: 24 }] },
       // "…and VOLT builds the whole tournament. Groups."
-      { kind: "stage", t: 23.25, d: 2.75, shot: "kami-fixtures-league", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 22.95, d: 2.35, shot: "kami-fixtures-league", plateW: 1040, plateY: 1060,
         heads: [
           { at: 0, label: "AUTO FIXTURES", lines: ["VOLT BUILDS", "THE {TOURNAMENT}."], size: 100 },
-          { at: 1.95, label: "STAGE ONE", lines: ["{GROUPS.}"], size: 150 },
+          { at: 1.5, label: "STAGE ONE", lines: ["{GROUPS.}"], size: 150 },
         ],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
@@ -442,25 +442,25 @@ export const REELS = [
           { at: 0.3, rect: [1100, 352, 723, 285], w: 880, y: 1240 },
         ] },
       // "Playoffs. A grand final."
-      { kind: "stage", t: 26.0, d: 2.55, shot: "kami-playoffs-final", plateW: 1040, plateY: 1060, sweep: false,
+      { kind: "stage", t: 25.3, d: 2.7, shot: "kami-playoffs-final", plateW: 1040, plateY: 1060, sweep: false,
         heads: [
           { at: 0, label: "STAGE TWO", lines: ["[PLAYOFFS.]"], size: 150 },
-          { at: 1.15, label: "STAGE THREE", lines: ["A GRAND", "~FINAL.~"], size: 150 },
+          { at: 1.12, label: "STAGE THREE", lines: ["A GRAND", "~FINAL.~"], size: 150 },
         ],
         plate: [{ at: 0, rx: 12, ry: 15 }],
         pieces: [
-          { at: 0.1, d: 1.05, rect: [366, 486, 713, 110], w: 960, y: 900 },
-          { at: 0.2, d: 0.95, rect: [1098, 486, 703, 110], w: 960, y: 1110 },
-          { at: 1.2, rect: [765, 700, 635, 130], w: 960, y: 1080 },
+          { at: 0.1, d: 1.02, rect: [366, 486, 713, 110], w: 960, y: 900 },
+          { at: 0.2, d: 0.92, rect: [1098, 486, 703, 110], w: 960, y: 1110 },
+          { at: 1.17, rect: [765, 700, 635, 130], w: 960, y: 1080 },
         ] },
       // "The crowd predicts every match."
-      { kind: "stage", t: 28.55, d: 2.5, shot: "kami-final-modal", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 28.0, d: 2.6, shot: "kami-final-modal", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "PREDICTIONS", lines: ["THE CROWD", "[CALLS IT.]"], size: 110 }],
         plate: [{ at: 0, rx: 12, ry: 15 }],
         pieces: [{ at: 0.2, rect: [652, 314, 616, 451], w: 860, y: 1060,
           focus: [{ at: 1.2, rect: [679, 610, 562, 45], tag: "4 OF 4 VOTES · PATIENCE", color: C.hot }] }] },
       // "And every kill hits the leaderboard."
-      { kind: "stage", t: 31.05, d: 2.6, shot: "kami-leaderboard", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 30.6, d: 2.55, shot: "kami-leaderboard", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "LEADERBOARD", lines: ["EVERY KILL.", "{TRACKED.}"], size: 110 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
@@ -470,22 +470,22 @@ export const REELS = [
           { at: 0.55, rect: [1340, 420, 483, 218], w: 420, x: 780, y: 1360 },
         ] },
       // "Hosting? It runs itself."
-      { kind: "list", t: 33.65, d: 2.45, label: "FOR HOSTS", lines: ["HOSTING?", "[IT RUNS ITSELF.]"], size: 104,
+      { kind: "list", t: 33.15, d: 2.45, label: "FOR HOSTS", lines: ["HOSTING?", "[IT RUNS ITSELF.]"], size: 104,
         items: [{ t: "SIGN-UPS & APPROVALS", at: 0.75 }, { t: "AUCTION DRAFT", at: 1.0 }, { t: "BRACKETS & SCORES", at: 1.25 }, { t: "DISCORD ROLES", at: 1.5 }] },
       // "Kami Labs ran their entire tournament on it."
-      { kind: "stage", t: 36.1, d: 3.95, shot: "kami-fixtures-champion", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 35.6, d: 3.25, shot: "kami-fixtures-champion", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "KAMI LABS", lines: ["A FULL TOURNAMENT", "ON {VOLT}."], size: 92 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
-          { at: 0.3, d: 2.1, rect: [345, 513, 723, 282], w: 860, y: 860 },
-          { at: 0.45, d: 1.95, rect: [1100, 513, 723, 282], w: 860, y: 1230 },
-          { at: 2.5, rect: [775, 350, 617, 135], w: 900, y: 1040 },
+          { at: 0.3, d: 1.9, rect: [345, 513, 723, 282], w: 860, y: 860 },
+          { at: 0.45, d: 1.75, rect: [1100, 513, 723, 282], w: 860, y: 1230 },
+          { at: 2.2, rect: [775, 350, 617, 135], w: 900, y: 1040 },
         ],
         toasts: [{ at: 1.1, k: "KAMI LABS", v: "6 TEAMS", color: C.volt, y: 1420, d: 0.75 }, { at: 1.75, k: "KAMI LABS", v: "24 PLAYERS", color: C.volt, side: "left", y: 1420, d: 0.75 }] },
       // "Your league is next."
-      { kind: "hook", t: 40.05, d: 1.7, art: ART.omenVoid, label: "NOW LIVE", lines: ["YOUR LEAGUE", "IS [NEXT.]"], size: 150 },
+      { kind: "hook", t: 38.85, d: 1.2, art: ART.omenVoid, label: "NOW LIVE", lines: ["YOUR LEAGUE", "IS [NEXT.]"], size: 150 },
       // "VOLT. Now live."
-      { kind: "cta", t: 41.75, d: 6.25, lines: ["NOW", "[LIVE.]"], size: 140, feat: "Solo sign-ups · Live auction · Brackets · Predictions · Stats", button: "START YOUR LEAGUE" },
+      { kind: "cta", t: 40.05, d: 5.95, lines: ["NOW", "[LIVE.]"], size: 140, feat: "Solo sign-ups · Live auction · Brackets · Predictions · Stats", button: "START YOUR LEAGUE" },
     ],
   },
 
