@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&display=block" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #070a14; color: #ecf3ff; font-family: Rajdhani, sans-serif; width: 1880px; padding: 40px; }
+  .tag { font-size: 17px; letter-spacing: 0.3em; color: #7da6ff; margin-bottom: 22px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; margin-bottom: 26px; }
+  .card { background: #0b1020; border: 1px solid rgba(120,150,220,0.16); padding: 34px; min-height: 340px; display: flex; flex-direction: column; }
+  .card.light { background: #f3f6fc; }
+  .card.light .tag { color: #2a5be0; }
+  .center { flex: 1; display: grid; place-items: center; }
+  .row { display: flex; align-items: center; gap: 28px; }
+  .sub { font-size: 15px; letter-spacing: 0.42em; color: #6f9bff; }
+  .light .sub { color: #2a5be0; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="bolt" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8db3ff"/><stop offset="0.55" stop-color="#3d7bff"/><stop offset="1" stop-color="#1f47c9"/></linearGradient>
+    <linearGradient id="arm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9cbef"/></linearGradient>
+    <linearGradient id="red" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7a85"/><stop offset="1" stop-color="#e2303f"/></linearGradient>
+    <linearGradient id="armBlue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6b9cff"/><stop offset="1" stop-color="#2a5be0"/></linearGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#16203d"/><stop offset="1" stop-color="#090d1a"/></linearGradient>
+
+    <!-- the user's mark, untouched geometry -->
+    <path id="armP" d="M344.811 140.139H0L273.118 552.012L436.988 278.57L344.811 140.139Z"/>
+    <path id="boltP" d="M392.606 466.561L689.622 0H1002L303.843 834L549.649 401.619L392.606 466.561Z"/>
+
+    <!-- 1 · Volt: ice-white arm, electric-blue bolt -->
+    <symbol id="m1" viewBox="0 0 1002 834"><use href="#armP" fill="url(#arm)"/><use href="#boltP" fill="url(#bolt)"/></symbol>
+    <!-- 2 · Voltage: blue arm, red bolt -->
+    <symbol id="m2" viewBox="0 0 1002 834"><use href="#armP" fill="url(#armBlue)"/><use href="#boltP" fill="url(#red)"/></symbol>
+    <!-- 3 · mono -->
+    <symbol id="m3w" viewBox="0 0 1002 834"><use href="#armP" fill="#f4f8ff"/><use href="#boltP" fill="#f4f8ff"/></symbol>
+    <symbol id="m3n" viewBox="0 0 1002 834"><use href="#armP" fill="#0a0f1e"/><use href="#boltP" fill="#0a0f1e"/></symbol>
+    <symbol id="m1l" viewBox="0 0 1002 834"><use href="#armP" fill="#0a0f1e"/><use href="#boltP" fill="url(#bolt)"/></symbol>
+
+    <!-- wordmark: geometric caps, the O carries the app's notch -->
+    <symbol id="word" viewBox="0 0 146 40">
+      <path d="M0 0H10.5L17.5 27L24.5 0H35L23 40H12Z"/>
+      <path fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/>
+      <path d="M80 0H89.5V31H105V40H80Z"/>
+      <path d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/>
+    </symbol>
+    <!-- "OLT" so the mark can stand in for the V -->
+    <symbol id="olt" viewBox="40 0 106 40">
+      <path fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/>
+      <path d="M80 0H89.5V31H105V40H80Z"/>
+      <path d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/>
+    </symbol>
+
+    <!-- app icon: the notched tile with the mark -->
+    <symbol id="icon" viewBox="0 0 512 512">
+      <path d="M0 0H432L512 80V512H80L0 432Z" fill="url(#tile)"/>
+      <path d="M0 0H432L512 80V512H80L0 432Z" fill="none" stroke="rgba(125,166,255,0.28)" stroke-width="6"/>
+      <g transform="translate(76 112) scale(0.36)"><use href="#armP" fill="url(#arm)"/><use href="#boltP" fill="url(#bolt)"/></g>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="grid">
+  <div class="card"><div class="tag">1 · VOLT — PRIMARY</div><div class="center"><svg width="330" height="275" style="filter:drop-shadow(0 0 28px rgba(61,123,255,0.45))"><use href="#m1"/></svg></div></div>
+  <div class="card"><div class="tag">2 · VOLTAGE — ALT</div><div class="center"><svg width="330" height="275" style="filter:drop-shadow(0 0 28px rgba(255,70,85,0.35))"><use href="#m2"/></svg></div></div>
+  <div class="card"><div class="tag">3 · MONO</div><div class="center"><div class="row"><svg width="200" height="166"><use href="#m3w"/></svg><div style="background:#f3f6fc;padding:22px"><svg width="160" height="133"><use href="#m3n"/></svg></div></div></div></div>
+</div>
+
+<div class="grid" style="grid-template-columns: 1.4fr 1fr 1fr;">
+  <div class="card"><div class="tag">HORIZONTAL LOCKUP</div><div class="center">
+    <div class="row" style="gap:26px"><svg width="150" height="125" style="filter:drop-shadow(0 0 18px rgba(61,123,255,0.4))"><use href="#m1"/></svg>
+      <div><svg width="330" height="90" fill="#f4f8ff"><use href="#word"/></svg><div class="sub" style="margin-top:10px">// LEAGUE PLATFORM</div></div></div>
+  </div></div>
+  <div class="card"><div class="tag">STACKED</div><div class="center"><div style="display:flex;flex-direction:column;align-items:center;gap:18px">
+    <svg width="170" height="141" style="filter:drop-shadow(0 0 18px rgba(61,123,255,0.4))"><use href="#m1"/></svg>
+    <svg width="220" height="60" fill="#f4f8ff"><use href="#word"/></svg><div class="sub">LEAGUE PLATFORM</div></div></div></div>
+  <div class="card"><div class="tag">MARK AS THE V</div><div class="center"><div class="row" style="gap:8px;align-items:flex-end">
+    <svg width="132" height="110" style="filter:drop-shadow(0 0 14px rgba(61,123,255,0.4))"><use href="#m1"/></svg>
+    <svg width="230" height="87" fill="#f4f8ff" style="margin-bottom:12px"><use href="#olt"/></svg></div></div></div>
+</div>
+
+<div class="grid" style="grid-template-columns: 1fr 1fr 1.4fr;">
+  <div class="card"><div class="tag">APP / DISCORD ICON</div><div class="center"><div class="row"><svg width="200" height="200"><use href="#icon"/></svg><svg width="96" height="96"><use href="#icon"/></svg></div></div></div>
+  <div class="card"><div class="tag">SMALL SIZES</div><div class="center"><div class="row" style="align-items:flex-end;gap:22px">
+    <svg width="64" height="64"><use href="#icon"/></svg><svg width="32" height="32"><use href="#icon"/></svg><svg width="16" height="16"><use href="#icon"/></svg>
+    <svg width="48" height="40"><use href="#m1"/></svg><svg width="24" height="20"><use href="#m1"/></svg></div></div></div>
+  <div class="card light"><div class="tag">ON LIGHT</div><div class="center"><div class="row" style="gap:24px"><svg width="130" height="108"><use href="#m1l"/></svg>
+    <div><svg width="280" height="77" fill="#0a0f1e"><use href="#word"/></svg><div class="sub" style="margin-top:8px">// LEAGUE PLATFORM</div></div></div></div></div>
+</div>
+</body>
+</html>

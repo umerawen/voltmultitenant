@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=IBM+Plex+Mono:wght@500&display=block" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #070a14; color: #ecf3ff; font-family: Rajdhani, sans-serif; width: 1800px; padding: 40px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 28px; }
+  .card { background: linear-gradient(#0d1324, #0a0e1a); border: 1px solid rgba(120,150,220,0.18); padding: 36px 40px 30px; }
+  .tag { font-size: 18px; letter-spacing: 0.3em; color: #7da6ff; margin-bottom: 26px; }
+  .row { display: flex; align-items: center; gap: 48px; }
+  .hero { width: 230px; height: 230px; display: grid; place-items: center; }
+  .lock { display: flex; align-items: center; gap: 22px; }
+  .sizes { display: flex; align-items: end; gap: 22px; margin-top: 26px; }
+  .light { background: #f2f5fb; padding: 14px 20px; display: flex; align-items: center; gap: 16px; }
+  .sub { font-size: 15px; letter-spacing: 0.34em; color: #5b8dff; margin-top: 6px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5d93ff"/><stop offset="1" stop-color="#2353d6"/></linearGradient>
+    <linearGradient id="blueV" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6b9cff"/><stop offset="1" stop-color="#2a5be0"/></linearGradient>
+
+    <!-- A · Crest: faceted shield, V cut out, voltage slash in the notch -->
+    <symbol id="A" viewBox="0 0 100 100">
+      <path d="M12 8H78L90 20V55L51 94L12 55Z" fill="url(#blue)"/>
+      <path d="M12 8H51V94L12 55Z" fill="#fff" opacity="0.07"/>
+      <path d="M26 24H39L51 57L63 24H76L57 74H45Z" fill="#0a0f1e"/>
+      <path d="M71 8H78L90 20V27Z" fill="#ff4655"/>
+    </symbol>
+    <symbol id="A1" viewBox="0 0 100 100">
+      <path d="M12 8H78L90 20V55L51 94L12 55Z" fill="#0a0f1e"/>
+      <path d="M26 24H39L51 57L63 24H76L57 74H45Z" fill="#f2f5fb"/>
+      <path d="M71 8H78L90 20V27Z" fill="#ff4655"/>
+    </symbol>
+
+    <!-- B · Tile: the app's notched panel, V cut out, red corner band -->
+    <symbol id="B" viewBox="0 0 100 100">
+      <path d="M8 8H76L92 24V92H24L8 76Z" fill="url(#blue)"/>
+      <path d="M8 8H50V92H24L8 76Z" fill="#fff" opacity="0.07"/>
+      <path d="M25 26H39L50 58L61 26H75L57 76H43Z" fill="#0a0f1e"/>
+      <path d="M68 8H76L92 24V32Z" fill="#ff4655"/>
+    </symbol>
+    <symbol id="B1" viewBox="0 0 100 100">
+      <path d="M8 8H76L92 24V92H24L8 76Z" fill="#0a0f1e"/>
+      <path d="M25 26H39L50 58L61 26H75L57 76H43Z" fill="#f2f5fb"/>
+      <path d="M68 8H76L92 24V32Z" fill="#ff4655"/>
+    </symbol>
+
+    <!-- C · Climb: stacked chevrons, the rank-up arrow -->
+    <symbol id="C" viewBox="0 0 100 100">
+      <path d="M10 16H30L50 50L70 16H90L50 84Z" fill="url(#blueV)"/>
+      <path d="M30 16H40L50 34L60 16H70L50 50Z" fill="#0a0f1e"/>
+      <path d="M38 60L50 81L62 60" fill="none" stroke="#0a0f1e" stroke-width="0"/>
+      <path d="M41 16H59L50 32Z" fill="#ff4655"/>
+    </symbol>
+    <symbol id="C1" viewBox="0 0 100 100">
+      <path d="M10 16H30L50 50L70 16H90L50 84Z" fill="#0a0f1e"/>
+      <path d="M30 16H40L50 34L60 16H70L50 50Z" fill="#f2f5fb"/>
+      <path d="M41 16H59L50 32Z" fill="#ff4655"/>
+    </symbol>
+
+    <!-- D · Type mark: the wordmark's V, leaning forward, with the speed stripe -->
+    <symbol id="D" viewBox="0 0 100 100">
+      <g transform="skewX(-12) translate(14 0)">
+        <path d="M10 12H33L50 64L67 12H90L62 84H38Z" fill="url(#blueV)"/>
+      </g>
+      <path d="M22 92H70L66 97H18Z" fill="#ff4655"/>
+    </symbol>
+    <symbol id="D1" viewBox="0 0 100 100">
+      <g transform="skewX(-12) translate(14 0)">
+        <path d="M10 12H33L50 64L67 12H90L62 84H38Z" fill="#0a0f1e"/>
+      </g>
+      <path d="M22 92H70L66 97H18Z" fill="#ff4655"/>
+    </symbol>
+
+    <!-- Custom wordmark: notched O (the app's corner cut), square terminals -->
+    <symbol id="word" viewBox="0 0 146 40">
+      <path d="M0 0H10.5L17.5 27L24.5 0H35L23 40H12Z"/>
+      <path fill-rule="evenodd" d="M40 0H66L74 8V40H48L40 32ZM49 9V31H65V9Z"/>
+      <path d="M80 0H89.5V31H105V40H80Z"/>
+      <path d="M109 0H146V9.5H132.25V40H122.75V9.5H109Z"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="grid">
+  <!-- each card: hero mark · lockup · sizes · light version -->
+  <div class="card" data-k="A">
+    <div class="tag">A · CREST</div>
+    <div class="row">
+      <svg class="hero" viewBox="0 0 100 100"><use href="#A"/></svg>
+      <div>
+        <div class="lock"><svg width="76" height="76"><use href="#A"/></svg><div><svg width="230" height="63" fill="#f4f8ff"><use href="#word"/></svg><div class="sub">// LEAGUE PLATFORM</div></div></div>
+        <div class="sizes"><svg width="48" height="48"><use href="#A"/></svg><svg width="32" height="32"><use href="#A"/></svg><svg width="16" height="16"><use href="#A"/></svg>
+          <div class="light"><svg width="44" height="44"><use href="#A1"/></svg><svg width="120" height="33" fill="#0a0f1e"><use href="#word"/></svg></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card" data-k="B">
+    <div class="tag">B · TILE</div>
+    <div class="row">
+      <svg class="hero" viewBox="0 0 100 100"><use href="#B"/></svg>
+      <div>
+        <div class="lock"><svg width="76" height="76"><use href="#B"/></svg><div><svg width="230" height="63" fill="#f4f8ff"><use href="#word"/></svg><div class="sub">// LEAGUE PLATFORM</div></div></div>
+        <div class="sizes"><svg width="48" height="48"><use href="#B"/></svg><svg width="32" height="32"><use href="#B"/></svg><svg width="16" height="16"><use href="#B"/></svg>
+          <div class="light"><svg width="44" height="44"><use href="#B1"/></svg><svg width="120" height="33" fill="#0a0f1e"><use href="#word"/></svg></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card" data-k="C">
+    <div class="tag">C · CLIMB</div>
+    <div class="row">
+      <svg class="hero" viewBox="0 0 100 100"><use href="#C"/></svg>
+      <div>
+        <div class="lock"><svg width="76" height="76"><use href="#C"/></svg><div><svg width="230" height="63" fill="#f4f8ff"><use href="#word"/></svg><div class="sub">// LEAGUE PLATFORM</div></div></div>
+        <div class="sizes"><svg width="48" height="48"><use href="#C"/></svg><svg width="32" height="32"><use href="#C"/></svg><svg width="16" height="16"><use href="#C"/></svg>
+          <div class="light"><svg width="44" height="44"><use href="#C1"/></svg><svg width="120" height="33" fill="#0a0f1e"><use href="#word"/></svg></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card" data-k="D">
+    <div class="tag">D · TYPE MARK</div>
+    <div class="row">
+      <svg class="hero" viewBox="0 0 100 100"><use href="#D"/></svg>
+      <div>
+        <div class="lock"><svg width="76" height="76"><use href="#D"/></svg><div><svg width="230" height="63" fill="#f4f8ff"><use href="#word"/></svg><div class="sub">// LEAGUE PLATFORM</div></div></div>
+        <div class="sizes"><svg width="48" height="48"><use href="#D"/></svg><svg width="32" height="32"><use href="#D"/></svg><svg width="16" height="16"><use href="#D"/></svg>
+          <div class="light"><svg width="44" height="44"><use href="#D1"/></svg><svg width="120" height="33" fill="#0a0f1e"><use href="#word"/></svg></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
