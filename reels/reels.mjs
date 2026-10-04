@@ -47,21 +47,34 @@ export const REELS = [
     scenes: [
       // "Every player has a price."
       { kind: "hook", t: 0, d: 2.45, art: ART.reyna, label: "LIVE AUCTION DRAFT", lines: ["EVERY PLAYER", "HAS A [PRICE]."], size: 140 },
-      // "Zephyr's on the block — and six captains want him. 2500… 2700… 2900!"
-      { kind: "screen", t: 2.45, d: 8.25, shot: "auction-block", url: "LIVE AUCTION",
-        head: { label: "ON THE BLOCK", lines: ["ZEPHYR IS UP.", "{6 CAPTAINS} WANT HIM."], size: 92 },
-        cam: [{ at: 0, focus: "ZEPHYR", w: 860 }, { at: 1.7, center: [430, 330], w: 620 }, { at: 3.4, focus: "CURRENT BID", w: 560 }],
-        toasts: [{ at: 4.26, k: "EMBERFALL", v: "BIDS |$2,500|", color: C.money }, { at: 5.72, k: "FROSTBYTE", v: "BIDS |$2,700|", color: C.money, side: "left" }, { at: 7.05, k: "NOVA STRIKE", v: "BIDS |$2,900|", color: C.money }] },
-      // "Going… going… SOLD! To Nova Strike."
-      { kind: "screen", t: 10.7, d: 5.1, shot: "auction-block", url: "LIVE AUCTION",
-        head: { label: "HAMMER DOWN", lines: ["GOING… GOING…"] },
-        cam: [{ at: 0, focus: "SOLD", w: 760 }],
-        cursor: [{ at: 1.82, to: "SOLD", fx: 0.45, d: 2.6 }],
-        stamp: { at: 2.74, text: "SOLD", sub: "NOVA STRIKE · $2,900", y: 980 } },
+      // "Zephyr's on the block — and six captains want him. 2500… 2700… 2900!  Going… going… SOLD!"
+      // The full auction screen floats in 3D; each part lifts off it as it's named.
+      { kind: "stage", t: 2.45, d: 13.35, shot: "auction-block", plateW: 1040, plateY: 1040,
+        heads: [
+          { at: 0, label: "ON THE BLOCK", lines: ["ZEPHYR IS UP.", "{6 CAPTAINS} WANT HIM."], size: 92 },
+          { at: 8.25, label: "HAMMER DOWN", lines: ["GOING… GOING…"] },
+        ],
+        plate: [{ at: 0, rx: 14, ry: -16 }, { at: 8.0, rx: 12, ry: 15, dur: 1.1 }],
+        pieces: [
+          { at: 0.45, d: 1.5, rect: [852, 90, 462, 602], w: 560, y: 1080 },                     // Zephyr's card
+          { at: 1.95, d: 1.9, rect: [268, 88, 254, 634], w: 360, x: 295, y: 1070 },              // captains, left
+          { at: 2.05, d: 1.8, rect: [1645, 88, 254, 634], w: 360, x: 785, y: 1070 },             // captains, right
+          { at: 3.95, d: 4.15, rect: [892, 715, 384, 85], w: 970, y: 1010,                       // the bid, ticking up
+            live: [
+              { rect: [915, 742, 165, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$2,300" }, { at: 4.26, text: "$2,500" }, { at: 5.72, text: "$2,700" }, { at: 7.05, text: "$2,900" }] },
+              { rect: [1105, 750, 150, 30], size: 20, font: "raj", steps: [{ at: 0, text: "VIPERS", color: "#ff4655" }, { at: 4.26, text: "EMBERFALL", color: "#5ad1ff" }, { at: 5.72, text: "FROSTBYTE", color: "#ff8a3d" }, { at: 7.05, text: "NOVA STRIKE", color: "#9d6bff" }] },
+            ] },
+          { at: 8.45, d: 4.75, rect: [836, 822, 494, 72], w: 970, y: 1080 },                     // SOLD / PASS
+        ],
+        toasts: [{ at: 4.26, k: "EMBERFALL", v: "BIDS |$2,500|", color: C.money, y: 1230 }, { at: 5.72, k: "FROSTBYTE", v: "BIDS |$2,700|", color: C.money, side: "left", y: 1230 }, { at: 7.05, k: "NOVA STRIKE", v: "BIDS |$2,900|", color: C.money, y: 1230, d: 1.0 }],
+        cursor: [{ at: 9.95, x: 426, y: 1082, d: 2.2 }],
+        stamp: { at: 10.99, text: "SOLD", sub: "NOVA STRIKE · $2,900", y: 840 } },
       // "Every captain gets a budget — spend it smart."
-      { kind: "screen", t: 15.8, d: 3.4, shot: "rosters", url: "ROSTERS",
-        head: { label: "THE LOCKER ROOM", lines: ["SPEND SMART.", "BUDGETS ARE {REAL}."], size: 96 },
-        cam: [{ at: 0, w: 640, center: [600, 560] }, { at: 1.4, w: 640, center: [1300, 560] }] },
+      { kind: "stage", t: 15.8, d: 3.4, shot: "rosters", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "THE LOCKER ROOM", lines: ["SPEND SMART.", "BUDGETS ARE {REAL}."], size: 96 }],
+        plate: [{ at: 0, rx: 14, ry: 16 }],
+        pieces: [{ at: 0.35, rect: [1092, 233, 357, 535], w: 580, y: 1110,
+          focus: [{ at: 0.9, rect: [1110, 313, 155, 68], tag: "BUDGET LEFT", color: C.money }, { at: 2.0, rect: [1110, 515, 285, 52], tag: "ZEPHYR · $2,520", color: C.volt }] }] },
       // "Twenty-four players. Six captains. One draft night."
       { kind: "stat", t: 19.2, d: 4.6, label: "ONE DRAFT NIGHT",
         items: [{ to: 24, label: "Players", at: 0.28, dur: 0.9 }, { to: 6, label: "Captains", color: C.voltHi, at: 1.75, dur: 0.8 }, { to: 1, label: "Draft night", color: C.money, at: 3.25, dur: 0.5 }] },

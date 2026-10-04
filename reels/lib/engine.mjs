@@ -153,6 +153,30 @@ export function reel(spec) {
     scene(s, inner, { enter: s.enter || "fade", exit: s.exit || "fade" });
   };
 
+  // canvas-space toasts (one replaces the next unless they say otherwise)
+  const mkToasts = (s, sid) => (s.toasts || []).map((o, i) => {
+    const id2 = nid(sid + "-to");
+    const at = s.t + o.at, side = o.side || (i % 2 ? "left" : "right");
+    const y = o.y ?? 1400;
+    if (o.d == null && s.toasts[i + 1]) o.d = s.toasts[i + 1].at - o.at - 0.05;
+    tw(`#${id2}`, { x: side === "right" ? 160 : -160, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "expo.out" }, at);
+    if (o.d) tto(`#${id2}`, { opacity: 0, x: side === "right" ? 60 : -60, duration: 0.3 }, at + o.d);
+    cue(at, o.sound || "pop", { p: o.p ?? i + 1, g: 0.7 });
+    return `<div class="toast ${side}" id="${id2}" style="top:${y}px;border-left-color:${o.color || C.volt}"><div class="toast-k" style="color:${o.color || C.voltHi}">${rich(o.k || "")}</div><div class="toast-v">${rich(o.v)}</div></div>`;
+  }).join("");
+  // a stamp slammed over everything; shakeSel gets a short jolt
+  const mkStamp = (s, sid, shakeSel) => {
+    if (!s.stamp) return "";
+    const st = s.stamp, at = s.t + st.at, col = st.color || C.money;
+    tw(`#${sid}-stamp`, { scale: 2.4, opacity: 0, rotation: -14 }, { scale: 1, opacity: 1, rotation: -6, duration: 0.42, ease: "expo.out" }, at);
+    tw(`#${sid}-fl`, { opacity: 0 }, { keyframes: { opacity: [0, 0.35, 0] }, duration: 0.65, ease: "power2.out" }, at + 0.08);
+    if (shakeSel) tw(shakeSel, { x: 0 }, { keyframes: { x: [0, -14, 11, -7, 4, 0] }, duration: 0.42, ease: "none", immediateRender: false }, at + 0.1);
+    cue(at - 1.1, "swell", { d: 1.1, g: 0.6 });
+    cue(at + 0.08, "thump", { g: 1 });
+    cue(at + 0.12, "chime", { p: 0, g: 0.55 });
+    return `<div class="stamp-wrap" style="top:${st.y ?? 900}px"><div class="stamp" id="${sid}-stamp" style="--c:${col}"><div class="stamp-t"${st.size ? ` style="font-size:${st.size}px"` : ""}>${rich(st.text)}</div>${st.sub ? `<div class="stamp-s">${rich(st.sub)}</div>` : ""}</div></div><div class="flash" id="${sid}-fl"></div>`;
+  };
+
   // A product screen in a browser frame (or full bleed) with a moving camera.
   kinds.screen = (s) => {
     const sid = s._id;
@@ -268,29 +292,8 @@ export function reel(spec) {
       const at = s.t + 0.02;
       head = `<div class="head${full ? " head-full" : ""}">${s.head.label ? label(sid, s.head.label, at) : ""}${lines(sid, s.head.lines, { size: s.head.size || 100, at: at + 0.08 })}</div>`;
     }
-    // canvas-space toasts beside the frame
-    const toasts = (s.toasts || []).map((o, i) => {
-      const id2 = nid(sid + "-to");
-      const at = s.t + o.at, side = o.side || (i % 2 ? "left" : "right");
-      const y = o.y ?? 1400;
-      if (o.d == null && s.toasts[i + 1]) o.d = s.toasts[i + 1].at - o.at - 0.05;
-      tw(`#${id2}`, { x: side === "right" ? 160 : -160, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "expo.out" }, at);
-      if (o.d) tto(`#${id2}`, { opacity: 0, x: side === "right" ? 60 : -60, duration: 0.3 }, at + o.d);
-      cue(at, o.sound || "pop", { p: o.p ?? i + 1, g: 0.7 });
-      return `<div class="toast ${side}" id="${id2}" style="top:${y}px;border-left-color:${o.color || C.volt}"><div class="toast-k" style="color:${o.color || C.voltHi}">${rich(o.k || "")}</div><div class="toast-v">${rich(o.v)}</div></div>`;
-    }).join("");
-    // a stamp slammed over the frame
-    let stamp = "";
-    if (s.stamp) {
-      const st = s.stamp, at = s.t + st.at, col = st.color || C.money;
-      stamp = `<div class="stamp-wrap" style="top:${st.y ?? 900}px"><div class="stamp" id="${sid}-stamp" style="--c:${col}"><div class="stamp-t"${st.size ? ` style="font-size:${st.size}px"` : ""}>${rich(st.text)}</div>${st.sub ? `<div class="stamp-s">${rich(st.sub)}</div>` : ""}</div></div><div class="flash" id="${sid}-fl"></div>`;
-      tw(`#${sid}-stamp`, { scale: 2.4, opacity: 0, rotation: -14 }, { scale: 1, opacity: 1, rotation: -6, duration: 0.42, ease: "expo.out" }, at);
-      tw(`#${sid}-fl`, { opacity: 0 }, { keyframes: { opacity: [0, 0.35, 0] }, duration: 0.65, ease: "power2.out" }, at + 0.08);
-      if (!full) tw(`#${sid}-bw`, { x: 0 }, { keyframes: { x: [0, -14, 11, -7, 4, 0] }, duration: 0.42, ease: "none", immediateRender: false }, at + 0.1);
-      cue(at - 1.1, "swell", { d: 1.1, g: 0.6 });
-      cue(at + 0.08, "thump", { g: 1 });
-      cue(at + 0.12, "chime", { p: 0, g: 0.55 });
-    }
+    const toasts = mkToasts(s, sid);
+    const stamp = mkStamp(s, sid, full ? null : `#${sid}-bw`);
     // a counter shown above / over the frame
     let count = "";
     if (s.count) {
@@ -303,6 +306,134 @@ export function reel(spec) {
     }
     const pos = full ? "" : `style="top:${s.frameY ?? 600}px"`;
     scene(s, `<div class="frame-pos" ${pos}>${view}</div>${head}${count}${toasts}${stamp}`, { enter: s.enter || "fade", exit: s.exit || "fade" });
+  };
+
+  // The whole screen as a floating, tilted plane — nothing cropped — and the
+  // parts that matter lift off it as big, readable cards (exploded UI).
+  //   plate:  [{ at, rx, ry, s, dur }]      poses of the plane (deg)
+  //   pieces: [{ at, d, rect, w, x, y, live, focus }]
+  //   heads:  [{ at, label, lines, size }]   headline per beat
+  //   cursor: [{ at, x, y, d }]              canvas-space click
+  kinds.stage = (s) => {
+    const sid = s._id;
+    const marks = marksFor(s.shot);
+    const rectOf = (m) => {
+      const r = Array.isArray(m) ? { x: m[0], y: m[1], w: m[2], h: m[3] } : marks[m];
+      if (!r) throw new Error(`${id}: mark "${m}" not found in ${s.shot}.json`);
+      return r;
+    };
+    const PW = s.plateW || 1000, k = PW / SW, PH = SH * k, P = 2400;
+    const CX = 540, CY = s.plateY ?? 1000;
+    const pl = `${sid}-p3`, pos = `${sid}-pp`;
+    const poses = (s.plate || [{ at: 0 }]).map((p) => ({ rx: 14, ry: -16, s: 1, dur: 1.2, ...p, at: s.t + (p.at || 0) }));
+    const rad = Math.PI / 180;
+    const project = (p, px, py) => {
+      const lx = (px - SW / 2) * k * p.s, ly = (py - SH / 2) * k * p.s;
+      const a = p.rx * rad, b = p.ry * rad;
+      const y1 = ly * Math.cos(a), z1 = ly * Math.sin(a);
+      const x2 = lx * Math.cos(b) + z1 * Math.sin(b), z2 = -lx * Math.sin(b) + z1 * Math.cos(b);
+      const f = P / (P - z2);
+      return [CX + x2 * f, CY + y1 * f];
+    };
+    const poseAt = (t) => { let q = poses[0]; for (const p of poses) if (p.at <= t) q = p; return q; };
+
+    // plane: fly in, then poses with a slow drift between them
+    const p0 = poses[0];
+    const base = { transformPerspective: P, transformOrigin: "50% 50%" };
+    if (s.flyIn !== false) tw(`#${pl}`, { ...base, rotationX: 50, rotationY: -40, scale: p0.s * 0.72, opacity: 0, y: 260 }, { rotationX: p0.rx, rotationY: p0.ry, scale: p0.s, opacity: 1, y: 0, duration: 1.15, ease: "expo.out" }, s.t - 0.15);
+    else tw(`#${pl}`, { ...base, rotationX: p0.rx, rotationY: p0.ry, scale: p0.s, opacity: 1, y: 0 }, { rotationX: p0.rx, rotationY: p0.ry, scale: p0.s, opacity: 1, y: 0, duration: 0.01 }, s.t - 0.2);
+    let last = { rx: p0.rx, ry: p0.ry, s: p0.s };
+    poses.forEach((p, i) => {
+      const arrive = i ? p.at + p.dur : s.t + 1.0;
+      if (i) tw(`#${pl}`, { rotationX: last.rx, rotationY: last.ry, scale: last.s }, { rotationX: p.rx, rotationY: p.ry, scale: p.s, duration: p.dur, ease: "power2.inOut", immediateRender: false }, p.at);
+      const until = poses[i + 1] ? poses[i + 1].at : s.t + s.d;
+      if (until - arrive > 0.3) {
+        const dr = { rx: p.rx - 1.5, ry: p.ry + 4, s: p.s * 1.02 };
+        tw(`#${pl}`, { rotationX: p.rx, rotationY: p.ry, scale: p.s }, { rotationX: dr.rx, rotationY: dr.ry, scale: dr.s, duration: until - arrive, ease: "none", immediateRender: false }, arrive);
+        last = dr;
+      } else last = { rx: p.rx, ry: p.ry, s: p.s };
+    });
+    tw(`#${pos}`, { y: 14 }, { y: -14, duration: s.d, ease: "sine.inOut" }, s.t);
+
+    // pieces
+    const img = asset("screen", s.shot);
+    const hl = [];
+    const pieces = (s.pieces || []).map((pc, i) => {
+      const id2 = `${sid}-pc${i}`, r = rectOf(pc.rect);
+      const S = pc.w / r.w, W2 = r.w * S, H2 = r.h * S;
+      const cx = pc.x ?? 540, cy = pc.y ?? 1020, at = s.t + pc.at;
+      const pose = poseAt(at);
+      const [ox, oy] = project(pose, r.x + r.w / 2, r.y + r.h / 2);
+      const [ax] = project(pose, r.x, r.y + r.h / 2), [bx] = project(pose, r.x + r.w, r.y + r.h / 2);
+      const s0 = Math.max(Math.abs(bx - ax) / W2, 0.05);
+      tw(`#${id2}`, { x: ox - cx, y: oy - cy, scale: s0, rotationX: pose.rx, rotationY: pose.ry, transformPerspective: P }, { x: 0, y: 0, scale: 1, rotationX: 0, rotationY: 0, duration: 0.8, ease: "expo.out" }, at);
+      tw(`#${id2}`, { opacity: 0 }, { opacity: 1, duration: 0.16, ease: "none" }, at);
+      tw(`#${id2}-f`, { y: 0 }, { y: -16, duration: pc.d || 3, ease: "sine.inOut" }, at + 0.6);
+      if (pc.d) tto(`#${id2}`, { opacity: 0, scale: 0.9, y: 40, duration: 0.35, ease: "power2.in" }, at + pc.d - 0.35);
+      cue(at, "air", { g: 0.45 });
+      cue(at + 0.25, "pop", { p: i + 1, g: 0.5 });
+      // where it came from, on the plane
+      const hid = `${id2}-hl`;
+      hl.push(`<div class="p3-hl" id="${hid}" style="left:${r.x * k}px;top:${r.y * k}px;width:${r.w * k}px;height:${r.h * k}px"></div>`);
+      tw(`#${hid}`, { opacity: 0 }, { opacity: 1, duration: 0.3 }, at);
+      if (pc.d) tto(`#${hid}`, { opacity: 0, duration: 0.3 }, at + pc.d - 0.3);
+      // live values painted over the capture (a price ticking up, a leader changing)
+      const live = (pc.live || []).map((L, j) => {
+        const lr = { x: (L.rect[0] - r.x) * S, y: (L.rect[1] - r.y) * S, w: L.rect[2] * S, h: L.rect[3] * S };
+        const spans = L.steps.map((st, q) => {
+          const sidq = `${id2}-l${j}-${q}`;
+          if (q > 0) tw(`#${sidq}`, { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, s.t + st.at);
+          if (L.steps[q + 1]) tto(`#${sidq}`, { opacity: 0, duration: 0.08 }, s.t + L.steps[q + 1].at);
+          return `<span id="${sidq}" class="live-v" style="${q > 0 ? "opacity:0;" : ""}color:${st.color || L.color || C.ink}">${esc(st.text)}</span>`;
+        }).join("");
+        return `<div class="live ${L.font === "raj" ? "live-raj" : "live-mono"}" style="left:${lr.x}px;top:${lr.y}px;width:${lr.w}px;height:${lr.h}px;font-size:${(L.size || 36) * S}px;background:${L.bg || "#0d1326"}">${spans}</div>`;
+      }).join("");
+      const focus = (pc.focus || []).map((F, j) => {
+        const fr = { x: (F.rect[0] - r.x) * S - 8, y: (F.rect[1] - r.y) * S - 8, w: F.rect[2] * S + 16, h: F.rect[3] * S + 16 };
+        const fid = `${id2}-fo${j}`, col = F.color || C.volt;
+        tw(`#${fid}`, { opacity: 0, scale: 1.15 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(1.6)" }, s.t + F.at);
+        cue(s.t + F.at, "pop", { p: 4, g: 0.5 });
+        const c = (p2) => `<i style="${p2};border-color:${col}"></i>`;
+        return `<div class="pc-focus" id="${fid}" style="left:${fr.x}px;top:${fr.y}px;width:${fr.w}px;height:${fr.h}px;box-shadow:0 0 30px ${col}66;background:${col}14">${c("left:0;top:0;border-right:0;border-bottom:0")}${c("right:0;top:0;border-left:0;border-bottom:0")}${c("left:0;bottom:0;border-right:0;border-top:0")}${c("right:0;bottom:0;border-left:0;border-top:0")}${F.tag ? `<b style="background:${col}">${rich(F.tag)}</b>` : ""}</div>`;
+      }).join("");
+      return `<div class="piece" id="${id2}" style="left:${cx - W2 / 2}px;top:${cy - H2 / 2}px;width:${W2}px;height:${H2}px"><div class="piece-in" id="${id2}-f"><div class="piece-clip"><img src="${img}" style="width:${SW * S}px;height:${SH * S}px;left:${-r.x * S}px;top:${-r.y * S}px">${live}</div>${focus}</div></div>`;
+    }).join("");
+    // dim the plane while a card is out
+    (s.pieces || []).forEach((pc, i) => {
+      const prev = s.pieces[i - 1];
+      const gapBefore = prev ? pc.at - (prev.at + (prev.d || 99)) : 99;
+      if (gapBefore > 0.4) tto(`#${sid}-dim`, { opacity: 0.62, duration: 0.4 }, s.t + pc.at);
+      const next = s.pieces[i + 1];
+      const end = pc.at + (pc.d || 99);
+      if (pc.d && (!next || next.at - end > 0.4)) tto(`#${sid}-dim`, { opacity: 0, duration: 0.4 }, s.t + end - 0.3);
+    });
+
+    // headlines per beat
+    const heads = (s.heads || []).map((h, i) => {
+      const hid = `${sid}-h${i}`, at = s.t + h.at + (i ? 0 : 0.02);
+      const next = s.heads[i + 1];
+      if (next) tto(`#${hid}`, { opacity: 0, y: -30, duration: 0.3, ease: "power2.in" }, s.t + next.at - 0.3);
+      return `<div class="head" id="${hid}">${h.label ? label(hid, h.label, at) : ""}${lines(hid, h.lines, { size: h.size || 100, at: at + 0.08 })}</div>`;
+    }).join("");
+
+    // canvas-space cursor
+    const cursors = (s.cursor || []).map((cu, i) => {
+      const cid = `${sid}-cu${i}`, at = s.t + cu.at;
+      const [fx, fy] = cu.from || [cu.x + 240, cu.y + 260];
+      tw(`#${cid}`, { opacity: 0 }, { opacity: 1, duration: 0.25 }, at);
+      tw(`#${cid}`, { x: fx, y: fy }, { x: cu.x, y: cu.y, duration: 0.75, ease: "power3.inOut" }, at + 0.1);
+      tw(`#${cid}`, { scale: 1 }, { scale: 0.8, duration: 0.09, yoyo: true, repeat: 1, ease: "power1.inOut", immediateRender: false }, at + 0.9);
+      tw(`#${cid}r`, { opacity: 0 }, { keyframes: { opacity: [0, 0.9, 0] }, duration: 0.6, ease: "none" }, at + 0.9);
+      tw(`#${cid}r`, { scale: 0.2 }, { scale: 1.5, duration: 0.6, ease: "power2.out" }, at + 0.9);
+      tto(`#${cid}`, { opacity: 0, duration: 0.3 }, at + (cu.d || 1.8));
+      cue(at + 0.92, "click");
+      return `<div id="${cid}" class="cursor" style="left:0;top:0;width:58px;height:58px"><svg viewBox="0 0 24 24" width="100%" height="100%"><path d="M4 2.5l15 9.2-6.6 1.4 3.9 7.3-2.8 1.5-3.9-7.4L4.9 19z" fill="#fff" stroke="#0a0d18" stroke-width="1.4" stroke-linejoin="round"/></svg></div><div id="${cid}r" class="ripple" style="left:${cu.x - 50}px;top:${cu.y - 50}px;width:100px;height:100px;border-width:4px"></div>`;
+    }).join("");
+
+    const toasts = mkToasts(s, sid);
+    const stamp = mkStamp(s, sid, `#${pos}`);
+    const plane = `<div class="p3-pos" id="${pos}"><div class="p3-floor" style="left:${CX - PW * 0.55}px;top:${CY + PH * 0.38}px;width:${PW * 1.1}px"></div><div class="p3" id="${pl}" style="left:${CX - PW / 2}px;top:${CY - PH / 2}px;width:${PW}px;height:${PH}px"><img src="${img}" width="${PW}" height="${PH}"><div class="p3-glare"></div>${hl.join("")}<div class="p3-dim" id="${sid}-dim"></div></div></div>`;
+    scene(s, `${plane}${heads}${pieces}${toasts}${cursors}${stamp}`, { enter: s.enter || "fade", exit: s.exit || "fade" });
   };
 
   // A big number.
