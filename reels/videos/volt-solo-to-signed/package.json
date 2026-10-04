@@ -1,0 +1,11 @@
+{
+  "name": "volt-solo-to-signed",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.8.116 preview",
+    "check": "npx --yes hyperframes@0.8.116 check",
+    "render": "npx --yes hyperframes@0.8.116 render",
+    "publish": "npx --yes hyperframes@0.8.116 publish"
+  }
+}

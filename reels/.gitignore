@@ -1,0 +1,7 @@
+node_modules/
+screens/
+music/
+storyboard/thumbs/
+videos/*/renders/
+videos/*/snapshots/
+videos/*/.hyperframes/cache/

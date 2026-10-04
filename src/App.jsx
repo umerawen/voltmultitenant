@@ -13,6 +13,10 @@ import { createClient } from "@supabase/supabase-js";
 //
 // Rows live in `community_kv (community_id, k, val, shared, user_id, updated_at)`.
 const HAS_SUPABASE = !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+// Marketing captures: the offline preview with ?demo=<scene> fills the app with
+// invented players (src/demo.js, loaded on demand). Never active with Supabase.
+const DEMO = !HAS_SUPABASE && typeof location !== "undefined" ? new URLSearchParams(location.search).get("demo") : null;
+const loadDemo = () => import("./demo.js");
 let __sb = null;
 // Read before createClient: the client consumes the URL hash of a password-reset
 // link while it initialises, so by the time React mounts the marker is gone.
@@ -3839,6 +3843,7 @@ function Leaderboard({ isAdmin }) {
   useEffect(() => {
     let alive = true;
     async function load() {
+      if (DEMO) { const m = await loadDemo(); if (alive) setRows(m.demoLeaderboard); return; }
       if (!HAS_SUPABASE || !window.__VOLT.communityId) { if (alive) setRows([]); return; }
       try {
         const { data: mrs } = await __sb.from("match_results")
@@ -4866,6 +4871,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           catch (e) { console.error("load roster", e); }
         }
         s = await writeState(freshState(captains, pool));
+      }
+      if (DEMO) {
+        const m = await loadDemo();
+        window.__VOLT.communityName = m.DEMO_LEAGUE_NAME;
+        if (!window.__demoBoard) window.__demoBoard = m.demoBoard(DEMO, { freshState, buildSingleElim, resolveMatch, propagateElim, leagueMatches });
+        s = await writeState(window.__demoBoard);
       }
 
       // Fold in anyone approved since the board was built, ONCE, on open.
@@ -9463,7 +9474,7 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
       {/* league mark + collapse toggle */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: wide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: wide ? 4 : 0 }}>
         <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
-          <LeagueLockup name={community?.name || "VOLT"} wide={wide} />
+          <LeagueLockup name={community?.name || window.__VOLT.communityName || "VOLT"} wide={wide} />
         </div>
         {wide && <button onClick={() => setWide(false)} aria-label="Collapse" title="Collapse" style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}><Icon name="collapse" size={14} /></button>}
       </div>
@@ -13836,6 +13847,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   }
 
   async function load() {
+    if (DEMO) { const m = await loadDemo(); window.__VOLT.communityName = m.demoLeague.name; setEvents(m.demoLeague.events); setLive(m.demoLeague.live); setBoard(m.demoLeague.board); return; }
     if (!HAS_SUPABASE) { setEvents([]); return; }
     const { data } = await __sb.from("events").select("*").eq("community_id", window.__VOLT.communityId).order("created_at", { ascending: false });
     setEvents(data || []);
@@ -14092,7 +14104,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
               <div style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1, maxWidth: 620 }}>
                 <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>// VOLT league</div>
                 <div style={{ fontSize: "clamp(40px, 6vw, 72px)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.01em",
-                  lineHeight: 0.92, marginTop: 10, textShadow: `0 0 40px ${H}55`, overflowWrap: "anywhere" }}>{community?.name || "Community"}</div>
+                  lineHeight: 0.92, marginTop: 10, textShadow: `0 0 40px ${H}55`, overflowWrap: "anywhere" }}>{community?.name || window.__VOLT.communityName || "Community"}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                   {community?.slug && (
                     <div style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "6px 7px 6px 13px",
@@ -14621,6 +14633,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     } catch (e) { console.error(e); }
   }
   useEffect(() => { loadMyReg(); }, [phase, ev?.id]);
+  useEffect(() => { if (DEMO) loadDemo().then((m) => setMyProfile(m.demoProfile)); }, []);
   // Host-only: how many applications are waiting for review this tournament.
   // Powers the header Approvals pill + its live count. Cheap: probes ids only,
   // and pauses on hidden tabs via visInterval (egress-friendly).
