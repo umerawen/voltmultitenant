@@ -58,3 +58,26 @@ in the spec's `cues`.
 `npx hyperframes lint` inside the project (structural warnings are expected).
 Then `FFMPEG=<path> bash render.sh <id>`. Sound stays soft: no fast attacks, no
 bright transients; tune `sfx/synth.py`, not per reel.
+
+## Real league, stage, draw, voiceover (current practice)
+
+- **Real data.** Marketing uses the owner's last league (Kami Labs) with their OK.
+  Pull it from Supabase into `reels/data/<league>.json` (git-ignored: players,
+  captains, draft-night team names, sale order, block, tournament, leaderboard,
+  league events, the viewer's card). Capture with
+  `node capture-screens.mjs --real data/<league>.json --prefix <league>-`.
+  Use draft-night team names (one team was later renamed "ISIS"); skip test events.
+- **No cropping frames.** Use the `stage` scene: the whole screen as a tilted,
+  feathered plane, and `pieces` (rects in screen px) lifted off it as cards,
+  cut to the component's shape (`shape: "notch" | "slant"`), with `live`
+  values (a ticking price) and `focus` tags. Lift grouped cards separately,
+  with space between them.
+- **The auction spin.** Never screen-record it. `node capture-cards.mjs --real ...
+  --out screens/<league>-draw` grabs each card still; the `draw` scene animates
+  it (ease up, cruise ~14 cards/s, glide to the winner, motion blur, ticks).
+- **Voiceover.** ElevenLabs (voice "Christina", `eleven_v3`; use
+  `eleven_multilingual_v2` with `<break>` tags when every beat must be
+  separable). Download, `python vo/tighten.py raw.wav vo/<reel>.flac 0.5`,
+  then time scenes to the printed phrase starts (`vo: { file, t }` in the spec).
+  The bed and SFX duck under the voice automatically.
+- Reels render at `fps: 60`.
