@@ -2,9 +2,9 @@
 # the cloud on every push to main that touches the app, and on demand from the
 # Actions tab. No Android Studio needed on your machine.
 #
-# Needs two repository secrets (Settings → Secrets and variables → Actions):
-#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY — the same public values as .env.local.
-# For push notifications, later: secret GOOGLE_SERVICES_JSON and variable VITE_PUSH=1.
+# The Supabase URL and public key come from .env.production (committed; they're
+# public by design). For push notifications, later: secret GOOGLE_SERVICES_JSON
+# and repository variable VITE_PUSH=1.
 # The APK is attached to the run as the "volt-android" artifact.
 name: Android app
 
@@ -19,6 +19,7 @@ on:
       - "capacitor.config.json"
       - "package.json"
       - "package-lock.json"
+      - ".env.production"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -42,11 +43,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      # No Supabase env here on purpose: an unset secret arrives as an empty
+      # string, which would override .env.production and build a demo app.
       - name: Build the web app
         run: npm run build
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           # Turn on push once Firebase is set up: repository variable VITE_PUSH = 1
           VITE_PUSH: ${{ vars.VITE_PUSH }}
 
