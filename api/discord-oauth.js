@@ -14,7 +14,12 @@
 import crypto from "node:crypto";
 
 export default async function handler(req, res) {
-  const { token, code, state, error } = req.query || {};
+  const { token, code, state, error, app } = req.query || {};
+  // Started from the phone app? Then every ending goes back into it through its
+  // link scheme rather than to the website. Leg 1 has ?app=1; leg 2 reads the
+  // flag from the signed state.
+  let fromApp = app === "1";
+  if (state) { try { fromApp = Buffer.from(String(state), "base64url").toString("utf8").split(".")[3] === "a"; } catch { /* not ours */ } }
   const origin = `https://${req.headers.host}`;
   const redirectUri = `${origin}/api/discord-oauth`;
 
@@ -22,7 +27,10 @@ export default async function handler(req, res) {
   // player was doing (see setResume in App.jsx) and shows the result. Ending on
   // a static page meant a "Back to VOLT" tap that dropped them on the home
   // screen with their setup gone.
-  const back = (status) => { res.setHeader("Location", `/?discord=${status}`); return res.status(302).end(); };
+  const back = (status) => {
+    res.setHeader("Location", fromApp ? `com.voltleagues.app://discord?status=${status}` : `/?discord=${status}`);
+    return res.status(302).end();
+  };
 
   // The user pressed "no" on Discord's consent screen.
   if (error) return back("cancelled");
@@ -36,7 +44,7 @@ export default async function handler(req, res) {
     // someone else's Discord account to a different VOLT account.
     const payload = `${uid}.${Date.now()}`;
     const sig = crypto.createHmac("sha256", process.env.SUPABASE_SERVICE_KEY).update(payload).digest("hex").slice(0, 32);
-    const st = Buffer.from(`${payload}.${sig}`).toString("base64url");
+    const st = Buffer.from(`${payload}.${sig}${fromApp ? ".a" : ""}`).toString("base64url");
 
     const url = new URL("https://discord.com/api/oauth2/authorize");
     url.searchParams.set("client_id", process.env.DISCORD_CLIENT_ID);

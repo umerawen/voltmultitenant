@@ -14,10 +14,12 @@
 //   DISCORD_BOT_TOKEN     — Bot section of the developer portal
 //   SUPABASE_URL, SUPABASE_SERVICE_KEY
 //   VOLT_NOTIFY_SECRET    — shared secret so only your app can trigger sends
+import { cors } from "./_cors.js";
 
 const API = "https://discord.com/api/v10";
 
 export default async function handler(req, res) {
+  if (cors(req, res)) return;   // the phone app calls from its own origin
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).end(); }
   // Two ways in, so this works from the browser as well as server-to-server:
   //   1. A logged-in host/moderator calling from VOLT (Authorization: Bearer <jwt>)

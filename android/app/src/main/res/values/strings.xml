@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VOLT</string>
+    <string name="title_activity_main">VOLT</string>
+    <string name="package_name">com.voltleagues.app</string>
+    <string name="custom_url_scheme">com.voltleagues.app</string>
+</resources>

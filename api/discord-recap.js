@@ -9,10 +9,12 @@
 // argue about, and arguing is what brings them back the following weekend.
 //
 // Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY
+import { cors } from "./_cors.js";
 
 const API = "https://discord.com/api/v10";
 
 export default async function handler(req, res) {
+  if (cors(req, res)) return;   // the phone app calls from its own origin
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).end(); }
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return res.status(500).json({ error: "DISCORD_BOT_TOKEN is not set" });

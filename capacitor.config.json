@@ -1,0 +1,32 @@
+{
+  "appId": "com.voltleagues.app",
+  "appName": "VOLT",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "backgroundColor": "#0a0d18",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0a0d18"
+  },
+  "android": {
+    "backgroundColor": "#0a0d18"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "launchAutoHide": true,
+      "backgroundColor": "#0a0d18",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0a0d18",
+      "overlaysWebView": false
+    },
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
+}

@@ -10,11 +10,13 @@
 // failures are reported rather than silently swallowed — the DMs still go out.
 //
 // Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY
+import { cors } from "./_cors.js";
 
 const API = "https://discord.com/api/v10";
 const ROLE_PREFIX = "VOLT ";                  // so we only ever touch roles we made
 
 export default async function handler(req, res) {
+  if (cors(req, res)) return;   // the phone app calls from its own origin
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).end(); }
 
   const token = process.env.DISCORD_BOT_TOKEN;

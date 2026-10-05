@@ -17,3 +17,7 @@ dist/
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# Firebase config for the phone app (supplied to CI as a secret)
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist

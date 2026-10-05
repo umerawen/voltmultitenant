@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useId } from "react";
+import { IS_NATIVE, SITE, AUTH_RETURN, apiUrl, siteOrigin, openAuthUrl, haptic, registerPush } from "./native.js";
 import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 
@@ -4697,6 +4698,8 @@ const SndFX = (() => {
       startAmbient();
     },
     play(name, ...args) {
+      const h = { bid: "medium", sold: "success", reveal: "heavy" }[name];
+      if (h) haptic(h);
       if (!started || !enabled) return;
       const fn = sfx[name] || (() => {});
       if (ctx && ctx.state === "suspended") {
@@ -7645,6 +7648,14 @@ function VoltGate() {
         if (!leagueName.trim()) throw new Error("Give your league a name first.");
         setResume({ kind: "auth", intent, leagueName: leagueName.trim(), displayName: displayName.trim() });
       }
+      if (IS_NATIVE) {
+        // In the app: sign in in the phone's browser, come back via com.voltleagues.app://auth.
+        const { data, error } = await __sb.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: AUTH_RETURN, skipBrowserRedirect: true } });
+        if (error) throw error;
+        await openAuthUrl(data.url);
+        setBusy(false);
+        return;
+      }
       const { error } = await __sb.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: window.location.origin } });
       if (error) throw error;
     } catch (e) { setErr(e.message || "Couldn't start Discord sign-in."); setBusy(false); }
@@ -7920,7 +7931,7 @@ function VoltGate() {
     setErr(""); setInfo(""); setBusy(true);
     try {
       if (!email.trim()) throw new Error("Enter the email you signed up with.");
-      const { error } = await __sb.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
+      const { error } = await __sb.auth.resetPasswordForEmail(email.trim(), { redirectTo: siteOrigin() });
       if (error) throw error;
       // Same message whether or not the address has an account, so this can't
       // be used to find out who's signed up.
@@ -9902,7 +9913,7 @@ function AvailabilityCard({ eventId }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-notify", {
+      const r = await fetch(apiUrl("/api/discord-notify"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ communityId: p.communityId, message: p.message,
@@ -10036,7 +10047,7 @@ function DiscordTeamsCard({ eventId }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-teams", {
+      const r = await fetch(apiUrl("/api/discord-teams"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ eventId, assignRoles: roles }),
@@ -10161,7 +10172,7 @@ function DiscordAnnounce({ eventId, communityId, phase }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-notify", {
+      const r = await fetch(apiUrl("/api/discord-notify"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         // dmButtons puts the row in the DM itself — the point of asking a question
@@ -10344,6 +10355,7 @@ async function startDiscordOAuth(resume) {
   const jwt = sess?.session?.access_token;
   if (!jwt) throw new Error("Session expired — sign in again.");
   if (resume) setResume(resume);
+  if (IS_NATIVE) { await openAuthUrl(`${SITE}/api/discord-oauth?token=${encodeURIComponent(jwt)}&app=1`); return; }
   window.location.href = `/api/discord-oauth?token=${encodeURIComponent(jwt)}`;
 }
 
@@ -10455,7 +10467,7 @@ function JoinGuideCard({ community, current }) {
   const [busy, setBusy] = useState("");
   const [res, setRes] = useState("");
   const [err, setErr] = useState("");
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const origin = typeof window !== "undefined" ? siteOrigin() : "";
 
   useEffect(() => {
     if (!open || connected !== null) return;
@@ -10478,7 +10490,7 @@ function JoinGuideCard({ community, current }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-notify", {
+      const r = await fetch(apiUrl("/api/discord-notify"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         // announce:false and no userIds — nothing is sent, this is roles only.
@@ -10525,7 +10537,7 @@ function JoinGuideCard({ community, current }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-notify", {
+      const r = await fetch(apiUrl("/api/discord-notify"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         // No userIds: this is a channel post, not a DM blast. DMing a reference
@@ -10635,7 +10647,7 @@ async function discordWrapUp(eventId) {
     const { data: sess } = await __sb.auth.getSession();
     const jwt = sess?.session?.access_token;
     if (!jwt) return null;
-    const r = await fetch("/api/discord-arena", {
+    const r = await fetch(apiUrl("/api/discord-arena"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify({ eventId, mode: "wrapup" }),
@@ -10667,7 +10679,7 @@ function DiscordArenaCard({ eventId, phase }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-arena", {
+      const r = await fetch(apiUrl("/api/discord-arena"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ eventId, mode }),
@@ -10723,7 +10735,7 @@ function DiscordArenaCard({ eventId, phase }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-predictions?mode=open", {
+      const r = await fetch(apiUrl("/api/discord-predictions?mode=open"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ eventId }),
@@ -10799,7 +10811,7 @@ function DiscordMomentsCard({ eventId, phase, draftAt }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/discord-recap", {
+      const r = await fetch(apiUrl("/api/discord-recap"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ eventId, mode }),
@@ -10869,7 +10881,7 @@ function IgnCheckCard({ eventId }) {
       const jwt = sess?.session?.access_token;
       const targets = rows.filter((r) => r.discord).map((r) => r.userId);
       if (!targets.length) { setErr("None of them have Discord connected, so I can't reach them."); setBusy(false); return; }
-      const r = await fetch("/api/discord-notify", {
+      const r = await fetch(apiUrl("/api/discord-notify"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({
@@ -11152,7 +11164,7 @@ function SubDesk({ eventId, onChanged }) {
       }
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
-      const r = await fetch("/api/discord-notify", {
+      const r = await fetch(apiUrl("/api/discord-notify"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({
@@ -13922,7 +13934,7 @@ function HostSetupChecklist({ community, events, current, onCreate, onSetDraftTi
     return () => { ok = false; };
   }, [community?.id, current?.id, current?.draft_at, events?.length, hidden]);
   if (hidden || !st) return null;
-  const link = `${window.location.origin}/?join=${community?.slug || ""}`;
+  const link = `${siteOrigin()}/?join=${community?.slug || ""}`;
   const small = (label, onClick, disabled) => (
     <button disabled={disabled} onClick={onClick} style={shellBtn("ghost", { padding: "6px 12px", fontSize: 11, whiteSpace: "nowrap", opacity: disabled ? 0.4 : 1 })}>{label}</button>
   );
@@ -14021,6 +14033,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
   const [mySusp, setMySusp] = useState(0);
   const [myStrikes, setMyStrikes] = useState(0);
   const [showPlayer, setShowPlayer] = useState(null); // public player-profile screen (full-screen, rail intact)
+  // Phone app: register this device for push once someone is signed in.
+  useEffect(() => { if (HAS_SUPABASE) registerPush(__sb); }, []);
   // Back from connecting Discord while editing the profile → reopen it.
   useEffect(() => { if (takeResume((r) => r.kind === "profile")) setPage("account"); }, []);
   useEffect(() => { if (openProfile) { setShowPlayer(openProfile); onProfileOpened && onProfileOpened(); } }, [openProfile]);
@@ -14386,7 +14400,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                       <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, color: "#ecf3ff" }}>{community.slug}</span>
                       {/* The link beats the code: it opens the join screen with the code
                           already in, so a new player types nothing they could get wrong. */}
-                      <CopyButton text={`${window.location.origin}/?join=${community.slug}`} label="Copy invite link" style={shellBtn("accent", { padding: "5px 11px", fontSize: 9.5, letterSpacing: "0.16em" })} />
+                      <CopyButton text={`${siteOrigin()}/?join=${community.slug}`} label="Copy invite link" style={shellBtn("accent", { padding: "5px 11px", fontSize: 9.5, letterSpacing: "0.16em" })} />
                     </div>
                   )}
                   {isHost && events && (
@@ -15627,7 +15641,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/read-tracker", {
+      const r = await fetch(apiUrl("/api/read-tracker"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ image: base64, mimeType }),
@@ -15870,7 +15884,7 @@ async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
       name: r.stat_payload?.name, acs: r.stat_payload?.acs,
       kills: r.stat_payload?.k, assists: r.stat_payload?.a, deaths: r.stat_payload?.d ?? 0,
     })).sort((x, y) => (y.acs || 0) - (x.acs || 0));
-    const send = (mode, payload) => fetch("/api/discord-arena", {
+    const send = (mode, payload) => fetch(apiUrl("/api/discord-arena"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify({ eventId: ev.id, mode, payload }),
@@ -16020,7 +16034,7 @@ function MatchReport({ ev, onDone, prefill }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch("/api/read-scoreboard", {
+      const r = await fetch(apiUrl("/api/read-scoreboard"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ image: base64, mimeType }),

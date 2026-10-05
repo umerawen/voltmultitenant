@@ -18,6 +18,7 @@
 // Anything illegible comes back null, never 0 — a zero in a profile looks like
 // a real value and nobody re-checks it. read-scoreboard.js clamps to 0 instead,
 // which is right there (a host is reviewing every row) and wrong here.
+import { cors } from "./_cors.js";
 
 
 const MAX_B64_CHARS = 6_000_000; // ≈4.5MB of image
@@ -138,6 +139,7 @@ const busyMessage = (status) => RETRY_STATUS.has(status) || status === 404
 export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
+  if (cors(req, res)) return;   // the phone app calls from its own origin
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Use POST." });

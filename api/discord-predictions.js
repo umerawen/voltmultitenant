@@ -5,12 +5,14 @@
 // repeated runs never double-post. Safe to call every few minutes.
 //
 // Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY, VOLT_NOTIFY_SECRET
+import { cors } from "./_cors.js";
 
 const API = "https://discord.com/api/v10";
 const WINDOW_MINS = 60;        // last-call reminder
 const AUTO_OPEN_MINS = 180;    // post any unopened card this close to kick-off
 
 export default async function handler(req, res) {
+  if (cors(req, res)) return;   // the phone app calls from its own origin
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) return res.status(500).json({ error: "DISCORD_BOT_TOKEN is not set" });
 

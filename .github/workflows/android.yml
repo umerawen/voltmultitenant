@@ -1,0 +1,72 @@
+# Builds the Android app (a debug APK you can install on any Android phone) in
+# the cloud on every push to main that touches the app, and on demand from the
+# Actions tab. No Android Studio needed on your machine.
+#
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY — the same public values as .env.local.
+# For push notifications, later: secret GOOGLE_SERVICES_JSON and variable VITE_PUSH=1.
+# The APK is attached to the run as the "volt-android" artifact.
+name: Android app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "android/**"
+      - "capacitor.config.json"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install
+        run: npm ci
+
+      - name: Build the web app
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Turn on push once Firebase is set up: repository variable VITE_PUSH = 1
+          VITE_PUSH: ${{ vars.VITE_PUSH }}
+
+      # Firebase's Android config, from the GOOGLE_SERVICES_JSON secret (optional until push is on).
+      - name: Firebase config
+        env:
+          GS: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: if [ -n "$GS" ]; then printf '%s' "$GS" > android/app/google-services.json; fi
+
+      - name: Copy it into the Android project
+        run: npx cap sync android
+
+      - name: Build the APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volt-android
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30

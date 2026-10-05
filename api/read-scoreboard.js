@@ -8,6 +8,7 @@
 // browser. Do NOT move this logic client-side: a key in the bundle can be lifted
 // by anyone who opens devtools, and they can exhaust the daily free quota — which
 // would break match reporting mid-tournament.
+import { cors } from "./_cors.js";
 
 
 // Gemini's inline-image ceiling is 20MB for the whole request. The client
@@ -104,6 +105,7 @@ const busyMessage = (status) => RETRY_STATUS.has(status) || status === 404
 export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
+  if (cors(req, res)) return;   // the phone app calls from its own origin
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Use POST." });
