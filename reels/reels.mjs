@@ -143,7 +143,7 @@ export const REELS = [
   //       Rewritten after feedback that reel 01 "started in the middle": this one
   //       says what the product is before it says anything clever.
   {
-    id: "volt-scout-hub", duration: 35.0, fps: 60,
+    id: "volt-scout-hub", duration: 35.0, fps: 60, font: { family: "Big Shoulders Display", scale: 1.15 },
     vo: { file: "vo/scout-v2.flac", t: 0.35, gain: 0.85 },
     scenes: [
       // "This is how Valorant communities run their own leagues."

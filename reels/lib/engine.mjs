@@ -50,6 +50,13 @@ function cachedWebp(src, name, scale) {
 }
 
 // ── the reel ─────────────────────────────────────────────────────────────
+function reelCss(font) {
+  const css = fs.readFileSync(path.join(HERE, "reel.css"), "utf8");
+  if (!font) return css;
+  return css.split("\n").map((l) => l.startsWith(".live-raj") || !l.includes('"Rajdhani"') ? l
+    : l.replace('"Rajdhani", sans-serif', `"${font.family}", sans-serif`).replace("font-weight: 700", "font-weight: 800").replace("font-weight: 600", "font-weight: 700")).join("\n");
+}
+
 export function reel(spec) {
   const { id, duration } = spec;
   const dir = path.join(REELS, "videos", id);
@@ -83,7 +90,11 @@ export function reel(spec) {
   };
 
   // Lines of display type that rise out of a mask, staggered.
+  // spec.font swaps the display face for this reel only: { family, scale } (scale
+  // grows headlines, for a narrower face). Text painted over screenshots keeps Rajdhani.
+  const font = spec.font;
   const lines = (sid, arr, { size = 104, at, stagger = 0.09, cls = "" } = {}) => {
+    if (font?.scale) size = Math.round(size * font.scale);
     const out = arr.map((l, i) => `<div class="ln ${cls}" style="font-size:${size}px"><span id="${sid}-l${i}" class="ln-i">${rich(l)}</span></div>`).join("");
     arr.forEach((_, i) => tw(`#${sid}-l${i}`, { yPercent: 115, opacity: 1 }, { yPercent: 0, duration: 0.55, ease: "power4.out" }, at + i * stagger));
     return out;
@@ -665,9 +676,9 @@ export function reel(spec) {
 <meta name="viewport" content="width=${W}, height=${H}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=IBM+Plex+Mono:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?${font ? `family=${font.family.replace(/ /g, "+")}:wght@700;800;900&` : ""}family=Rajdhani:wght@500;600;700&family=IBM+Plex+Mono:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=block" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
-<style>${fs.readFileSync(path.join(HERE, "reel.css"), "utf8")}</style>
+<style>${reelCss(font)}</style>
 </head>
 <body>
 <div id="root" data-composition-id="main" data-start="0" data-duration="${duration}" data-width="${W}" data-height="${H}">
