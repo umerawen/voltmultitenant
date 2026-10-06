@@ -5,6 +5,7 @@
 // Times are seconds; keep cuts on the 0.5s grid (120 BPM bed).
 // Text markup: [red]  {blue}  |green|  ~gold~
 import { reel, C } from "./lib/engine.mjs";
+import { grungeScout } from "./lib/grunge.mjs";
 
 const ART = {
   jett: { src: "art-jett.webp", fx: 0.6 },
@@ -605,10 +606,14 @@ export const REELS = [
   });
 }
 
+// 13 ── the grunge cut of 04: the same voiceover on a street-poster wall, built in
+//       lib/grunge.mjs (Big Shoulders + Mr Dafoe, taped prints, match cuts).
+REELS.push({ id: "volt-scout-grunge", duration: 35.0, fps: 60, vo: { file: "vo/scout-v2.flac", t: 0.35, gain: 0.85 }, build: grungeScout });
+
 const only = process.argv[2];
 if (only === "--list") { REELS.forEach((r, i) => console.log(String(i + 1).padStart(2, "0") + " " + r.id)); process.exit(0); }
 for (const spec of REELS) {
   if (only && !spec.id.includes(only)) continue;
-  const r = reel(spec);
+  const r = spec.build ? spec.build(spec) : reel(spec);
   console.log("✓", spec.id, r.cues, "cues");
 }

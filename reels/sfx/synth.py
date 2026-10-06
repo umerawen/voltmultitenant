@@ -287,7 +287,32 @@ def s_heart(g=1.0, **_):
     return stereo(x, 0, 0.0) * g, 0.12
 
 
-SOUNDS = {"heart": s_heart, "whoosh": s_whoosh, "air": s_air, "swell": s_swell, "thump": s_thump, "boom": s_boom,
+def s_scrape(d=0.45, g=1.0, **_):
+    """A dry brush dragged across a wall: band-passed noise with bristle flutter."""
+    n = int(d * SR)
+    t = np.arange(n) / SR
+    flutter = 0.55 + 0.45 * lowpass(rng.standard_normal(n), 38) / 0.08
+    flutter = np.clip(flutter, 0.15, 1.4)
+    e = np.sin(np.pi * np.clip(t / d, 0, 1)) ** 0.7
+    c = np.geomspace(1400, 2600, n)
+    x = moving_band(pink(n), c, 0.7, e * flutter) * 3.2
+    x = lowpass(x, 5200)
+    x = fade_out(x, 0.04)
+    return stereo(x, 0.15, 0.008) * g * 0.5, 0.12
+
+
+def s_slap(g=1.0, **_):
+    """A print slapped on the wall: paper smack + a short low knock."""
+    d = 0.4
+    t = t_axis(d)
+    smack = bandpass(rng.standard_normal(len(t)), 500, 3800) * env_ar(len(t), 0.002, 0.03) * 0.9
+    f = 90 + 70 * np.exp(-t / 0.02)
+    knock = np.sin(2 * np.pi * np.cumsum(f) / SR) * env_ar(len(t), 0.003, 0.07) * 0.8
+    x = lowpass(smack + knock, 4200)
+    return stereo(x, 0, 0.004) * g * 0.75, 0.16
+
+
+SOUNDS = {"heart": s_heart, "scrape": s_scrape, "slap": s_slap, "whoosh": s_whoosh, "air": s_air, "swell": s_swell, "thump": s_thump, "boom": s_boom,
           "chime": s_chime, "pop": s_pop, "click": s_click, "rise": s_rise, "shimmer": s_shimmer}
 
 
@@ -390,6 +415,70 @@ def bed(duration, outro):
     return wet
 
 
+def bed_grit(duration, outro):
+    """The grunge cut's bed: half-time boom-bap at 120 BPM (kick on 1, snare on 3),
+    a dark detuned minor pad through tape saturation, dusty hats and vinyl crackle."""
+    n = int(duration * SR)
+    t = np.arange(n) / SR
+    bar = 4 * BEAT
+    pad = np.zeros(n)
+    prog = [(45, [45, 52, 57, 60]), (41, [41, 48, 53, 57]), (43, [43, 50, 55, 58]), (40, [40, 47, 52, 55])]
+    for ci in range(int(np.ceil(duration / (bar * 2))) + 1):
+        s0, s1 = ci * bar * 2, (ci + 1) * bar * 2
+        a, b = int(max(s0 - 0.2, 0) * SR), int(min(s1 + 0.2, duration) * SR)
+        if a >= n:
+            break
+        tt = t[a:b]
+        seg = np.zeros(len(tt))
+        for m in prog[ci % 4][1]:
+            for det in (-0.006, 0.0, 0.006):
+                seg += saw_additive(note(m) * (1 + det), tt, fc=650)
+        w = np.ones(len(tt))
+        xf = int(0.4 * SR)
+        if s0 > 0:
+            w[:xf] = np.linspace(0, 1, len(w[:xf]))
+        w[-xf:] = np.minimum(w[-xf:], np.linspace(1, 0, len(w[-xf:])))
+        pad[a:b] += seg * w
+    pad = np.tanh(pad * 0.9) * 0.05 * (1 + 0.12 * np.sin(2 * np.pi * 0.25 * t))
+    kd = int(0.6 * SR)
+    kt = np.arange(kd) / SR
+    kick = np.sin(2 * np.pi * np.cumsum(44 + 90 * np.exp(-kt / 0.03)) / SR) * env_ar(kd, 0.003, 0.2)
+    kick = np.tanh(kick * 2.2) * 0.42
+    sd = int(0.35 * SR)
+    snare = (bandpass(rng.standard_normal(sd), 900, 5000) * env_ar(sd, 0.002, 0.07) * 0.8
+             + np.sin(2 * np.pi * 185 * np.arange(sd) / SR) * env_ar(sd, 0.002, 0.04) * 0.5)
+    snare = lowpass(snare, 5500) * 0.32
+    hd = int(0.08 * SR)
+    hat = bandpass(rng.standard_normal(hd), 4000, 7000) * env_ar(hd, 0.002, 0.018) * 0.05
+    drums = np.zeros(n)
+    start = BEAT * 2
+    stop = outro if outro else duration
+    i = 0
+    while i * BEAT / 2 < duration:
+        bt = i * BEAT / 2
+        s_ = int(bt * SR)
+        if start <= bt < stop - 0.01:
+            pos = i % 8  # 8 eighths per bar
+            if pos in (0, 5):
+                e = min(n, s_ + kd); drums[s_:e] += kick[: e - s_]
+            if pos == 4:
+                e = min(n, s_ + sd); drums[s_:e] += snare[: e - s_]
+            if pos % 2 == 1 or rng.random() < 0.3:
+                e = min(n, s_ + hd); drums[s_:e] += hat[: e - s_] * (0.6 + 0.6 * rng.random())
+        i += 1
+    crackle = np.zeros(n)
+    for _ in range(int(duration * 14)):
+        k = int(rng.random() * (n - 200))
+        crackle[k:k + 60] += rng.standard_normal(60) * np.exp(-np.arange(60) / 9) * (0.02 + 0.05 * rng.random())
+    crackle = bandpass(crackle, 1200, 6000)
+    y = stereo(pad, 0, 0.016) + stereo(drums) + stereo(crackle, 0.2, 0.01)
+    fi = int(0.3 * SR)
+    y[:fi] *= np.linspace(0, 1, fi)[:, None]
+    fo = int(1.4 * SR)
+    y[-fo:] *= np.linspace(1, 0, fo)[:, None] ** 1.5
+    return reverb(y, 0.12)[:n]
+
+
 # ── mix ──────────────────────────────────────────────────────────────────
 def main(cue_path, out):
     spec = json.load(open(cue_path, encoding="utf8"))
@@ -407,7 +496,7 @@ def main(cue_path, out):
         s = int(max(c["t"], 0) * SR)
         e = min(len(sfx), s + len(y))
         sfx[s:e] += y[: e - s]
-    b = bed(dur, spec.get("outro"))
+    b = (bed_grit if spec.get("bed") == "grit" else bed)(dur, spec.get("outro"))
     duck_bed = np.ones(len(mix))
     duck_sfx = np.ones(len(mix))
     vo_track = np.zeros_like(mix)
