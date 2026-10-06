@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 
 # Build output
@@ -18,6 +18,6 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Firebase config for the phone app (supplied to CI as a secret)
-android/app/google-services.json
+# iOS Firebase config, when it exists (android/app/google-services.json is
+# committed: it's client config built into every copy of the app anyway)
 ios/App/App/GoogleService-Info.plist

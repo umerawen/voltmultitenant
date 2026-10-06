@@ -39,9 +39,10 @@ tournament bracket, predictions, leaderboard, plus a Discord bot.
 - `api/_cors.js` lets the app's origins (`capacitor://localhost`,
   `https://localhost`) call the API functions; new browser-called functions
   need `if (cors(req, res)) return;` first.
-- Push: `push_tokens` + trigger `notifications_push` → `api/push.js` (FCM).
-  Inert until `FIREBASE_SERVICE_ACCOUNT` (Vercel) and `VITE_PUSH=1` +
-  `google-services.json` (app build) exist.
+- Push: `push_tokens` + trigger `notifications_push` → `api/push.js` (FCM,
+  Firebase project `volt-leagues`). Android only so far; the app side is on
+  (`VITE_PUSH=1` in `.env.production`, `android/app/google-services.json`), and
+  sending needs `FIREBASE_SERVICE_ACCOUNT` in Vercel.
 - The Android APK builds in GitHub Actions (`.github/workflows/android.yml`).
   After changing the web app: `npm run build && npx cap sync`. Icons/splash:
   `node reels/logo/app-assets.mjs`.

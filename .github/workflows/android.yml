@@ -2,9 +2,8 @@
 # the cloud on every push to main that touches the app, and on demand from the
 # Actions tab. No Android Studio needed on your machine.
 #
-# The Supabase URL and public key come from .env.production (committed; they're
-# public by design). For push notifications, later: secret GOOGLE_SERVICES_JSON
-# and repository variable VITE_PUSH=1.
+# Config comes from committed files: .env.production (the public Supabase URL
+# and key, VITE_PUSH) and android/app/google-services.json (Firebase client config).
 # The APK is attached to the run as the "volt-android" artifact.
 name: Android app
 
@@ -43,19 +42,10 @@ jobs:
       - name: Install
         run: npm ci
 
-      # No Supabase env here on purpose: an unset secret arrives as an empty
-      # string, which would override .env.production and build a demo app.
+      # No VITE_* env here on purpose: an unset secret or variable arrives as an
+      # empty string, which would override .env.production.
       - name: Build the web app
         run: npm run build
-        env:
-          # Turn on push once Firebase is set up: repository variable VITE_PUSH = 1
-          VITE_PUSH: ${{ vars.VITE_PUSH }}
-
-      # Firebase's Android config, from the GOOGLE_SERVICES_JSON secret (optional until push is on).
-      - name: Firebase config
-        env:
-          GS: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: if [ -n "$GS" ]; then printf '%s' "$GS" > android/app/google-services.json; fi
 
       - name: Copy it into the Android project
         run: npx cap sync android

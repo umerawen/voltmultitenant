@@ -59,13 +59,15 @@ export async function shareLink({ title, text, url }) {
   return false;
 }
 
-// Push notifications. Off until Firebase is set up (VITE_PUSH=1 at build time,
-// plus google-services.json / the APNs key) — asking Firebase for a token on
-// Android without its config file crashes the app. Asks once for permission,
-// then files the device under whoever is signed in (volt_push_register).
+// Push notifications. Off unless built with VITE_PUSH=1 — asking Firebase for a
+// token on Android without google-services.json crashes the app. Android only
+// for now: on iOS this plugin returns an APNs token, which FCM can't send to
+// (iOS needs @capacitor-firebase/messaging and an APNs key in Firebase).
+// Asks once for permission, then files the device under whoever is signed in
+// (volt_push_register).
 let pushWired = false;
 export async function registerPush(sb) {
-  if (!IS_NATIVE || !sb || import.meta.env.VITE_PUSH !== "1") return;
+  if (!IS_NATIVE || PLATFORM !== "android" || !sb || import.meta.env.VITE_PUSH !== "1") return;
   try {
     const { PushNotifications } = await import("@capacitor/push-notifications");
     let perm = await PushNotifications.checkPermissions();

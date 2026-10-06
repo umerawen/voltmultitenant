@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "49826156761",
+    "project_id": "volt-leagues",
+    "storage_bucket": "volt-leagues.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:49826156761:android:042447a62f0de654dceec8",
+        "android_client_info": {
+          "package_name": "com.voltleagues.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBTwgQhlcuH7oKYOyMr8PnuNS1n4ZVVz64"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
