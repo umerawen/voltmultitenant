@@ -654,7 +654,7 @@ export function reel(spec) {
   for (const c of spec.cues || []) cue(c.t, c.k, c);
 
   // background drift
-  js.unshift(`tl.fromTo("#glow1",{x:-120,y:-60},{x:140,y:80,duration:${duration},ease:"sine.inOut",immediateRender:true},0);tl.fromTo("#glow2",{x:80,y:40},{x:-120,y:-90,duration:${duration},ease:"sine.inOut",immediateRender:true},0);tl.fromTo("#grid",{backgroundPosition:"0px 0px"},{backgroundPosition:"0px 240px",duration:${duration},ease:"none",immediateRender:true},0);`);
+  js.unshift(`tl.fromTo("#glow1",{x:-120,y:-60},{x:140,y:80,duration:${duration},ease:"sine.inOut",immediateRender:true},0);tl.fromTo("#grid",{backgroundPosition:"0px 0px"},{backgroundPosition:"0px 240px",duration:${duration},ease:"none",immediateRender:true},0);`);
   // fade the whole thing up from black, and out at the very end
   js.push(`tl.fromTo("#fadein",{opacity:1},{opacity:0,duration:0.35,ease:"power1.out",immediateRender:true},0);`);
 
@@ -671,7 +671,7 @@ export function reel(spec) {
 </head>
 <body>
 <div id="root" data-composition-id="main" data-start="0" data-duration="${duration}" data-width="${W}" data-height="${H}">
-<div id="bg" class="clip" data-start="0" data-duration="${duration}" data-track-index="0"><div id="glow1"></div><div id="glow2"></div><div id="grid"></div><div id="grain"></div><div id="vig"></div></div>
+<div id="bg" class="clip" data-start="0" data-duration="${duration}" data-track-index="0"><div id="glow1"></div><div id="grid"></div><div id="grain"></div><div id="vig"></div></div>
 ${html.join("\n")}
 <div id="fadein-c" class="clip" data-start="0" data-duration="0.5" data-track-index="10"><div id="fadein"></div></div>
 </div>

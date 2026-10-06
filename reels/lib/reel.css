@@ -6,7 +6,6 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 
 /* background */
 #glow1 { position: absolute; width: 1500px; height: 1500px; left: -420px; top: -460px; background: radial-gradient(circle, rgba(61,123,255,0.30), rgba(61,123,255,0.08) 38%, rgba(61,123,255,0) 64%); }
-#glow2 { position: absolute; width: 1300px; height: 1300px; right: -560px; bottom: -260px; background: radial-gradient(circle, rgba(110,80,255,0.16), rgba(255,70,85,0.05) 40%, transparent 64%); }
 #grid { position: absolute; inset: 0; background-image: linear-gradient(rgba(120,150,220,0.075) 1px, transparent 1px), linear-gradient(90deg, rgba(120,150,220,0.075) 1px, transparent 1px); background-size: 80px 80px; -webkit-mask-image: radial-gradient(ellipse 85% 60% at 50% 42%, #000 25%, transparent 82%); mask-image: radial-gradient(ellipse 85% 60% at 50% 42%, #000 25%, transparent 82%); }
 #grain { position: absolute; inset: 0; opacity: 0.07; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='7' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
 #vig { position: absolute; inset: 0; background: radial-gradient(ellipse 95% 75% at 50% 45%, transparent 52%, rgba(0,0,0,0.6)); }
