@@ -143,16 +143,16 @@ export const REELS = [
   //       Rewritten after feedback that reel 01 "started in the middle": this one
   //       says what the product is before it says anything clever.
   {
-    id: "volt-scout-hub", duration: 35.0, fps: 60, font: { family: "Big Shoulders Display", scale: 1.15 },
+    id: "volt-scout-hub", duration: 35.0, fps: 60, font: { family: "Big Shoulders Display", scale: 1.15, brush: "Kaushan Script" },
     vo: { file: "vo/scout-v2.flac", t: 0.35, gain: 0.85 },
     scenes: [
       // "This is how Valorant communities run their own leagues."
-      { kind: "hook", t: 0, d: 3.0, art: ART.omen, label: "FOR VALORANT COMMUNITIES", lines: ["RUN YOUR OWN", "[LEAGUE.]"], size: 150 },
+      { kind: "hook", t: 0, d: 3.0, art: ART.omen, label: "FOR VALORANT COMMUNITIES", lines: ["RUN YOUR OWN", "[^League.^]"], size: 150 },
       // "VOLT."  (the bolt strikes on the word)
-      { kind: "cta", t: 3.0, d: 1.8, tag: "// THE LEAGUE PLATFORM", lines: ["BUILT FOR", "{VALORANT.}"], size: 84, button: false, exit: "fade" },
+      { kind: "cta", t: 3.0, d: 1.8, tag: "// THE LEAGUE PLATFORM", lines: ["BUILT FOR", "{^Valorant.^}"], size: 84, button: false, exit: "fade" },
       // "Players sign up."  (the pool fills: the live counts, then real players)
       { kind: "stage", t: 4.8, d: 1.4, shot: "kami-player-pool", plateW: 1040, plateY: 1060,
-        heads: [{ at: 0, label: "STEP 1 OF 3", lines: ["PLAYERS", "[SIGN UP.]"], size: 120 }],
+        heads: [{ at: 0, label: "STEP 1 OF 3", lines: ["PLAYERS", "[^sign up.^]"], size: 120 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
           { at: 0.1, rect: [344, 895, 359, 171], w: 480, x: 290, y: 880 },
@@ -163,7 +163,7 @@ export const REELS = [
         toasts: [{ at: 0.45, k: "KAMI LABS", v: "|34| PLAYERS SIGNED UP", color: C.money, y: 1420, d: 0.9 }] },
       // "Captains draft them in a live auction."  (a real bid climbs, then SOLD)
       { kind: "stage", t: 6.2, d: 2.5, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
-        heads: [{ at: 0, label: "STEP 2 OF 3", lines: ["CAPTAINS BID", "{LIVE.}"], size: 120 }],
+        heads: [{ at: 0, label: "STEP 2 OF 3", lines: ["CAPTAINS BID", "{^live.^}"], size: 120 }],
         plate: [{ at: 0, rx: 12, ry: 15 }],
         pieces: [
           { at: 0.1, rect: [852, 90, 462, 602], w: 420, y: 830, shape: "notch", cut: 24 },
@@ -177,7 +177,7 @@ export const REELS = [
         stamp: { at: 1.95, text: "SOLD", sub: "MISFITS · $1,600", y: 840 } },
       // "And the bracket runs itself."  (semis, then the final, built for you)
       { kind: "stage", t: 8.7, d: 2.05, shot: "kami-playoffs-final", plateW: 1040, plateY: 1060, sweep: false,
-        heads: [{ at: 0, label: "STEP 3 OF 3", lines: ["THE BRACKET", "~RUNS ITSELF.~"], size: 120 }],
+        heads: [{ at: 0, label: "STEP 3 OF 3", lines: ["THE BRACKET", "~^runs itself.^~"], size: 120 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
           { at: 0.1, rect: [366, 486, 713, 110], w: 960, y: 860 },
@@ -185,10 +185,10 @@ export const REELS = [
           { at: 0.75, rect: [765, 700, 635, 130], w: 960, y: 1310 },
         ] },
       // "But the draft is where it's won."
-      { kind: "hook", t: 10.75, d: 2.2, art: ART.jett, label: "DRAFT NIGHT", lines: ["THE DRAFT IS", "WHERE IT'S [WON.]"], size: 124 },
+      { kind: "hook", t: 10.75, d: 2.2, art: ART.jett, label: "DRAFT NIGHT", lines: ["THE DRAFT IS", "where it's [^won.^]"], size: 124 },
       // "Every captain gets ten thousand to spend."
       { kind: "stage", t: 12.95, d: 2.8, shot: "kami-dashboard", plateW: 1040, plateY: 1060,
-        heads: [{ at: 0, label: "THE BUDGET", lines: ["EVERY CAPTAIN", "GETS |$10,000.|"], size: 112 }],
+        heads: [{ at: 0, label: "THE BUDGET", lines: ["EVERY CAPTAIN GETS", "|^$10,000.^|"], size: 112 }],
         plate: [{ at: 0, rx: 14, ry: 16 }],
         pieces: [
           { at: 0.2, rect: [1340, 795, 483, 273], w: 900, y: 930,
@@ -197,10 +197,10 @@ export const REELS = [
             focus: [{ at: 1.5, rect: [1357, 532, 450, 52], tag: "$4,000 FOR ONE PLAYER", color: C.hot, tagBelow: true }] },
         ] },
       // "So before you bid… you scout."
-      { kind: "hook", t: 15.75, d: 2.5, art: ART.omenVoid, label: "FOR CAPTAINS", lines: ["BEFORE YOU BID,", "YOU [SCOUT.]"], size: 130 },
+      { kind: "hook", t: 15.75, d: 2.5, art: ART.omenVoid, label: "FOR CAPTAINS", lines: ["BEFORE YOU BID,", "[^you scout.^]"], size: 130 },
       // "Every player, on one board. Rank, role, and stats."
       { kind: "stage", t: 18.25, d: 4.85, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
-        heads: [{ at: 0, label: "THE SCOUT HUB", lines: ["EVERY PLAYER.", "{ONE BOARD.}"], size: 96 }],
+        heads: [{ at: 0, label: "THE SCOUT HUB", lines: ["EVERY PLAYER.", "{^One board.^}"], size: 96 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
           { at: 0.35, rect: [345, 378, 360, 184], w: 440, x: 295, y: 830 },
@@ -211,7 +211,7 @@ export const REELS = [
         ] },
       // "Open a scout file, and it's all there."
       { kind: "stage", t: 23.1, d: 3.1, shot: "kami-scout-modal", plateW: 1040, plateY: 1060,
-        heads: [{ at: 0, label: "THE SCOUT FILE", lines: ["OPEN A FILE.", "IT'S {ALL THERE}."], size: 96 }],
+        heads: [{ at: 0, label: "THE SCOUT FILE", lines: ["OPEN A FILE.", "{^It's all there.^}"], size: 96 }],
         plate: [{ at: 0, rx: 12, ry: 15 }],
         pieces: [
           { at: 0.25, rect: [510, 117, 435, 603], w: 420, x: 290, y: 1080, shape: "notch", cut: 24 },
@@ -220,7 +220,7 @@ export const REELS = [
         ] },
       // "Then bid like you mean it."
       { kind: "stage", t: 26.2, d: 2.0, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
-        heads: [{ at: 0, label: "DRAFT NIGHT", lines: ["THEN BID LIKE", "YOU [MEAN IT]."], size: 96 }],
+        heads: [{ at: 0, label: "DRAFT NIGHT", lines: ["THEN BID LIKE", "[^you mean it.^]"], size: 96 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [{ at: 0.15, rect: [916, 714, 334, 87], w: 900, y: 1010, shape: "slant", cut: 22,
           live: [
@@ -229,7 +229,7 @@ export const REELS = [
           ] }],
         toasts: [{ at: 0.65, k: "DOOM", v: "BIDS |$1,400|", color: "#ff8a3d", y: 1230 }, { at: 1.25, k: "MISFITS", v: "BIDS |$1,600|", color: "#ff4655", side: "left", y: 1230 }] },
       // "Scout. Bid. Win. Start your league on VOLT."
-      { kind: "cta", t: 28.2, d: 6.8, lines: ["SCOUT. BID.", "[WIN.]"], feat: FEAT, button: "START YOUR LEAGUE" },
+      { kind: "cta", t: 28.2, d: 6.8, lines: ["SCOUT. BID.", "[^Win.^]"], feat: FEAT, button: "START YOUR LEAGUE" },
     ],
   },
 

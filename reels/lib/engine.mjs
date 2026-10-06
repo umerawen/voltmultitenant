@@ -28,7 +28,8 @@ export function rich(s) {
     .replace(/\[([^\]]+)\]/g, '<span class="c-hot">$1</span>')
     .replace(/\{([^}]+)\}/g, '<span class="c-volt">$1</span>')
     .replace(/\|([^|]+)\|/g, '<span class="c-money">$1</span>')
-    .replace(/~([^~]+)~/g, '<span class="c-gold">$1</span>');
+    .replace(/~([^~]+)~/g, '<span class="c-gold">$1</span>')
+    .replace(/\^([^^]+)\^/g, '<span class="brush">$1</span>');
 }
 const J = (v) => JSON.stringify(v);
 const r2 = (n) => Math.round(n * 1000) / 1000;
@@ -53,8 +54,9 @@ function cachedWebp(src, name, scale) {
 function reelCss(font) {
   const css = fs.readFileSync(path.join(HERE, "reel.css"), "utf8");
   if (!font) return css;
+  const brush = font.brush ? `\n.brush { font-family: "${font.brush}", cursive; font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 1.12em; line-height: 1; display: inline-block; transform: rotate(-6deg); transform-origin: 0 70%; }` : "";
   return css.split("\n").map((l) => l.startsWith(".live-raj") || !l.includes('"Rajdhani"') ? l
-    : l.replace('"Rajdhani", sans-serif', `"${font.family}", sans-serif`).replace("font-weight: 700", "font-weight: 800").replace("font-weight: 600", "font-weight: 700")).join("\n");
+    : l.replace('"Rajdhani", sans-serif', `"${font.family}", sans-serif`).replace("font-weight: 700", "font-weight: 800").replace("font-weight: 600", "font-weight: 700")).join("\n") + brush;
 }
 
 export function reel(spec) {
@@ -95,8 +97,11 @@ export function reel(spec) {
   const font = spec.font;
   const lines = (sid, arr, { size = 104, at, stagger = 0.09, cls = "" } = {}) => {
     if (font?.scale) size = Math.round(size * font.scale);
-    const out = arr.map((l, i) => `<div class="ln ${cls}" style="font-size:${size}px"><span id="${sid}-l${i}" class="ln-i">${rich(l)}</span></div>`).join("");
-    arr.forEach((_, i) => tw(`#${sid}-l${i}`, { yPercent: 115, opacity: 1 }, { yPercent: 0, duration: 0.55, ease: "power4.out" }, at + i * stagger));
+    const brush = (l) => l.includes("^");
+    const out = arr.map((l, i) => `<div class="ln ${cls}${brush(l) ? " ln-br" : ""}" style="font-size:${size}px"><span id="${sid}-l${i}" class="ln-i">${rich(l)}</span></div>`).join("");
+    arr.forEach((l, i) => brush(l)
+      ? tw(`#${sid}-l${i}`, { clipPath: "inset(-60% 100% -60% -20%)" }, { clipPath: "inset(-60% -20% -60% -20%)", duration: 0.6, ease: "power2.inOut" }, at + i * stagger + 0.08)
+      : tw(`#${sid}-l${i}`, { yPercent: 115, opacity: 1 }, { yPercent: 0, duration: 0.55, ease: "power4.out" }, at + i * stagger));
     return out;
   };
   const label = (sid, text, at, { color } = {}) => {
@@ -676,7 +681,7 @@ export function reel(spec) {
 <meta name="viewport" content="width=${W}, height=${H}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?${font ? `family=${font.family.replace(/ /g, "+")}:wght@700;800;900&` : ""}family=Rajdhani:wght@500;600;700&family=IBM+Plex+Mono:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?${font ? `family=${font.family.replace(/ /g, "+")}:wght@700;800;900&` : ""}${font?.brush ? `family=${font.brush.replace(/ /g, "+")}&` : ""}family=Rajdhani:wght@500;600;700&family=IBM+Plex+Mono:wght@500;700&family=Space+Grotesk:wght@400;500;700&display=block" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
 <style>${reelCss(font)}</style>
 </head>
