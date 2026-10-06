@@ -139,26 +139,43 @@ export const REELS = [
     ],
   },
 
-  // 04 ── captains: scout before you spend
+  // 04 ── what VOLT is, then why captains scout (voice: "Jax Meridian"; vo/scout-v2.flac).
+  //       Rewritten after feedback that reel 01 "started in the middle": this one
+  //       says what the product is before it says anything clever.
   {
-    id: "volt-scout-hub", duration: 14.8, fps: 60,
-    vo: { file: "vo/scout.flac", t: 0.35, gain: 0.85 },
+    id: "volt-scout-hub", duration: 35.0, fps: 60,
+    vo: { file: "vo/scout-v2.flac", t: 0.35, gain: 0.85 },
     scenes: [
-      // "Scout before you spend."
-      { kind: "hook", t: 0, d: 2.1, art: ART.omen, label: "FOR CAPTAINS", lines: ["SCOUT BEFORE", "YOU [SPEND]."], size: 140 },
-      // "Every player on one board: rank, role, and stats."
-      { kind: "stage", t: 2.1, d: 4.2, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
+      // "This is how Valorant communities run their own leagues."
+      { kind: "hook", t: 0, d: 3.0, art: ART.omen, label: "FOR VALORANT COMMUNITIES", lines: ["RUN YOUR OWN", "[LEAGUE.]"], size: 150 },
+      // "VOLT."  (the bolt strikes on the word)
+      { kind: "cta", t: 3.0, d: 1.8, tag: "// THE LEAGUE PLATFORM", lines: ["BUILT FOR", "{VALORANT.}"], size: 84, button: false, exit: "fade" },
+      // "Players sign up. Captains draft them in a live auction. And the bracket runs itself."
+      { kind: "montage", t: 4.8, beat: 1, items: [
+        { at: 0.1, shot: "kami-pool-scrolled", center: [1642, 668], word: "SIGN UP", small: "STEP 1 · PLAYERS JOIN" },
+        { at: 1.4, shot: "kami-auction-block", center: [1083, 757], word: "AUCTION", small: "STEP 2 · CAPTAINS DRAFT LIVE" },
+        { at: 3.95, d: 2.0, shot: "kami-playoffs", center: [1082, 540], word: "BRACKET", small: "STEP 3 · IT RUNS ITSELF" },
+      ] },
+      // "But the draft is where it's won."
+      { kind: "hook", t: 10.75, d: 2.2, art: ART.jett, label: "DRAFT NIGHT", lines: ["THE DRAFT IS", "WHERE IT'S [WON.]"], size: 124 },
+      // "Every captain gets ten thousand to spend."
+      { kind: "stat", t: 12.95, d: 2.8, label: "EVERY CAPTAIN GETS",
+        items: [{ to: 10000, prefix: "$", label: "To spend", color: C.money, at: 0.4, dur: 0.8 }, { to: 4, label: "Players to buy", color: C.voltHi, at: 1.15, dur: 0.4 }] },
+      // "So before you bid… you scout."
+      { kind: "hook", t: 15.75, d: 2.5, art: ART.omenVoid, label: "FOR CAPTAINS", lines: ["BEFORE YOU BID,", "YOU [SCOUT.]"], size: 130 },
+      // "Every player, on one board. Rank, role, and stats."
+      { kind: "stage", t: 18.25, d: 4.85, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "THE SCOUT HUB", lines: ["EVERY PLAYER.", "{ONE BOARD.}"], size: 96 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [
           { at: 0.35, rect: [345, 378, 360, 184], w: 440, x: 295, y: 830 },
           { at: 0.45, rect: [1462, 378, 360, 184], w: 440, x: 785, y: 830,
-            focus: [{ at: 2.07, rect: [1480, 421, 110, 18], tag: "RANK" }, { at: 2.73, rect: [1480, 443, 170, 18], tag: "ROLE", tagBelow: true }, { at: 3.4, rect: [1480, 478, 250, 22], tag: "STATS", color: C.money, tagBelow: true }] },
+            focus: [{ at: 2.39, rect: [1480, 421, 110, 18], tag: "RANK" }, { at: 3.1, rect: [1480, 443, 170, 18], tag: "ROLE", tagBelow: true }, { at: 3.76, rect: [1480, 478, 250, 22], tag: "STATS", color: C.money, tagBelow: true }] },
           { at: 0.55, rect: [1090, 578, 360, 180], w: 440, x: 295, y: 1120 },
           { at: 0.65, rect: [717, 378, 360, 184], w: 440, x: 785, y: 1120 },
         ] },
       // "Open a scout file, and it's all there."
-      { kind: "stage", t: 6.3, d: 2.6, shot: "kami-scout-modal", plateW: 1040, plateY: 1060,
+      { kind: "stage", t: 23.1, d: 3.1, shot: "kami-scout-modal", plateW: 1040, plateY: 1060,
         heads: [{ at: 0, label: "THE SCOUT FILE", lines: ["OPEN A FILE.", "IT'S {ALL THERE}."], size: 96 }],
         plate: [{ at: 0, rx: 12, ry: 15 }],
         pieces: [
@@ -167,17 +184,17 @@ export const REELS = [
           { at: 0.55, rect: [995, 522, 398, 146], w: 430, x: 790, y: 1230 },
         ] },
       // "Then bid like you mean it."
-      { kind: "stage", t: 8.9, d: 2.0, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
+      { kind: "stage", t: 26.2, d: 2.0, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
         heads: [{ at: 0, label: "DRAFT NIGHT", lines: ["THEN BID LIKE", "YOU [MEAN IT]."], size: 96 }],
         plate: [{ at: 0, rx: 14, ry: -16 }],
         pieces: [{ at: 0.15, rect: [916, 714, 334, 87], w: 900, y: 1010, shape: "slant", cut: 22,
           live: [
-            { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$1,200" }, { at: 0.75, text: "$1,400" }, { at: 1.35, text: "$1,600" }] },
-            { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "PATIENCE", color: "#9d6bff" }, { at: 0.75, text: "DOOM", color: "#ff8a3d" }, { at: 1.35, text: "MISFITS", color: "#ff4655" }] },
+            { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$1,200" }, { at: 0.65, text: "$1,400" }, { at: 1.25, text: "$1,600" }] },
+            { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "PATIENCE", color: "#9d6bff" }, { at: 0.65, text: "DOOM", color: "#ff8a3d" }, { at: 1.25, text: "MISFITS", color: "#ff4655" }] },
           ] }],
-        toasts: [{ at: 0.75, k: "DOOM", v: "BIDS |$1,400|", color: "#ff8a3d", y: 1230 }, { at: 1.35, k: "MISFITS", v: "BIDS |$1,600|", color: "#ff4655", side: "left", y: 1230 }] },
-      // "Know who you're buying… on VOLT."
-      { kind: "cta", t: 10.9, d: 3.9, lines: ["SCOUT. BID.", "[WIN.]"], feat: FEAT, button: "START SCOUTING" },
+        toasts: [{ at: 0.65, k: "DOOM", v: "BIDS |$1,400|", color: "#ff8a3d", y: 1230 }, { at: 1.25, k: "MISFITS", v: "BIDS |$1,600|", color: "#ff4655", side: "left", y: 1230 }] },
+      // "Scout. Bid. Win. Start your league on VOLT."
+      { kind: "cta", t: 28.2, d: 6.8, lines: ["SCOUT. BID.", "[WIN.]"], feat: FEAT, button: "START YOUR LEAGUE" },
     ],
   },
 
