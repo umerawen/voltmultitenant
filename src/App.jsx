@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useId } from "react";
+import { useState, useEffect, useRef, useCallback, useId, memo } from "react";
 import { IS_NATIVE, SITE, AUTH_RETURN, apiUrl, siteOrigin, openAuthUrl, haptic, registerPush } from "./native.js";
 import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
@@ -182,7 +182,7 @@ const ICON_PATHS = {
   reserve:     "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20v-.5A6.5 6.5 0 0 1 9 13a6.5 6.5 0 0 1 6.5 6.5v.5M19 8v6M16 11h6",
   rosters:     "M12 2.5l8 3v6c0 4.8-3.4 8.6-8 10-4.6-1.4-8-5.2-8-10v-6zM8.5 10.5h7M8.5 14h7",
   mock:        "M12 3v4M12 17v4M3 12h4M17 12h4M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
-  fixtures:    "M3 5h5v14H3M8 12h5M13 8h3v8h-3M16 12h5",
+  fixtures:    "M2 4h5v5H2M7 6.5h5M2 15h5v5H2M7 17.5h5M12 6.5v11M12 12h4M16 9h6v6h-6z",  // a bracket: two pairs into a final
   leaderboard: "M3 14h5v7H3zM9.5 5h5v16h-5zM16 10h5v11h-5z",
   veto:        "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM5.6 5.6l12.8 12.8",
   season:      "M7 4h10v5a5 5 0 0 1-10 0zM7 6H3.5v2A3.5 3.5 0 0 0 7 11.5M17 6h3.5v2a3.5 3.5 0 0 1-3.5 3.5M12 14v4M8 21h8M9.5 18h5",
@@ -2843,7 +2843,9 @@ function REEL_EASE(t) {
   return REEL_D1 + (1 - REEL_D1) * (1 - Math.pow(1 - u, 3)); // soft ease-out tail
 }
 
-function ReelCard({ player, center, dim, idle }) {
+// Memoised: while the strip spins only the card entering and the card leaving the
+// centre change props, so only those two re-render.
+const ReelCard = memo(function ReelCard({ player, center, dim, idle, lite }) {
   // render the REAL trading card, scaled to fit the reel slot; center card grows
   return (
     <div className="relative shrink-0 overflow-visible" style={{
@@ -2854,11 +2856,11 @@ function ReelCard({ player, center, dim, idle }) {
       zIndex: center ? 3 : 1,
     }}>
       <div className="absolute left-1/2 top-1/2 volt-reel-stage" style={{ width: 420, transform: `translate(-50%, -50%) scale(${REEL_SCALE})` }}>
-        <PlayerCard player={player} lite={!center} />
+        <PlayerCard player={player} lite={lite || !center} />
       </div>
     </div>
   );
-}
+});
 
 function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
   // active draw if a spin exists and hasn't fully revealed yet, OR landed (show winner)
@@ -2881,8 +2883,14 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
     return () => ro.disconnect();
   }, []);
 
-  const [x, setX] = useState(0);
+  // The strip's position is written straight to the DOM every frame (a React
+  // render per frame made the spin stutter on phones); React only hears about
+  // which card is centred, and when the reel lands.
+  const stripRef = useRef(null);
+  const xRef = useRef(0);
   const [centerIdx, setCenterIdx] = useState(0);
+  const [landed, setLanded] = useState(false);
+  const narrow = useNarrow(640);
 
   // ── DRAW animation ──
   const LOOPS = 6;
@@ -2899,9 +2907,12 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
     const finalX = -(winnerIndex * REEL_CARD_W + (REEL_CARD_W - REEL_GAP) / 2) + stageW / 2;
     const total = startX - finalX;
     let lastTickIdx = -1;
+    setLanded(false);
     const apply = (t) => {
       const curX = startX - total * REEL_EASE(t);
-      setX(curX);
+      xRef.current = curX;
+      if (stripRef.current) stripRef.current.style.transform = `translate3d(${curX}px, -50%, 0)`;
+      if (t >= 1) setLanded(true);
       const idx = Math.round((stageW / 2 - curX - (REEL_CARD_W - REEL_GAP) / 2) / REEL_CARD_W);
       const clamped = Math.max(0, Math.min(idx, drawReel.length - 1));
       setCenterIdx(clamped);
@@ -2958,14 +2969,14 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
         </div>
 
         {drawing ? (
-          <div className="absolute top-1/2 flex items-center" style={{ left: 0, transform: `translate(${x}px, -50%)`, willChange: "transform" }}>
+          <div ref={stripRef} className="absolute top-1/2 flex items-center" style={{ left: 0, transform: `translate3d(${xRef.current}px, -50%, 0)`, willChange: "transform" }}>
             {drawReel.map((p, i) => {
               // windowing: only mount real cards near the visible center; far cards are width-preserving spacers
-              const WIN = 7;
+              const WIN = narrow ? 3 : 7;
               if (Math.abs(i - centerIdx) > WIN) {
                 return <div key={i} className="shrink-0" style={{ width: REEL_INNER, height: REEL_CARD_H, marginRight: REEL_GAP }} />;
               }
-              return <ReelCard key={i} player={p} center={i === centerIdx} dim={i !== centerIdx} />;
+              return <ReelCard key={i} player={p} center={i === centerIdx} dim={i !== centerIdx} lite={!landed && !done} />;
             })}
           </div>
         ) : (
@@ -8245,12 +8256,6 @@ const MOBILE_CSS = `
       .page-wrap { padding-left: 12px !important; padding-right: 12px !important; }
     }
 
-    /* The spin-the-wheel stage is a fixed 420px canvas. It already scales, but
-       the desktop scale overhangs a phone; shrink the stage rather than letting
-       it get clipped by the shell. */
-    @media (max-width: 480px) {
-      .volt-reel-stage { transform: translate(-50%, -50%) scale(0.8) !important; }
-    }
 `;
 function ShellStyles() {
   return <style>{`
