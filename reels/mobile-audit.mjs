@@ -32,7 +32,13 @@ const clickText = (t) => async (p) => {
   }, t.toUpperCase());
   await wait(1600);
 };
-const hub = async (p) => { await p.evaluate(() => [...document.querySelectorAll("button")].find((b) => /league hub/i.test(b.textContent))?.click()); await wait(2500); };
+const hub = async (p) => {   // phones reach the hub through More
+  if (!(await p.evaluate(() => { const b = [...document.querySelectorAll("button")].find((b) => /league hub/i.test(b.textContent)); b?.click(); return !!b; }))) {
+    await byText(p, "More"); await wait(600);
+    await p.evaluate(() => [...document.querySelectorAll("button")].find((b) => /league hub/i.test(b.textContent))?.click());
+  }
+  await wait(2500);
+};
 const hubPage = (label) => async (p) => { await p.evaluate((l) => [...document.querySelectorAll("button")].find((b) => b.textContent.trim().toLowerCase() === l)?.click(), label); await wait(1200); };
 const drawer = async (p) => { await byText(p, "More"); await wait(700); };
 const menu = async (p) => { await p.evaluate(() => document.querySelector('button[aria-label="Account menu"]')?.click()); await wait(700); };

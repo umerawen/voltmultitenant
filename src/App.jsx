@@ -3883,7 +3883,7 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
     <button onClick={onClick} disabled={disabled}
       className="relative rounded-lg overflow-hidden group text-left"
       style={{
-        aspectRatio: "16 / 10",
+        aspectRatio: "16 / 10", containerType: "inline-size",
         border: `1px solid ${isDecider ? "#3ddc84" : state === "banned" ? "rgba(255,70,85,0.4)" : state === "off" ? "rgba(120,150,220,0.15)" : tint + "99"}`,
         boxShadow: isDecider ? "0 0 26px rgba(61,220,132,0.45)" : "none",
         cursor: disabled ? "default" : "pointer",
@@ -3900,8 +3900,11 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
       }} />
       {/* hover accent for clickable cards */}
       {!disabled && <div className="absolute inset-0 opacity-0 group-hover:opacity-100" style={{ background: `linear-gradient(to top, ${tint}22, transparent 60%)`, transition: "opacity .15s" }} />}
-      {/* name — centered & enlarged */}
-      <span className="absolute inset-0 grid place-items-center text-center px-2 font-bold uppercase pointer-events-none" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(1.5rem,3.2vw,2.4rem)", lineHeight: 1, letterSpacing: "0.06em", color: dimmed ? "rgba(236,243,255,0.5)" : "#f4f8ff", textShadow: "0 2px 14px rgba(0,0,0,0.75)" }}>{m}</span>
+      {/* a shade along the bottom so the name always reads */}
+      <div className="absolute inset-x-0 bottom-0 pointer-events-none" style={{ height: "62%", background: "linear-gradient(to top, rgba(5,8,16,0.88), rgba(5,8,16,0.35) 55%, transparent)" }} />
+      {!dimmed && <span className="absolute left-0 bottom-0 pointer-events-none" style={{ width: 3, height: "46%", background: tint, boxShadow: `0 0 10px ${tint}` }} />}
+      {/* name — bottom-left, sized to the tile so long names (Fracture, Corrode) fit */}
+      <span className="absolute left-0 right-0 bottom-0 font-bold uppercase pointer-events-none" style={{ padding: "0 8% 7% 9%", fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(14px, 16cqi, 2.4rem)", lineHeight: 1, letterSpacing: "0.04em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: dimmed ? "rgba(236,243,255,0.5)" : "#f4f8ff", textShadow: "0 2px 12px rgba(0,0,0,0.8)" }}>{m}</span>
       {/* decider checkmark, corner-style like the in-game select */}
       {isDecider && (
         <>
@@ -6417,7 +6420,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, fontWeight: 700, color: "#ffe4a0" }}>{draftIn}</span>
             </div>
           )}
-          {chrome?.onReport && (
+          {isDesk && chrome?.onReport && (
             <button onClick={() => {
                 // With fixtures built, land on the fixture list rather than a blank
                 // form: reporting from a fixture pre-fills both teams, the label and
@@ -6432,7 +6435,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           {/* portal — back out to Registration (or the league hub). One button for
               both roles: for a host with applications waiting it carries the count,
               which is why there's no separate Approvals control. */}
-          {chrome?.onBack && (
+          {isDesk && chrome?.onBack && (
             <button onClick={chrome.onBack}
               title={pendingReview > 0 ? `${pendingReview} application${pendingReview === 1 ? "" : "s"} awaiting review` : (chrome.portalLabel || "League hub")}
               style={{ height: 36, padding: "0 13px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, flex: "0 0 auto", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
@@ -6449,7 +6452,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             </button>
           )}
           {chrome && HAS_SUPABASE && <NotifBell />}
-          {chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
+          {isDesk && chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
           {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} seat={chipSeat} />}
           {!chrome && (
             <button data-snd="off" data-nohover="1" onClick={() => setSoundOn((v) => !v)} aria-label={soundOn ? "Mute sound" : "Unmute sound"}
@@ -6523,13 +6526,19 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 );
               })}
             </div>
+            {chrome?.hostControls && (
+              <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#f5c453", fontWeight: 700, padding: "0 4px 8px" }}>// Host</div>
+                <div onClick={() => setDrawerOpen(false)}>{chrome.hostControls}</div>
+              </div>
+            )}
             <div style={{ display: "grid", gap: 4, marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
               {[
                 chrome?.account && { key: "acc", icon: <Icon name="account" />, label: "My account", on: view === "account", go: () => setView("account") },
                 chrome?.onReport && { key: "rep", icon: <Icon name="clipboard" />, label: "Report a match", go: () => chrome.onReport() },
                 !auth?.userId && { key: "seat", icon: <Icon name="swap" />, label: "Switch seat", go: () => setIdentity(null) },
                 { key: "snd", icon: <Icon name={soundOn ? "soundOn" : "soundOff"} />, label: soundOn ? "Sound on" : "Sound off", go: () => setSoundOn((v) => !v), keep: true, snd: true },
-                chrome && { key: "hub", icon: <span style={{ fontSize: 17 }}>⊞</span>, label: chrome.portalLabel || "League hub", go: () => chrome.onBack(), accent: true },
+                chrome && { key: "hub", icon: <span style={{ fontSize: 17 }}>⊞</span>, label: (chrome.portalLabel || "League hub") + (pendingReview > 0 ? ` · ${pendingReview} waiting` : ""), go: () => chrome.onBack(), accent: true },
               ].filter(Boolean).map((r) => (
                 <button key={r.key} data-snd={r.snd ? "off" : undefined} onClick={() => { if (!r.keep) setDrawerOpen(false); r.go(); }}
                   className="flex items-center gap-3 text-left"
@@ -8511,6 +8520,7 @@ function CheckIcon({ size = 13 }) {
 
 function AccountChip({ account, onSignOut, onProfile, seat }) {
   const [open, setOpen] = useState(false);
+  const compact = useNarrow(640);   // phones: just the initial, the menu holds the rest
   const dcLinked = useDiscordLinked();
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef(null);
@@ -8547,10 +8557,12 @@ function AccountChip({ account, onSignOut, onProfile, seat }) {
   return (
     <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
       <button onClick={() => setOpen(o => !o)} aria-label="Account menu"
-        style={{ height: 36, padding: "0 14px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(255,255,255,0.045)", border: "1px solid rgba(120,150,220,0.32)", color: "#dce7ff", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: seat?.color || "#3ddc84", boxShadow: `0 0 8px ${seat?.color || "rgba(61,220,132,0.8)"}` }} />
-        <span>{account.name}</span>
-        <span style={{ color: "rgba(200,215,255,0.45)", fontSize: 9 }}>▼</span>
+        style={{ height: 36, padding: compact ? 0 : "0 14px", width: compact ? 38 : undefined, justifyContent: "center", position: "relative", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(255,255,255,0.045)", border: "1px solid rgba(120,150,220,0.32)", color: "#dce7ff", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>
+        <span style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: seat?.color || "#3ddc84", boxShadow: `0 0 8px ${seat?.color || "rgba(61,220,132,0.8)"}`,
+          ...(compact ? { position: "absolute", top: 5, right: 5, width: 6, height: 6 } : null) }} />
+        {compact
+          ? <span style={{ fontSize: 15, letterSpacing: 0 }}>{String(account.name || "?").trim().charAt(0).toUpperCase()}</span>
+          : <><span>{account.name}</span><span style={{ color: "rgba(200,215,255,0.45)", fontSize: 9 }}>▼</span></>}
       </button>
       {open && <>
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
@@ -9218,6 +9230,7 @@ const NOTIF_GLYPH = { role: "◆", approved: "✓", rejected: "✕", captain: "�
 const NOTIF_COLOR = { role: "#f5c453", approved: "#3ddc84", rejected: "#ff4655", captain: "#f5c453", settled: "#f5c453", weekend_open: "#3ddc84", suspension: "#ff4655", new_application: "#f5c453" };
 
 function NotifBell() {
+  const narrow = useNarrow(640);   // phones: the panel spans the screen instead of hanging off the bell
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
   async function pull() {
@@ -9252,7 +9265,7 @@ function NotifBell() {
         <Icon name="bell" size={18} />
       </button>
       {open && (
-        <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 320, maxHeight: 400, overflowY: "auto", zIndex: 130, background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(10), padding: "12px 14px", boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
+        <div style={{ ...(narrow ? { position: "fixed", left: 8, right: 8, top: 66, maxHeight: "calc(100dvh - 160px)" } : { position: "absolute", right: 0, top: "calc(100% + 8px)", width: 320, maxHeight: 400 }), overflowY: "auto", zIndex: 130, background: "linear-gradient(160deg,rgba(20,26,42,0.98),rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.4)", clipPath: SHELL_NOTCH(10), padding: "12px 14px", boxShadow: "0 20px 50px rgba(0,0,0,0.6)" }}>
           <div style={{ fontSize: 10, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 8 }}>// Notifications</div>
           {rows.length === 0 && <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.45)", margin: 0 }}>Nothing yet — league news lands here.</p>}
           <div style={{ display: "grid", gap: 6 }}>
@@ -14703,28 +14716,6 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         {!needsSetup && <DiscordConnectBanner />}
       </>;
     })()}
-    {isHost && current && (() => {
-      // Nudge the host when a tournament has been sitting in a live phase — the
-      // loop needs a manual flip and it's easy to forget one on a busy night.
-      const hrs = current.created_at ? (Date.now() - new Date(current.created_at).getTime()) / 3.6e6 : 0;
-      const stale = { registration_open: hrs > 72, registration_closed: true, drafting: true, matches_live: true }[current.phase];
-      const advLabel = { registration_open: "Start draft phase", registration_closed: "Start draft phase", drafting: "Start matches", matches_live: "Settle the tournament" }[current.phase];
-      return stale && advLabel ? (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 16, padding: "11px 16px", background: "rgba(245,196,83,0.06)", border: "1px solid rgba(245,196,83,0.35)", clipPath: SHELL_NOTCH(9), flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 600 }}>⚙ {weekendName(current)} is waiting on you. Next step: <b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>{advLabel}</b></span>
-          <button onClick={() => onEnter(current)} style={shellBtn("warn", { padding: "7px 14px", fontSize: 11.5 })}>Manage tournament →</button>
-        </div>
-      ) : null;
-    })()}
-    {isHost && HAS_SUPABASE && current && (
-      <HostAlerts>
-        <BoardGapCard eventId={current.id} />
-        <IgnCheckCard eventId={current.id} />
-        <AvailabilityCard eventId={current.id} />
-        {["drafting","matches_live"].includes(current.phase)
-          ? <SubDesk eventId={current.id} onChanged={load} /> : null}
-      </HostAlerts>
-    )}
 
     {events.length === 0
       ? <div style={{ ...PANEL(null, "22px 24px"), clipPath: SHELL_NOTCH(16), marginBottom: 22 }}>
@@ -14778,6 +14769,13 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     {live?.mineStatus === "rejected" && <span style={{ fontSize: 9.5, letterSpacing: "0.16em", textTransform: "uppercase", color: "#ff8f9a", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", padding: "4px 9px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Not approved</span>}
                     {(current.phase === "registration_open" || current.phase === "registration_closed") && live && !live.mineStatus && <span style={{ fontSize: 12.5, color: "#f5c453" }}>You haven't applied yet</span>}
                   </div>
+                  {/* For the host: the move that's theirs to make, done from Manage inside the tournament. */}
+                  {isHost && { registration_open: "Start the draft phase", registration_closed: "Start the draft phase", drafting: "Start the matches", matches_live: "Settle the tournament" }[current.phase] && (
+                    <div style={{ fontSize: 12, color: "rgba(245,196,83,0.85)", marginTop: 10, letterSpacing: "0.02em" }}>
+                      Next step · <b style={{ textTransform: "uppercase", letterSpacing: "0.08em" }}>{{ registration_open: "Start the draft phase", registration_closed: "Start the draft phase", drafting: "Start the matches", matches_live: "Settle the tournament" }[current.phase]}</b>
+                      <span style={{ color: "rgba(200,215,255,0.45)" }}> — Manage, inside the tournament</span>
+                    </div>
+                  )}
                   {/* Draft time is the one fact everybody scans for — give it a
                       chip of its own rather than a loose line of mono text. */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
@@ -14896,6 +14894,15 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             </div>
           )}
         </div>}
+    {isHost && HAS_SUPABASE && current && (
+      <HostAlerts>
+        <BoardGapCard eventId={current.id} />
+        <IgnCheckCard eventId={current.id} />
+        <AvailabilityCard eventId={current.id} />
+        {["drafting","matches_live"].includes(current.phase)
+          ? <SubDesk eventId={current.id} onChanged={load} /> : null}
+      </HostAlerts>
+    )}
   </>);
 }
 
@@ -15371,7 +15378,37 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     } catch (e) { console.error(e); setBusy(false); }
   }
 
-  const bar = (
+  // Phones: row one says where you are (back, the tournament and its phase, bell,
+  // you); row two is what you can do (open the tournament; host tools).
+  const inRegPhase = phase === "registration_open" || phase === "registration_closed";
+  const barPhone = (
+    <div className="vg-shell" style={{ position: "sticky", top: 0, zIndex: 60, padding: "10px 14px 12px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(8,11,19,0.96))", borderBottom: "1px solid rgba(61,123,255,0.2)", backdropFilter: "blur(12px)", fontFamily: "'Rajdhani',sans-serif" }}>
+      <ShellStyles />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={onBack} aria-label="Back to the league" title="League hub" style={shellBtn("ghost", { width: 38, height: 38, padding: 0, display: "grid", placeItems: "center", fontSize: 20, flexShrink: 0 })}>‹</button>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#ecf3ff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.1 }}>{ev ? weekendName(ev) : "Tournament"}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: PHASE_COLOR[phase] }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: PHASE_COLOR[phase], boxShadow: `0 0 8px ${PHASE_COLOR[phase]}` }} />{PHASE_LABEL[phase]}</div>
+        </div>
+        {HAS_SUPABASE && <NotifBell />}
+        {account && <AccountChip account={account} onSignOut={onSignOut} />}
+      </div>
+      {(inRegPhase || isHost) && (
+        <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+          {inRegPhase && regView === "gate" && <button onClick={() => setRegView("app")} style={shellBtn("primary", { flex: 1, padding: "11px 12px", fontSize: 12 })}>⊞ Open the tournament →</button>}
+          {inRegPhase && regView === "app" && <button onClick={() => setRegView("gate")} style={shellBtn("accent", { flex: 1, padding: "11px 12px", fontSize: 12 })}>‹ Registration</button>}
+          {isHost && <HostMenu>
+              {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
+              {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: 8 })}>⟳ Rebuild teams</button>}
+              {phase === "matches_live" && <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { width: "100%", padding: "9px", marginTop: 8 })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
+              {phase !== "settled" && <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+            </HostMenu>}
+        </div>
+      )}
+    </div>
+  );
+  const barWide = (
     <div className="vg-shell" style={{ position: "sticky", top: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(8,11,19,0.96))", borderBottom: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 10px 30px rgba(0,0,0,0.35)", fontFamily: "'Rajdhani',sans-serif" }}>
       <ShellStyles />
       <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 14px" })}>‹ Schedule</button>
@@ -15403,6 +15440,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       </div>
     </div>
   );
+  const bar = narrow ? barPhone : barWide;
 
   // Registration phases land on the sign-up card, but the league stays
   // browsable — "Explore the league" opens the full app (Scout Hub, rosters)
