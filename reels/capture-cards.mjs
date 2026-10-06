@@ -40,7 +40,9 @@ const draw = await page.evaluate(() => {
   const name = (id) => b.players.find((p) => p.id === id)?.name;
   return { startTs: sp.startTs, duration: sp.duration, pool: sp.pool.map(name), winner: name(sp.playerId) };
 });
-const n = draw.pool.length, winnerIdx = draw.pool.indexOf(draw.winner), LOOPS = 6, winnerIndex = LOOPS * n + winnerIdx;
+// The app's reel always travels REEL_TRAVEL cards, starting where that lands on the winner.
+const REEL_TRAVEL = 60, REEL_LEAD = 6;
+const n = draw.pool.length, winnerIdx = draw.pool.indexOf(draw.winner), winnerIndex = REEL_LEAD + REEL_TRAVEL;
 
 // the card nearest the marker
 const centreCard = () => page.evaluate(() => {
@@ -56,10 +58,10 @@ const centreCard = () => page.evaluate(() => {
 await page.addStyleTag({ content: ".relative.w-full > .absolute.z-20.pointer-events-none { visibility: hidden !important; }" });
 
 // in time order (the app's spin loop stops for good once it lands), winner last
-const shots = [...Array(n).keys()].map((k) => [k, winnerIndex - ((winnerIdx - k + n) % n)]).sort((a, b) => a[1] - b[1]);
+const shots = [...Array(n).keys()].map((k) => [k, winnerIndex - ((winnerIdx - k + n) % n)]).filter(([, i]) => i > REEL_LEAD).sort((a, b) => a[1] - b[1]);
 for (const [k, i] of shots) {
   // the last time player k passes the marker before the winner lands
-  await page.evaluate((v) => window.__freeze(v), draw.startTs + timeFor(i / winnerIndex) * draw.duration + 1);
+  await page.evaluate((v) => window.__freeze(v), draw.startTs + timeFor((i - REEL_LEAD) / REEL_TRAVEL) * draw.duration + 1);
   await new Promise((r) => setTimeout(r, 700));
   const c = await centreCard();
   await page.screenshot({ path: path.join(out, `card-${String(k).padStart(2, "0")}.png`), clip: { x: c.x, y: c.y, width: c.w, height: c.h } });
@@ -71,6 +73,6 @@ await new Promise((r) => setTimeout(r, 1500));
 const rv = await page.evaluate(() => { const el = document.querySelector(".bid-pop"); const r = el?.getBoundingClientRect(); return r && { x: r.x - 40, y: r.y - 10, w: r.width + 80, h: r.height + 20 }; });
 if (rv) await page.screenshot({ path: path.join(out, "reveal.png"), clip: { x: rv.x, y: rv.y, width: rv.w, height: rv.h } });
 const size = await page.evaluate(() => { const r = document.querySelector(".volt-reel-stage").getBoundingClientRect(); return { w: r.width, h: r.height }; });
-fs.writeFileSync(path.join(out, "draw.json"), JSON.stringify({ ...draw, winnerIdx, loops: LOOPS, reveal: !!rv, slotW: 292, cardScale: 1.1 }, null, 1));
+fs.writeFileSync(path.join(out, "draw.json"), JSON.stringify({ ...draw, winnerIdx, travel: REEL_TRAVEL, reveal: !!rv, slotW: 292, cardScale: 1.1 }, null, 1));
 await browser.close();
 console.log("✓", out, n, "cards; winner", draw.winner, "at pool index", winnerIdx);

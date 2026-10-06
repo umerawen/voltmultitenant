@@ -2617,8 +2617,9 @@ function PlayerCard({ player, lite = false }) {
   const r = RANKS[player.rank] || RANKS.Iron;
   return (
     <div className="relative mx-auto w-full" style={{ maxWidth: 420 }}>
-      <div className="absolute -inset-6 pointer-events-none"
-        style={{ background: `radial-gradient(ellipse at 50% 30%, ${r.glow}, transparent 70%)`, filter: "blur(18px)" }} />
+      {/* closest-side so the glow fades out inside its own box (no flat band above the card) */}
+      <div className="absolute -inset-10 pointer-events-none"
+        style={{ background: `radial-gradient(closest-side at 50% 40%, ${r.glow}, transparent)`, filter: "blur(12px)" }} />
       <div className="relative overflow-hidden"
         style={{
           clipPath: "polygon(0 0, calc(100% - 26px) 0, 100% 26px, 100% 100%, 26px 100%, 0 calc(100% - 26px))",
@@ -2828,6 +2829,8 @@ const REEL_SCALE = 0.66;  // scale applied to the real 420px PlayerCard
 const REEL_CARD_H = 520;  // fixed slot height — fits the taller portrait card
 const REEL_CARD_W = 292;  // full slot width incl. gap (scaled card ≈277 + small gap)
 const REEL_GAP = 14;
+const REEL_TRAVEL = 60;   // cards the strip passes on every draw (~13 a second at full speed)
+const REEL_LEAD = 6;      // cards already on the strip, left of the start, so it never begins half-empty
 const REEL_INNER = REEL_CARD_W - REEL_GAP;
 /* mini player card used inside the reel */
 // Two-phase reel easing: constant-speed cruise (first 45% of time → 71% of distance),
@@ -2893,17 +2896,24 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
   const narrow = useNarrow(640);
 
   // ── DRAW animation ──
-  const LOOPS = 6;
+  // The same journey whatever the pool size: the strip always travels REEL_TRAVEL
+  // cards and lands on the winner. Instead of looping the pool a fixed number of
+  // times (a short crawl with 3 players, a blur with 100), it STARTS at whichever
+  // player puts the winner exactly REEL_TRAVEL cards away. Every client derives
+  // the same start from the spin, so everyone sees the same reel.
   const winnerPoolIdx = drawing ? Math.max(spin.pool.indexOf(spin.playerId), 0) : 0;
-  const winnerIndex = LOOPS * n + winnerPoolIdx;
-  const drawReel = drawing ? Array.from({ length: winnerIndex + n + 8 }, (_, i) => wheelPool[i % n]) : [];
+  // REEL_LEAD cards sit to the left of the starting card so the strip is full
+  // from the first frame, not empty on one side.
+  const startPoolIdx = (((winnerPoolIdx - REEL_TRAVEL - REEL_LEAD) % n) + n) % n;
+  const winnerIndex = REEL_LEAD + REEL_TRAVEL;
+  const drawReel = drawing ? Array.from({ length: REEL_LEAD + REEL_TRAVEL + 9 }, (_, i) => wheelPool[(startPoolIdx + i) % n]) : [];
   const winner = drawing ? players.find((p) => p.id === spin.playerId) : null;
   const wr = winner ? rankOf(winner.rank) : RANKS.Iron;
   const done = drawing && Date.now() >= spin.startTs + spin.duration;
 
   useEffect(() => {
     if (!drawing) return;
-    const startX = stageW / 2 - (REEL_CARD_W - REEL_GAP) / 2;
+    const startX = stageW / 2 - (REEL_LEAD * REEL_CARD_W + (REEL_CARD_W - REEL_GAP) / 2);
     const finalX = -(winnerIndex * REEL_CARD_W + (REEL_CARD_W - REEL_GAP) / 2) + stageW / 2;
     const total = startX - finalX;
     let lastTickIdx = -1;
@@ -2953,7 +2963,9 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
 
       {/* reel */}
       <div ref={reelRef} className="relative w-full mt-4" style={{ height: REEL_CARD_H + 50, overflow: "hidden" }}>
-        <div className="absolute pointer-events-none" style={{ left: 0, right: 0, top: -20, bottom: -20, background: `radial-gradient(ellipse 30% 80% at 50% 50%, ${glow}, transparent 70%)`, filter: "blur(20px)", transition: "background 600ms" }} />
+        {/* closest-side: the glow reaches zero before the box's edges, so the
+            reel's overflow can't slice it into a hard line top and bottom */}
+        <div className="absolute pointer-events-none" style={{ left: "26%", right: "26%", top: 0, bottom: 0, background: `radial-gradient(closest-side, ${glow}, transparent)`, transition: "background 600ms" }} />
         {/* edge fades */}
         <div className="absolute inset-y-0 left-0 z-10 pointer-events-none" style={{ width: 80, background: "linear-gradient(90deg, #0a0d18, transparent)" }} />
         <div className="absolute inset-y-0 right-0 z-10 pointer-events-none" style={{ width: 80, background: "linear-gradient(270deg, #0a0d18, transparent)" }} />
