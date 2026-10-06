@@ -26,9 +26,12 @@ html, body { width: 1080px; height: 1920px; overflow: hidden; background: #0a0d1
 
 /* hook */
 .hook-txt { position: absolute; left: 90px; right: 90px; }
-.art { position: absolute; left: 0; top: 0; width: 1080px; height: 1250px; overflow: hidden; }
+/* the art fades out with a mask, so the frame's own background (glows, grid) shows
+   through below it: no box edge, no second gradient under the text */
+.art { position: absolute; left: 0; top: 0; width: 1080px; height: 1250px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 55%, rgba(0,0,0,0.5) 78%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, #000 55%, rgba(0,0,0,0.5) 78%, transparent 100%); }
 .art img { position: absolute; top: 0; }
-.art-fade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(10,13,24,0.45) 0%, rgba(10,13,24,0) 22%, rgba(10,13,24,0.1) 50%, rgba(10,13,24,0.8) 80%, #0a0d18 100%); }
+.art-fade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(10,13,24,0.45) 0%, rgba(10,13,24,0) 22%, rgba(10,13,24,0.1) 50%, rgba(10,13,24,0.45) 100%); }
 .agent { position: absolute; top: 120px; width: 720px; height: 1360px; }
 /* blue backlight: an ellipse that has fully faded well before its box edge */
 .agent::before { content: ""; position: absolute; left: -260px; right: -260px; top: -120px; bottom: 120px; background: radial-gradient(ellipse 36% 38% at 50% 42%, rgba(61,123,255,0.34), rgba(61,123,255,0.12) 55%, rgba(61,123,255,0) 100%); }

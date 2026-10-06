@@ -150,17 +150,52 @@ export const REELS = [
       { kind: "hook", t: 0, d: 3.0, art: ART.omen, label: "FOR VALORANT COMMUNITIES", lines: ["RUN YOUR OWN", "[LEAGUE.]"], size: 150 },
       // "VOLT."  (the bolt strikes on the word)
       { kind: "cta", t: 3.0, d: 1.8, tag: "// THE LEAGUE PLATFORM", lines: ["BUILT FOR", "{VALORANT.}"], size: 84, button: false, exit: "fade" },
-      // "Players sign up. Captains draft them in a live auction. And the bracket runs itself."
-      { kind: "montage", t: 4.8, beat: 1, items: [
-        { at: 0.1, shot: "kami-pool-scrolled", center: [1642, 668], word: "SIGN UP", small: "STEP 1 · PLAYERS JOIN" },
-        { at: 1.4, shot: "kami-auction-block", center: [1083, 757], word: "AUCTION", small: "STEP 2 · CAPTAINS DRAFT LIVE" },
-        { at: 3.95, d: 2.0, shot: "kami-playoffs", center: [1082, 540], word: "BRACKET", small: "STEP 3 · IT RUNS ITSELF" },
-      ] },
+      // "Players sign up."  (the pool fills: the live counts, then real players)
+      { kind: "stage", t: 4.8, d: 1.4, shot: "kami-player-pool", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "STEP 1 OF 3", lines: ["PLAYERS", "[SIGN UP.]"], size: 120 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.1, rect: [344, 895, 359, 171], w: 480, x: 290, y: 880 },
+          { at: 0.17, rect: [1463, 895, 359, 171], w: 480, x: 790, y: 880 },
+          { at: 0.24, rect: [717, 895, 359, 171], w: 480, x: 290, y: 1145 },
+          { at: 0.31, rect: [1090, 895, 359, 171], w: 480, x: 790, y: 1145 },
+        ],
+        toasts: [{ at: 0.45, k: "KAMI LABS", v: "|34| PLAYERS SIGNED UP", color: C.money, y: 1420, d: 0.9 }] },
+      // "Captains draft them in a live auction."  (a real bid climbs, then SOLD)
+      { kind: "stage", t: 6.2, d: 2.5, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
+        heads: [{ at: 0, label: "STEP 2 OF 3", lines: ["CAPTAINS BID", "{LIVE.}"], size: 120 }],
+        plate: [{ at: 0, rx: 12, ry: 15 }],
+        pieces: [
+          { at: 0.1, rect: [852, 90, 462, 602], w: 420, y: 830, shape: "notch", cut: 24 },
+          { at: 0.25, rect: [916, 714, 334, 87], w: 900, y: 1390, shape: "slant", cut: 22,
+            live: [
+              { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$800" }, { at: 0.45, text: "$1,200" }, { at: 0.95, text: "$1,400" }, { at: 1.4, text: "$1,600" }] },
+              { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "—", color: "rgba(200,215,255,0.4)" }, { at: 0.45, text: "PATIENCE", color: "#9d6bff" }, { at: 0.95, text: "DOOM", color: "#ff8a3d" }, { at: 1.4, text: "MISFITS", color: "#ff4655" }] },
+            ] },
+        ],
+        toasts: [{ at: 0.7, k: "PATIENCE", v: "BIDS |$1,200|", color: "#9d6bff", y: 1600 }, { at: 1.2, k: "DOOM", v: "BIDS |$1,400|", color: "#ff8a3d", side: "left", y: 1600 }, { at: 1.65, k: "MISFITS", v: "BIDS |$1,600|", color: "#ff4655", y: 1600, d: 0.8 }],
+        stamp: { at: 1.95, text: "SOLD", sub: "MISFITS · $1,600", y: 840 } },
+      // "And the bracket runs itself."  (semis, then the final, built for you)
+      { kind: "stage", t: 8.7, d: 2.05, shot: "kami-playoffs-final", plateW: 1040, plateY: 1060, sweep: false,
+        heads: [{ at: 0, label: "STEP 3 OF 3", lines: ["THE BRACKET", "~RUNS ITSELF.~"], size: 120 }],
+        plate: [{ at: 0, rx: 14, ry: -16 }],
+        pieces: [
+          { at: 0.1, rect: [366, 486, 713, 110], w: 960, y: 860 },
+          { at: 0.25, rect: [1098, 486, 703, 110], w: 960, y: 1060 },
+          { at: 0.75, rect: [765, 700, 635, 130], w: 960, y: 1310 },
+        ] },
       // "But the draft is where it's won."
       { kind: "hook", t: 10.75, d: 2.2, art: ART.jett, label: "DRAFT NIGHT", lines: ["THE DRAFT IS", "WHERE IT'S [WON.]"], size: 124 },
       // "Every captain gets ten thousand to spend."
-      { kind: "stat", t: 12.95, d: 2.8, label: "EVERY CAPTAIN GETS",
-        items: [{ to: 10000, prefix: "$", label: "To spend", color: C.money, at: 0.4, dur: 0.8 }, { to: 4, label: "Players to buy", color: C.voltHi, at: 1.15, dur: 0.4 }] },
+      { kind: "stage", t: 12.95, d: 2.8, shot: "kami-dashboard", plateW: 1040, plateY: 1060,
+        heads: [{ at: 0, label: "THE BUDGET", lines: ["EVERY CAPTAIN", "GETS |$10,000.|"], size: 112 }],
+        plate: [{ at: 0, rx: 14, ry: 16 }],
+        pieces: [
+          { at: 0.2, rect: [1340, 795, 483, 273], w: 900, y: 930,
+            focus: [{ at: 0.9, rect: [1357, 835, 447, 24], tag: "$10,000 EACH", color: C.money }] },
+          { at: 0.5, rect: [1340, 494, 482, 283], w: 640, y: 1390,
+            focus: [{ at: 1.5, rect: [1357, 532, 450, 52], tag: "$4,000 FOR ONE PLAYER", color: C.hot, tagBelow: true }] },
+        ] },
       // "So before you bid… you scout."
       { kind: "hook", t: 15.75, d: 2.5, art: ART.omenVoid, label: "FOR CAPTAINS", lines: ["BEFORE YOU BID,", "YOU [SCOUT.]"], size: 130 },
       // "Every player, on one board. Rank, role, and stats."
