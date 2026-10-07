@@ -21,3 +21,6 @@ Thumbs.db
 # iOS Firebase config, when it exists (android/app/google-services.json is
 # committed: it's client config built into every copy of the app anyway)
 ios/App/App/GoogleService-Info.plist
+
+# /brag explainer output (real league screens; rendered locally)
+brag-output*/
