@@ -108,7 +108,7 @@ const card = (id, name, [rx, ry, rw, rh], { x, y, w, cls = "" }) => {
 {
   const names = ["kami-player-pool", "kami-auction-block", "kami-scout-modal", "kami-fixtures-league", "kami-leaderboard", "kami-rosters", "kami-playoffs-final", "kami-final-modal", "kami-league-page", "kami-dashboard", "kami-match-modal", "kami-fixtures-champion"];
   const tiles = names.map((n, i) => `<div class="tile" style="left:${(i % 4) * 620}px;top:${Math.floor(i / 4) * 360}px"><img src="${shot(n)}"></div>`).join("");
-  scene(0, 5.55, `<div class="wall" id="w0">${tiles}</div><div class="wall-shade"></div>
+  scene(0, 5.4, `<div class="wall" id="w0">${tiles}</div><div class="wall-shade"></div>
     <div class="mid"><div class="big" id="i0a">SEEN OUR REELS?</div><div class="big" id="i0b">HERE'S THE <span class="b">FULL PICTURE.</span></div></div>`, { fadeIn: 0.6 });
   tw("#w0", { x: -40, y: -60, rotation: -7, scale: 1.05 }, { x: -260, y: -60, rotation: -7, scale: 1.05, duration: 5.6, ease: "none" }, 0);
   pop("#i0a", 0.95, { y: 30, d: 0.6 });
@@ -119,7 +119,7 @@ const card = (id, name, [rx, ry, rw, rh], { x, y, w, cls = "" }) => {
 
 // 1 · what it is, and who it's for
 {
-  scene(5.4, 11.7, `<div class="logo-c" id="l1">${logo("lg1", 720)}</div>
+  scene(5.4, 11.55, `<div class="logo-c" id="l1">${logo("lg1", 720)}</div>
     <div class="mid1"><div class="hl c" id="w1a">A PLATFORM FOR RUNNING</div><div class="hl c" id="w1b">YOUR OWN <span class="b">VALORANT LEAGUE.</span></div>
     <div class="for" id="w1f">BUILT FOR</div>
     <div class="chips"><span class="chip" id="w1c0">Community hosts</span><span class="chip" id="w1c1">Discord servers</span><span class="chip" id="w1c2">Clubs</span></div>
@@ -142,7 +142,7 @@ const card = (id, name, [rx, ry, rw, rh], { x, y, w, cls = "" }) => {
     `<div class="mess vc" id="m2" data-layout-allow-overlap><b>🔊 Draft night · voice</b><p>"who's next?"</p><p>"wait, what's my budget"</p><p>"did anyone write that down"</p></div>`,
     `<div class="mess br2" id="m3" data-layout-allow-overlap><b>Bracket (by hand)</b><svg viewBox="0 0 300 150" width="300" height="150"><path d="M10 20h80v40h40M10 100h80v-40M130 60h60v40h40M10 140h80v-40" stroke="#c9d3ea" stroke-width="3" fill="none" stroke-linecap="round"/><text x="150" y="52" fill="#ff8a8a" font-size="18" font-family="Space Grotesk">TBD?</text></svg></div>`,
   ];
-  scene(16.95, 13.65, `<div class="lp"><div class="chap"><span class="chl">THE PROBLEM</span></div><div class="hl" id="p2h0">RUNNING A LEAGUE</div><div class="hl" id="p2h1">TODAY MEANS…</div>
+  scene(16.95, 13.6, `<div class="lp"><div class="chap"><span class="chl">THE PROBLEM</span></div><div class="hl" id="p2h0">RUNNING A LEAGUE</div><div class="hl" id="p2h1">TODAY MEANS…</div>
       <div class="rows">${rows.map(([t], i) => `<div class="row" id="p2r${i}"><i></i><span>${esc(t)}<s id="p2s${i}"></s></span></div>`).join("")}</div></div>
     <div class="pile" id="pile" data-layout-allow-overlap>${chaos.join("")}</div>
     <div class="verdict" id="p2v"><div id="p2v0">HOURS OF ADMIN.</div><div class="red" id="p2v1">SOMETHING ALWAYS BREAKS.</div></div>`);
@@ -174,7 +174,7 @@ CH.forEach(([, , t], i) => {
 });
 
 // 3 · 01 create
-scene(30.55, 3.8, panel("c3", "01", "CREATE", [["CREATE YOUR", 31.0], ["LEAGUE.", 31.25], ["SHARE ONE LINK.", 32.85]]) +
+scene(30.55, 3.7, panel("c3", "01", "CREATE", [["CREATE YOUR", 31.0], ["LEAGUE.", 31.25], ["SHARE ONE LINK.", 32.85]]) +
   frame("f3", [{ id: "f3a", name: "kami-league-page", at: 30.55, cams: [{ cx: 960, cy: 540, w: 1920 }, { at: 31.3, cx: 990, cy: 330, w: 1400, dur: 1.6 }] }], { label: "KAMI LABS · LEAGUE" }) +
   `<div class="toast" id="t3"><b>🔗</b>Invite link copied</div>`);
 pop("#t3", 33.05, { y: 16 }); fx(33.05, "ui/click2.ogg", 0.28);
@@ -183,7 +183,7 @@ pop("#t3", 33.05, { y: 16 }); fx(33.05, "ui/click2.ogg", 0.28);
 {
   const S4 = 760 / 358, cx = 950, cy = 300, at = (x, y) => [r(cx + (x - 1464) * S4), r(cy + (y - 577) * S4)];
   const [ax, ay] = at(1474, 618), [sx, sy] = at(1474, 676);
-  scene(34.25, 12.7, panel("c4", "02", "SIGN-UPS", [["PLAYERS SIGN UP", 34.35], ["SOLO.", 34.85]],
+  scene(34.25, 12.65, panel("c4", "02", "SIGN-UPS", [["PLAYERS SIGN UP", 34.35], ["SOLO.", 34.85]],
     [["Rank and role on every card", 36.3], ["Stats read from a tracker screenshot", 38.4], ["Every sign-up in one place, to approve", 42.85]]) +
     `<div class="grpA" id="g4a">${card("k4", "kami-pool-scrolled", [1464, 577, 358, 186], { x: cx, y: cy, w: 760 })}
       <div class="ring rt" id="k4r" style="left:${ax}px;top:${ay}px;width:${r(250 * S4)}px;height:${r(50 * S4)}px"><b>RANK · ROLE</b></div>
@@ -205,7 +205,7 @@ pop("#t3", 33.05, { y: 16 }); fx(33.05, "ui/click2.ogg", 0.28);
   const bids = [["$800", "—", C.dim], ["$1,200", "PATIENCE", "#9d6bff"], ["$1,400", "DOOM", "#ff8a3d"], ["$1,600", "MISFITS", "#ff4655"]];
   const bt = [46.9, 51.65, 52.35, 53.05];
   const live = `<div class="lv" data-layout-allow-overlap style="left:945px;top:742px;width:160px;height:50px">${bids.map(([v], i) => `<span id="bv${i}" class="lvv">${v}</span>`).join("")}</div><div class="lv nm" data-layout-allow-overlap style="left:1128px;top:750px;width:108px;height:30px">${bids.map(([, n, c], i) => `<span id="bn${i}" class="lvn" style="color:${c}">${esc(n)}</span>`).join("")}</div>`;
-  scene(46.9, 10.65, panel("c5", "03", "DRAFT NIGHT", [["A LIVE AUCTION", 47.0], ["DRAFT.", 47.5]],
+  scene(46.9, 10.55, panel("c5", "03", "DRAFT NIGHT", [["A LIVE AUCTION", 47.0], ["DRAFT.", 47.5]],
     [["Every captain gets the same <em>$10,000</em>", 50.05], ["Bid on players, one at a time", 51.6], ["Everyone watches the same board, live", 53.95]]) +
     frame("f5", [{ id: "f5a", name: "kami-auction-block", at: 46.9, cams: [{ cx: 960, cy: 540, w: 1920 }, { at: 49.8, cx: 1080, cy: 450, w: 1300, dur: 1.2 }, { at: 54.0, cx: 960, cy: 540, w: 1920, dur: 1.2 }], live }], { label: "KAMI LABS · LIVE AUCTION", live: true }) +
     card("p5", "kami-dashboard", [1340, 795, 483, 273], { x: 740, y: 600, w: 380, cls: "float" }));
@@ -228,7 +228,7 @@ scene(57.45, 7.6, panel("c6", "04", "SCOUTING", [["SCOUT EVERY", 57.55], ["PLAYE
 {
   const roles = [["MISFITS", "#ff4655"], ["CHAOS", "#00e5ff"], ["PATIENCE", "#9d6bff"], ["VANGUARD", "#5ad1ff"], ["DOOM", "#ff8a3d"], ["IN&OUT", "#3ddc84"]];
   const lines = [`<p><strong>You're on MISFITS</strong> for this weekend.</p>`, `<p>Captain: Yona</p>`, `<p class="gap">Your squad:</p>`, `<p>limonataa</p>`, `<p>aliya</p>`, `<p>Hakuna Matata</p>`, `<p>Kamijeee</p>`, `<p class="gap">Use <code>/roster</code> any time to see this again.</p>`];
-  scene(65.05, 7.1, panel("c7", "05", "TEAMS", [["TEAMS LAND IN", 65.15], ["YOUR DISCORD.", 65.6]],
+  scene(65.05, 7.05, panel("c7", "05", "TEAMS", [["TEAMS LAND IN", 65.15], ["YOUR DISCORD.", 65.6]],
     [["Every player gets their team by DM", 66.35], ["Team roles set up in your server", 69.3]]) +
     `<div class="dc" id="dc"><div class="dc-top"># Direct Messages</div><div class="dc-msg"><div class="dc-av">${logo("lgd", 44)}</div><div class="dc-body"><div class="dc-name">VOLT <span class="app">APP</span></div>${lines.map((l, i) => l.replace("<p", `<p id="dl${i}"`)).join("")}</div></div></div>
     <div class="roles" id="rl"><div class="roles-h">SERVER ROLES</div><div class="roles-c">${roles.map(([n, c], i) => `<span class="role" id="ro${i}" style="color:${c};border-color:${c}66;background:${c}14"><i style="background:${c}"></i>@${esc(n)}</span>`).join("")}</div></div>`);
@@ -241,7 +241,7 @@ scene(57.45, 7.6, panel("c6", "04", "SCOUTING", [["SCOUT EVERY", 57.55], ["PLAYE
 // 8 · 06 tournament: groups → playoffs → final, a scoreboard read, the leaderboard
 {
   const tk = (t) => `<span class="step" id="st${t}">`;
-  scene(72.1, 14.5, panel("c8", "06", "TOURNAMENT", [["THE TOURNAMENT", 72.2], ["RUNS ITSELF.", 72.65]],
+  scene(72.1, 14.45, panel("c8", "06", "TOURNAMENT", [["THE TOURNAMENT", 72.2], ["RUNS ITSELF.", 72.65]],
     [[`${tk(0)}Groups</span> → ${tk(1)}Playoffs</span> → ${tk(2)}Grand final</span>`, 73.55], ["Upload the scoreboard: VOLT reads it", 77.35], ["The bracket and leaderboard update", 82.65]]) +
     frame("f8", [
       { id: "f8a", name: "kami-match-modal", at: 72.1, cams: [{ cx: 960, cy: 540, w: 1920 }, { at: 72.9, cx: 1130, cy: 540, w: 1600, dur: 1.4 }] },
@@ -283,7 +283,7 @@ scene(86.55, 5.8, panel("c9", "07", "COMMUNITY", [["YOUR WHOLE", 86.65], ["SERVE
 // 11 · proof: Kami Labs
 {
   const stats = [[24, "PLAYERS", 110.6], [6, "TEAMS", 111.95], [1, "CHAMPION", 113.15]];
-  scene(106.4, 7.95, `<div class="proof-h" id="ph">KAMI LABS RAN THEIR WHOLE TOURNAMENT ON <span class="b">VOLT.</span></div>` +
+  scene(106.4, 7.85, `<div class="proof-h" id="ph">KAMI LABS RAN THEIR WHOLE TOURNAMENT ON <span class="b">VOLT.</span></div>` +
     frame("f11", [{ id: "f11a", name: "kami-fixtures-champion", at: 106.4, cams: [{ cx: 960, cy: 540, w: 1920 }, { at: 107.2, cx: 1083, cy: 470, w: 1450, dur: 1.6 }] }], { x: 480, y: 175, w: 960, label: "KAMI LABS · CHAMPIONS" }) +
     `<div class="stats">${stats.map(([n, l], i) => `<div class="stat" id="s${i}"><b id="s${i}n">0</b><span>${l}</span></div>`).join("")}</div>`);
   pop("#ph", 106.5, { y: 20, d: 0.55 });
