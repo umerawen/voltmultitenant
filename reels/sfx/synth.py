@@ -312,7 +312,54 @@ def s_slap(g=1.0, **_):
     return stereo(x, 0, 0.004) * g * 0.75, 0.16
 
 
-SOUNDS = {"heart": s_heart, "scrape": s_scrape, "slap": s_slap, "whoosh": s_whoosh, "air": s_air, "swell": s_swell, "thump": s_thump, "boom": s_boom,
+def s_tick(g=1.0, **_):
+    """A bid landing: a tiny, soft wooden tick, barely there."""
+    d = 0.12
+    t = t_axis(d)
+    f = 1500 + 500 * np.exp(-t / 0.006)
+    x = np.sin(2 * np.pi * np.cumsum(f) / SR) * env_ar(len(t), 0.002, 0.018)
+    x += bandpass(rng.standard_normal(len(t)), 1500, 4500) * env_ar(len(t), 0.001, 0.006) * 0.3
+    x = lowpass(x, 3800) * 0.3
+    return stereo(x, 0.1) * g, 0.18
+
+
+def s_sold(g=1.0, **_):
+    """The one accent: a soft low knock under a struck F-major bell that rings out."""
+    th, _ = s_thump(g=0.45)
+    d = 3.2
+    t = t_axis(d)
+    x = np.zeros(len(t))
+    for m, a in ((77, 1.0), (81, 0.55), (84, 0.5), (89, 0.2)):
+        f0 = note(m)
+        x += a * np.sin(2 * np.pi * f0 * t) * env_ar(len(t), 0.004, 1.1)
+        x += a * 0.22 * np.sin(2 * np.pi * f0 * 2.0 * t + 0.4) * env_ar(len(t), 0.003, 0.3)
+        x += a * 0.3 * np.sin(2 * np.pi * f0 * 1.0025 * t) * env_ar(len(t), 0.01, 0.9)
+    x = lowpass(x, 5000) * 0.14
+    y = stereo(x, 0, 0.012)
+    y[: len(th)] += th
+    return y * g, 0.42
+
+
+def s_resolve(g=1.0, **_):
+    """The logo: the score lands home on a wide F-major-9, blooming slowly and ringing out."""
+    d = 10.0
+    t = t_axis(d)
+    x = np.zeros(len(t))
+    for m, a in ((29, 0.55), (41, 0.6), (53, 0.5), (57, 0.42), (60, 0.38), (64, 0.3), (67, 0.26), (72, 0.18)):
+        for det in (-0.003, 0.003):
+            x += a * np.sin(2 * np.pi * note(m) * (1 + det) * t + m)
+    x = lowpass(x, 2400) * env_ar(len(t), 0.35, 4.5, sustain=0.08) * 0.13
+    bell = np.zeros(len(t))
+    for m, a, st in ((81, 1.0, 0.0), (84, 0.6, 0.12)):
+        s0 = int(st * SR)
+        tt = np.arange(len(t) - s0) / SR
+        bell[s0:] += a * np.sin(2 * np.pi * note(m) * tt) * env_ar(len(tt), 0.006, 1.6)
+    x += lowpass(bell, 5000) * 0.07
+    x = fade_out(x, 1.5)
+    return stereo(x, 0, 0.016) * g, 0.45
+
+
+SOUNDS = {"tick": s_tick, "sold": s_sold, "resolve": s_resolve, "heart": s_heart, "scrape": s_scrape, "slap": s_slap, "whoosh": s_whoosh, "air": s_air, "swell": s_swell, "thump": s_thump, "boom": s_boom,
           "chime": s_chime, "pop": s_pop, "click": s_click, "rise": s_rise, "shimmer": s_shimmer}
 
 
@@ -479,6 +526,118 @@ def bed_grit(duration, outro):
     return reverb(y, 0.12)[:n]
 
 
+def bed_premium(duration, outro, sc=None):
+    """The premium reel's score: an atmospheric pad that becomes a quiet electronic groove.
+    Sections come from cues.json "score": a soft pulse from `pulse`, silence but the pad
+    over `hold` (the "And then..."), the groove from `groove`, a breath before `sold`, the
+    full groove from `full`, and at `outro` everything stops so the logo's chord can land."""
+    sc = sc or {}
+    n = int(duration * SR)
+    t = np.arange(n) / SR
+    P = sc.get("pulse", 5.4)
+    H0, H1 = sc.get("hold", [15.7, 18.6])
+    G = sc.get("groove", H1)
+    S = sc.get("sold")
+    F = sc.get("full", G + 8)
+    E = outro or duration
+    lin = lambda pts: np.interp(t, *zip(*pts))
+    # Bbmaj7 - F/A - Dm7 - C, one chord per 4 s
+    prog = [(46, [58, 62, 65, 69]), (45, [57, 60, 65, 69]), (50, [57, 60, 62, 65]), (48, [55, 60, 64, 67])]
+    blk = 8 * BEAT
+    pad = np.zeros(n)
+    sub = np.zeros(n)
+    for ci in range(int(np.ceil(duration / blk)) + 1):
+        s0, s1 = ci * blk, (ci + 1) * blk
+        a, b = int(max(s0 - 0.3, 0) * SR), int(min(s1 + 0.3, duration) * SR)
+        if a >= n:
+            break
+        tt = t[a:b]
+        root, ch = prog[ci % 4]
+        seg = np.zeros(len(tt))
+        for m in ch:
+            for det in (-0.004, 0, 0.004):
+                seg += saw_additive(note(m) * (1 + det), tt, fc=850)
+        w = np.ones(len(tt))
+        xf = min(int(0.6 * SR), len(w) // 2)
+        if s0 > 0:
+            w[:xf] = np.linspace(0, 1, xf)
+        w[-xf:] = np.minimum(w[-xf:], np.linspace(1, 0, xf))
+        pad[a:b] += seg * w
+        sub[a:b] += np.sin(2 * np.pi * note(root - 12) * tt) * w
+    pad *= 0.04 * lin([(0, 0), (1.2, 1), (H0, 1), (H0 + 0.8, 1.2), (H1, 1.2), (G + 0.5, 1), (E, 1), (E + 0.9, 0), (duration, 0)])
+    sub *= 0.075 * lin([(0, 0), (G - 0.5, 0), (G + 0.5, 0.7), (F, 1), (E, 1), (E + 0.5, 0), (duration, 0)])
+    xb = t % BEAT
+    pump = 1 - 0.32 * np.clip(np.exp(-xb / 0.1) - np.exp(-BEAT / 0.1), 0, 1) * (1 - np.exp(-xb / 0.008)) * (t >= G)
+    pad *= pump
+    sub *= pump
+
+    # gate: drums and pulses sit out the hold, take a breath before SOLD, stop at the outro
+    def on(at, frm):
+        if at < frm or at >= E - 0.01 or H0 <= at < H1:
+            return False
+        return not (S and S - 0.38 <= at < S)
+
+    kd = int(0.4 * SR)
+    kt = np.arange(kd) / SR
+    k1 = np.sin(2 * np.pi * np.cumsum(48 + 62 * np.exp(-kt / 0.03)) / SR) * env_ar(kd, 0.004, 0.13)
+    k1 = fade_out(lowpass(k1, 600), 0.1) * 0.3
+    hd = int(0.07 * SR)
+    hat = fade_out(bandpass(rng.standard_normal(hd), 3500, 7500) * env_ar(hd, 0.003, 0.016), 0.02) * 0.03
+    cd = int(0.3 * SR)
+    clap = fade_out(bandpass(rng.standard_normal(cd), 900, 4000) * env_ar(cd, 0.006, 0.06), 0.05) * 0.06
+    pd = int(0.32 * SR)
+    pt = np.arange(pd) / SR
+    drums = np.zeros(n)
+    pulse = np.zeros(n)
+    arp = np.zeros(n)
+    kick_g = lin([(G, 0.55), (F, 1), (duration, 1)])
+    pulse_g = lin([(P, 0.25), (P + 3, 0.6), (G, 0.8), (F, 1), (duration, 1)])
+    arp_g = lin([(G + 2.5, 0), (G + 4, 0.5), (F, 0.8), (E, 1), (duration, 1)])
+    step = BEAT / 4
+    for i in range(int(duration / step) + 1):
+        at = i * step
+        s_ = int(at * SR)
+        if s_ >= n:
+            break
+        pos = i % 16
+        ci = int(at // blk) % 4
+        root, ch = prog[ci]
+        # the pulse: muted 8ths on the root and fifth
+        if pos % 2 == 0 and on(at, P):
+            m = (root + 12) if pos % 4 == 0 else (root + 19)
+            f0 = note(m)
+            x = (np.sin(2 * np.pi * f0 * pt) + 0.4 * np.sin(4 * np.pi * f0 * pt)) * env_ar(pd, 0.004, 0.07)
+            e = min(n, s_ + pd)
+            pulse[s_:e] += x[: e - s_] * 0.05 * pulse_g[s_]
+        if on(at, G):
+            if pos % 4 == 0:
+                e = min(n, s_ + kd); drums[s_:e] += k1[: e - s_] * kick_g[s_]
+            if pos % 4 == 2 or (at >= F and pos % 2 == 1):
+                e = min(n, s_ + hd); drums[s_:e] += hat[: e - s_] * (1.0 if pos % 4 == 2 else 0.45)
+            if at >= F and pos in (4, 12):
+                e = min(n, s_ + cd); drums[s_:e] += clap[: e - s_]
+        # the arp: 16ths climbing the chord, an octave up
+        if on(at, G + 2.5) and arp_g[s_] > 0:
+            m = ch[(i * 3) % 4] + 12 + (12 if pos in (6, 14) else 0)
+            f0 = note(m)
+            x = (np.sin(2 * np.pi * f0 * pt) + 0.2 * np.sin(4 * np.pi * f0 * pt)) * env_ar(pd, 0.003, 0.05)
+            e = min(n, s_ + pd)
+            arp[s_:e] += x[: e - s_] * 0.022 * arp_g[s_] * (1.0 if pos % 4 == 0 else 0.7)
+    pulse = lowpass(pulse, 1300)
+    arp = lowpass(arp, 3200)
+    # into the auction: an airy lift across the hold
+    riser = np.zeros(n)
+    r0, r1 = int((H0 + 0.6) * SR), int(H1 * SR)
+    if r1 > r0:
+        k = r1 - r0
+        riser[r0:r1] = moving_band(pink(k), np.geomspace(300, 3200, k), 0.6, np.linspace(0, 1, k) ** 2.4) * 0.35
+    y = (stereo(pad, 0, 0.014) + stereo(sub) + stereo(drums) + stereo(pulse, -0.15, 0.006)
+         + stereo(arp, 0.2, 0.01) + stereo(riser, 0, 0.012))
+    fi = int(0.5 * SR)
+    y[:fi] *= np.linspace(0, 1, fi)[:, None]
+    return reverb(y, 0.2)[:n]
+
+
 # ── mix ──────────────────────────────────────────────────────────────────
 def main(cue_path, out):
     spec = json.load(open(cue_path, encoding="utf8"))
@@ -496,7 +655,11 @@ def main(cue_path, out):
         s = int(max(c["t"], 0) * SR)
         e = min(len(sfx), s + len(y))
         sfx[s:e] += y[: e - s]
-    b = (bed_grit if spec.get("bed") == "grit" else bed)(dur, spec.get("outro"))
+    kind = spec.get("bed")
+    if kind == "premium":
+        b = bed_premium(dur, spec.get("outro"), spec.get("score"))
+    else:
+        b = (bed_grit if kind == "grit" else bed)(dur, spec.get("outro"))
     duck_bed = np.ones(len(mix))
     duck_sfx = np.ones(len(mix))
     vo_track = np.zeros_like(mix)

@@ -6,6 +6,7 @@
 // Text markup: [red]  {blue}  |green|  ~gold~
 import { reel, C } from "./lib/engine.mjs";
 import { grungeScout } from "./lib/grunge.mjs";
+import { premiumReel } from "./lib/premium.mjs";
 
 const ART = {
   jett: { src: "art-jett.webp", fx: 0.6 },
@@ -609,6 +610,7 @@ export const REELS = [
 // 13 ── the grunge cut of 04: the same voiceover on a street-poster wall, built in
 //       lib/grunge.mjs (Big Shoulders + Mr Dafoe, taped prints, match cuts).
 REELS.push({ id: "volt-scout-grunge", duration: 35.0, fps: 60, vo: { file: "vo/scout-v2.flac", t: 0.35, gain: 0.85 }, build: grungeScout });
+REELS.push({ id: "volt-premium", duration: 53.5, fps: 60, vo: { file: "vo/premium.flac", t: 0.5, gain: 0.85 }, build: premiumReel });
 
 const only = process.argv[2];
 if (only === "--list") { REELS.forEach((r, i) => console.log(String(i + 1).padStart(2, "0") + " " + r.id)); process.exit(0); }
