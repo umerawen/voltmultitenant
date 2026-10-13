@@ -13,6 +13,9 @@
 import { cors } from "./_cors.js";
 
 const API = "https://discord.com/api/v10";
+// Each call sends for at most this long (~40 players), then returns `next` so
+// the client can carry on. Keeps a 300-player league inside any function limit.
+const BUDGET_MS = 40_000;
 const ROLE_PREFIX = "VOLT ";                  // so we only ever touch roles we made
 
 export default async function handler(req, res) {
@@ -28,7 +31,10 @@ export default async function handler(req, res) {
   const uid = await whoami(jwt);
   if (!uid) return res.status(401).json({ error: "session expired — sign in again" });
 
-  const { eventId, assignRoles = true } = req.body || {};
+  // `from` resumes a run: big leagues are sent in batches (see BUDGET_MS), the
+  // client calls again with the `next` index each batch returns until it's null.
+  const { eventId, assignRoles = true, from = 0 } = req.body || {};
+  const started = Date.now();
   if (!eventId) return res.status(400).json({ error: "eventId is required" });
 
   try {
@@ -71,33 +77,44 @@ export default async function handler(req, res) {
       .map((r) => r.id));
     const out = { dmed: 0, unlinked: 0, blocked: 0, rolesCreated: 0, rolesAssigned: 0, roleErrors: [] };
 
+    // Everyone to message, in board order (captain first, then the roster), so
+    // an index into this list means the same person on every batch.
+    const work = [];
     for (const team of board.teams || []) {
-      const memberIds = [
-        ...(team.captainUserId ? [team.captainUserId] : []),
-        ...(team.roster || []),
-      ];
-      const names = (team.roster || [])
-        .map((id) => (board.players || []).find((p) => p.id === id))
-        .filter(Boolean)
-        .map((p) => `• ${p.name}${p.rank ? ` — ${p.rank}` : ""}${p.role ? ` · ${p.role}` : ""}`);
+      for (const uidMember of [...(team.captainUserId ? [team.captainUserId] : []), ...(team.roster || [])])
+        work.push({ team, uidMember });
+    }
 
-      // One role per team, reused if it already exists from a previous weekend.
-      let roleId = null;
-      if (guild && assignRoles) {
-        const roleName = ROLE_PREFIX + team.name;
-        const found = existingRoles.find((r) => r.name === roleName);
-        if (found) roleId = found.id;
-        else {
-          const made = await createRole(token, guild, roleName, team.hue);
-          if (made.ok) { roleId = made.body.id; voltRoleIds.add(roleId); out.rolesCreated++; }
-          else if (!out.roleErrors.includes(made.reason)) out.roleErrors.push(made.reason);
-        }
+    // One role per team, reused if it already exists (from a previous weekend,
+    // or an earlier batch of this run).
+    const roleOf = new Map();
+    const teamRole = async (team) => {
+      if (!guild || !assignRoles) return null;
+      if (roleOf.has(team.id)) return roleOf.get(team.id);
+      const roleName = ROLE_PREFIX + team.name;
+      let roleId = existingRoles.find((r) => r.name === roleName)?.id || null;
+      if (!roleId) {
+        const made = await createRole(token, guild, roleName, team.hue);
+        if (made.ok) { roleId = made.body.id; voltRoleIds.add(roleId); out.rolesCreated++; }
+        else if (!out.roleErrors.includes(made.reason)) out.roleErrors.push(made.reason);
       }
+      roleOf.set(team.id, roleId);
+      return roleId;
+    };
 
-      for (const uidMember of memberIds) {
-        const did = discordOf.get(uidMember);
-        if (!did) { out.unlinked++; continue; }
-
+    let i = Math.max(0, Math.min(Number(from) || 0, work.length));
+    for (; i < work.length; i++) {
+      // Stop well inside the function's time limit and hand back where to resume.
+      if (Date.now() - started > BUDGET_MS) break;
+      const { team, uidMember } = work[i];
+      const did = discordOf.get(uidMember);
+      if (!did) { out.unlinked++; continue; }
+      {
+        const names = (team.roster || [])
+          .map((id) => (board.players || []).find((p) => p.id === id))
+          .filter(Boolean)
+          .map((p) => `• ${p.name}${p.rank ? ` — ${p.rank}` : ""}${p.role ? ` · ${p.role}` : ""}`);
+        const roleId = await teamRole(team);
         const isCaptain = uidMember === team.captainUserId;
         const msg =
           `**You're on ${team.name}** for ${ev.weekend_label || "this weekend"}.\n` +
@@ -117,7 +134,7 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json(out);
+    return res.status(200).json({ ...out, done: i, total: work.length, next: i < work.length ? i : null });
   } catch (e) {
     console.error("discord-teams failed", e);
     return res.status(500).json({ error: "Couldn't finish. Some players may have been messaged." });

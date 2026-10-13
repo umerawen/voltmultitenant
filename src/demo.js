@@ -2,7 +2,7 @@
 // Supabase keys) with ?demo=<scene>, so it never ships into a live session.
 // Every name here is invented — no real players appear in marketing footage.
 //
-// Scenes: pool · auction · drafted · bracket · league
+// Scenes: pool · auction · drafted · bracket · league · bigleague
 
 const PLAYERS = [
   // name, rank, div, role, agent, kda, acs, hs, win
@@ -69,6 +69,25 @@ export function demoBoard(scene, h) {
   };
 
   if (scene === "pool") return s;
+
+  // A big league: 40 invented teams, eight groups of five, top two from each
+  // into a round of 16 — the group stage → knockout path end to end.
+  if (scene === "bigleague") {
+    const syl = ["VO", "KA", "RI", "ZE", "NO", "TA", "LU", "XE", "MI", "DA", "SO", "QU"];
+    const big = Array.from({ length: 40 }, (_, i) => ({ id: "bl-" + i, name: `${syl[i % 12]}${syl[Math.floor(i / 12) + 4]}`, captain: "Cap " + (i + 1),
+      hue: `hsl(${((i * 137.508) % 360).toFixed(0)}, 78%, ${58 + ((i % 3) - 1) * 7}%)`, roster: [], budget: 10000 }));
+    s.teams = big; s.players = []; s.pool = [];
+    const t = { format: "group", bo: 1, overrides: {}, locked: true, createdAt: Date.now(), playoff: "semis", advance: 2, semis: null, final: null, matches: {},
+      groups: Array.from({ length: 8 }, (_, g) => ({ id: "g" + g, name: "Group " + "ABCDEFGH"[g], teamIds: big.slice(g * 5, g * 5 + 5).map((x) => x.id) })) };
+    let k = 7;
+    const score = (m) => { k = (k * 16807) % 2147483647; const lose = 3 + (k % 10); m.maps = [k % 2 ? { a: 13, b: lose } : { a: lose, b: 13 }]; h.resolveMatch(m); };
+    t.groups.forEach((g) => { t.matches[g.id] = h.roundRobinMatches(g.teamIds, 1); t.matches[g.id].forEach(score); });
+    h.syncFinal(s, t);
+    // the first three round-of-16 matches are in, the rest are tonight
+    (t.ko?.[0] || []).filter((m) => !m.bye).slice(0, 3).forEach((m) => { score(m); h.syncFinal(s, t); });
+    s.tournament = t;
+    return s;
+  }
 
   if (REAL) {
     // Replay the real draft in order, up to the player on the block (auction)

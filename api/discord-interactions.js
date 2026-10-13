@@ -334,6 +334,8 @@ function allMatches(t) {
       (ms || []).forEach((m) => push(m, g?.name || "Group"));
     }
   }
+  const K = (t.ko || []).length;           // group-stage knockout rounds before the semis
+  (t.ko || []).forEach((r, i) => (r || []).forEach((m) => !m?.bye && push(m, i === K - 1 ? "Quarterfinal" : "Round of 16")));
   (t.semis || []).forEach((m) => push(m, "Semifinal"));
   if (t.final) push(t.final, "Final");
   const R = (t.rounds || []).length;
@@ -428,7 +430,9 @@ function standingsText(b) {
   }
 
   // Playoffs after a table stage.
-  const ko = [...(t.semis || []).map((m) => ["Semifinal", m]), ...(t.final ? [["Final", t.final]] : [])]
+  const K = (t.ko || []).length;
+  const ko = [...(t.ko || []).flatMap((r, i) => (r || []).filter((m) => !m?.bye).map((m) => [i === K - 1 ? "Quarterfinal" : "Round of 16", m])),
+    ...(t.semis || []).map((m) => ["Semifinal", m]), ...(t.final ? [["Final", t.final]] : [])]
     .filter(([, m]) => m && (m.teamA || m.teamB));
   if (ko.length) parts.push("**Playoffs**\n" + ko.map(([s, m]) => `• ${s}: ${resultLine(m, nameOf)}`).join("\n"));
 

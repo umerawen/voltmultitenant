@@ -445,6 +445,10 @@ const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brim
 
 const TEAM_HUES = ["#ff4655", "#00e5ff", "#9d6bff", "#5ad1ff", "#ff8a3d", "#e35cff", "#3ddc84", "#f5c453", "#ff6fae", "#7c9cff", "#ffd24a", "#4dd6c1"];
 const MIN_TEAMS = 2;   // no maximum — a league runs as many teams as it has captains
+// Group stage: up to eight groups. Past four qualifiers the group stage feeds a
+// knockout (round of 16 / quarterfinals) ahead of the semis, so big leagues still
+// get a real bracket instead of four huge groups and four playoff spots.
+const MAX_GROUPS = 8;
 
 // Team colour for the nth team. The hand-picked palette covers the first dozen;
 // past that, colours are generated on the golden angle so a 20-team league still
@@ -472,6 +476,7 @@ function tournamentMatches(t) {
   const out = [];
   if (Array.isArray(t.matches)) t.matches.forEach((m) => out.push(m));
   else if (t.matches && typeof t.matches === "object") Object.values(t.matches).forEach((a) => Array.isArray(a) && a.forEach((m) => out.push(m)));
+  (t.ko || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
   (t.semis || []).forEach((m) => out.push(m));
   if (t.final) out.push(t.final);
   (t.rounds || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
@@ -841,6 +846,7 @@ function computeStandings(teamIds, matches, overrides) {
 // locate a match inside a tournament by locator: {kind, ...}
 //  group: {kind:"group", groupId, matchId}  | rr: {kind:"rr", matchId}
 //  final: {kind:"final"} | elim: {kind:"elim", round, idx}
+//  ko: {kind:"ko", round, idx} (group-stage knockout rounds before the semis)
 function findMatch(t, loc) {
   if (!loc) return null;
   if (loc.kind === "group") return (t.matches?.[loc.groupId] || []).find((m) => m.id === loc.matchId) || null;
@@ -848,6 +854,7 @@ function findMatch(t, loc) {
   if (loc.kind === "final") return t.final || null;
   if (loc.kind === "semi") return (t.semis || []).find((m) => m.id === loc.matchId) || null;
   if (loc.kind === "elim") return t.rounds?.[loc.round]?.[loc.idx] || null;
+  if (loc.kind === "ko") return t.ko?.[loc.round]?.[loc.idx] || null;
   return null;
 }
 
@@ -875,6 +882,127 @@ function propagateElim(t) {
       resolveMatch(nm);
     });
   }
+}
+
+// Group stage → knockout: seeds the semis (and any rounds before them) from
+// the finished group tables, and the final from the semis. Pure: board in, board out.
+function syncFinal(s, t) {
+  const table = (g) => {
+    const ms = t.matches[g.id] || [];
+    const done = ms.length > 0 && ms.every((m) => m.done);
+    const rows = computeStandings(g.teamIds, ms, t.overrides);
+    return { done, rows };
+  };
+  const groups = t.groups.map(table);
+  const allGroupsDone = groups.length > 0 && groups.every((g) => g.done);
+
+  // Two groups default to semis. Straight-to-final discards both runners-up,
+  // so second place in a group is worth nothing and half the teams are done
+  // after the group stage. Explicitly choosing "final" still works for two
+  // groups. Three or four groups always need semis — a final only has room
+  // for two group winners, and the old code silently dropped the rest.
+  if (t.groups.length > 2) t.playoff = "semis";
+  const wantSemis = t.playoff === "semis" || (t.playoff == null && t.groups.length === 2);
+  // Top one or two from each group. More than four qualifiers (five+ groups,
+  // or the top two from three+ groups) adds knockout rounds before the semis.
+  const adv = t.groups.length > 2 && t.advance === 2 ? 2 : 1;
+  const koOn = t.groups.length > 4 || (t.groups.length > 2 && adv === 2);
+  const koPlayed = () => (t.ko || []).some((r) => (r || []).some((m) => m.done && !m.bye));
+  if (!wantSemis) {
+    t.semis = null;
+    const winners = groups.map((g) => (g.done && g.rows.length ? g.rows[0].teamId : null));
+    if (winners.length >= 2 && winners[0] && winners[1]) {
+      if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: t.bo, maps: [], done: false, winner: null };
+      else if (!t.final.done) { t.final.teamA = winners[0]; t.final.teamB = winners[1]; }
+    } else if (t.final && !t.final.done) t.final = null;
+    return;
+  }
+
+  // Crossover semis: winner of one group meets the runner-up of the other, so
+  // topping your group is worth something rather than just qualifying.
+  if (!allGroupsDone || groups.length < 2 || groups.some((g) => g.rows.length < 2)) {
+    if (t.ko && !koPlayed()) { t.ko = null; t.koSeed = null; }
+    if (t.semis && !t.semis.some((m) => m.done)) t.semis = null;
+    if (t.final && !t.final.done) t.final = null;
+    return;
+  }
+  let pairs;
+  if (!koOn) { t.ko = null; t.koSeed = null; }
+  if (koOn) {
+    // Group winners seeded by record, then runners-up by record; standard
+    // bracket order (1 v 8, 4 v 5, …) with byes for the top seeds, and a
+    // first-round pairing of two teams from the same group swapped where a
+    // swap keeps both pairs apart.
+    const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
+    const seeds = [
+      ...groups.map((g, gi) => ({ ...g.rows[0], gi })).sort(byRecord),
+      ...(adv === 2 ? groups.map((g, gi) => ({ ...g.rows[1], gi })).sort(byRecord) : []),
+    ];
+    const size = Math.max(8, nextPow2(seeds.length));
+    const order = seedOrder(size).map((n) => seeds[n - 1] || null);
+    for (let i = 0; i < size; i += 2) {
+      const a = order[i], b = order[i + 1];
+      if (!a || !b || a.gi !== b.gi) continue;
+      for (let j = 0; j < size; j += 2) {
+        const c = order[j], d = order[j + 1];
+        if (j === i || !c || !d) continue;
+        if (d.gi !== a.gi && c.gi !== b.gi) { order[i + 1] = d; order[j + 1] = b; break; }
+      }
+    }
+    const sig = order.map((x) => x?.teamId || "-").join(",");
+    if (!t.ko || (!koPlayed() && t.koSeed !== sig)) {
+      // first round from the ordered slots, then empty rounds down to the last eight
+      const rounds = [];
+      let r0 = [];
+      for (let i = 0; i < size; i += 2) {
+        const a = order[i]?.teamId || null, b = order[i + 1]?.teamId || null;
+        const m = { id: tuid(), teamA: a, teamB: b, bo: t.bo, maps: [], done: false, winner: null };
+        if (!!a !== !!b) { m.done = true; m.winner = a || b; m.bye = true; }
+        r0.push(m);
+      }
+      rounds.push(r0);
+      for (let n = size / 4; n >= 4; n /= 2)
+        rounds.push(Array.from({ length: n }, () => ({ id: tuid(), teamA: null, teamB: null, bo: t.bo, maps: [], done: false, winner: null })));
+      t.ko = rounds; t.koSeed = sig;
+    }
+    propagateElim({ rounds: t.ko });
+    const w = t.ko[t.ko.length - 1].map((m) => (m.done ? m.winner : null));
+    pairs = [{ id: "sf1", teamA: w[0], teamB: w[1] }, { id: "sf2", teamA: w[2], teamB: w[3] }];
+  } else if (groups.length === 2) {
+    const [A, B] = groups;
+    pairs = [
+      { id: "sf1", teamA: A.rows[0].teamId, teamB: B.rows[1].teamId },
+      { id: "sf2", teamA: B.rows[0].teamId, teamB: A.rows[1].teamId },
+    ];
+  } else {
+    // Three or four groups: every group winner (plus the best runner-up when
+    // there are three) goes through, seeded by record — 1 v 4, 2 v 3.
+    const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
+    const seeds = groups.map((g) => g.rows[0]);
+    if (groups.length === 3) seeds.push(groups.map((g) => g.rows[1]).sort(byRecord)[0]);
+    seeds.sort(byRecord);
+    pairs = [
+      { id: "sf1", teamA: seeds[0].teamId, teamB: seeds[3].teamId },
+      { id: "sf2", teamA: seeds[1].teamId, teamB: seeds[2].teamId },
+    ];
+  }
+  if (!t.semis) {
+    t.semis = pairs.map((x) => ({ ...x, bo: t.bo, maps: [], done: false, winner: null }));
+  } else {
+    // Re-seed only what hasn't been played, so correcting an earlier group
+    // result can't rewrite a semi that already happened.
+    t.semis = pairs.map((x) => {
+      const prev = t.semis.find((m) => m.id === x.id);
+      if (prev?.done) return prev;
+      return { ...(prev || {}), ...x, bo: prev?.bo ?? t.bo, maps: prev?.maps || [], done: false, winner: null };
+    });
+  }
+
+  const w = t.semis.map((m) => (m.done ? m.winner : null));
+  if (w[0] && w[1]) {
+    if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: t.bo, maps: [], done: false, winner: null };
+    else if (!t.final.done) { t.final.teamA = w[0]; t.final.teamB = w[1]; }
+  } else if (t.final && !t.final.done) t.final = null;
 }
 
 const fmt = (n) => "$" + Number(n || 0).toLocaleString();
@@ -1390,7 +1518,7 @@ function FormatSwitcher({ t, actions }) {
               {fmt === "group" && (
                 <>
                   <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.5)", fontWeight: 700, marginLeft: 6 }}>Groups</span>
-                  <input type="number" min="2" max="4" value={groups} onChange={(e) => setGroups(Math.min(4, Math.max(2, Number(e.target.value) || 2)))}
+                  <input type="number" min="2" max={MAX_GROUPS} value={groups} onChange={(e) => setGroups(Math.min(MAX_GROUPS, Math.max(2, Number(e.target.value) || 2)))}
                     style={{ width: 60, padding: "6px 8px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} />
                 </>
               )}
@@ -1997,7 +2125,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
         <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>No tournament has been set up yet. The host will configure the format and brackets — they'll appear here live once it begins.</p>
       </div>
     );
-    const maxGroups = Math.max(2, Math.min(4, Math.floor(state.teams.length / 2))); // semis + final seat at most four group winners
+    const maxGroups = Math.max(2, Math.min(MAX_GROUPS, Math.floor(state.teams.length / 2))); // every group needs two teams
     return (
       <div className="view-in page-wrap py-10 flex flex-col items-center">
         {header("Competition", "New", "Tournament")}
@@ -2046,7 +2174,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                   );
                 })}
               </div>
-              <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>{state.teams.length} teams available · the top of each group goes through to the semifinals.</p>
+              <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>{state.teams.length} teams available · {draftGroups > 4 ? "the group winners go through to the quarterfinals" : "the top of each group goes through to the semifinals"}. You can take the top two from each group later.</p>
             </TPanel>
           )}
 
@@ -2256,6 +2384,26 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             </span>
           );
         })()}
+        {isAdmin && t.format === "group" && (t.groups?.length || 0) > 2 && actions.tSetAdvance && (() => {
+          const two = t.advance === 2, G = t.groups.length;
+          const opt = (on, label, n, tip) => (
+            <button key={n} onClick={() => actions.tSetAdvance(n)} title={tip}
+              className="text-xs uppercase tracking-widest px-3 py-1.5"
+              style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+                color: on ? "#cfe0ff" : "rgba(200,215,255,0.45)",
+                border: `1px solid ${on ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.2)"}`,
+                background: on ? "rgba(61,123,255,0.18)" : "transparent" }}>
+              {label}
+            </button>
+          );
+          return (
+            <span className="inline-flex items-center gap-2">
+              <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Playoff</span>
+              {opt(!two, "Top 1 per group", 1, G === 3 ? "The three group winners and the best runner-up." : `The ${G} group winners.`)}
+              {opt(two, "Top 2 per group", 2, `Winners and runners-up: ${G * 2} teams in the knockout.`)}
+            </span>
+          );
+        })()}
         {isAdmin && actions.tSwitchFormat && <FormatSwitcher t={t} actions={actions} />}
         {isAdmin && <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "transparent" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>}
       </div>
@@ -2270,7 +2418,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             {t.groups.map((g) => (
               <div key={g.id} className="flex flex-col gap-4">
                 <TPanel title={`${g.name} · Standings`}>
-                  <TStandings teamIds={g.teamIds} matches={t.matches[g.id] || []} overrides={t.overrides} teamOf={teamOf} advance={t.playoff === "semis" && t.groups.length === 2 ? 2 : 1} />
+                  <TStandings teamIds={g.teamIds} matches={t.matches[g.id] || []} overrides={t.overrides} teamOf={teamOf} advance={(t.playoff === "semis" && t.groups.length === 2) || (t.groups.length > 2 && t.advance === 2) ? 2 : 1} />
                 </TPanel>
                 <TPanel title={`${g.name} · Matches`}>
                   <div className="flex flex-col gap-2">
@@ -2282,11 +2430,32 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
               </div>
             ))}
           </div>
+          {/* knockout rounds before the semis (more than four qualifiers) */}
+          {t.ko?.length > 0 && t.ko.map((r, ri) => {
+            const name = ri === t.ko.length - 1 ? "Quarterfinal" : "Round of 16";
+            const real = r.map((m, mi) => [m, mi]).filter(([m]) => !m.bye);
+            return (
+              <TPanel key={ri} hue="#7da6ff" title={ri === t.ko.length - 1 ? "Quarterfinals" : "Round of 16"} className="mb-6">
+                {ri === 0 && (
+                  <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
+                    {t.advance === 2 ? "Group winners and runners-up" : "Group winners"}, seeded by record{r.some((m) => m.bye) ? " — the top seeds get a bye" : ""}. Teams from the same group are kept apart where possible.
+                  </p>
+                )}
+                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
+                  {real.map(([m, mi], k) => (
+                    <TMatchRow key={m.id} match={m} locator={{ kind: "ko", round: ri, idx: mi }} teamOf={teamOf} isAdmin={isAdmin} stage={`${name} ${k + 1}`} {...A} />
+                  ))}
+                </div>
+              </TPanel>
+            );
+          })}
           {/* semifinals, when the bracket has them */}
           {t.playoff === "semis" && (
             <TPanel hue="#7da6ff" title="Semifinals" className="mb-6">
               <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
-                {(t.groups?.length || 2) === 2
+                {t.ko?.length
+                  ? "The quarterfinal winners."
+                  : (t.groups?.length || 2) === 2
                   ? "Winner of each group meets the other group's runner-up."
                   : t.groups.length === 3
                     ? "The three group winners and the best runner-up, seeded by record."
@@ -2300,7 +2469,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                 </div>
               ) : (
                 <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
-                  Complete every group match and the semis will seed themselves.
+                  {t.ko?.length ? "Waiting on the quarterfinals." : "Complete every group match and the semis will seed themselves."}
                 </p>
               )}
             </TPanel>
@@ -5051,7 +5220,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       if (DEMO) {
         const m = await loadDemo();
         window.__VOLT.communityName = m.DEMO_LEAGUE_NAME;
-        if (!window.__demoBoard) window.__demoBoard = m.demoBoard(DEMO, { freshState, buildSingleElim, resolveMatch, propagateElim, leagueMatches });
+        if (!window.__demoBoard) window.__demoBoard = m.demoBoard(DEMO, { freshState, buildSingleElim, resolveMatch, propagateElim, leagueMatches, roundRobinMatches, syncFinal });
         s = await writeState(window.__demoBoard);
       }
 
@@ -5682,7 +5851,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const boNum = matchType === "bo3" ? 3 : 1;       // numeric best-of for match logic
     const t = { format, bo: boNum, overrides: {}, createdAt: Date.now() };
     if (format === "group") {
-      const g = Math.max(2, Math.min(numGroups || 2, 4, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      const g = Math.max(2, Math.min(numGroups || 2, MAX_GROUPS, Math.max(2, Math.floor(ids.length / 2) || 2)));
       t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
       t.matches = {}; // per-group matches generated when groups are locked
       t.locked = false;
@@ -5718,6 +5887,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const out = [];
     if (t.format === "group") {
       Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach((m) => out.push(m)));
+      (t.ko || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
       (t.semis || []).forEach((m) => out.push(m));
       if (t.final) out.push(t.final);
     } else if (t.format === "single") {
@@ -5744,7 +5914,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const boNum = matchType === "bo3" ? 3 : 1;
     const t = { format, bo: boNum, overrides: prev?.overrides || {}, createdAt: Date.now() };
     if (format === "group") {
-      const g = Math.max(2, Math.min(numGroups || 2, 4, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      const g = Math.max(2, Math.min(numGroups || 2, MAX_GROUPS, Math.max(2, Math.floor(ids.length / 2) || 2)));
       t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
       t.matches = {}; t.locked = false; t.final = null;
     } else if (format === "roundrobin" || format === "league") {
@@ -5888,12 +6058,26 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // Switch a two-group stage between semis and a straight final. Refuses once
   // a knockout match has been played, so the shape can't change underneath a
   // result that already counted.
+  // Three or more groups: send the top one or the top two from each group into
+  // the knockout. Same rule as above — fixed once a knockout match is played.
+  const tSetAdvance = (n) => mutate((s) => {
+    const t = s.tournament;
+    if (!t || t.format !== "group" || (t.groups || []).length < 3) return s;
+    if (t.final?.done || (t.semis || []).some((m) => m.done) || (t.ko || []).some((r) => r.some((m) => m.done && !m.bye))) return s;
+    t.advance = n === 2 ? 2 : 1;
+    t.semis = null; t.final = null; t.ko = null; t.koSeed = null;
+    syncFinal(s, t);
+    s.log.unshift(`Playoff: top ${t.advance} from each group`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
   const tSetPlayoff = (mode) => mutate((s) => {
     const t = s.tournament;
     if (!t || t.format !== "group") return s;
-    if (t.final?.done || (t.semis || []).some((m) => m.done)) return s;
+    if (t.final?.done || (t.semis || []).some((m) => m.done) || (t.ko || []).some((r) => r.some((m) => m.done && !m.bye))) return s;
     t.playoff = mode === "semis" ? "semis" : "final";
-    t.semis = null; t.final = null;
+    t.semis = null; t.final = null; t.ko = null; t.koSeed = null;
     syncFinal(s, t);
     s.log.unshift(`Playoff set to ${t.playoff === "semis" ? "semis + final" : "straight final"}`);
     s.log = s.log.slice(0, 8);
@@ -5944,77 +6128,6 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     else { t.final.teamA = a; t.final.teamB = b; }
   }
 
-  function syncFinal(s, t) {
-    const table = (g) => {
-      const ms = t.matches[g.id] || [];
-      const done = ms.length > 0 && ms.every((m) => m.done);
-      const rows = computeStandings(g.teamIds, ms, t.overrides);
-      return { done, rows };
-    };
-    const groups = t.groups.map(table);
-    const allGroupsDone = groups.length > 0 && groups.every((g) => g.done);
-
-    // Two groups default to semis. Straight-to-final discards both runners-up,
-    // so second place in a group is worth nothing and half the teams are done
-    // after the group stage. Explicitly choosing "final" still works for two
-    // groups. Three or four groups always need semis — a final only has room
-    // for two group winners, and the old code silently dropped the rest.
-    if (t.groups.length > 2) t.playoff = "semis";
-    const wantSemis = t.playoff === "semis" || (t.playoff == null && t.groups.length === 2);
-    if (!wantSemis) {
-      t.semis = null;
-      const winners = groups.map((g) => (g.done && g.rows.length ? g.rows[0].teamId : null));
-      if (winners.length >= 2 && winners[0] && winners[1]) {
-        if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: t.bo, maps: [], done: false, winner: null };
-        else if (!t.final.done) { t.final.teamA = winners[0]; t.final.teamB = winners[1]; }
-      } else if (t.final && !t.final.done) t.final = null;
-      return;
-    }
-
-    // Crossover semis: winner of one group meets the runner-up of the other, so
-    // topping your group is worth something rather than just qualifying.
-    if (!allGroupsDone || groups.length < 2 || groups.some((g) => g.rows.length < 2)) {
-      if (t.semis && !t.semis.some((m) => m.done)) t.semis = null;
-      if (t.final && !t.final.done) t.final = null;
-      return;
-    }
-    let pairs;
-    if (groups.length === 2) {
-      const [A, B] = groups;
-      pairs = [
-        { id: "sf1", teamA: A.rows[0].teamId, teamB: B.rows[1].teamId },
-        { id: "sf2", teamA: B.rows[0].teamId, teamB: A.rows[1].teamId },
-      ];
-    } else {
-      // Three or four groups: every group winner (plus the best runner-up when
-      // there are three) goes through, seeded by record — 1 v 4, 2 v 3.
-      const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
-      const seeds = groups.map((g) => g.rows[0]);
-      if (groups.length === 3) seeds.push(groups.map((g) => g.rows[1]).sort(byRecord)[0]);
-      seeds.sort(byRecord);
-      pairs = [
-        { id: "sf1", teamA: seeds[0].teamId, teamB: seeds[3].teamId },
-        { id: "sf2", teamA: seeds[1].teamId, teamB: seeds[2].teamId },
-      ];
-    }
-    if (!t.semis) {
-      t.semis = pairs.map((x) => ({ ...x, bo: t.bo, maps: [], done: false, winner: null }));
-    } else {
-      // Re-seed only what hasn't been played, so correcting an earlier group
-      // result can't rewrite a semi that already happened.
-      t.semis = pairs.map((x) => {
-        const prev = t.semis.find((m) => m.id === x.id);
-        if (prev?.done) return prev;
-        return { ...(prev || {}), ...x, bo: prev?.bo ?? t.bo, maps: prev?.maps || [], done: false, winner: null };
-      });
-    }
-
-    const w = t.semis.map((m) => (m.done ? m.winner : null));
-    if (w[0] && w[1]) {
-      if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: t.bo, maps: [], done: false, winner: null };
-      else if (!t.final.done) { t.final.teamA = w[0]; t.final.teamB = w[1]; }
-    } else if (t.final && !t.final.done) t.final = null;
-  }
 
   // ── Hooks must stay above every early return ─────────────────────────
   // The role picker below returns early. A hook declared after it runs on some
@@ -7465,7 +7578,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       state={state}
       isAdmin={isAdmin}
       teamOf={teamOf}
-      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff }}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance }}
     />
   );
 
@@ -10070,22 +10183,42 @@ function DiscordTeamsCard({ eventId }) {
   const [res, setRes] = useState(null);
   const [err, setErr] = useState("");
   const [roles, setRoles] = useState(true);
+  // Big leagues go out in batches (the API stops at ~40s and returns `next`).
+  // A failed batch keeps its place, so trying again resumes rather than
+  // messaging the first half twice.
+  const [progress, setProgress] = useState(null);   // { done, total }
+  const [resumeFrom, setResumeFrom] = useState(0);
 
   async function run() {
-    setBusy(true); setErr(""); setRes(null);
+    setBusy(true); setErr("");
+    const sum = resumeFrom > 0 && res ? { ...res } : { dmed: 0, unlinked: 0, blocked: 0, rolesCreated: 0, rolesAssigned: 0, roleErrors: [] };
+    if (!resumeFrom) setRes(null);
+    let from = resumeFrom;
     try {
-      const { data: sess } = await __sb.auth.getSession();
-      const jwt = sess?.session?.access_token;
-      if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch(apiUrl("/api/discord-teams"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ eventId, assignRoles: roles }),
-      });
-      const b = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
-      setRes(b);
-    } catch (e) { setErr(e.message || "Couldn't send."); }
+      for (let guard = 0; guard < 100; guard++) {
+        const { data: sess } = await __sb.auth.getSession();
+        const jwt = sess?.session?.access_token;
+        if (!jwt) throw new Error("Session expired — sign in again.");
+        const r = await fetch(apiUrl("/api/discord-teams"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ eventId, assignRoles: roles, from }),
+        });
+        const b = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(b?.error || `Failed (${r.status})`);
+        for (const k of ["dmed", "unlinked", "blocked", "rolesCreated", "rolesAssigned"]) sum[k] += b[k] || 0;
+        for (const e of b.roleErrors || []) if (!sum.roleErrors.includes(e)) sum.roleErrors.push(e);
+        setRes({ ...sum });
+        setProgress({ done: b.done ?? 0, total: b.total ?? 0 });
+        if (b.next == null) { from = 0; break; }
+        from = b.next;
+        setResumeFrom(from);
+      }
+      setResumeFrom(0);
+    } catch (e) {
+      setResumeFrom(from);
+      setErr((e.message || "Couldn't send.") + (from > 0 ? " Press the button again to carry on from where it stopped." : ""));
+    }
     setBusy(false);
   }
 
@@ -10102,7 +10235,7 @@ function DiscordTeamsCard({ eventId }) {
         </label>
         <div>
           <button disabled={busy} onClick={run} style={shellBtn("primary", { padding: "9px 16px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
-            {busy ? "Sending…" : "Send team DMs"}
+            {busy ? (progress?.total ? `Sending… ${progress.done} / ${progress.total}` : "Sending…") : resumeFrom > 0 ? `Carry on from ${resumeFrom}${progress?.total ? ` / ${progress.total}` : ""}` : "Send team DMs"}
           </button>
         </div>
         {res && (
@@ -12387,7 +12520,7 @@ function TeamGlance({ team, players, onOpen, slots = 0 }) {
 }
 
 const allMatches = (t) => !t ? [] : t.format === "group"
-  ? Object.values(t.matches || {}).flat().concat(t.final ? [t.final] : [])
+  ? Object.values(t.matches || {}).flat().concat((t.ko || []).flat().filter((m) => !m.bye), t.semis || [], t.final ? [t.final] : [])
   : t.format === "single" ? (t.rounds || []).flat() : (t.matches || []);
 
 function FixtureGlance({ state }) {
