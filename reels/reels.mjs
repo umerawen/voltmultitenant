@@ -6,7 +6,6 @@
 // Text markup: [red]  {blue}  |green|  ~gold~
 import { reel, C } from "./lib/engine.mjs";
 import { grungeScout } from "./lib/grunge.mjs";
-import { premiumReel } from "./lib/premium.mjs";
 
 const ART = {
   jett: { src: "art-jett.webp", fx: 0.6 },
@@ -610,7 +609,117 @@ export const REELS = [
 // 13 ── the grunge cut of 04: the same voiceover on a street-poster wall, built in
 //       lib/grunge.mjs (Big Shoulders + Mr Dafoe, taped prints, match cuts).
 REELS.push({ id: "volt-scout-grunge", duration: 35.0, fps: 60, vo: { file: "vo/scout-v2.flac", t: 0.35, gain: 0.85 }, build: grungeScout });
-REELS.push({ id: "volt-premium", duration: 53.5, fps: 60, vo: { file: "vo/premium.flac", t: 0.5, gain: 0.85 }, build: premiumReel });
+
+// 14 ── for community owners: "What if teams weren't chosen… but bought?" Reel 04's
+//       Big Shoulders look (no brush) on the long script (vo/premium.flac at 0.5s).
+REELS.push({
+  id: "volt-premium", duration: 53.5, fps: 60, font: { family: "Big Shoulders Display", scale: 1.15 },
+  vo: { file: "vo/premium.flac", t: 0.5, gain: 0.85 },
+  scenes: [
+    // "What if Valorant teams weren't chosen…"
+    { kind: "hook", t: 0, d: 3.25, art: ART.omen, label: "FOR VALORANT COMMUNITIES", lines: ["WHAT IF TEAMS", "WEREN'T [CHOSEN?]"], size: 140 },
+    // "…but bought, in a live auction?"  (a real bid climbs, then SOLD)
+    { kind: "stage", t: 3.25, d: 2.4, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
+      heads: [{ at: 0, label: "THE LIVE AUCTION", lines: ["BUT", "|BOUGHT.|"], size: 130 }],
+      plate: [{ at: 0, rx: 12, ry: 15 }],
+      pieces: [
+        { at: 0.05, rect: [852, 90, 462, 602], w: 400, y: 840, shape: "notch", cut: 24 },
+        { at: 0.2, rect: [916, 714, 334, 87], w: 900, y: 1380, shape: "slant", cut: 22,
+          live: [
+            { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$800" }, { at: 0.95, text: "$1,200" }, { at: 1.25, text: "$1,400" }, { at: 1.5, text: "$1,600" }] },
+            { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "—", color: "rgba(200,215,255,0.4)" }, { at: 0.95, text: "PATIENCE", color: "#9d6bff" }, { at: 1.25, text: "DOOM", color: "#ff8a3d" }, { at: 1.5, text: "MISFITS", color: "#ff4655" }] },
+          ] },
+      ],
+      stamp: { at: 1.8, text: "SOLD", sub: "MISFITS · $1,600", y: 840 } },
+    // "You've got the players. You've got the community."
+    { kind: "stage", t: 5.65, d: 3.6, shot: "kami-pool-scrolled", plateW: 1040, plateY: 1060,
+      heads: [{ at: 0, label: "YOUR COMMUNITY", lines: ["YOUR", "{PLAYERS.}"], size: 130 }, { at: 1.89, label: "YOUR COMMUNITY", lines: ["YOUR", "{COMMUNITY.}"], size: 130 }],
+      plate: [{ at: 0, rx: 14, ry: -16 }],
+      pieces: [
+        { at: 0.15, d: 1.75, rect: [345, 378, 360, 184], w: 440, x: 295, y: 860 },
+        { at: 0.25, d: 1.65, rect: [1462, 378, 360, 184], w: 440, x: 785, y: 860 },
+        { at: 0.35, d: 1.55, rect: [1090, 578, 360, 180], w: 440, x: 295, y: 1150 },
+        { at: 0.45, d: 1.45, rect: [717, 378, 360, 184], w: 440, x: 785, y: 1150 },
+        { at: 1.95, shot: "kami-leaderboard", rect: [345, 360, 1480, 290], w: 1000, y: 1000 },
+      ] },
+    // "So why aren't you running your own Valorant league?"
+    { kind: "stage", t: 9.25, d: 2.9, shot: "kami-dashboard", plateW: 1040, plateY: 1080,
+      heads: [{ at: 0, label: "YOUR LEAGUE", lines: ["YOUR", "{LEAGUE.}"], size: 130 }],
+      plate: [{ at: 0, rx: 14, ry: 16 }] },
+    // "Players sign up. You appoint captains."
+    { kind: "stage", t: 12.15, d: 3.55, shot: "kami-player-pool", plateW: 1040, plateY: 1060,
+      heads: [{ at: 0, label: "STEP 1", lines: ["PLAYERS", "[SIGN UP.]"], size: 120 }, { at: 1.71, label: "STEP 2", lines: ["YOU PICK", "~CAPTAINS.~"], size: 120 }],
+      plate: [{ at: 0, rx: 14, ry: -16 }],
+      pieces: [
+        { at: 0.1, d: 1.55, rect: [344, 895, 359, 171], w: 480, x: 290, y: 880 },
+        { at: 0.17, d: 1.5, rect: [1463, 895, 359, 171], w: 480, x: 790, y: 880 },
+        { at: 0.24, d: 1.45, rect: [717, 895, 359, 171], w: 480, x: 290, y: 1145 },
+        { at: 0.31, d: 1.4, rect: [1090, 895, 359, 171], w: 480, x: 790, y: 1145 },
+        { at: 1.78, rect: [344, 492, 359, 186], w: 480, x: 290, y: 880 },
+        { at: 1.85, rect: [717, 492, 359, 186], w: 480, x: 790, y: 880 },
+        { at: 1.92, rect: [1090, 492, 359, 186], w: 480, x: 290, y: 1145 },
+        { at: 1.99, rect: [1463, 492, 359, 186], w: 480, x: 790, y: 1145 },
+      ] },
+    // "And then… things get interesting."
+    { kind: "hook", t: 15.7, d: 2.95, art: ART.jett, label: "DRAFT NIGHT", lines: ["AND THEN…", "IT GETS [INTERESTING.]"], size: 118 },
+    // "Captains go head-to-head in a live player auction."  (the real draw lands on Kamijeee)
+    { kind: "draw", t: 18.65, d: 3.75, draw: "kami-draw", spin: 2.5, delay: 0.25, y: 1040, cardW: 400,
+      head: { label: "LIVE PLAYER AUCTION", lines: ["HEAD", "TO [HEAD.]"], size: 120 },
+      reveal: { name: "KAMIJEEE", sub: "ON THE BLOCK · OPENS AT $800", color: "#dbe4f2" } },
+    // "Scouting talent, outbidding rivals, and building their dream teams."
+    { kind: "stage", t: 22.4, d: 3.0, shot: "kami-auction-block", plateW: 1040, plateY: 1040,
+      heads: [{ at: 0, label: "LIVE AUCTION", lines: ["OUTBID YOUR", "[RIVALS.]"], size: 120 }],
+      plate: [{ at: 0, rx: 14, ry: -16 }],
+      pieces: [
+        { at: 0.1, rect: [852, 90, 462, 602], w: 400, y: 840, shape: "notch", cut: 24 },
+        { at: 0.2, rect: [916, 714, 334, 87], w: 900, y: 1380, shape: "slant", cut: 22,
+          live: [
+            { rect: [945, 742, 160, 50], size: 36, color: "#5b8dff", steps: [{ at: 0, text: "$1,200" }, { at: 0.9, text: "$1,400" }, { at: 1.6, text: "$1,600" }] },
+            { rect: [1128, 750, 108, 30], size: 20, font: "raj", steps: [{ at: 0, text: "PATIENCE", color: "#9d6bff" }, { at: 0.9, text: "DOOM", color: "#ff8a3d" }, { at: 1.6, text: "MISFITS", color: "#ff4655" }] },
+          ] },
+      ],
+      toasts: [{ at: 0.9, k: "DOOM", v: "BIDS |$1,400|", color: "#ff8a3d", y: 1600, d: 0.65 }, { at: 1.6, k: "MISFITS", v: "BIDS |$1,600|", color: "#ff4655", side: "left", y: 1600, d: 0.55 }],
+      stamp: { at: 2.2, text: "SOLD", sub: "KAMIJEEE → MISFITS", y: 840 } },
+    // "…and building their dream teams."
+    { kind: "stage", t: 25.4, d: 1.45, shot: "kami-rosters", plateW: 1040, plateY: 1060,
+      heads: [{ at: 0, label: "ROSTERS", lines: ["BUILD THE", "|DREAM TEAM.|"], size: 120 }],
+      plate: [{ at: 0, rx: 14, ry: 16 }],
+      pieces: [
+        { at: 0.1, rect: [343, 233, 357, 535], w: 430, x: 295, y: 1080 },
+        { at: 0.2, rect: [717, 233, 357, 535], w: 430, x: 785, y: 1080 },
+      ] },
+    // "And that's only the beginning. Fixtures, leaderboards,"
+    { kind: "stage", t: 26.85, d: 4.0, shot: "kami-match-modal", plateW: 1040, plateY: 1060,
+      heads: [{ at: 0, label: "THE SEASON", lines: ["THAT'S ONLY THE", "{BEGINNING.}"], size: 110 }, { at: 2.25, label: "FIXTURES", lines: ["THE", "[MATCHUPS.]"], size: 130 }],
+      plate: [{ at: 0, rx: 14, ry: 16 }],
+      pieces: [
+        { at: 2.3, rect: [343, 664, 726, 416], w: 940, y: 960 },
+        { at: 3.15, shot: "kami-leaderboard", rect: [345, 360, 1480, 290], w: 1000, y: 1420 },
+      ] },
+    // "predictions, and the race to become champions."
+    { kind: "stage", t: 30.85, d: 3.3, shot: "kami-final-modal", plateW: 1040, plateY: 1060,
+      heads: [{ at: 0, label: "PREDICTIONS", lines: ["THE", "[RIVALRIES.]"], size: 130 }, { at: 2.1, label: "THE FINAL", lines: ["THE", "~CHAMPIONS.~"], size: 130 }],
+      plate: [{ at: 0, rx: 14, ry: -16 }],
+      pieces: [
+        { at: 0.1, d: 1.95, rect: [652, 314, 616, 451], w: 860, y: 1050 },
+        { at: 2.15, shot: "kami-fixtures-champion", rect: [775, 349, 616, 135], w: 1000, y: 1050 },
+      ] },
+    // "All in one place. Less admin for you."
+    { kind: "stage", t: 34.15, d: 4.3, shot: "kami-dashboard", plateW: 1040, plateY: 1060,
+      heads: [{ at: 0, label: "ONE PLATFORM", lines: ["ALL IN", "{ONE PLACE.}"], size: 130 }, { at: 2.1, label: "FOR HOSTS", lines: ["LESS", "[ADMIN.]"], size: 130 }],
+      plate: [{ at: 0, rx: 14, ry: 16 }],
+      pieces: [
+        { at: 2.2, rect: [1340, 795, 483, 273], w: 900, y: 960 },
+        { at: 2.45, rect: [1340, 494, 482, 283], w: 640, y: 1400 },
+      ] },
+    // "More competition, more rivalries, and way more fun for your community."
+    { kind: "list", t: 38.45, d: 5.15, y: 560, label: "FOR YOUR COMMUNITY", lines: ["MORE OF", "|WHAT MATTERS.|"], size: 112,
+      items: [{ t: "More competition", at: 0.1 }, { t: "More rivalries", at: 1.6 }, { t: "Way more fun", at: 3.05 }] },
+    // "This is VOLT. Your community. Your league. Your rules."
+    { kind: "cta", t: 43.6, d: 9.9, tag: "// THIS IS VOLT", lines: ["YOUR COMMUNITY.", "YOUR LEAGUE.", "{YOUR RULES.}"], size: 92,
+      feat: "Sign-ups · Live auction · Fixtures · Leaderboards · Predictions", button: "DM US TO LAUNCH YOUR LEAGUE" },
+  ],
+});
 
 const only = process.argv[2];
 if (only === "--list") { REELS.forEach((r, i) => console.log(String(i + 1).padStart(2, "0") + " " + r.id)); process.exit(0); }
