@@ -15,6 +15,7 @@ const ART = {
   killjoy: { src: "art-killjoy.webp", fx: 0.47, ih: 1013 },
   archer: { src: "art-archer.webp", fx: 0.4, ih: 1013 },
   omenVoid: { src: "art-omen-void.webp", fx: 0.47, ih: 1012 },
+  yoru: { src: "art-yoru.webp", fx: 0.5, w: 1122, ih: 1402, h: 1350 },   // portrait, graded navy to match
 };
 const FEAT = "Solo sign-ups · Live auction · Brackets · Stats";
 const QF2 = "[aria-label^='QF 2']", SF1 = "[aria-label^='SF 1']", FINAL = "[aria-label^='Final']", DIALOG = "[role=dialog]";
@@ -617,7 +618,7 @@ REELS.push({
   vo: { file: "vo/premium.flac", t: 0.5, gain: 0.85 },
   scenes: [
     // "What if Valorant teams weren't chosen…"
-    { kind: "hook", t: 0, d: 3.25, art: ART.omen, label: "FOR VALORANT COMMUNITIES", lines: ["WHAT IF TEAMS", "WEREN'T [CHOSEN?]"], size: 140 },
+    { kind: "hook", t: 0, d: 3.25, art: ART.yoru, label: "FOR VALORANT COMMUNITIES", lines: ["WHAT IF TEAMS", "WEREN'T [CHOSEN?]"], size: 140 },
     // "…but bought, in a live auction?"  (a real bid climbs, then SOLD)
     { kind: "stage", t: 3.25, d: 2.4, shot: "kami-auction-block", plateW: 1040, plateY: 1040, sweep: false,
       heads: [{ at: 0, label: "THE LIVE AUCTION", lines: ["BUT", "|BOUGHT.|"], size: 130 }],
