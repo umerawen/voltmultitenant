@@ -6837,7 +6837,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             <SalesGlance state={state} onOpen={openPlayer} />
           </Cell>
           <Cell title="Captains' purses" action="Rosters" onGo={goto("locker")}>
-            <PursesGlance state={state} />
+            <PursesGlance state={state} mineId={dashTeam?.id} onAll={goto("locker")} />
           </Cell>
           <Cell title="Biggest buys" action="Rosters" span={2} onGo={goto("locker")}>
             <BuysGlance state={state} onOpen={openPlayer} />
@@ -7281,6 +7281,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         @media (min-width: 1280px) {
           .volt-auc-grid { display: grid; grid-template-columns: 230px minmax(0, 1fr) 230px; gap: 18px; padding: 0 20px; align-items: start; }
           .volt-auc-rail { display: flex !important; }
+          .volt-auc-rail[data-compact] { position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; scrollbar-width: thin; padding-right: 4px; }
           .volt-auc-rail[data-side="left"] { animation: voltRailL .45s cubic-bezier(.2,.8,.3,1) backwards; }
           .volt-auc-rail[data-side="right"] { animation: voltRailR .45s cubic-bezier(.2,.8,.3,1) backwards; }
           @keyframes voltRailL { from { opacity: 0; transform: translateX(-24px); } }
@@ -7290,7 +7291,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         }
       `}</style>
       {/* slim budget bar — narrow screens only; wide screens get the side rails */}
-      <div className={(railsOn ? "volt-auc-bar " : "") + "volt-hscroll flex flex-nowrap sm:flex-wrap sm:justify-center overflow-x-auto gap-2 px-4 sm:px-5 md:px-8 pt-4 sm:pt-5 pb-3"}>
+      <div className={(railsOn ? "volt-auc-bar " : "") + "volt-hscroll flex flex-nowrap " + (state.teams.length > 12 ? "" : "sm:flex-wrap sm:justify-center ") + "overflow-x-auto gap-2 px-4 sm:px-5 md:px-8 pt-4 sm:pt-5 pb-3"}>
         {state.teams.map((t) => { const lead = block?.leaderId === t.id; return (
           <div key={t.id} className="shrink-0 flex items-center gap-2.5 px-3.5 py-2 rounded-lg" style={{ background: lead ? "rgba(255,70,85,0.16)" : "rgba(255,255,255,0.04)", border: `1px solid ${lead ? "#ff4655" : t.hue + "44"}` }}>
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.hue, boxShadow: `0 0 8px ${t.hue}` }} />
@@ -7302,7 +7303,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
       <div className={railsOn ? "volt-auc-grid" : undefined}>
       {railsOn && <AuctionRail side="left" teams={state.teams.slice(0, Math.ceil(state.teams.length / 2))} players={state.players}
-        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} />}
+        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} compact={state.teams.length > 12} />}
       <div className="px-5 md:px-8 py-4 flex flex-col items-center gap-6">
         {/* center stage */}
         <div className="flex flex-col items-center gap-5 w-full">
@@ -7502,7 +7503,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         </div>
       </div>
       {railsOn && <AuctionRail side="right" teams={state.teams.slice(Math.ceil(state.teams.length / 2))} players={state.players}
-        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} />}
+        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} compact={state.teams.length > 12} />}
       </div>
     </div>
   );
@@ -11546,11 +11547,25 @@ function PoolStrip({ players }) {
 // ── Auction side rails ───────────────────────────────────────────────────
 // Every captain's squad and purse beside the block, so nobody leaves the
 // auction to check who still needs what. Half the teams each side.
-function AuctionTeamCell({ t, players, lead, mine, pool }) {
+function AuctionTeamCell({ t, players, lead, mine, pool, compact }) {
   const roster = (t.roster || []).map((id) => (players || []).find((p) => p.id === id)).filter(Boolean);
   const full = roster.length >= 4;
   const max = Math.max(0, maxAllowedBid(t, pool));
   const edge = lead ? "#3ddc84" : mine ? t.hue : `${t.hue}44`;
+  if (compact) return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", clipPath: SHELL_NOTCH(7),
+      background: lead ? "linear-gradient(160deg, rgba(61,220,132,0.18), rgba(10,13,22,0.85) 65%)" : `linear-gradient(160deg, ${t.hue}18, rgba(10,13,22,0.82) 60%)`,
+      border: `1px solid ${edge}`, opacity: full && !lead ? 0.55 : 1, transition: "all 200ms" }}>
+      <TeamMono name={t.name} hue={t.hue} size={16} />
+      <span style={{ flex: 1, minWidth: 0, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 13, textTransform: "uppercase",
+        color: t.hue, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}{mine ? " · you" : ""}</span>
+      <span style={{ display: "flex", gap: 2 }}>
+        {[0, 1, 2, 3].map((k) => <span key={k} style={{ width: 6, height: 6, transform: "rotate(45deg)",
+          background: k < roster.length ? t.hue : "transparent", border: `1px solid ${k < roster.length ? t.hue : "rgba(200,215,255,0.25)"}` }} />)}
+      </span>
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 12, color: lead ? "#3ddc84" : "#ecf3ff", minWidth: 56, textAlign: "right" }}>{fmt(t.budget)}</span>
+    </div>
+  );
   return (
     <div style={{ position: "relative", padding: "11px 12px 10px", clipPath: SHELL_NOTCH(10),
       background: lead ? `linear-gradient(160deg, rgba(61,220,132,0.16), rgba(10,13,22,0.85) 65%)`
@@ -11598,10 +11613,13 @@ function AuctionTeamCell({ t, players, lead, mine, pool }) {
     </div>
   );
 }
-function AuctionRail({ teams, players, leaderId, myTeamId, pool, side }) {
+// Big leagues (more than 12 teams) get one-line cells, and a rail taller than
+// the screen scrolls inside itself instead of stretching the auction page.
+function AuctionRail({ teams, players, leaderId, myTeamId, pool, side, compact }) {
   return (
-    <div className="volt-auc-rail" data-side={side} style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 16 }}>
-      {teams.map((t) => <AuctionTeamCell key={t.id} t={t} players={players} pool={pool}
+    <div className="volt-auc-rail" data-side={side} data-compact={compact ? "" : undefined}
+      style={{ display: "flex", flexDirection: "column", gap: compact ? 6 : 10, paddingTop: 16 }}>
+      {teams.map((t) => <AuctionTeamCell key={t.id} t={t} players={players} pool={pool} compact={compact}
         lead={leaderId === t.id} mine={myTeamId === t.id} />)}
     </div>
   );
@@ -13268,9 +13286,17 @@ function SalesGlance({ state, onOpen }) {
 }
 
 // ── Captains' purses: who can still afford what ──────────────────────────
-function PursesGlance({ state, slots = 4 }) {
-  const teams = [...(state?.teams || [])].sort((a, b) => (b.budget || 0) - (a.budget || 0));
-  if (!teams.length) return <Empty title="No teams yet" hint="Teams appear when the host builds them from the captains." />;
+// A glance, so it stops at a handful of teams (a 40-team league used to list
+// all 40 and stretch the whole dashboard row). Richest first, and the viewer's
+// own team is always in the list.
+const PURSE_ROWS = 6;
+function PursesGlance({ state, slots = 4, mineId, onAll }) {
+  const all = [...(state?.teams || [])].sort((a, b) => (b.budget || 0) - (a.budget || 0));
+  if (!all.length) return <Empty title="No teams yet" hint="Teams appear when the host builds them from the captains." />;
+  let teams = all.slice(0, PURSE_ROWS);
+  const mine = mineId && all.find((t) => t.id === mineId);
+  if (mine && !teams.includes(mine)) teams = [...teams.slice(0, PURSE_ROWS - 1), mine];
+  const more = all.length - teams.length;
   return (
     <div style={{ display: "grid", gap: 9 }}>
       {teams.map((t, i) => {
@@ -13294,6 +13320,12 @@ function PursesGlance({ state, slots = 4 }) {
           </div>
         );
       })}
+      {more > 0 && (
+        <button onClick={onAll} style={{ justifySelf: "start", marginTop: 2, padding: 0, background: "none", border: 0, cursor: onAll ? "pointer" : "default",
+          fontFamily: MONO, fontSize: 11, letterSpacing: "0.06em", color: "#7da6ff" }}>
+          +{more} more team{more === 1 ? "" : "s"}{onAll ? " · all purses →" : ""}
+        </button>
+      )}
     </div>
   );
 }

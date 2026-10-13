@@ -76,7 +76,11 @@ export function demoBoard(scene, h) {
     const syl = ["VO", "KA", "RI", "ZE", "NO", "TA", "LU", "XE", "MI", "DA", "SO", "QU"];
     const big = Array.from({ length: 40 }, (_, i) => ({ id: "bl-" + i, name: `${syl[i % 12]}${syl[Math.floor(i / 12) + 4]}`, captain: "Cap " + (i + 1),
       hue: `hsl(${((i * 137.508) % 360).toFixed(0)}, 78%, ${58 + ((i % 3) - 1) * 7}%)`, roster: [], budget: 10000 }));
-    s.teams = big; s.players = []; s.pool = [];
+    s.teams = big; s.players = s.players.filter((p) => !p.isCaptain);
+    // one invented player on the block, so the auction view has something live
+    const lot = s.players[0]; lot.status = "block";
+    s.block = { playerId: lot.id, startingBid: 2000, currentBid: 2600, leaderId: big[17].id, ts: Date.now() };
+    s.bidHistory = [{ teamId: big[3].id, amount: 2200, ts: Date.now() - 6000 }, { teamId: big[17].id, amount: 2600, ts: Date.now() - 2000 }];
     const t = { format: "group", bo: 1, overrides: {}, locked: true, createdAt: Date.now(), playoff: "semis", advance: 2, semis: null, final: null, matches: {},
       groups: Array.from({ length: 8 }, (_, g) => ({ id: "g" + g, name: "Group " + "ABCDEFGH"[g], teamIds: big.slice(g * 5, g * 5 + 5).map((x) => x.id) })) };
     let k = 7;
