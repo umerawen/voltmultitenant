@@ -4039,19 +4039,19 @@ const ALL_MAPS = ["Ascent", "Bind", "Breeze", "Corrode", "Fracture", "Haven", "I
 // Served from public/img/maps/ — see README. Keeping these out of the bundle
 // means the browser fetches them in parallel and caches them separately.
 const MAP_IMG = {
-  Ascent: "/img/maps/ascent.jpg",
-  Bind: "/img/maps/bind.jpg",
-  Breeze: "/img/maps/breeze.jpg",
-  Corrode: "/img/maps/corrode.jpg",
-  Fracture: "/img/maps/fracture.jpg",
-  Haven: "/img/maps/haven.jpg",
-  Icebox: "/img/maps/icebox.jpg",
-  Lotus: "/img/maps/lotus.jpg",
-  Pearl: "/img/maps/pearl.jpg",
-  Split: "/img/maps/split.jpg",
-  Summit: "/img/maps/summit.jpg",
-  Sunset: "/img/maps/sunset.jpg",
-  Abyss: "/img/maps/abyss.jpg",
+  Ascent: "/img/maps/ascent.jpg?v=2",
+  Bind: "/img/maps/bind.jpg?v=2",
+  Breeze: "/img/maps/breeze.jpg?v=2",
+  Corrode: "/img/maps/corrode.jpg?v=2",
+  Fracture: "/img/maps/fracture.jpg?v=2",
+  Haven: "/img/maps/haven.jpg?v=2",
+  Icebox: "/img/maps/icebox.jpg?v=2",
+  Lotus: "/img/maps/lotus.jpg?v=2",
+  Pearl: "/img/maps/pearl.jpg?v=2",
+  Split: "/img/maps/split.jpg?v=2",
+  Summit: "/img/maps/summit.jpg?v=2",
+  Sunset: "/img/maps/sunset.jpg?v=2",
+  Abyss: "/img/maps/abyss.jpg?v=2",
 };
 // Distinct placeholder tint per map so the grid reads as cards before real art is supplied.
 const MAP_TINT = {
