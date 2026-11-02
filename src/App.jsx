@@ -15439,18 +15439,22 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     return () => stop();
   }, [ev?.id, ev?.phase]);
 
-  // registration_closed is back, and this time it earns the step: it's the line
-  // that decides who was in the draft. Sign-ups stay open through it, but anyone
-  // joining from here on is a reserve (pool_eligible = false), not an auction pick.
-  const NEXT = { registration_open: "registration_closed", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
-  const NEXT_LABEL = { registration_open: "Close the draft pool", registration_closed: "Start draft phase", drafting: "Start matches", matches_live: "Settle tournament", settled: "Settled" };
+  // One press moves the tournament on: closing sign-ups opens the draft. Nothing
+  // sends a tournament to registration_closed any more; one already sitting there
+  // (sign-ups open, late joiners are reserves) still moves on to the draft.
+  const NEXT = { registration_open: "drafting", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
+  const NEXT_LABEL = { registration_open: "Next: close sign-ups & open draft", registration_closed: "Next: open draft", drafting: "Next: start matches", matches_live: "Next: settle tournament", settled: "Settled" };
   // settled → matches_live is a real reversal, not a plain phase step: it has to
   // restore the trophy counters that settling overwrote. stepBack routes it to
   // volt_unsettle rather than a straight phase update.
-  const PREV = { registration_closed: "registration_open", drafting: "registration_closed", matches_live: "drafting", settled: "matches_live" };
-  const [arm, setArm] = useState(false); // two-tap confirm on phase advance
+  const PREV = { registration_closed: "registration_open", drafting: "registration_open", matches_live: "drafting", settled: "matches_live" };
+  const [arm, setArm] = useState(false); // two-tap confirm, settling only: every other step can be moved back
   useEffect(() => { if (!arm) return; const t = setTimeout(() => setArm(false), 4000); return () => clearTimeout(t); }, [arm]);
   useEffect(() => { setArm(false); }, [phase]);
+  const tapNext = () => {
+    if (NEXT[phase] === "settled" && !arm) { setArm(true); return; }
+    setArm(false); advance();
+  };
 
   // Step the tournament one phase backward (settled stays terminal — season
   // snapshots are written at settle and must not be re-rolled casually).
@@ -15570,7 +15574,14 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
     // Closing registration and opening the draft are one step now, so this is
     // the last moment pending applications can be approved. Don't let them be
     // stranded silently — they'd never reach the pool.
-    if (phase === "registration_closed") {
+    if (NEXT[phase] === "drafting") {
+      // Once the draft is open players can't sign up or withdraw, and the
+      // day-before availability check only goes out during registration.
+      const hoursOut = ev?.draft_at ? (new Date(ev.draft_at).getTime() - Date.now()) / 36e5 : 0;
+      if (hoursOut > 24 && !(await voltConfirm(
+        `The draft is set for ${whenLabel(ev.draft_at)}.\n\n` +
+        `Opening it now closes sign-ups straight away, players can no longer withdraw, and the day-before availability check won't go out.`,
+        { title: "Open the draft early?", confirmLabel: "Open it now", cancelLabel: "Not yet" }))) return;
       const n = await loadPending();
       if (n > 0) {
         const ok = await voltConfirm(
@@ -15770,7 +15781,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
               {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
               {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: 8 })}>⟳ Rebuild teams</button>}
               {phase === "matches_live" && <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { width: "100%", padding: "9px", marginTop: 8 })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
-              {phase !== "settled" && <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+              {phase !== "settled" && <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
             </HostMenu>}
         </div>
       )}
@@ -15793,7 +15804,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
               {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
               {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: 8 })}>⟳ Rebuild teams</button>}
               {phase === "matches_live" && <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { width: "100%", padding: "9px", marginTop: 8 })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
-              {phase !== "settled" && <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+              {phase !== "settled" && <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
             </HostMenu>
           : <>
               {PREV[phase] && <button disabled={busy} onClick={stepBack} title="Move this tournament back one phase" style={shellBtn("ghost", { padding: "8px 11px" })}>↶</button>}
@@ -15802,7 +15813,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
               {phase === "matches_live" &&
                 <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { padding: "8px 12px" })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
               {phase !== "settled" &&
-                <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "ghost", { padding: "8px 16px" })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+                <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "ghost", { padding: "8px 16px" })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
             </>)}
         {account && <AccountChip account={account} onSignOut={onSignOut} />}
       </div>
@@ -15825,7 +15836,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
       {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: PREV[phase] ? 8 : 0 })}>⟳ Rebuild teams</button>}
       {phase === "matches_live" && <button onClick={() => setMatchView(true)} style={shellBtn("accent", { width: "100%", padding: "9px", marginTop: 8 })}>▦ Report match</button>}
-      {phase !== "settled" && <button disabled={busy} onClick={() => { if (!arm) { setArm(true); return; } setArm(false); advance(); }} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+      {phase !== "settled" && <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
     </> : null;
     const chrome = {
       backLabel: inReg ? "Registration" : "Schedule",
