@@ -15268,15 +15268,23 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 // ── Tournament roster fetch (module-level: used by the phase shell AND the
 // draft app's live browse mode) ──────────────────────────────────────────
 async function fetchRosterForEvent(eventId) {
-  const { data: regs } = await __sb.from("registrations")
-    .select("id, user_id, is_captain, status, availability_confirmed, no_show, wants_captain, pool_eligible, users(display_name, wants_captain, trophy_streak)")
+  const { data: regs, error } = await __sb.from("registrations")
+    .select("id, user_id, is_captain, status, availability_confirmed, no_show, wants_captain, pool_eligible")
     .eq("event_id", eventId);
+  // A failed read must not look like an empty roster: the draft is built from this.
+  if (error) throw error;
   const rows = regs || [];
   const ids = rows.map(r => r.user_id);
-  let profs = {}, noShowCounts = {};
+  let profs = {}, people = {}, noShowCounts = {};
   if (ids.length) {
     const { data: pp } = await __sb.from("player_profiles").select("*").in("user_id", ids);
     (pp || []).forEach(p => { profs[p.user_id] = p; });
+    // Fetched separately: a player has one users row per league, so the database
+    // has no single row for a registration to embed.
+    const { data: us, error: usersErr } = await __sb.from("users").select("id, display_name, wants_captain, trophy_streak")
+      .eq("community_id", window.__VOLT.communityId).in("id", ids);
+    if (usersErr) throw usersErr;
+    (us || []).forEach(u => { people[u.id] = u; });
     // season no-show history — the reliability signal hosts review against
     const { data: ns } = await __sb.from("registrations").select("user_id")
       .eq("community_id", window.__VOLT.communityId).eq("no_show", true).in("user_id", ids);
@@ -15284,15 +15292,16 @@ async function fetchRosterForEvent(eventId) {
   }
   const withProfile = (r) => {
     const p = profs[r.user_id] || {};
+    const u = people[r.user_id] || {};
     return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain,
       // Was this person in the draft? Late sign-ups are false. Missing = legacy
       // row from before the column existed, which was always draft-eligible.
       poolEligible: r.pool_eligible !== false,
-      volunteered: !!(r.wants_captain || r.users?.wants_captain), // per-tournament hand; legacy users flag as fallback
-      trophies: r.users?.trophy_streak || 0,
+      volunteered: !!(r.wants_captain || u.wants_captain), // per-tournament hand; legacy users flag as fallback
+      trophies: u.trophy_streak || 0,
       status: r.status || "approved", available: !!r.availability_confirmed,
       noShow: !!r.no_show, noShows: noShowCounts[r.user_id] || 0,
-      name: r.users?.display_name || "Player",
+      name: u.display_name || "Player",
       ign: p.ign ?? null,
       rank: p.rank, rankDiv: p.rank_div ?? null,
       peakRank: p.peak_rank ?? null, peakRankDiv: p.peak_rank_div ?? null,
