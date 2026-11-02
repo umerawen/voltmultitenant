@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useId, memo } from "react";
-import { IS_NATIVE, SITE, AUTH_RETURN, apiUrl, siteOrigin, openAuthUrl, haptic, registerPush } from "./native.js";
+import { IS_NATIVE, SITE, apiUrl, siteOrigin, openAuthUrl, haptic, registerPush } from "./native.js";
 import { createPortal } from "react-dom";
 import { createClient } from "@supabase/supabase-js";
 
@@ -7759,8 +7759,8 @@ function VoltGate() {
   const [info, setInfo] = useState(""); // neutral status line (e.g. "check your email")
   const [invitedTo, setInvitedTo] = useState(null); // league name, when they arrived on an invite link
   const [invite, setInvite] = useState(null); // { league, card }: a signed-in player's invite to a new league
-  const [discordAuth, setDiscordAuth] = useState(false); // Discord sign-in provider enabled in Supabase
-  useEffect(() => { discordAuthEnabled().then(setDiscordAuth); }, []);
+  const discordAuth = HAS_SUPABASE;
+  const [showEmail, setShowEmail] = useState(false); // Discord leads; email is one tap away
 
   // ?join=<code> lets a host post one link instead of asking people to copy a
   // code between two apps. Read once on mount and stripped from the URL, so a
@@ -7823,10 +7823,18 @@ function VoltGate() {
         cancelled: ["Discord wasn't connected. You can try again any time.", "warn"],
         expired: ["That Discord link expired — press Connect Discord again.", "warn"],
         failed: ["Couldn't reach Discord — try connecting again in a moment.", "error"],
+        email_exists: ["That email already has a VOLT account. Sign in with your password, then press Connect Discord once and this button will work next time.", "warn"],
       }[discordReturn];
       if (msg) setTimeout(() => voltToast(msg[0], msg[1]), 400);
     }
     (async () => {
+      // Back from "Continue with Discord": trade the single-use token for a session.
+      const loginToken = /[#&]volt_login=([^&]+)/.exec(window.location.hash || "");
+      if (loginToken) {
+        try { window.history.replaceState({}, "", window.location.pathname + window.location.search); } catch { /* ignore */ }
+        const { error } = await __sb.auth.verifyOtp({ token_hash: decodeURIComponent(loginToken[1]), type: "magiclink" });
+        if (error) { console.error("discord login", error); setTimeout(() => voltToast("Discord sign-in didn't finish. Please try again.", "error"), 400); }
+      }
       const { data } = await __sb.auth.getSession();
       if (data?.session) {
         setSession(data.session);
@@ -7835,6 +7843,7 @@ function VoltGate() {
       }
       // A code in the URL means they came from an invite, so send them straight
       // to the join form rather than a generic welcome screen.
+      else if (discordReturn === "email_exists") { setShowEmail(true); setPhase("signin"); }
       else setPhase(joinLink.current ? "join" : "welcome");
     })();
     const { data: sub } = __sb.auth.onAuthStateChange((e, s) => {
@@ -7903,8 +7912,7 @@ function VoltGate() {
   // Signed in with Discord → their Discord is already verified, so link it to
   // the league profile now instead of asking them to connect it separately.
   async function linkDiscordIfAny(user) {
-    const providers = user?.app_metadata?.providers || [];
-    if (!providers.includes("discord")) return;
+    if (!user?.app_metadata?.discord_id) return;
     try { await __sb.rpc("volt_link_discord_from_auth"); } catch (e) { console.error("discord auto-link", e); }
   }
 
@@ -7962,14 +7970,11 @@ function VoltGate() {
       }
       if (IS_NATIVE) {
         // In the app: sign in in the phone's browser, come back via com.voltleagues.app://auth.
-        const { data, error } = await __sb.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: AUTH_RETURN, skipBrowserRedirect: true } });
-        if (error) throw error;
-        await openAuthUrl(data.url);
+        await openAuthUrl(`${SITE}/api/discord-oauth?login=1&app=1`);
         setBusy(false);
         return;
       }
-      const { error } = await __sb.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: window.location.origin } });
-      if (error) throw error;
+      window.location.href = "/api/discord-oauth?login=1";
     } catch (e) { setErr(e.message || "Couldn't start Discord sign-in."); setBusy(false); }
   }
 
@@ -8212,14 +8217,16 @@ function VoltGate() {
   </>);
   const submitting = (fn) => (e) => { e.preventDefault(); if (!busy) fn(); };
   // One tap: account + verified Discord together. Email stays as the fallback.
-  const discordFirst = (intent, label) => discordAuth && (<>
+  const emailHidden = discordAuth && !session && !showEmail;
+  const discordFirst = (intent, label) => emailHidden && (<>
     <button type="button" disabled={busy} onClick={() => continueWithDiscord(intent)}
       style={{ ...btn(true), marginTop: 2, background: "#5865F2", borderColor: "#7983f5", color: "#fff", boxShadow: "0 0 24px rgba(88,101,242,0.35)" }}>
       {busy ? "…" : label}</button>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "12px 0 10px" }}>
-      <span style={{ flex: 1, height: 1, background: "rgba(120,150,220,0.2)" }} />
-      <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>or use email</span>
-      <span style={{ flex: 1, height: 1, background: "rgba(120,150,220,0.2)" }} />
+    <div style={{ textAlign: "center", marginTop: 14 }}>
+      <button type="button" onClick={() => { setErr(""); setShowEmail(true); }}
+        style={{ background: "none", border: "none", minHeight: 44, padding: "0 12px", color: "#7da6ff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.04em" }}>
+        Use email instead</button>
+      <p style={{ margin: "2px 0 0", fontSize: 12, color: "rgba(200,215,255,0.5)" }}>Have an account but never connected Discord to it? Use email.</p>
     </div>
   </>);
   const infoLine = info && <p style={{ color: "#9af5c2", fontSize: 13, marginTop: 12, lineHeight: 1.5 }}>{info}</p>;
@@ -8268,13 +8275,15 @@ function VoltGate() {
     {backLink}
     <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Welcome back. Sign in to your league.</p>
     {discordFirst("signin", "Continue with Discord")}
-    {emailPw(false)}
-    <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : "Sign in →"}</button>
-    <div style={{ textAlign: "center", marginTop: 12 }}>
-      <button type="button" onClick={() => { setErr(""); setInfo(""); setPhase("forgot"); }}
-        style={{ background: "none", border: "none", color: "#7da6ff", fontSize: 13, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.04em" }}>
-        Forgot your password?</button>
-    </div>
+    {!emailHidden && <>
+      {emailPw(false)}
+      <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : "Sign in →"}</button>
+      <div style={{ textAlign: "center", marginTop: 12 }}>
+        <button type="button" onClick={() => { setErr(""); setInfo(""); setPhase("forgot"); }}
+          style={{ background: "none", border: "none", color: "#7da6ff", fontSize: 13, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.04em" }}>
+          Forgot your password?</button>
+      </div>
+    </>}
   </form>);
 
   // Forgot password → email a reset link.
@@ -8303,9 +8312,12 @@ function VoltGate() {
     <p style={{ margin: "0 0 6px", color: "#5dcaa5", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Host setup</p>
     <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Name your league and create your host account. You'll get an invite link to share with players.</p>
     {labelled("League name", <input style={field} name="organization" autoComplete="organization" required placeholder="e.g. Minaal.GG" value={leagueName} onChange={e => setLeagueName(e.target.value)} />)}
-    {labelled("Your display name", <input style={field} name="nickname" autoComplete="nickname" placeholder="What players will see" value={displayName} onChange={e => setDisplayName(e.target.value)} />)}
-    {!session && <>{discordFirst("host", "Create with Discord →")}{emailPw(true)}</>}
-    <button type="submit" disabled={busy} style={btn(!(discordAuth && !session))}>{busy ? "…" : "Create my league →"}</button>
+    {discordFirst("host", "Create with Discord →")}
+    {!emailHidden && <>
+      {labelled("Your display name", <input style={field} name="nickname" autoComplete="nickname" placeholder="What players will see" value={displayName} onChange={e => setDisplayName(e.target.value)} />)}
+      {!session && emailPw(true)}
+      <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : "Create my league →"}</button>
+    </>}
   </form>);
 
   if (phase === "pending") return wrap(<>
@@ -8385,13 +8397,15 @@ function VoltGate() {
       <p style={{ margin: "0 0 16px", color: "rgba(200,215,255,0.7)", fontSize: 14 }}>Enter the join code your host gave you, then set up your account.</p>
       {labelled("Join code", <input style={{ ...field, textTransform: "lowercase" }} name="join-code" autoComplete="off" required placeholder="e.g. minaal-gg-x7k" value={ccode} onChange={e => setCcode(e.target.value)} />)}
     </>}
-    {labelled("Your display name", <input style={field} name="nickname" autoComplete="nickname" placeholder="What captains and players will see" value={displayName} onChange={e => setDisplayName(e.target.value)} />)}
-    {!session && <>
-      {discordFirst("join", invitedTo ? `Join ${invitedTo} with Discord →` : "Join with Discord →")}
-      {emailPw(true)}
-      <p style={{ margin: "-4px 0 8px", fontSize: 12, color: "rgba(200,215,255,0.45)" }}>Already have an account? Use the same email and password — we'll sign you in.</p>
+    {discordFirst("join", invitedTo ? `Join ${invitedTo} with Discord →` : "Join with Discord →")}
+    {!emailHidden && <>
+      {labelled("Your display name", <input style={field} name="nickname" autoComplete="nickname" placeholder="What captains and players will see" value={displayName} onChange={e => setDisplayName(e.target.value)} />)}
+      {!session && <>
+        {emailPw(true)}
+        <p style={{ margin: "-4px 0 8px", fontSize: 12, color: "rgba(200,215,255,0.45)" }}>Already have an account? Use the same email and password — we'll sign you in.</p>
+      </>}
+      <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : invitedTo ? `Join ${invitedTo} →` : "Join league →"}</button>
     </>}
-    <button type="submit" disabled={busy} style={btn(!(discordAuth && !session))}>{busy ? "…" : invitedTo ? `Join ${invitedTo} →` : "Join league →"}</button>
   </form>);
 
   return wrap(<p className="vg-loading" style={{ margin: 0 }}>// Syncing…</p>);
@@ -9123,19 +9137,6 @@ function VoltToastHost() {
 function discordNameOf(user) {
   const m = user?.user_metadata || {};
   return m.custom_claims?.global_name || m.full_name || (m.name ? String(m.name).replace(/#0$/, "") : null) || null;
-}
-
-// Is the Discord sign-in provider switched on in Supabase? Public endpoint;
-// the "Continue with Discord" buttons only appear when it is.
-let __discordAuthEnabled = null;
-async function discordAuthEnabled() {
-  if (__discordAuthEnabled !== null || !HAS_SUPABASE) return !!__discordAuthEnabled;
-  try {
-    const r = await fetch(import.meta.env.VITE_SUPABASE_URL + "/auth/v1/settings", { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY } });
-    const j = await r.json();
-    __discordAuthEnabled = !!j?.external?.discord;
-  } catch { __discordAuthEnabled = false; }
-  return __discordAuthEnabled;
 }
 
 // ── Resume after a round trip to Discord. Connecting Discord is a full-page
