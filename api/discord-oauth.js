@@ -50,7 +50,7 @@ export default async function handler(req, res) {
     res.setHeader("Set-Cookie", `volt_dl=${nonce}; Path=/api/discord-oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`);
 
     const url = new URL("https://discord.com/api/oauth2/authorize");
-    url.searchParams.set("client_id", process.env.DISCORD_CLIENT_ID);
+    url.searchParams.set("client_id", process.env.DISCORD_CLIENT_ID.trim());
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "identify email");
@@ -71,7 +71,7 @@ export default async function handler(req, res) {
     const st = Buffer.from(`${payload}.${sig}${fromApp ? ".a" : ""}`).toString("base64url");
 
     const url = new URL("https://discord.com/api/oauth2/authorize");
-    url.searchParams.set("client_id", process.env.DISCORD_CLIENT_ID);
+    url.searchParams.set("client_id", process.env.DISCORD_CLIENT_ID.trim());
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "identify");     // just who they are — nothing else
@@ -105,8 +105,8 @@ export default async function handler(req, res) {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
-          client_id: process.env.DISCORD_CLIENT_ID,
-          client_secret: process.env.DISCORD_CLIENT_SECRET,
+          client_id: process.env.DISCORD_CLIENT_ID.trim(),
+          client_secret: process.env.DISCORD_CLIENT_SECRET.trim(),
           grant_type: "authorization_code",
           code: String(code),
           redirect_uri: redirectUri,
