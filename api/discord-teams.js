@@ -41,19 +41,21 @@ export default async function handler(req, res) {
     const [ev] = await sb(`/rest/v1/events?id=eq.${eventId}&select=community_id,weekend_label`);
     if (!ev) return res.status(404).json({ error: "weekend not found" });
 
-    const [me] = await sb(`/rest/v1/users?id=eq.${uid}&select=role,community_id`);
+    const [me] = await sb(`/rest/v1/users?id=eq.${uid}&community_id=eq.${ev.community_id}&select=role,community_id`);
     if (!me || me.community_id !== ev.community_id || !["host", "moderator"].includes(me.role)) {
       return res.status(403).json({ error: "only the host or a moderator can do this" });
     }
 
     const [community] = await sb(
-      `/rest/v1/communities?id=eq.${ev.community_id}&select=discord_guild_id,discord_role_id`);
+      `/rest/v1/communities?id=eq.${ev.community_id}&select=name,slug,discord_guild_id,discord_role_id`);
     const guild = community?.discord_guild_id;
 
     // Same tournament stamp the rest of the bot uses, so a team DM read later
     // still says which tournament it was for.
     const tag = ev.weekend_label || null;
-    const stamp = (t) => (tag ? `-# ◈ ${tag}\n${t}` : t);
+    // A DM has no server around it, and a player can be in several leagues.
+    const leagueLink = `[${community.name}](https://${req.headers.host}/?join=${encodeURIComponent(community.slug)})`;
+    const stamp = (t) => `-# ◈ ${leagueLink}${tag ? ` · ${tag}` : ""}\n${t}`;
 
     // The board is the source of truth for who ended up where.
     const key = encodeURIComponent(`volt-auction-v2::${eventId}`);

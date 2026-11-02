@@ -63,7 +63,7 @@ export default async function handler(req, res) {
   try {
     const [community] = await sb(
       `/rest/v1/communities?id=eq.${communityId}` +
-      `&select=name,discord_channel_id,discord_guild_id,discord_role_id,discord_role_name`);
+      `&select=name,slug,discord_channel_id,discord_guild_id,discord_role_id,discord_role_name`);
     if (!community) return res.status(404).json({ error: "league not found" });
 
     // Stamp every outgoing message with the tournament it belongs to, so a DM
@@ -72,11 +72,15 @@ export default async function handler(req, res) {
     // disagree about what the current tournament is called.
     const tag = await rpcTag(community.discord_guild_id);
     const stamp = (t) => (tag ? `-# ◈ ${tag}\n${t}` : t);
+    // A DM has no server around it, and a player can be in several leagues. The
+    // link opens this league whichever one they were last looking at.
+    const leagueLink = `[${community.name}](https://${req.headers.host}/?join=${encodeURIComponent(community.slug)})`;
+    const dmStamp = (t) => `-# ◈ ${leagueLink}${tag ? ` · ${tag}` : ""}\n${t}`;
 
     // A browser caller must be staff of THIS league — not just any logged-in user.
     if (caller) {
       const [me] = await sb(
-        `/rest/v1/users?id=eq.${caller}&select=role,community_id`);
+        `/rest/v1/users?id=eq.${caller}&community_id=eq.${communityId}&select=role,community_id`);
       if (!me || me.community_id !== communityId || !["host", "moderator"].includes(me.role)) {
         return res.status(403).json({ error: "only the host or a moderator can send this" });
       }
@@ -101,7 +105,7 @@ export default async function handler(req, res) {
     const delivered = [];
     const blocked = [];
     for (const t of targets) {
-      const r = await dm(token, t.discordId, stamp(message), dmButtons ? buttonRow(buttons, buttonUrl) : null);
+      const r = await dm(token, t.discordId, dmStamp(message), dmButtons ? buttonRow(buttons, buttonUrl) : null);
       if (r.ok) delivered.push(t.userId);
       else blocked.push({ ...t, reason: r.reason });
       await sleep(250);           // stay well inside Discord's rate limits

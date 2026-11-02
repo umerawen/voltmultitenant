@@ -26,7 +26,11 @@ export default async function handler(req, res) {
   if (!ids.length) return res.status(200).json({ sent: 0 });
 
   try {
-    const notes = await rest(`notifications?id=in.(${ids.join(",")})&select=id,user_id,kind,title,body,event_id`);
+    const notes = await rest(`notifications?id=in.(${ids.join(",")})&select=id,user_id,community_id,kind,title,body,event_id`);
+    // A player can be in several leagues, so every push says which one.
+    const commIds = [...new Set(notes.map((n) => n.community_id).filter(Boolean))];
+    const comms = commIds.length ? await rest(`communities?id=in.(${commIds.join(",")})&select=id,name`) : [];
+    const leagueName = Object.fromEntries(comms.map((c) => [c.id, c.name]));
     const users = [...new Set(notes.map((n) => n.user_id))];
     if (!users.length) return res.status(200).json({ sent: 0 });
     const toks = await rest(`push_tokens?user_id=in.(${users.join(",")})&select=token,user_id`);
@@ -45,7 +49,7 @@ export default async function handler(req, res) {
           headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
           body: JSON.stringify({ message: {
             token,
-            notification: { title: n.title, body: n.body || "" },
+            notification: { title: leagueName[n.community_id] ? `${leagueName[n.community_id]}: ${n.title}` : n.title, body: n.body || "" },
             data: { kind: String(n.kind || ""), event_id: String(n.event_id || ""), notification_id: String(n.id) },
             android: { priority: "HIGH", notification: { color: "#3D7BFF", sound: "default" } },
             apns: { payload: { aps: { sound: "default" } } },

@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     const [ev] = await sb(`/rest/v1/events?id=eq.${eventId}&select=community_id,weekend_label,draft_at`);
     if (!ev) return res.status(404).json({ error: "tournament not found" });
 
-    const [me] = await sb(`/rest/v1/users?id=eq.${uid}&select=role,community_id`);
+    const [me] = await sb(`/rest/v1/users?id=eq.${uid}&community_id=eq.${ev.community_id}&select=role,community_id`);
     if (!me || me.community_id !== ev.community_id || !["host", "moderator"].includes(me.role)) {
       return res.status(403).json({ error: "only the host or a moderator can do this" });
     }

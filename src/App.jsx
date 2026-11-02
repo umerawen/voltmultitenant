@@ -295,6 +295,113 @@ function LeagueMark({ name, size = 38 }) {
   );
 }
 // Crest plus name: the league's name in white with the platform line beneath.
+// ── Switching leagues ───────────────────────────────────────────────────
+// One account, many leagues. The current league lives on the account, and
+// everything on screen is scoped to it, so a switch is a clean reload.
+const LEAGUE_CHOSEN_KEY = "volt_league_chosen";
+const LEAGUE_SWITCH_KEY = "volt_league_switch";
+const LEAGUE_PHASES = {
+  matches_live: ["Matches live", "#3ddc84"],
+  drafting: ["Draft live", "#ff4655"],
+  registration_open: ["Sign-ups open", "#7da6ff"],
+  registration_closed: ["Sign-ups closed", "rgba(200,215,255,0.6)"],
+};
+function markLeagueChosen(switched) {
+  try {
+    sessionStorage.setItem(LEAGUE_CHOSEN_KEY, "1");
+    if (switched) localStorage.setItem(LEAGUE_SWITCH_KEY, String(Date.now()));   // tells this browser's other tabs
+  } catch { /* private mode */ }
+}
+
+function LeaguePanel({ anchor, onClose }) {
+  const [leagues, setLeagues] = useState(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    __sb.rpc("volt_my_leagues").then(({ data }) => { if (alive) setLeagues(data?.leagues || []); });
+    return () => { alive = false; };
+  }, []);
+  async function go(l) {
+    if (l.active) return onClose();
+    setBusy(l.id); setErr("");
+    const { error } = await __sb.rpc("volt_switch_league", { p_community: l.id });
+    if (error) { setErr(error.message); setBusy(null); return; }
+    markLeagueChosen(true);
+    window.location.reload();
+  }
+  async function join(e) {
+    e.preventDefault();
+    // People paste the whole invite link as often as the code.
+    const c = code.trim().replace(/^.*[?&]join=/i, "").split("&")[0];
+    if (!c) return;
+    setBusy("join"); setErr("");
+    const { error } = await __sb.rpc("volt_join_league", { p_slug: c });
+    if (error) { setErr(error.message); setBusy(null); return; }
+    markLeagueChosen(true);
+    window.location.reload();
+  }
+  const W = 300;
+  const vw = window.innerWidth;
+  return createPortal(<>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 9000 }} />
+    <div role="menu" aria-label="Your leagues" style={{ position: "fixed", zIndex: 9001, top: anchor.bottom + 8, left: Math.max(12, Math.min(anchor.left, vw - Math.min(W, vw - 24) - 12)), width: Math.min(W, vw - 24), maxHeight: "calc(100vh - 100px)", overflowY: "auto",
+      padding: 8, fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", background: "linear-gradient(160deg, rgba(16,23,40,0.99), rgba(9,13,23,0.99))", border: "1px solid rgba(61,123,255,0.35)", boxShadow: "0 18px 40px rgba(0,0,0,0.55)" }}>
+      <div style={{ padding: "6px 8px 8px", fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>Your leagues</div>
+      {leagues === null && <div style={{ padding: "8px", fontSize: 13, color: "rgba(200,215,255,0.55)" }}>Loading…</div>}
+      {(leagues || []).map((l) => {
+        const [label, color] = LEAGUE_PHASES[l.phase] || ["Nothing running", "rgba(200,215,255,0.45)"];
+        return (
+          <button key={l.id} role="menuitem" onClick={() => go(l)} disabled={!!busy}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 52, padding: "8px", textAlign: "left", fontFamily: "inherit", color: "inherit", cursor: l.active ? "default" : "pointer",
+              background: l.active ? "rgba(61,123,255,0.12)" : "transparent", border: "none", borderLeft: `2px solid ${l.active ? "#3d7bff" : "transparent"}` }}>
+            <LeagueMark name={l.name} size={28} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span>
+              <span style={{ display: "block", fontSize: 12.5, color, marginTop: 1 }}>{busy === l.id ? "Switching…" : label}</span>
+            </span>
+            {l.unread > 0 && <span aria-label={`${l.unread} unread`} style={{ minWidth: 20, padding: "1px 5px", textAlign: "center", fontSize: 11.5, fontWeight: 700, color: "#fff", background: "#ff4655", borderRadius: 10 }}>{l.unread}</span>}
+            {l.active && <CheckIcon size={14} />}
+          </button>
+        );
+      })}
+      <form onSubmit={join} style={{ marginTop: 8, padding: "10px 8px 4px", borderTop: "1px solid rgba(120,150,220,0.18)" }}>
+        <label htmlFor="volt-join-another" style={{ display: "block", marginBottom: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>Join another league</label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input id="volt-join-another" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Join code or invite link" autoComplete="off"
+            style={{ flex: 1, minWidth: 0, minHeight: 40, padding: "8px 10px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "inherit", fontSize: 14 }} />
+          <button type="submit" disabled={!!busy || !code.trim()} style={shellBtn("primary", { padding: "0 14px", minHeight: 40, fontSize: 12, letterSpacing: "0.1em" })}>{busy === "join" ? "…" : "Join"}</button>
+        </div>
+      </form>
+      {err && <div role="alert" style={{ padding: "8px", fontSize: 13, color: "#ff8f9a" }}>{err}</div>}
+    </div>
+  </>, document.body);
+}
+
+// The arrow beside a league's name. A dot means something's waiting in another league.
+function LeagueSwitch({ size = 26, style }) {
+  const [anchor, setAnchor] = useState(null);
+  const [waiting, setWaiting] = useState(false);
+  useEffect(() => {
+    if (!HAS_SUPABASE) return;
+    let alive = true;
+    __sb.rpc("volt_my_leagues").then(({ data }) => {
+      if (alive) setWaiting((data?.leagues || []).some((l) => !l.active && (l.unread > 0 || l.phase === "drafting" || l.phase === "matches_live")));
+    });
+    return () => { alive = false; };
+  }, []);
+  if (!HAS_SUPABASE) return null;
+  return <>
+    <button onClick={(e) => setAnchor(e.currentTarget.getBoundingClientRect())} aria-label="Switch league" aria-haspopup="menu" title="Switch league"
+      style={{ position: "relative", flex: "0 0 auto", width: size, height: size, display: "grid", placeItems: "center", cursor: "pointer", color: "#9dc0ff", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.25)", ...style }}>
+      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>
+      {waiting && <span style={{ position: "absolute", top: -3, right: -3, width: 8, height: 8, borderRadius: "50%", background: "#ff4655" }} />}
+    </button>
+    {anchor && <LeaguePanel anchor={anchor} onClose={() => setAnchor(null)} />}
+  </>;
+}
+
 function LeagueLockup({ name, wide = true, size = 34 }) {
   // No league yet: the platform's own wordmark (the bolt is the V).
   if (wide && (!name || name.trim().toUpperCase() === "VOLT")) return <VoltWordmark height={Math.round(size * 0.95)} />;
@@ -5555,7 +5662,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         rank: p.rank ?? null, role: p.role ?? null, agent: p.agent ?? null,
         kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
         updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id" }).then(({ error }) => { if (error) console.error("profile write-through:", error.message); });
+      }, { onConflict: "user_id,community_id" }).then(({ error }) => { if (error) console.error("profile write-through:", error.message); });
     }
   };
   const removePlayer = (pid) => mutate((s) => {
@@ -6459,6 +6566,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           className="flex items-center gap-2" style={{ minWidth: 0, background: "none", border: "none", padding: 0, cursor: chrome?.onHub ? "pointer" : "default" }}>
           <LeagueLockup name={window.__VOLT.communityName || "VOLT"} wide={railWide} />
         </button>
+        {railWide && <LeagueSwitch style={{ marginRight: "auto" }} />}
         {railWide && (
           <button onClick={() => setRailWide(false)} aria-label="Collapse navigation" title="Collapse"
             style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}><Icon name="collapse" size={14} /></button>
@@ -7650,6 +7758,7 @@ function VoltGate() {
   const [pw2, setPw2] = useState("");  // new-password confirmation on the reset screen
   const [info, setInfo] = useState(""); // neutral status line (e.g. "check your email")
   const [invitedTo, setInvitedTo] = useState(null); // league name, when they arrived on an invite link
+  const [invite, setInvite] = useState(null); // { league, card }: a signed-in player's invite to a new league
   const [discordAuth, setDiscordAuth] = useState(false); // Discord sign-in provider enabled in Supabase
   useEffect(() => { discordAuthEnabled().then(setDiscordAuth); }, []);
 
@@ -7662,6 +7771,25 @@ function VoltGate() {
     try { c = new URLSearchParams(window.location.search).get("join") || ""; } catch { /* no URL */ }
     joinLink.current = c.trim().toLowerCase();
   }
+
+  // The current league belongs to the account, not the tab. If it changed in
+  // another tab or on another device, this one would otherwise keep asking for a
+  // league it can no longer read and quietly show nothing.
+  useEffect(() => {
+    if (!HAS_SUPABASE) return;
+    const onStorage = (e) => { if (e.key === LEAGUE_SWITCH_KEY) window.location.reload(); };
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible" || !window.__VOLT.communityId) return;
+      try {
+        const { data } = await __sb.rpc("volt_my_leagues");
+        const current = (data?.leagues || []).find((l) => l.active);
+        if (current && current.id !== window.__VOLT.communityId) window.location.reload();
+      } catch { /* offline: try again next time */ }
+    };
+    window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.removeEventListener("storage", onStorage); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
 
   // In preview (no Supabase), skip straight into the app with a memory community.
   useEffect(() => {
@@ -7733,6 +7861,7 @@ function VoltGate() {
       setDisplayName(authResume.displayName || "");
       return;
     }
+    if (await routeLeague(uid)) return;
     const { data: u } = await __sb.from("users").select("*, communities(*)").eq("id", uid).maybeSingle();
     if (u && u.community_id) {
       // Discord sign-ins keep their league link current (idempotent).
@@ -7777,6 +7906,43 @@ function VoltGate() {
     const providers = user?.app_metadata?.providers || [];
     if (!providers.includes("discord")) return;
     try { await __sb.rpc("volt_link_discord_from_auth"); } catch (e) { console.error("discord auto-link", e); }
+  }
+
+  // Settle which league this session opens. Returns true when it has shown a
+  // screen of its own and loading should stop there.
+  async function routeLeague() {
+    const { data, error } = await __sb.rpc("volt_my_leagues");
+    if (error) { console.error("my leagues", error); return false; }
+    const mine = data?.leagues || [];
+    const code = joinLink.current;
+    if (code) {
+      // An invite link, which is also how a Discord message points at a league.
+      joinLink.current = "";
+      const hit = mine.find((l) => l.slug.toLowerCase() === code);
+      if (hit) {
+        if (!hit.active) await __sb.rpc("volt_switch_league", { p_community: hit.id });
+      } else if (mine.length) {
+        const { data: rows } = await __sb.rpc("join_lookup", { p_slug: code });
+        const league = Array.isArray(rows) ? rows[0] : rows;
+        if (league) { setInvite({ league, card: data.card }); setPhase("joinConfirm"); return true; }
+        setTimeout(() => voltToast("That invite link isn't for a league that's open right now.", "warn"), 400);
+      } else {
+        setPendingIntent("join"); setPhase("join"); return true;
+      }
+      markLeagueChosen(false);
+      return false;
+    }
+    // Fresh visit: a live draft or match in another league beats wherever they
+    // were last. Once they've picked a league this session, leave them there.
+    let chosen = false;
+    try { chosen = sessionStorage.getItem(LEAGUE_CHOSEN_KEY) === "1"; } catch { /* private mode */ }
+    if (!chosen && mine.length > 1) {
+      const isLive = (l) => l.phase === "drafting" || l.phase === "matches_live";
+      const live = mine.find(isLive);
+      if (live && !mine.find((l) => l.active && isLive(l))) await __sb.rpc("volt_switch_league", { p_community: live.id });
+    }
+    markLeagueChosen(false);
+    return false;
   }
 
   // "Continue with Discord" — one tap instead of email + password + a separate
@@ -7891,29 +8057,14 @@ function VoltGate() {
       if (!c) throw new Error("No league found with that code. Check with your host.");
       const user = await ensureAuthedUser();
       window.__VOLT.userId = user.id;
-      // Does this account already belong to a league?
-      const { data: existing } = await __sb.from("users").select("community_id, role, display_name").eq("id", user.id).maybeSingle();
-      if (existing && existing.community_id && existing.community_id !== c.id) {
-        if (existing.role === "host") {
-          throw new Error("This account hosts another league. Hosts can't move — create a separate account to join as a player.");
-        }
-        if (!(await voltConfirm(`This account is already in another league. Joining "${c.name}" will move you out of it.`,
-            { title: "Switch leagues?", confirmLabel: `Join ${c.name}` }))) {
-          setBusy(false); return;
-        }
-      }
-      await __sb.from("users").upsert({
-        id: user.id, community_id: c.id,
-        // Keep your role only when you're staying in the same league. A
-        // moderator of one league joining another arrives as a plain player.
-        role: (existing?.community_id === c.id && (existing?.role === "host" || existing?.role === "moderator"))
-          ? existing.role : "player",
-        display_name: (over.displayName ?? displayName) || existing?.display_name || discordNameOf(user) || (user.email || email).split("@")[0],
-      });
-      window.__VOLT.communityId = c.id; window.__VOLT.communityName = c.name; setCommunity(c);
-      setProfile({ id: user.id, role: "player", display_name: (over.displayName ?? displayName) || discordNameOf(user) || email.split("@")[0], community_id: c.id });
+      // Adds them to this league without touching any league they're already in,
+      // and carries their player card, WhatsApp and Discord link across. Anyone
+      // already in it just moves there.
+      const { error: joinErr } = await __sb.rpc("volt_join_league", { p_slug: code, p_display: (over.displayName ?? displayName).trim() || null });
+      if (joinErr) throw joinErr;
       await linkDiscordIfAny(user);
-      setPhase("schedule");
+      markLeagueChosen(true);
+      window.location.reload();
       setBusy(false); return true;
     } catch (e) { setErr(e.message || "Could not join the league."); }
     setBusy(false); return false;
@@ -8201,6 +8352,23 @@ function VoltGate() {
   </>);
 
   // Join a league.
+  if (phase === "joinConfirm" && invite) {
+    const c = invite.card || {};
+    const rank = [c.rank, c.rankDiv].filter(Boolean).join(" ");
+    return wrap(<form onSubmit={submitting(() => doJoin({ code: invite.league.slug }))}>
+      <p style={{ margin: "0 0 6px", color: "#af9aec", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>You're invited</p>
+      <h2 style={{ margin: "0 0 16px", fontSize: 28, fontWeight: 700, textTransform: "uppercase", color: "#ecf3ff", overflowWrap: "anywhere" }}>Join {invite.league.name}?</h2>
+      <div style={{ padding: "14px 16px", marginBottom: 12, background: "rgba(175,154,236,0.08)", border: "1px solid rgba(175,154,236,0.4)", clipPath: SHELL_NOTCH(8) }}>
+        <div style={{ fontSize: 20, fontWeight: 700, textTransform: "uppercase", color: "#ecf3ff", overflowWrap: "anywhere" }}>{c.ign || c.name || "You"}</div>
+        <div style={{ fontSize: 14, color: "rgba(200,215,255,0.7)", marginTop: 2 }}>{[rank, c.role, c.agent].filter(Boolean).join(" · ") || "You'll add your rank and role next"}</div>
+      </div>
+      <p style={{ margin: "0 0 16px", fontSize: 13, color: "rgba(200,215,255,0.6)" }}>Your profile comes with you, and you stay in your other leagues. Rank changed? Update it on your profile after joining.</p>
+      <button type="submit" disabled={busy} style={btn(true)}>{busy ? "…" : "Join league →"}</button>
+      <button type="button" disabled={busy} onClick={() => { setInvite(null); setErr(""); setPhase("loading"); loadProfile(window.__VOLT.userId); }}
+        style={{ ...btn(false), marginTop: 10 }}>Not now</button>
+    </form>);
+  }
+
   if (phase === "join") return wrap(<form onSubmit={submitting(doJoin)}>
     {backLink}
     <p style={{ margin: "0 0 6px", color: "#af9aec", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", fontWeight: 700 }}>Join a league</p>
@@ -8650,6 +8818,7 @@ function CheckIcon({ size = 13 }) {
 }
 
 function AccountChip({ account, onSignOut, onProfile, seat }) {
+  const [leaguePanel, setLeaguePanel] = useState(null);
   const [open, setOpen] = useState(false);
   const compact = useNarrow(640);   // phones: just the initial, the menu holds the rest
   const dcLinked = useDiscordLinked();
@@ -8729,9 +8898,11 @@ function AccountChip({ account, onSignOut, onProfile, seat }) {
             </button>
           )}
           {onProfile && <button onClick={() => { setOpen(false); onProfile(); }} style={shellBtn("ghost", { width: "100%", marginTop: 12, padding: "9px", letterSpacing: "0.1em" })}>⊞ My Account</button>}
+          {onProfile && <button onClick={(e) => { setLeaguePanel(e.currentTarget.getBoundingClientRect()); setOpen(false); }} style={shellBtn("ghost", { width: "100%", marginTop: 8, padding: "9px", letterSpacing: "0.1em" })}>⇄ Switch league</button>}
           <button onClick={onSignOut} style={shellBtn("danger", { width: "100%", marginTop: onProfile ? 8 : 12, padding: "9px", letterSpacing: "0.1em" })}>Sign out</button>
         </div>
       </>}
+      {leaguePanel && <LeaguePanel anchor={leaguePanel} onClose={() => setLeaguePanel(null)} />}
     </div>
   );
 }
@@ -9366,7 +9537,7 @@ function NotifBell() {
   const [open, setOpen] = useState(false);
   async function pull() {
     try {
-      const { data } = await __sb.from("notifications").select("*").eq("user_id", window.__VOLT.userId).order("created_at", { ascending: false }).limit(15);
+      const { data } = await __sb.from("notifications").select("*").eq("user_id", window.__VOLT.userId).eq("community_id", window.__VOLT.communityId).order("created_at", { ascending: false }).limit(15);
       setRows(data || []);
     } catch (e) { console.error(e); }
   }
@@ -9375,7 +9546,7 @@ function NotifBell() {
   async function openPanel() {
     const v = !open; setOpen(v);
     if (v && unread) {
-      try { await __sb.from("notifications").update({ read: true }).eq("user_id", window.__VOLT.userId).eq("read", false); } catch (e) {}
+      try { await __sb.from("notifications").update({ read: true }).eq("user_id", window.__VOLT.userId).eq("community_id", window.__VOLT.communityId).eq("read", false); } catch (e) {}
       setRows(rs => rs.map(r => ({ ...r, read: true })));
     }
   }
@@ -9844,6 +10015,7 @@ function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide,
       <div style={{ display: "flex", alignItems: "center", justifyContent: wide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: wide ? 4 : 0 }}>
         <div className="flex items-center gap-2" style={{ minWidth: 0 }}>
           <LeagueLockup name={community?.name || window.__VOLT.communityName || "VOLT"} wide={wide} />
+          {wide && <LeagueSwitch />}
         </div>
         {wide && <button onClick={() => setWide(false)} aria-label="Collapse" title="Collapse" style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}><Icon name="collapse" size={14} /></button>}
       </div>
@@ -14481,7 +14653,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, padding: showRail ? "14px 20px" : "10px 14px", borderBottom: "1px solid rgba(61,123,255,0.2)", background: "linear-gradient(180deg, rgba(12,17,30,0.95), rgba(9,12,21,0.9))",
         ...(showRail ? null : { position: "sticky", top: 0, zIndex: 50, backdropFilter: "blur(12px)" }) }}>
         {/* phones have no rail, so the league's mark sits here */}
-        {!showRail && <div style={{ marginRight: "auto", minWidth: 0 }}><LeagueLockup name={community?.name || window.__VOLT.communityName || "VOLT"} wide /></div>}
+        {!showRail && <div style={{ marginRight: "auto", minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}><LeagueLockup name={community?.name || window.__VOLT.communityName || "VOLT"} wide /><LeagueSwitch size={34} /></div>}
         {HAS_SUPABASE && <NotifBell />}
         {account && <AccountChip account={account} onSignOut={onSignOut} onProfile={HAS_SUPABASE ? openAccount : null} />}
       </div>
@@ -15926,7 +16098,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
       hs: d.hs === "" ? null : parseInt(d.hs), win: d.win === "" ? null : parseInt(d.win),
       tracker_url: d.tracker ? (/^https?:\/\//i.test(d.tracker) ? d.tracker.trim() : "https://" + d.tracker.trim()) : null,
       updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" });
+    }, { onConflict: "user_id,community_id" });
     // Digits only — wa.me needs a bare international number, and normalising on
     // the way in means the host never has to clean it up by hand.
     const waDigits = (d.whatsapp || "").replace(/[^0-9]/g, "");
