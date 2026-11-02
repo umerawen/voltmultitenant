@@ -14366,6 +14366,22 @@ function RoleWelcome({ userId, isModerator, captainEv, onWarRoom }) {
   );
 }
 
+// Lives out here because its entrance animation restarts whenever it remounts: as
+// a const inside WeekendSchedule it was a new component on every render, so the
+// heading replayed its rise each time a piece of the page finished loading.
+const PageHead = ({ league, title, sub, accent = "#3d7bff", right }) => (
+  <div style={{ position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+    padding: "4px 2px 20px", marginBottom: 20, borderBottom: "1px solid rgba(120,150,220,0.16)" }}>
+    <div style={{ minWidth: 0, animation: "voltRise .4s backwards" }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: accent, fontWeight: 700 }}>// {league}</div>
+      <div style={{ fontSize: "clamp(32px, 4.2vw, 48px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 0.95, marginTop: 8, letterSpacing: "0.01em", textShadow: `0 0 34px ${accent}40` }}>{title}</div>
+      {sub && <div style={{ fontSize: 13.5, color: "rgba(200,215,255,0.55)", marginTop: 9, maxWidth: 640, lineHeight: 1.5 }}>{sub}</div>}
+    </div>
+    {right}
+    <span aria-hidden style={{ position: "absolute", left: 0, bottom: -1, width: 90, height: 2, background: accent, boxShadow: `0 0 12px ${accent}` }} />
+  </div>
+);
+
 function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, onEnter, openProfile, onProfileOpened }) {
   const [events, setEvents] = useState(null);
   // Platform operators see the league review queue below their own league.
@@ -14831,18 +14847,6 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── page chrome ──
   const leagueName = community?.name || window.__VOLT.communityName || "League";
-  const PageHead = ({ title, sub, accent = "#3d7bff", right }) => (
-    <div style={{ position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
-      padding: "4px 2px 20px", marginBottom: 20, borderBottom: "1px solid rgba(120,150,220,0.16)" }}>
-      <div style={{ minWidth: 0, animation: "voltRise .4s backwards" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: accent, fontWeight: 700 }}>// {leagueName}</div>
-        <div style={{ fontSize: "clamp(32px, 4.2vw, 48px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 0.95, marginTop: 8, letterSpacing: "0.01em", textShadow: `0 0 34px ${accent}40` }}>{title}</div>
-        {sub && <div style={{ fontSize: 13.5, color: "rgba(200,215,255,0.55)", marginTop: 9, maxWidth: 640, lineHeight: 1.5 }}>{sub}</div>}
-      </div>
-      {right}
-      <span aria-hidden style={{ position: "absolute", left: 0, bottom: -1, width: 90, height: 2, background: accent, boxShadow: `0 0 12px ${accent}` }} />
-    </div>
-  );
   const recapStat = (label, value, color, extra) => (
     <div style={{ minWidth: 0, padding: "9px 11px", background: "rgba(10,16,30,0.7)", border: `1px solid ${color}40`, clipPath: SHELL_NOTCH(6) }}>
       <div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color, fontWeight: 700 }}>{label}</div>
@@ -14860,7 +14864,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Season race ──
   if (page === "season") return wrap(<>
-    <PageHead title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, ACS ÷ 4, and kills plus a third of assists." accent="#f5c453" />
+    <PageHead league={leagueName} title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, ACS ÷ 4, and kills plus a third of assists." accent="#f5c453" />
     {board && board.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
         {board.slice(0, 3).map((r, i) => {
@@ -14935,7 +14939,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Tournaments: what's on now, what's next, and every one before ──
   if (page === "tournaments") return wrap(<>
-    <PageHead title="Tournaments" sub="The one running now, what's coming up, and the results of every tournament this league has played." right={createBtn} />
+    <PageHead league={leagueName} title="Tournaments" sub="The one running now, what's coming up, and the results of every tournament this league has played." right={createBtn} />
     {(current || upcoming.length > 0) && (
       <>
         <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "0 0 10px" }}><span style={SEC_LABEL}>// Now and next</span><span style={SEC_RULE} /></div>
@@ -15003,7 +15007,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Discord ──
   if (page === "discord" && isHost) return wrap(<>
-    <PageHead title="Discord" sub="Connect the server, then let the bot announce, build channels, hand out roles and post the moments." accent="#8b9cff" />
+    <PageHead league={leagueName} title="Discord" sub="Connect the server, then let the bot announce, build channels, hand out roles and post the moments." accent="#8b9cff" />
     {/* Everything the bot does is one job with several tools, so it's one panel
         with tabs rather than six stacked cards. Tabs suit this and not the
         alerts above: switching between equal tools is what they're for. */}
@@ -15037,7 +15041,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Staff ──
   if (page === "staff" && showStaff) return wrap(<>
-    <PageHead title="Staff" sub="Who helps you run the league, and the moderation tools that come with it." />
+    <PageHead league={leagueName} title="Staff" sub="Who helps you run the league, and the moderation tools that come with it." />
     {isTrueHost && HAS_SUPABASE && <StaffPanel onOpenPlayer={(uid) => setShowPlayer(uid)} />}
     {HAS_SUPABASE && isOperator && <AdminQueue />}
   </>, "page");
