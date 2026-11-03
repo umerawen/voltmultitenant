@@ -8417,7 +8417,7 @@ const SHELL_NOTCH = (n = 9) => `polygon(0 0, calc(100% - ${n}px) 0, 100% ${n}px,
 function shellBtn(kind, extra) {
   const kinds = {
     primary: { background: "linear-gradient(180deg,#4a86ff,#2f66e0)", borderColor: "rgba(140,180,255,0.55)", color: "#fff", boxShadow: "0 0 18px rgba(61,123,255,0.35)" },
-    ghost:   { background: "linear-gradient(180deg, rgba(20,30,52,0.8), rgba(10,16,30,0.8))", borderColor: "rgba(90,130,210,0.4)", color: "#cfe0ff" },
+    ghost:   { background: "linear-gradient(180deg, rgba(61,123,255,0.22), rgba(61,123,255,0.12))", borderColor: "rgba(125,166,255,0.75)", color: "#e6efff" },
     accent:  { background: "rgba(61,220,132,0.08)", borderColor: "rgba(61,220,132,0.45)", color: "#9af5c2" },
     warn:    { background: "rgba(245,196,83,0.07)", borderColor: "rgba(245,196,83,0.45)", color: "#f5c453" },
     danger:  { background: "rgba(255,70,85,0.08)", borderColor: "rgba(255,70,85,0.45)", color: "#ff8a94" },
@@ -16168,7 +16168,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
                 </div>))}
             </div>
           : <p style={{ color: "rgba(200,215,255,0.55)", fontSize: 13, margin: "0 0 12px" }}>Captains study this before bidding on you. Add your rank and tracker stats — it takes 30 seconds.</p>}
-        <button onClick={() => setEditing(true)} style={shellBtn(has ? "ghost" : "primary", { padding: "9px 18px", fontSize: 12 })}>{has ? "Edit my stats" : "Set up my stats →"}</button>
+        <button onClick={() => setEditing(true)} style={shellBtn("primary", { padding: "9px 18px", fontSize: 12 })}>{has ? "Edit my stats" : "Set up my stats →"}</button>
       </>}
       {editing && <>
         {/* Filling seven stat fields by hand is the heaviest friction in the
