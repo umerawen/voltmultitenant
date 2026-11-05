@@ -16881,7 +16881,7 @@ function WeekendRegistration({ ev, auth, phase }) {
   // is whether you land in the draft pool or the reserves, not whether you can join.
   const regOpen = phase === "registration_open" || phase === "registration_closed";
   const poolOpen = phase === "registration_open";
-  const isHost = auth?.role === "host";
+  const isHost = auth?.role === "host" || auth?.role === "moderator"; // staff: moderators review applications too
   const [reg, setReg] = useState(undefined);
   const [roster, setRoster] = useState([]);       // approved
   const [pendingQ, setPendingQ] = useState([]);   // host queue
@@ -17100,7 +17100,7 @@ function WeekendRegistration({ ev, auth, phase }) {
 
         <div style={{ ...panel, order: isHost ? 3 : 1 }}>
           {corner}
-          {secLabel(isHost && !reg ? "Your registration (host)" : "Your application")}
+          {secLabel(isHost && !reg ? "Your registration (staff)" : "Your application")}
           {/* status line */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
