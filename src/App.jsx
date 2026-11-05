@@ -24,6 +24,7 @@ let __sb = null;
 const __RECOVERY_AT_LOAD = typeof window !== "undefined" && /type=recovery/.test(window.location.hash || "");
 if (HAS_SUPABASE) __sb = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
 
+
 // Set after login/community-select. Until then, storage is a no-op-ish memory map.
 window.__VOLT = window.__VOLT || { communityId: null, userId: null };
 
@@ -8413,6 +8414,8 @@ function VoltGate() {
 
 // ── Shell design language — mirrors the old app's HUD aesthetic ─────────
 // Notched clip-path corners, Rajdhani uppercase tracking, blue glow accents.
+// Rajdhani is for headings and buttons: it's too narrow for sentences and forms.
+const READ_FONT = "'Space Grotesk',sans-serif";
 const SHELL_NOTCH = (n = 9) => `polygon(0 0, calc(100% - ${n}px) 0, 100% ${n}px, 100% 100%, ${n}px 100%, 0 calc(100% - ${n}px))`;
 function shellBtn(kind, extra) {
   const kinds = {
@@ -8953,7 +8956,8 @@ function ToggleSwitch({ on, color, disabled, onClick }) {
 // startPhase: "intro" for a first-timer, "edit" when they're back from Discord
 // mid-setup, "terms" when the profile is already complete.
 function FirstTimeOnboard({ ev, wantCap, onClose, onApplied, startPhase = "intro" }) {
-  const [phase, setPhase] = useState(startPhase); // intro → edit → terms → applying → done
+  // "intro" opens straight on the form: a page of explanation before it only delayed people.
+  const [phase, setPhase] = useState(startPhase === "intro" ? "edit" : startPhase); // edit → terms → applying → done
   const [note, setNote] = useState("");
   const [result, setResult] = useState(null);   // "approved" | "pending", from volt_apply
   const draftLine = ev?.draft_at
@@ -8978,60 +8982,48 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied, startPhase = "intro
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{ width: 22, height: 22, display: "grid", placeItems: "center", borderRadius: "50%", fontSize: 11, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace",
         background: done ? "#3ddc84" : active ? "rgba(61,123,255,0.2)" : "rgba(255,255,255,0.05)",
-        color: done ? "#06210f" : active ? "#7da6ff" : "rgba(200,215,255,0.4)", border: `1px solid ${done ? "#3ddc84" : active ? "#3d7bff" : "rgba(120,150,220,0.25)"}` }}>{done ? "✓" : n}</span>
-      <span style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: active || done ? "#ecf3ff" : "rgba(200,215,255,0.4)" }}>{label}</span>
+        color: done ? "#06210f" : active ? "#9dbdff" : "rgba(214,226,255,0.68)", border: `1px solid ${done ? "#3ddc84" : active ? "#3d7bff" : "rgba(120,150,220,0.25)"}` }}>{done ? "✓" : n}</span>
+      <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap", color: active || done ? "#ecf3ff" : "rgba(214,226,255,0.68)" }}>{label}</span>
     </div>
   );
 
+  // The commitment step is its own dialog, so draw only that rather than stacking
+  // it on an empty copy of this one. Closing goes back to where the player came from.
+  if (phase === "terms") return (
+    <RegisterTerms ev={ev} onAccept={applyNow} onClose={() => (startPhase === "terms" ? onClose() : setPhase("edit"))} />
+  );
+
   return (
-    <VoltOverlay onClose={onClose} zIndex={130} dim="rgba(4,6,12,0.85)">
-      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto", background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)", clipPath: SHELL_NOTCH(16), padding: "26px 26px 24px" }}>
+    <VoltOverlay onClose={onClose} zIndex={130} dim="rgba(4,6,12,0.72)">
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto", background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)", clipPath: SHELL_NOTCH(16), padding: "24px 26px 26px", fontFamily: READ_FONT, color: "#ecf3ff", scrollbarWidth: "thin", scrollbarColor: "rgba(125,166,255,0.4) transparent" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Welcome to the league</div>
-          <button onClick={onClose} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>✕</button>
+          <div style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 22, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.15 }}>{phase === "edit" ? "Your scouting profile" : weekendName(ev)}</div>
+          <button onClick={onClose} aria-label="Close" style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>✕</button>
         </div>
 
         {/* step rail — the three real steps, ticked off as they're done */}
         {(() => {
-          const at = { intro: 1, edit: 1, terms: 2, applying: 3, done: 3 }[phase] || 1;
-          const sep = <span style={{ flex: 1, height: 1, minWidth: 16, background: "rgba(120,150,220,0.2)" }} />;
+          const at = { edit: 1, applying: 3, done: 3 }[phase] || 1;
+          const sep = <span style={{ flex: 1, height: 1, minWidth: 8, background: "rgba(120,150,220,0.3)" }} />;
           return (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0 20px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 18px" }}>
               {step(1, "Profile", at === 1, at > 1)}{sep}
-              {step(2, "Commitment", at === 2, at > 2)}{sep}
-              {step(3, "You're in", at === 3 && phase !== "done", phase === "done")}
+              {step(2, "Rules", at === 2, at > 2)}{sep}
+              {step(3, "Done", at === 3 && phase !== "done", phase === "done")}
             </div>
           );
         })()}
 
-        {phase === "intro" && <>
-          <div style={{ fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.1 }}>Set up your scouting profile</div>
-          <p style={{ fontSize: 13.5, lineHeight: 1.55, color: "rgba(200,215,255,0.7)", marginTop: 10 }}>
-            This is a <b style={{ color: "#7da6ff" }}>one-time setup</b>. Captains study it at the auction to decide who to draft, and it powers your player card and radar. You won't fill this in again — it carries across every tournament, and your match stats stack onto it automatically as you play.
-          </p>
-          <div style={{ display: "grid", gap: 12, margin: "18px 0", padding: "16px 18px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(8) }}>
-            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Required:</b> your Valorant name, rank, role, a connected Discord and a WhatsApp number. Everything else (agent, KDA, ACS, tracker link) sharpens your card but is optional.</div>
-            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Tip:</b> paste a screenshot of your tracker profile and most of it fills itself in.</div>
-            <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(210,222,255,0.82)" }}><b style={{ color: "#ecf3ff" }}>Then you're entered</b> — available for the draft{draftLine ? ` (${draftLine})` : ""} and up to 4 matches this tournament.</div>
-          </div>
-          <button onClick={() => setPhase("edit")} style={shellBtn("primary", { width: "100%", padding: "13px", letterSpacing: "0.14em" })}>Set up my profile →</button>
-        </>}
-
         {phase === "edit" && <>
-          <div style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Your scouting profile</div>
-          <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginBottom: 14 }}>Valorant name, rank, role, a connected Discord and WhatsApp are required. Save to continue — what you've typed is kept if you step out to connect Discord.</p>
+          <p style={{ fontSize: 15, lineHeight: 1.5, color: "rgba(224,233,255,0.85)", margin: "0 0 18px" }}>You only fill this in once. Captains read it before they bid on you.</p>
           <ScoutProfileCard userId={window.__VOLT.userId} onSaved={afterSave} embedded
             resume={{ kind: "onboard", eventId: ev.id, wantCap: !!wantCap }} />
-          {note && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>{note}</div>}
+          {note && <div style={{ fontSize: 13.5, color: "#ff8f9a", marginTop: 10 }}>{note}</div>}
         </>}
-
-        {phase === "terms" && (
-          <RegisterTerms ev={ev} onAccept={applyNow} onClose={() => setPhase("edit")} />
-        )}
 
         {phase === "applying" && (
           <div style={{ textAlign: "center", padding: "30px 0" }}>
-            <div className="vg-loading" style={{ fontSize: 14 }}>// Entering you in the pool…</div>
+            <div className="vg-loading" style={{ fontSize: 15 }}>// Entering you in the pool…</div>
           </div>
         )}
 
@@ -9039,23 +9031,23 @@ function FirstTimeOnboard({ ev, wantCap, onClose, onApplied, startPhase = "intro
         {phase === "done" && <>
           <div style={{ textAlign: "center", padding: "6px 0 4px" }}>
             <div style={{ fontSize: 46, lineHeight: 1, color: result === "approved" ? "#3ddc84" : "#f5c453", textShadow: `0 0 30px ${result === "approved" ? "rgba(61,220,132,0.5)" : "rgba(245,196,83,0.45)"}` }}>{result === "approved" ? "✓" : "◷"}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", marginTop: 10 }}>
+            <div style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 26, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", marginTop: 10 }}>
               {result === "approved" ? "You're in" : "Application sent"}
             </div>
-            <p style={{ fontSize: 13.5, color: "rgba(200,215,255,0.65)", margin: "8px 0 0" }}>
+            <p style={{ fontSize: 15, lineHeight: 1.5, color: "rgba(224,233,255,0.85)", margin: "8px 0 0" }}>
               {result === "approved"
                 ? `You're in the pool for ${weekendName(ev)}.`
                 : "Your first tournaments get a quick look from the host. You'll get a notification the moment you're approved."}
             </p>
           </div>
           <div style={{ display: "grid", gap: 10, margin: "18px 0", padding: "16px 18px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(8) }}>
-            <div style={{ fontSize: 11, letterSpacing: "0.22em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>What happens next</div>
+            <div style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 14, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9dbdff", fontWeight: 700 }}>What happens next</div>
             {[
               draftLine ? `The draft is ${draftLine}. You don't have to be there — captains bid on you either way.` : "The host sets the draft time — you'll see it here. You don't have to be there; captains bid on you either way.",
               "Once you're drafted, the bot DMs you your team on Discord.",
               "Can't make it after all? Flip \"I'm playing\" off before the draft — no strike.",
             ].map((t, i) => (
-              <div key={i} style={{ display: "flex", gap: 10, fontSize: 13.5, lineHeight: 1.55, color: "rgba(210,222,255,0.85)" }}>
+              <div key={i} style={{ display: "flex", gap: 10, fontSize: 14.5, lineHeight: 1.5, color: "rgba(224,233,255,0.88)" }}>
                 <span style={{ color: "#7da6ff", fontWeight: 700 }}>{i + 1}</span><span>{t}</span>
               </div>
             ))}
@@ -9331,7 +9323,7 @@ function RegisterTerms({ ev, onAccept, onClose, returning = false }) {
   const [ok, setOk] = useState(false);
   const [full, setFull] = useState(!returning);
   const line = (children) => (
-    <li style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 14.5, lineHeight: 1.68, color: "rgba(214,226,255,0.85)" }}>
+    <li style={{ display: "flex", gap: 11, alignItems: "flex-start", fontSize: 14.5, lineHeight: 1.5, color: "rgba(224,233,255,0.88)" }}>
       <span style={{ color: "#5b8dff", flex: "0 0 auto", marginTop: 2 }}>▪</span><span>{children}</span>
     </li>
   );
@@ -9344,7 +9336,7 @@ function RegisterTerms({ ev, onAccept, onClose, returning = false }) {
         <div style={{ fontSize: 21, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.2, margin: "10px 0 8px" }}>
           Free <span style={{ color: "#f5c453" }}>Sat &amp; Sun, 7PM–2AM PKT</span>?
         </div>
-        <p style={{ fontSize: 14, lineHeight: 1.6, color: "rgba(205,219,255,0.75)", margin: "0 0 16px" }}>
+        <p style={{ fontFamily: READ_FONT, fontSize: 14.5, lineHeight: 1.5, color: "rgba(224,233,255,0.88)", margin: "0 0 16px" }}>
           Same deal as always: drop out before the draft and it costs nothing. Unreachable after you're drafted is a strike, and two strikes means a 2-tournament suspension.
         </p>
         <button onClick={onAccept}
@@ -9359,19 +9351,19 @@ function RegisterTerms({ ev, onAccept, onClose, returning = false }) {
     </VoltOverlay>
   );
   return (
-    <VoltOverlay onClose={onClose} zIndex={140}>
+    <VoltOverlay onClose={onClose} zIndex={140} dim="rgba(4,6,12,0.72)">
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", padding: "26px 28px 24px",
         background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)",
-        clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+        clipPath: SHELL_NOTCH(16), fontFamily: READ_FONT }}>
         <div className="flex items-center justify-between gap-3">
-          <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Before you register</span>
+          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 14, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9dbdff", fontWeight: 700 }}>Before you register</span>
           <button onClick={onClose} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
         </div>
 
-        <h3 style={{ fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.2, margin: "18px 0 8px" }}>
+        <h3 style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 24, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", lineHeight: 1.2, margin: "16px 0 8px" }}>
           You're committing to <span style={{ color: "#f5c453" }}>Sat &amp; Sun, 7PM–2AM PKT</span>
         </h3>
-        <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "rgba(205,219,255,0.75)", margin: "0 0 20px" }}>
+        <p style={{ fontSize: 15, lineHeight: 1.55, color: "rgba(224,233,255,0.85)", margin: "0 0 18px" }}>
           Matches are scheduled anywhere inside that window and you won't know your exact times until the bracket is set. You need to be <b style={{ color: "#ecf3ff" }}>reachable for all of it</b> — if you can't be, don't register for this tournament.
         </p>
 
@@ -9390,13 +9382,13 @@ function RegisterTerms({ ev, onAccept, onClose, returning = false }) {
           clipPath: SHELL_NOTCH(8), transition: "background .15s, border-color .15s" }}>
           <input type="checkbox" checked={ok} onChange={(e) => setOk(e.target.checked)}
             style={{ width: 19, height: 19, accentColor: "#3ddc84", marginTop: 1, flex: "0 0 auto", cursor: "pointer" }} />
-          <span style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.55, color: ok ? "#ecf3ff" : "rgba(200,215,255,0.75)" }}>
+          <span style={{ fontSize: 14.5, fontWeight: 500, lineHeight: 1.5, color: ok ? "#ecf3ff" : "rgba(224,233,255,0.88)" }}>
             I'm available and reachable for the full window, and I understand the strike policy.
           </span>
         </label>
 
         <button disabled={!ok} onClick={onAccept}
-          style={{ width: "100%", marginTop: 18, padding: "15px", fontSize: 14, fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase",
+          style={{ width: "100%", marginTop: 18, padding: "15px", fontFamily: "'Rajdhani',sans-serif", fontSize: 14.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase",
             cursor: ok ? "pointer" : "not-allowed", opacity: ok ? 1 : 0.4,
             background: "rgba(61,220,132,0.16)", border: "1px solid #3ddc84", color: "#9af5c2",
             clipPath: SHELL_NOTCH(12) }}>Enter this tournament →</button>
@@ -9488,7 +9480,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
         <span style={{ ...label, color: on ? (status === "approved" ? "#9af5c2" : "#f5c453") : "#ecf3ff" }}>I'm playing this tournament</span>
         <ToggleSwitch on={on} color={color} disabled={busy || susp > 0 || rejected} onClick={flipPlay} />
       </div>
-      <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "rgba(200,215,255,0.55)", marginTop: -4 }}>
+      <div style={{ fontFamily: READ_FONT, fontSize: 13, lineHeight: 1.45, color: "rgba(214,226,255,0.74)", marginTop: -4 }}>
         {susp > 0 ? <span style={{ color: "#ff8f9a", fontWeight: 700 }}>Suspended — {susp} tournament{susp === 1 ? "" : "s"} remaining. You can't enter yet.</span>
           : rejected ? <span style={{ color: "#ff8f9a" }}>Not approved this tournament — talk to the host.</span>
           : status === "approved" ? <span style={{ color: "#9af5c2" }}>You're in ✓{draftLine ? ` — draft ${draftLine}` : ""} · flip off to drop out</span>
@@ -9499,7 +9491,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
         // The rule lives in fn_no_show_penalty: every 2nd strike (2, 4, 6…)
         // sets a 2-tournament suspension. So the warning fires on odd counts —
         // you're one strike away whenever you're sitting on 1, 3, 5…
-        <div style={{ fontSize: 11, color: strikes % 2 === 1 ? "#ff8f9a" : "#f5c453", fontWeight: 600 }}>
+        <div style={{ fontFamily: READ_FONT, fontSize: 13, lineHeight: 1.4, color: strikes % 2 === 1 ? "#ff8f9a" : "#f5c453", fontWeight: 500 }}>
           ⚠ {strikes} no-show{strikes === 1 ? "" : "s"} on record{strikes % 2 === 1 ? " — one more triggers a 2-tournament suspension" : ""}</div>
       )}
       {!rejected && susp === 0 && (
@@ -9508,7 +9500,7 @@ function PlayToggle({ ev, mine, profileComplete, susp, strikes, onEditProfile, o
           <ToggleSwitch on={capOn} color="#3d7bff" disabled={busy} onClick={flipCap} />
         </div>
       )}
-      {note && <div style={{ fontSize: 11.5, color: "#f5c453" }}>{note}</div>}
+      {note && <div style={{ fontFamily: READ_FONT, fontSize: 13, lineHeight: 1.4, color: "#f5c453" }}>{note}</div>}
       {onboard && <FirstTimeOnboard ev={ev} wantCap={wantCap} startPhase={onboardStart} onClose={() => setOnboard(false)} onApplied={onChanged} />}
       {terms && <RegisterTerms ev={ev} returning={termsQuick} onAccept={doApply} onClose={() => setTerms(false)} />}
     </div>
@@ -14224,7 +14216,7 @@ function ChecklistCard({ eyebrow, title, steps, cta, footer, tone = "#3d7bff", o
               background: s.done ? "#3ddc84" : "transparent", color: s.done ? "#06210f" : tone, border: `1px solid ${s.done ? "#3ddc84" : tone + "88"}` }}>{s.done ? "✓" : ""}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: "#ecf3ff", textDecoration: s.done ? "line-through" : "none" }}>{s.label}</div>
-              {s.sub && !s.done && <div style={{ fontSize: 12, color: "rgba(200,215,255,0.5)", marginTop: 1 }}>{s.sub}</div>}
+              {s.sub && !s.done && <div style={{ fontFamily: READ_FONT, fontSize: 13, lineHeight: 1.4, color: "rgba(214,226,255,0.74)", marginTop: 2 }}>{s.sub}</div>}
             </div>
             {!s.done && s.action}
           </div>
@@ -14273,7 +14265,7 @@ function MatchReadyCard({ prof, ev, myReg, susp, onOpenProfile, onChanged }) {
         title={ready ? "One step left — sign up for the tournament" : "A few things before captains can draft you"}
         steps={steps}
         cta={<button onClick={cta.go} style={shellBtn("primary", { padding: "11px 20px", fontSize: 12.5 })}>{cta.label}</button>}
-        footer={!ready && <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)" }}>Takes about two minutes — paste a tracker screenshot and most of it fills itself in.</span>} />
+        footer={!ready && <span style={{ fontFamily: READ_FONT, fontSize: 13, lineHeight: 1.4, color: "rgba(214,226,255,0.74)" }}>Takes about two minutes. A tracker screenshot fills in most of it.</span>} />
       {flow && <FirstTimeOnboard ev={ev} wantCap={false} startPhase={flow} onClose={() => setFlow(null)} onApplied={onChanged} />}
     </>
   );
@@ -16006,8 +15998,12 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
   const [dcBusy, setDcBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
-  const fieldS = { width: "100%", padding: "9px 10px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 14, boxSizing: "border-box" };
-  const labS = { fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif", display: "block", marginBottom: 4, textAlign: "left" };
+  // 16px inputs: anything smaller makes iPhones zoom the page on focus.
+  const fieldS = { width: "100%", minHeight: 44, padding: "10px 12px", background: "rgba(10,16,30,0.75)", border: "1px solid rgba(125,166,255,0.42)", color: "#ecf3ff", fontFamily: READ_FONT, fontSize: 16, boxSizing: "border-box" };
+  const labS = { fontSize: 13.5, fontWeight: 500, color: "rgba(232,239,255,0.95)", fontFamily: READ_FONT, display: "block", marginBottom: 6, textAlign: "left" };
+  const helpS = { fontSize: 13, lineHeight: 1.45, color: "rgba(214,226,255,0.74)", fontFamily: READ_FONT, display: "block", marginTop: 6 };
+  const groupS = { fontFamily: "'Rajdhani',sans-serif", fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#cfe0ff", margin: "22px 0 12px" };
+  const twoCol = { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12, marginBottom: 14 };
 
   async function load() {
     const { data } = await __sb.from("player_profiles").select("*").eq("user_id", userId).maybeSingle();
@@ -16155,7 +16151,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
   if (prof === undefined) return null;
   const has = prof && prof.rank;
   return (
-    <div style={{ marginTop: embedded ? 0 : 24, padding: embedded ? 0 : "18px 20px", position: "relative", background: embedded ? "none" : "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(14), textAlign: "left" }}>
+    <div style={{ marginTop: embedded ? 0 : 24, padding: embedded ? 0 : "18px 20px", position: "relative", background: embedded ? "none" : "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: embedded ? "none" : "1px solid rgba(61,123,255,0.28)", clipPath: embedded ? "none" : SHELL_NOTCH(14), textAlign: "left", fontFamily: READ_FONT }}>
       {!embedded && <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />}
       {!embedded && <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 10 }}>// Your scouting profile</div>}
       {!editing && <>
@@ -16178,108 +16174,115 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => { e.preventDefault(); setDragOver(false); readTracker(e.dataTransfer?.files?.[0]); }}
-          style={{ marginBottom: 14, padding: "14px 16px", clipPath: SHELL_NOTCH(9),
+          style={{ marginBottom: 6, padding: "14px 16px", clipPath: SHELL_NOTCH(9),
             background: dragOver ? "rgba(61,123,255,0.12)" : "rgba(10,16,30,0.45)",
-            border: `1px ${dragOver ? "solid" : "dashed"} rgba(61,123,255,${dragOver ? 0.6 : 0.3})` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "#cfe0ff" }}>⎘ Fill this in from a screenshot</span>
-            <label style={{ ...shellBtn("ghost", { padding: "7px 14px", fontSize: 11, cursor: shotBusy ? "wait" : "pointer" }), display: "inline-block" }}>
+            border: `1px ${dragOver ? "solid" : "dashed"} rgba(125,166,255,${dragOver ? 0.7 : 0.45})` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: "#ecf3ff" }}>Fill this in from a screenshot</span>
+            <label style={{ ...shellBtn("ghost", { padding: "8px 14px", fontSize: 12, cursor: shotBusy ? "wait" : "pointer" }), display: "inline-block" }}>
               {shotBusy ? "Reading…" : "Choose image"}
               <input type="file" accept="image/*" disabled={shotBusy} style={{ display: "none" }}
                 onChange={(e) => { readTracker(e.target.files?.[0]); e.target.value = ""; }} />
             </label>
-            <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)" }}>or paste with Ctrl+V, or drag one here</span>
           </div>
-          <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.42)", marginTop: 6, lineHeight: 1.55 }}>
-            Screenshot your tracker.gg overview on the <b style={{ color: "rgba(200,215,255,0.6)" }}>Competitive</b> tab
-            for the current act. Everything it reads lands in the fields below for you to check before saving.
+          <div style={{ ...helpS, marginTop: 8 }}>
+            Screenshot your tracker.gg <b style={{ color: "#ecf3ff", fontWeight: 500 }}>Competitive</b> tab for the current act, then
+            paste it with Ctrl+V or drag it here. Check the values before you save.
           </div>
           {shotScope && (
-            <div style={{ fontSize: 12, color: "#9af5c2", marginTop: 8 }}>
-              ✓ Read {shotFilled.length} field{shotFilled.length === 1 ? "" : "s"} from <b>{shotScope}</b>
-              <span style={{ color: "rgba(200,215,255,0.45)" }}> — check that's the right tab, then review the values.</span>
+            <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "#9af5c2", marginTop: 8 }}>
+              ✓ Read {shotFilled.length} field{shotFilled.length === 1 ? "" : "s"} from <b>{shotScope}</b>.
+              <span style={{ color: "rgba(214,226,255,0.74)" }}> Check that's the right tab, then review the values.</span>
             </div>
           )}
-          {shotErr && <div style={{ fontSize: 12, color: "#f5c453", marginTop: 8 }}>⚠ {shotErr}</div>}
+          {shotErr && <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "#f5c453", marginTop: 8 }}>⚠ {shotErr}</div>}
         </div>
-        {/* Match reporting reads the scoreboard screenshot and looks players up
-            by this name. If it doesn't match what Valorant prints, the stats
-            land on nobody — so it sits first and on its own row. */}
+
+        {/* Required first, so what stands between a player and the Save button is
+            all in one place. Match reporting looks players up by this name, which
+            is why it leads. */}
+        <div style={groupS}>Required</div>
         <label style={{ display: "block", marginBottom: 14 }}>
-          <span style={labS}>Valorant name *</span>
-          <input value={d.ign} placeholder="exactly as it appears in-game"
+          <span style={labS}>Valorant name</span>
+          <input value={d.ign} placeholder="Exactly as it appears in-game"
             onChange={(e) => setD({ ...d, ign: e.target.value })} style={fieldS} />
-          <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
-            Without the #tag. Your match stats are matched to you by this name, so it has to be exact
-            — if it's wrong, your scores go to nobody and you get no season points.
-          </span>
+          <span style={helpS}>Leave off the #tag. If this doesn't match the game, your match stats won't reach you.</span>
         </label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(110px,1fr))", gap: 10, marginBottom: 14 }}>
+        <div style={twoCol}>
           {/* Tier and division are separate controls because the tier alone
               drives opening bids and pool filters — the number is cosmetic. */}
-          <label><span style={labS}>Rank *</span>
+          <label><span style={labS}>Rank</span>
             <select value={d.rank} onChange={e => setD({ ...d, rank: e.target.value, rankDiv: hasDivisions(e.target.value) ? d.rankDiv : "" })} style={fieldS}>
-              <option value="">— select —</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
+              <option value="">Select</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
             </select></label>
           <label><span style={labS}>Division</span>
             <select value={d.rankDiv} disabled={!hasDivisions(d.rank)} onChange={e => setD({ ...d, rankDiv: e.target.value })}
-              style={{ ...fieldS, opacity: hasDivisions(d.rank) ? 1 : 0.4 }}>
+              style={{ ...fieldS, opacity: hasDivisions(d.rank) ? 1 : 0.55 }}>
               <option value="">{d.rank === "Radiant" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
             </select></label>
+        </div>
+        <label style={{ display: "block", marginBottom: 14 }}><span style={labS}>Role</span>
+          <select value={d.role} onChange={e => setD({ ...d, role: e.target.value })} style={fieldS}>
+            <option value="">Select</option>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+          </select></label>
+        {/* Not typed any more — a hand-entered handle proved nothing and the bot
+            still couldn't reach anyone. The OAuth link is the source of both. */}
+        <div style={{ marginBottom: 14 }}><span style={labS}>Discord</span>
+          {dc.linked
+            ? <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "rgba(61,220,132,0.06)", border: "1px solid rgba(61,220,132,0.35)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
+                <span style={{ fontSize: 14, color: "#9af5c2", fontWeight: 700 }}>✓ Connected</span>
+                {dc.handle && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, color: "#ecf3ff" }}>{dc.handle}</span>}
+              </div>
+            : <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 8px 8px 12px", background: "rgba(10,16,30,0.75)", border: "1px solid rgba(125,166,255,0.42)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
+                <span style={{ fontSize: 14, color: "rgba(224,233,255,0.85)", flex: "1 1 120px" }}>Not connected yet</span>
+                <button disabled={dcBusy} onClick={async () => { setDcBusy(true); try { await startDiscordOAuth(resume || { kind: "profile" }); } catch { setDcBusy(false); } }}
+                  style={shellBtn("primary", { padding: "8px 14px", fontSize: 12, whiteSpace: "nowrap" })}>{dcBusy ? "…" : "Connect Discord"}</button>
+              </div>}
+          <span style={helpS}>Lets VOLT DM you about drafts and matches. Anything you've typed is kept while you connect.</span>
+        </div>
+        <label style={{ display: "block" }}><span style={labS}>WhatsApp number</span>
+          <input value={d.whatsapp} inputMode="tel" placeholder="e.g. 923001234567" onChange={e => setD({ ...d, whatsapp: e.target.value })} style={fieldS} />
+          <span style={helpS}>Start with your country code. Only the host and moderators can see it, and only if you don't answer on Discord.</span>
+        </label>
+
+        <div style={groupS}>Optional <span style={{ fontFamily: READ_FONT, fontSize: 13, fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "rgba(214,226,255,0.74)" }}>· helps captains bid on you</span></div>
+        <div style={twoCol}>
           <label><span style={labS}>Peak rank</span>
             <select value={d.peakRank} onChange={e => setD({ ...d, peakRank: e.target.value, peakRankDiv: hasDivisions(e.target.value) ? d.peakRankDiv : "" })} style={fieldS}>
-              <option value="">— none —</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
+              <option value="">None</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
             </select></label>
           <label><span style={labS}>Peak division</span>
             <select value={d.peakRankDiv} disabled={!hasDivisions(d.peakRank)} onChange={e => setD({ ...d, peakRankDiv: e.target.value })}
-              style={{ ...fieldS, opacity: hasDivisions(d.peakRank) ? 1 : 0.4 }}>
+              style={{ ...fieldS, opacity: hasDivisions(d.peakRank) ? 1 : 0.55 }}>
               <option value="">{d.peakRank === "Radiant" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
             </select></label>
-          <label><span style={labS}>Role</span>
-            <select value={d.role} onChange={e => setD({ ...d, role: e.target.value })} style={fieldS}>
-              <option value="">— select —</option>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-            </select></label>
-          {[["agent", "Main agent", "text"], ["kda", "KDA", "num"], ["acs", "ACS", "num"], ["hs", "HS %", "num"], ["win", "Win %", "num"]].map(([k, label, type]) => (
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Main agent</span>
+            <input value={d.agent} onChange={e => setD({ ...d, agent: e.target.value })} style={fieldS} /></label>
+          {[["kda", "KDA"], ["acs", "ACS"], ["hs", "HS %"], ["win", "Win %"]].map(([k, label]) => (
             <label key={k}><span style={labS}>{label}</span>
-              <input value={d[k]} onChange={e => setD({ ...d, [k]: type === "num" ? e.target.value.replace(/[^0-9.]/g, "") : e.target.value })} style={fieldS} /></label>))}
-          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Tracker link (tracker.gg, blitz.gg…)</span>
+              <input value={d[k]} inputMode="decimal" onChange={e => setD({ ...d, [k]: e.target.value.replace(/[^0-9.]/g, "") })} style={fieldS} /></label>))}
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Tracker link</span>
             <input value={d.tracker} placeholder="tracker.gg/valorant/profile/riot/yourname" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
-          {/* Not typed any more — a hand-entered handle proved nothing and the bot
-              still couldn't reach anyone. The OAuth link is the source of both. */}
-          <div style={{ gridColumn: "1 / -1" }}><span style={labS}>Discord *</span>
-            {dc.linked
-              ? <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "rgba(61,220,132,0.06)", border: "1px solid rgba(61,220,132,0.35)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 13, color: "#9af5c2", fontWeight: 700 }}>✓ Connected</span>
-                  {dc.handle && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#ecf3ff" }}>{dc.handle}</span>}
-                </div>
-              : <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 10px 9px 12px", background: "rgba(245,196,83,0.07)", border: "1px solid rgba(245,196,83,0.45)", clipPath: SHELL_NOTCH(7), flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12.5, color: "#ffe4a0", flex: "1 1 180px" }}>Not connected — required to enter a tournament.</span>
-                  <button disabled={dcBusy} onClick={async () => { setDcBusy(true); try { await startDiscordOAuth(resume || { kind: "profile" }); } catch { setDcBusy(false); } }}
-                    style={shellBtn("warn", { padding: "7px 14px", fontSize: 11, whiteSpace: "nowrap" })}>{dcBusy ? "…" : "◈ Connect Discord"}</button>
-                </div>}
-            <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
-              Your handle is pulled from Discord, so captains always have the right one — and VOLT can DM you about drafts and matches.
-            </span></div>
-          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>WhatsApp number *</span>
-            <input value={d.whatsapp} inputMode="tel" placeholder="Country code first, e.g. 923001234567" onChange={e => setD({ ...d, whatsapp: e.target.value })} style={fieldS} />
-            <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.45)", display: "block", marginTop: 4 }}>
-              Required so you can be reached if a match is at risk. Only the host and moderators can see it, and only if you don't answer on Discord — captains and other players never do.
-            </span></label>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button disabled={busy || !d.ign.trim() || !d.rank || !d.role || !(dc.linked || dc.handle) || (d.whatsapp || "").replace(/[^0-9]/g, "").length < 8} onClick={save} style={shellBtn("accent", { padding: "9px 18px", fontSize: 12 })}>{busy ? "…" : "✓ Save"}</button>
-          {saveErr && <span style={{ fontSize: 12, color: "#ff8f9a", alignSelf: "center" }}>⚠ {saveErr}</span>}
-          {!saveErr && (() => {
-            const need = [];
-            if (!d.rank) need.push("rank");
-            if (!d.role) need.push("role");
-            if (!d.ign.trim()) need.push("your Valorant name");
-            if (!dc.linked && !dc.handle) need.push("Discord connection");
-            if ((d.whatsapp || "").replace(/[^0-9]/g, "").length < 8) need.push("WhatsApp number");
-            return need.length ? <span style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)", alignSelf: "center" }}>Still needed: {need.join(", ")}</span> : null;
-          })()}
-          <button onClick={() => { clearDraft(); setEditing(false); load(); }} style={shellBtn("ghost", { padding: "9px 18px", fontSize: 12 })}>Cancel</button>
-        </div>
+
+        {(() => {
+          const need = [];
+          if (!d.ign.trim()) need.push("Valorant name");
+          if (!d.rank) need.push("rank");
+          if (!d.role) need.push("role");
+          if (!dc.linked && !dc.handle) need.push("Discord");
+          if ((d.whatsapp || "").replace(/[^0-9]/g, "").length < 8) need.push("WhatsApp number");
+          const blocked = busy || need.length > 0;
+          return <>
+            {saveErr && <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "#ff8f9a", marginBottom: 10 }}>⚠ {saveErr}</div>}
+            {!saveErr && need.length > 0 && <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "rgba(224,233,255,0.85)", marginBottom: 10 }}>Still needed: {need.join(", ")}</div>}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button disabled={blocked} onClick={save} style={shellBtn("primary", { flex: embedded ? "1 1 100%" : "0 0 auto", padding: "13px 20px", fontSize: 13, opacity: blocked ? 0.5 : 1, cursor: blocked ? "not-allowed" : "pointer" })}>{busy ? "Saving…" : embedded ? "Save and continue →" : "Save"}</button>
+              {/* In the sign-up dialog the ✕ already does this. */}
+              {!embedded && <button onClick={() => { clearDraft(); setEditing(false); load(); }} style={shellBtn("ghost", { padding: "13px 20px", fontSize: 13 })}>Cancel</button>}
+            </div>
+          </>;
+        })()}
       </>}
     </div>
   );
