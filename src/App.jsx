@@ -3705,9 +3705,46 @@ function PlayerPicker({ value, players, onChange }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const sel = players.find((p) => p.id === value);
-  const list = players.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()) || p.agent.toLowerCase().includes(q.toLowerCase()));
+  const list = players.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()) || (p.agent || "").toLowerCase().includes(q.toLowerCase()));
+  // The list is portalled to <body>: each War Room slot row has notched corners
+  // (clip-path), which clips every descendant, so an absolutely positioned list
+  // was sliced off at the bottom of its row and couldn't be used.
+  const boxRef = useRef(null);
+  const [anchor, setAnchor] = useState(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (boxRef.current && boxRef.current.contains(e.target)) return;
+      if (e.target.closest && e.target.closest("[data-volt-pickpanel]")) return;
+      setOpen(false); setQ("");
+    };
+    const onKey = (e) => { if (e.key === "Escape") { setOpen(false); setQ(""); } };
+    const place = () => {
+      const r = boxRef.current?.getBoundingClientRect();
+      if (r) setAnchor({ top: r.top, bottom: r.bottom, left: r.left, width: r.width });
+    };
+    place();
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+  const panelPos = () => {
+    const vh = window.innerHeight, vw = window.innerWidth;
+    const H = 270;                       // search box + 220px list
+    const width = Math.min(Math.max(anchor.width, 280), vw - 16);
+    const left = Math.max(8, Math.min(anchor.left, vw - width - 8));
+    const flip = anchor.bottom + 4 + H > vh - 8 && anchor.top - 4 - H > 8;
+    return flip ? { bottom: vh - anchor.top + 4, left, width } : { top: anchor.bottom + 4, left, width };
+  };
   return (
-    <div className="relative flex-1 min-w-0">
+    <div ref={boxRef} className="relative flex-1 min-w-0">
       <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left"
         style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${sel ? rankOf(sel.rank).c + "66" : "rgba(255,255,255,0.12)"}`, color: "#ecf3ff" }}>
         {sel ? (
@@ -3719,8 +3756,8 @@ function PlayerPicker({ value, players, onChange }) {
         ) : <span className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>Select a player…</span>}
         <span className="ml-auto text-xs" style={{ color: "rgba(236,243,255,0.4)" }}>▾</span>
       </button>
-      {open && (
-        <div className="absolute z-30 mt-1 w-full rounded-lg overflow-hidden" style={{ background: "#0d1120", border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 40px rgba(0,0,0,0.6)" }}>
+      {open && anchor && createPortal(
+        <div data-volt-pickpanel="1" className="rounded-lg overflow-hidden" style={{ position: "fixed", zIndex: 200, ...panelPos(), background: "#0d1120", border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 40px rgba(0,0,0,0.6)" }}>
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="w-full px-3 py-2 text-sm outline-none" style={{ background: "rgba(255,255,255,0.05)", color: "#ecf3ff", borderBottom: "1px solid rgba(255,255,255,0.1)" }} />
           <div style={{ maxHeight: 220, overflowY: "auto" }}>
             {value && <button onClick={() => { onChange(""); setOpen(false); setQ(""); }} className="w-full text-left px-3 py-2 text-xs uppercase tracking-widest" style={{ color: "#ff8a94" }}>✕ Clear slot</button>}
@@ -3734,7 +3771,7 @@ function PlayerPicker({ value, players, onChange }) {
             ); })}
             {list.length === 0 && <p className="px-3 py-3 text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>No matches.</p>}
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );
