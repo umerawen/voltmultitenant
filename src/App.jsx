@@ -10279,6 +10279,19 @@ function AvailabilityCard({ eventId }) {
     <div style={{ marginTop: 14 }}>
       <SectionHead title="Who we can reach" />
       <div style={PANEL((silent.length || unlinked.length) ? "rgba(245,196,83,0.4)" : "rgba(61,220,132,0.3)")}>
+        {/* Not sent yet: the button stays here. Before, one unconnected player
+            switched the card to this view and the only way to send was gone. */}
+        {!asked && (
+          <div style={{ marginBottom: 4 }}>
+            <button disabled={busy} onClick={sendNow}
+              style={shellBtn("primary", { padding: "10px 18px", fontSize: 12, opacity: busy ? 0.5 : 1 })}>
+              {busy ? "Sending…" : "◈ Send availability check now"}
+            </button>
+            <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginTop: 8, lineHeight: 1.55 }}>
+              DMs everyone in the draft pool except reserves. Goes out automatically about a day before the draft if you don't.
+            </div>
+          </div>
+        )}
         {d?.asked && (
           <div style={{ fontSize: 13.5, color: "#9af5c2", fontWeight: 700 }}>
             ✓ {d.confirmed} confirmed they can play
