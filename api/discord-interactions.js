@@ -706,6 +706,8 @@ function payloadFor(out, ephemeral) {
   if (out.embeds) d.embeds = out.embeds;
   if (out.allowedMentions) d.allowed_mentions = out.allowedMentions;
   if (ephemeral) d.flags = EPHEMERAL;
+  // No link preview cards on plain replies (the sign-up link would unfurl).
+  if (!out.embeds) d.flags = (d.flags || 0) | (1 << 2);
   return d;
 }
 const needsLink = (out) => reply(out,

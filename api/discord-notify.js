@@ -244,7 +244,8 @@ export default async function handler(req, res) {
 async function dm(token, discordId, content, components) {
   const ch = await post(token, "/users/@me/channels", { recipient_id: discordId });
   if (!ch.ok) return { ok: false, reason: ch.reason };
-  const payload = { content: content.slice(0, 1900) };
+  // SUPPRESS_EMBEDS: no preview card for the league link on every DM.
+  const payload = { content: content.slice(0, 1900), flags: 1 << 2 };
   if (components) payload.components = components;
   return post(token, `/channels/${ch.body.id}/messages`, payload);
 }

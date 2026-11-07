@@ -179,7 +179,9 @@ async function setTeamRole(token, guild, userId, roleId, voltRoleIds) {
 async function dm(token, discordId, content) {
   const ch = await call(token, "/users/@me/channels", "POST", { recipient_id: discordId });
   if (!ch.ok) return { ok: false, reason: ch.reason };
-  return call(token, `/channels/${ch.body.id}/messages`, "POST", { content: content.slice(0, 1900) });
+  // SUPPRESS_EMBEDS: the league link at the top would otherwise unfurl into a
+  // big preview card on every single DM.
+  return call(token, `/channels/${ch.body.id}/messages`, "POST", { content: content.slice(0, 1900), flags: 1 << 2 });
 }
 
 async function call(token, path, method, body) {
