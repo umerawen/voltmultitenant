@@ -2461,6 +2461,12 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
 
   // ── LIVE STATE: locked, scores being entered ──
   const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo, onSetTime: actions.tSetTime, onVote: actions.tVote };
+  // Knockout rounds before the semis exist only once the groups finish; until
+  // then show where they will be, so the bracket shape is visible from day one.
+  const G = t.groups?.length || 0;
+  const koSeeds = G * (G > 2 && t.advance === 2 ? 2 : 1);
+  const koExpected = t.format === "group" && t.playoff === "semis" && (G > 4 || (G > 2 && t.advance === 2));
+  const top2of3 = t.format === "group" && G === 3 && t.advance === 2;
   let champion = null;
   if (t.format === "single" && t.rounds?.length) { const fm = t.rounds[t.rounds.length - 1][0]; if (fm?.done) champion = teamOf(fm.winner); }
   // Any format that ends in a decider (group final, or the league Sunday final)
@@ -2563,6 +2569,18 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             ))}
           </div>
           {/* knockout rounds before the semis (more than four qualifiers) */}
+          {!t.ko?.length && koExpected && (
+            <TPanel hue="#7da6ff" title={koSeeds > 8 ? "Round of 16" : "Quarterfinals"} className="mb-6">
+              <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
+                {top2of3
+                  ? "Group winners are seeds 1–3 and runners-up seeds 4–6, each ranked by points, then round difference. Seeds 1 and 2 go straight to the semis; seed 3 plays seed 6 and seed 4 plays seed 5."
+                  : `${t.advance === 2 ? "Group winners and runners-up" : "Group winners"}, seeded by record. Teams from the same group are kept apart where possible.`}
+              </p>
+              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
+                Complete every group match and the {koSeeds > 8 ? "first round" : "quarterfinals"} will seed themselves.
+              </p>
+            </TPanel>
+          )}
           {t.ko?.length > 0 && t.ko.map((r, ri) => {
             const name = ri === t.ko.length - 1 ? "Quarterfinal" : "Round of 16";
             const real = r.map((m, mi) => [m, mi]).filter(([m]) => !m.bye);
@@ -2585,7 +2603,9 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           {t.playoff === "semis" && (
             <TPanel hue="#7da6ff" title="Semifinals" className="mb-6">
               <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
-                {t.ko?.length
+                {top2of3
+                  ? "Seed 1 meets the winner of seed 4 v seed 5; seed 2 meets the winner of seed 3 v seed 6."
+                  : t.ko?.length || koExpected
                   ? "The quarterfinal winners."
                   : (t.groups?.length || 2) === 2
                   ? "Winner of each group meets the other group's runner-up."
@@ -2601,7 +2621,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                 </div>
               ) : (
                 <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
-                  {t.ko?.length ? "Waiting on the quarterfinals." : "Complete every group match and the semis will seed themselves."}
+                  {t.ko?.length || koExpected ? "Waiting on the quarterfinals." : "Complete every group match and the semis will seed themselves."}
                 </p>
               )}
             </TPanel>
