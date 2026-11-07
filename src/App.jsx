@@ -61,7 +61,10 @@ if (typeof window !== "undefined") {
         // 1) Cheap probe: timestamp only.
         let probe = __sb.from("community_kv").select("updated_at").eq("community_id", cid).eq("k", key).eq("shared", !!shared);
         if (!shared) probe = probe.eq("user_id", window.__VOLT.userId);
-        const { data: meta } = await probe.maybeSingle();
+        // A failed read must throw, not look like "no board": the draft used
+        // to build a fresh board when a read failed, overwriting a live auction.
+        const { data: meta, error: probeErr } = await probe.maybeSingle();
+        if (probeErr) throw probeErr;
         if (!meta) return null;
         if (sinceUpdatedAt && meta.updated_at && meta.updated_at <= sinceUpdatedAt) {
           return { unchanged: true, updatedAt: meta.updated_at };
@@ -69,9 +72,10 @@ if (typeof window !== "undefined") {
         // 2) It changed (or caller had nothing) → fetch the full value once.
         let full = __sb.from("community_kv").select("val, updated_at").eq("community_id", cid).eq("k", key).eq("shared", !!shared);
         if (!shared) full = full.eq("user_id", window.__VOLT.userId);
-        const { data } = await full.maybeSingle();
+        const { data, error: fullErr } = await full.maybeSingle();
+        if (fullErr) throw fullErr;
         return data ? { key, value: data.val, updatedAt: data.updated_at, shared: !!shared } : null;
-      } catch (e) { console.error("storage.getIfChanged", e); return memGet(key, shared); }
+      } catch (e) { console.error("storage.getIfChanged", e); throw e; }
     },
     async set(key, value, shared) {
       const cid = window.__VOLT.communityId;
@@ -685,6 +689,21 @@ const isManualPlayer = (p) => !(typeof p?.id === "string" && p.id.length > 30);
 // auction. Undefined means the no-Supabase preview, where everything is allowed.
 const isLeagueOwner = () => window.__VOLT?.isHost !== false;
 
+// Give rebuilt teams the ids their captains already had. Mock Draft plans are
+// stored per team id, so renumbering t5 → t4 hid a captain's saved plans.
+function keepTeamIds(built, prior) {
+  const prev = {};
+  (prior?.teams || []).forEach((t) => { if (t.captainUserId) prev[t.captainUserId] = t.id; });
+  const taken = new Set();
+  built.teams.forEach((t) => {
+    const id = prev[t.captainUserId];
+    if (id && !taken.has(id)) { t.id = id; taken.add(id); } else t.id = null;
+  });
+  let n = 1;
+  built.teams.forEach((t) => { if (!t.id) { while (taken.has("t" + n)) n++; t.id = "t" + n; taken.add(t.id); } });
+  return built;
+}
+
 function freshState(captains, poolPlayers) {  // captains: optional [{ userId, name, teamName? }] from the real community.
   // When present, teams are built from real registered captains (each tied to a
   // userId so login-based seat claiming maps to the right seat). Otherwise the
@@ -726,6 +745,11 @@ function freshState(captains, poolPlayers) {  // captains: optional [{ userId, n
     stamp: Date.now(),
   };
 }
+
+// Every client drops a board whose stamp isn't newer than the one it holds, so
+// stamps must only go up. Date.now() alone doesn't: a device whose clock runs
+// behind would write "older" boards that everyone ignores.
+const nextStamp = (base) => Math.max(Date.now(), ((base && base.stamp) || 0) + 1);
 
 // Board-read cache, keyed by boardKey(), so polling can use a conditional GET:
 // when the row hasn't changed since we last read it, nothing is downloaded and
@@ -5351,6 +5375,13 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const load = async () => {
       let s = await readState();
       if (!s) {
+        // readState also returns null when the read FAILED. Ask again strictly:
+        // only a clean "no such row" may create a board. Anything else waits
+        // for the poll to deliver the real one.
+        let missing = false;
+        try { missing = (await window.storage.getIfChanged(boardKey(), true, null)) === null; }
+        catch (e) { console.error("board read failed — not creating a board", e); }
+        if (!missing) return;
         // No board yet: build it from THIS tournament's registrations — the
         // same source the host's "open draft" uses. This used to pull anyone
         // in the league who'd ever ticked wants_captain, so the teams didn't
@@ -5609,7 +5640,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       const base = stateRef.current || freshState();
       const next = fn(structuredClone(base));
       if (!next) return;
-      next.stamp = Date.now();                // stamp now so the poll guard is exact
+      next.stamp = nextStamp(base);           // stamp now so the poll guard is exact
       localStampRef.current = next.stamp;
       setState(next);
       const persist = async (st, attempt = 0) => {
@@ -5637,7 +5668,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             setSaveErr(null);
             return;
           }
-          merged.stamp = Date.now();
+          merged.stamp = nextStamp(r.current);
           localStampRef.current = merged.stamp;
           setState(merged);
           return persist(merged, attempt + 1);
@@ -5672,7 +5703,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         const expected = boardVersion();
         const next = fn(structuredClone(latest));
         if (!next) break;
-        next.stamp = Date.now();
+        next.stamp = nextStamp(latest);
         const r = await writeStateChecked(next, expected);
         if (r.ok) { localStampRef.current = next.stamp; setState(next); break; }
         if (!r.current || attempt === 3) {
@@ -15564,7 +15595,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       // teams, so one call covers both cases — and either way every registered
       // player lands on the board instead of being dropped.
       if (captains.length >= MIN_TEAMS || !existing) {
-        const built = stamp(freshState(withNames, pool));
+        const built = keepTeamIds(stamp(freshState(withNames, pool)), existing);
         // Players the host typed in by hand have no registration to
         // rebuild from, so a plain rebuild would silently erase them. Carry
         // them over (minus any that a real registration now supersedes).
@@ -15794,7 +15825,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       const priorName = {};
       (prior?.teams || []).forEach(t => { if (t.captainUserId && t.name) priorName[t.captainUserId] = t.name; });
       const withNames = captains.map(c => (priorName[c.userId] ? { ...c, teamName: priorName[c.userId] } : c));
-      await writeState(freshState(withNames, pool));
+      await writeState(keepTeamIds(freshState(withNames, pool), prior));
       window.location.reload();
     } catch (e) { console.error(e); setBusy(false); }
   }
@@ -15916,7 +15947,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
             onEditProfile={() => setRegView("gate")} onChanged={loadMyReg} />
         : null,
     };
-    return <DraftApp auth={auth} browse={inReg} chrome={chrome} initialView={initialView} />;
+    return <DraftApp key={inReg ? "browse" : "live"} auth={auth} browse={inReg} chrome={chrome} initialView={initialView} />;
   }
 
   return <div>{bar}<WeekendRegistration ev={ev} auth={auth} phase={phase} /></div>;
