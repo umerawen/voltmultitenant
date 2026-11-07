@@ -11089,21 +11089,37 @@ function DiscordArenaCard({ eventId, phase }) {
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       if (!jwt) throw new Error("Session expired — sign in again.");
-      const r = await fetch(apiUrl("/api/discord-arena"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ eventId, mode }),
-      });
-      const b = await r.json().catch(() => null);
-      if (!r.ok) {
-        if (b?.error) throw new Error(b.error);
-        if (r.status === 504 || r.status === 500) throw new Error(
-          "The server gave up part-way through. Anything it already made is kept — press the button again to finish the rest.");
-        if (r.status === 404) throw new Error(
-          "/api/discord-arena isn't deployed yet — upload it to Vercel and wait for the build.");
-        throw new Error(`Failed (${r.status})`);
+      // Each request stops after ~8s (Vercel's limit) and reports `partial`.
+      // Every step is idempotent, so keep calling until it finishes instead of
+      // asking the host to press the button again and again.
+      const once = async () => {
+        const r = await fetch(apiUrl("/api/discord-arena"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ eventId, mode }),
+        });
+        const b = await r.json().catch(() => null);
+        if (!r.ok) {
+          if (b?.error) throw new Error(b.error);
+          if (r.status === 504 || r.status === 500) throw new Error(
+            "The server gave up part-way through. Anything it already made is kept — press the button again to finish the rest.");
+          if (r.status === 404) throw new Error(
+            "/api/discord-arena isn't deployed yet — upload it to Vercel and wait for the build.");
+          throw new Error(`Failed (${r.status})`);
+        }
+        return b;
+      };
+      const loops = mode === "teams" || mode === "common" || mode === "wrapup";
+      let b = await once(), madeAll = b.created?.length || 0, deletedAll = b.deleted || 0;
+      for (let i = 0; loops && b.partial && i < 10; i++) {
+        setMsg(`Still working — ${madeAll} created so far…`);
+        b = await once();
+        madeAll += b.created?.length || 0;
+        deletedAll += b.deleted || 0;
       }
-      const made = b.created?.length || 0, kept = b.reused?.length || 0;
+      b.deleted = deletedAll;
+      // Things made in an earlier round show up as "reused" in the last one.
+      const made = madeAll, kept = Math.max(0, (b.reused?.length || 0) - (madeAll - (b.created?.length || 0)));
       const label = mode === "teams" ? "Team rooms" : mode === "common" ? "Channels" : "";
       if (mode === "wrapup") {
         const n = b.deleted || 0;

@@ -186,30 +186,57 @@ async function buildTeams(ctx) {
   }
   out.teams = roleOf.size;
 
+  // League staff see every team room. The rooms deny @everyone, so without this
+  // only Discord admins could see them — a VOLT host or moderator who isn't a
+  // server admin saw an empty server after building.
+  const staff = await staffDiscordIds(ctx);
+  const ALL = (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString();
+
   // 2. Channels. ensureChannel mutates ctx.channels, so these stay sequential —
   //    two teams racing could otherwise both decide a channel is missing.
+  const reusedRooms = [];
   for (const t of teams) {
     const roleId = roleOf.get(t.name);
     if (!roleId || outOfTime(ctx, out)) continue;
     const overwrites = [
       { id: ctx.guild, type: 0, deny: P.VIEW.toString(), allow: "0" },
-      { id: roleId, type: 0, allow: (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString(), deny: "0" },
+      { id: roleId, type: 0, allow: ALL, deny: "0" },
     ];
-    if (ctx.me) overwrites.push({ id: ctx.me, type: 1,
-      allow: (P.VIEW | P.SEND | P.CONNECT | P.SPEAK).toString(), deny: "0" });
-    await ensureChannel(ctx, { ref: `team-text:${t.name}`, name: `${slug(t.name)}-room`, type: 0,
-      parent_id: cat, eventScoped: true, permission_overwrites: overwrites,
-      topic: `${t.name} only. Captain: ${t.captain || "—"}` }, out);
-    await ensureChannel(ctx, { ref: `team-vc:${t.name}`, name: t.name, type: 2,
-      parent_id: cat, eventScoped: true, permission_overwrites: overwrites }, out);
+    if (ctx.me) overwrites.push({ id: ctx.me, type: 1, allow: ALL, deny: "0" });
+    for (const s of staff) if (s !== ctx.me) overwrites.push({ id: s, type: 1, allow: ALL, deny: "0" });
+    for (const spec of [
+      { ref: `team-text:${t.name}`, name: `${slug(t.name)}-room`, type: 0,
+        topic: `${t.name} only. Captain: ${t.captain || "—"}` },
+      { ref: `team-vc:${t.name}`, name: t.name, type: 2 },
+    ]) {
+      const before = out.created.length;
+      const id = await ensureChannel(ctx, { ...spec, parent_id: cat, eventScoped: true,
+        permission_overwrites: overwrites }, out);
+      if (id && out.created.length === before) reusedRooms.push(id);
+    }
   }
 
+  // Rooms built before staff were added to the overwrites: let staff in now.
+  // PUT on one overwrite is idempotent and leaves the others alone.
+  const opens = [];
+  for (const cid of reusedRooms) for (const s of staff) opens.push({ cid, s });
+  await pool(opens, 5, async ({ cid, s }) => {
+    const r = await call(ctx.token, `/channels/${cid}/permissions/${s}`, "PUT",
+      { type: 1, allow: ALL, deny: "0" });
+    if (!r.ok && !out.errors.some((e) => e.startsWith("staff access"))) {
+      out.errors.push(`staff access: ${r.reason}`);
+    }
+  });
+
   // 3. Member roles — the bulk of the calls, and fully independent of each other.
+  //    Captains too: they aren't "sold" to their own team, so they used to be
+  //    left out and couldn't see their own room.
   const grants = [];
   for (const t of teams) {
     const roleId = roleOf.get(t.name);
     if (!roleId) continue;
-    for (const did of t.discordIds || []) grants.push({ did, roleId, team: t.name });
+    const ids = new Set([...(t.discordIds || []), t.captainDiscord].filter(Boolean));
+    for (const did of ids) grants.push({ did, roleId, team: t.name });
   }
   await pool(grants, 5, async (g) => {
     const r = await call(ctx.token, `/guilds/${ctx.guild}/members/${g.did}/roles/${g.roleId}`, "PUT");
@@ -576,6 +603,19 @@ async function selfId(token) {
   const r = await call(token, "/users/@me", "GET");
   _selfId = r.ok ? r.body?.id : null;
   return _selfId;
+}
+
+// Discord ids of the league's host and moderators (those who linked Discord).
+async function staffDiscordIds(ctx) {
+  try {
+    const users = await sb(`/rest/v1/users?community_id=eq.${ctx.community}` +
+      `&role=in.(host,moderator)&select=id`);
+    const ids = (users || []).map((u) => u.id);
+    if (!ids.length) return [];
+    const rows = await sb(`/rest/v1/player_contacts?community_id=eq.${ctx.community}` +
+      `&user_id=in.(${ids.join(",")})&discord_user_id=not.is.null&select=discord_user_id`);
+    return [...new Set((rows || []).map((r) => r.discord_user_id))];
+  } catch (e) { console.error("staffDiscordIds", e); return []; }
 }
 
 async function listRoles(ctx) {
