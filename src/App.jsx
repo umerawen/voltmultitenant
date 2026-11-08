@@ -1016,6 +1016,85 @@ function propagateElim(t) {
   }
 }
 
+const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
+
+// The knockout draw: group winners seeded by record, then runners-up by record;
+// standard bracket order (1 v 8, 4 v 5, …) with byes for the top seeds, and a
+// first-round pairing of two teams from the same group swapped where a swap
+// keeps both pairs apart. syncFinal builds the real bracket from this and
+// playoffPreview shows it early, so the two can't disagree.
+function koSeedOrder(groups, adv, keepApart = true) {
+  const seeds = [
+    ...groups.map((g, gi) => ({ ...g.rows[0], gi })).sort(byRecord),
+    ...(adv === 2 ? groups.map((g, gi) => ({ ...g.rows[1], gi })).sort(byRecord) : []),
+  ].map((x, i) => ({ ...x, seed: i + 1 }));
+  const size = Math.max(8, nextPow2(seeds.length));
+  const order = seedOrder(size).map((n) => seeds[n - 1] || null);
+  if (keepApart) for (let i = 0; i < size; i += 2) {
+    const a = order[i], b = order[i + 1];
+    if (!a || !b || a.gi !== b.gi) continue;
+    for (let j = 0; j < size; j += 2) {
+      const c = order[j], d = order[j + 1];
+      if (j === i || !c || !d) continue;
+      if (d.gi !== a.gi && c.gi !== b.gi) { order[i + 1] = d; order[j + 1] = b; break; }
+    }
+  }
+  return { size, order };
+}
+
+// The playoff matches before they exist: seed labels from the start, and the
+// teams that would be there if the groups ended now once every group has a
+// result. For display only; nothing here is saved to the board.
+function playoffPreview(t) {
+  const G = t.groups?.length || 0;
+  if (G < 2) return null;
+  const tables = t.groups.map((g) => {
+    const ms = t.matches[g.id] || [];
+    return { name: g.name, played: ms.some((m) => m.done), rows: computeStandings(g.teamIds, ms, t.overrides) };
+  });
+  const live = tables.every((x) => x.played && x.rows.length >= 2);
+  const adv = G > 2 && t.advance === 2 ? 2 : 1;
+  const blank = { pts: 0, diff: 0, rf: 0 };
+  const groups = live ? tables : tables.map(() => ({ rows: [blank, blank] }));
+  const seat = (s) => ({ label: s ? `Seed ${s.seed}` : "TBD", team: s?.teamId || null, projected: !!s?.teamId });
+  const placed = (x, i) => ({ label: `${x.name} ${i ? "runner-up" : "winner"}`, team: live ? x.rows[i]?.teamId || null : null, projected: live });
+  const feed = (m) => m.through || { label: `Winner of ${m.tag}`, team: null };
+
+  const ko = [];
+  let semis;
+  if (G > 4 || (G > 2 && adv === 2)) {
+    const { size, order } = koSeedOrder(groups, adv, live);
+    let round = [];
+    for (let i = 0; i < size; i += 2) {
+      const a = order[i], b = order[i + 1];
+      round.push(a && b ? { a: seat(a), b: seat(b), tag: `${a.seed}v${b.seed}` } : { through: seat(a || b) });
+    }
+    ko.push(round);
+    while (round.length > 4) {
+      const prev = round;
+      round = Array.from({ length: prev.length / 2 }, (_, i) => ({ a: feed(prev[i * 2]), b: feed(prev[i * 2 + 1]), tag: `QF${i + 1}` }));
+      ko.push(round);
+    }
+    semis = [{ a: feed(round[0]), b: feed(round[1]) }, { a: feed(round[2]), b: feed(round[3]) }];
+  } else if (G === 2) {
+    const [A, B] = tables;
+    semis = [{ a: placed(A, 0), b: placed(B, 1) }, { a: placed(B, 0), b: placed(A, 1) }];
+  } else {
+    const seeds = groups.map((g) => g.rows[0]);
+    if (G === 3) seeds.push(groups.map((g) => g.rows[1]).sort(byRecord)[0]);
+    const ranked = seeds.sort(byRecord).map((x, i) => ({ ...x, seed: i + 1 }));
+    semis = [{ a: seat(ranked[0]), b: seat(ranked[3]) }, { a: seat(ranked[1]), b: seat(ranked[2]) }];
+  }
+  const semiWinner = (i) => {
+    const m = t.semis?.[i];
+    return { label: `Winner of SF${i + 1}`, team: m?.done ? m.winner || null : null };
+  };
+  const final = t.playoff === "semis"
+    ? { a: semiWinner(0), b: semiWinner(1) }
+    : { a: placed(tables[0], 0), b: placed(tables[1], 0) };
+  return { ko, semis, final };
+}
+
 // Group stage → knockout: seeds the semis (and any rounds before them) from
 // the finished group tables, and the final from the semis. Pure: board in, board out.
 function syncFinal(s, t) {
@@ -1061,26 +1140,7 @@ function syncFinal(s, t) {
   let pairs;
   if (!koOn) { t.ko = null; t.koSeed = null; }
   if (koOn) {
-    // Group winners seeded by record, then runners-up by record; standard
-    // bracket order (1 v 8, 4 v 5, …) with byes for the top seeds, and a
-    // first-round pairing of two teams from the same group swapped where a
-    // swap keeps both pairs apart.
-    const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
-    const seeds = [
-      ...groups.map((g, gi) => ({ ...g.rows[0], gi })).sort(byRecord),
-      ...(adv === 2 ? groups.map((g, gi) => ({ ...g.rows[1], gi })).sort(byRecord) : []),
-    ];
-    const size = Math.max(8, nextPow2(seeds.length));
-    const order = seedOrder(size).map((n) => seeds[n - 1] || null);
-    for (let i = 0; i < size; i += 2) {
-      const a = order[i], b = order[i + 1];
-      if (!a || !b || a.gi !== b.gi) continue;
-      for (let j = 0; j < size; j += 2) {
-        const c = order[j], d = order[j + 1];
-        if (j === i || !c || !d) continue;
-        if (d.gi !== a.gi && c.gi !== b.gi) { order[i + 1] = d; order[j + 1] = b; break; }
-      }
-    }
+    const { size, order } = koSeedOrder(groups, adv);
     const sig = order.map((x) => x?.teamId || "-").join(",");
     if (!t.ko || (!koPlayed() && t.koSeed !== sig)) {
       // first round from the ordered slots, then empty rounds down to the last eight
@@ -1109,7 +1169,6 @@ function syncFinal(s, t) {
   } else {
     // Three or four groups: every group winner (plus the best runner-up when
     // there are three) goes through, seeded by record — 1 v 4, 2 v 3.
-    const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
     const seeds = groups.map((g) => g.rows[0]);
     if (groups.length === 3) seeds.push(groups.map((g) => g.rows[1]).sort(byRecord)[0]);
     seeds.sort(byRecord);
@@ -1724,7 +1783,7 @@ function FxStatus({ f, match }) {
   if (match.done) return <span style={{ ...base, color: "#3ddc84" }}>Final</span>;
   if (f.started) return <span style={{ ...base, color: "#ff4655", display: "inline-flex", alignItems: "center", gap: 6 }}>
     <span className="volt-fx-dot" style={{ width: 6, height: 6 }} />Live</span>;
-  if (f.at) return <span style={{ ...base, color: "#9af5c2", letterSpacing: "0.1em" }}>{fxWhen(f.at)}</span>;
+  if (f.at) return <span style={{ ...base, fontSize: 12.5, color: "#c4fcdc", letterSpacing: "0.07em", padding: "2px 8px", background: "rgba(154,245,194,0.1)", border: "1px solid rgba(154,245,194,0.28)" }}>{fxWhen(f.at)}</span>;
   return <span style={{ ...base, color: "rgba(200,215,255,0.3)" }}>Time TBC</span>;
 }
 
@@ -1836,7 +1895,7 @@ function MatchModal({ match, locator, teamOf, isAdmin, A, stage, onClose }) {
 }
 
 // List card: used by groups, playoffs, finals and the league's live round.
-function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false }) {
+function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false, slotA, slotB }) {
   const [open, setOpen] = useState(false);
   const f = matchFacts(match, teamOf);
   const mine = window.__VOLT?.userId && match.votes?.[window.__VOLT.userId]?.side;
@@ -1845,9 +1904,9 @@ function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false })
   const name = (team, win, lose, align) => (
     <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, justifyContent: align === "right" ? "flex-end" : "flex-start", opacity: lose ? 0.45 : 1 }}>
       {align === "left" && <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />}
-      <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: big ? 20 : 16.5, lineHeight: 1.1, letterSpacing: "0.02em", textAlign: align,
+      <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: !team && (align === "left" ? slotA : slotB) ? (big ? 16 : 13) : big ? 20 : 16.5, lineHeight: 1.1, letterSpacing: "0.02em", textAlign: align,
         color: team ? team.hue : "rgba(200,215,255,0.35)", textShadow: win && team ? `0 0 16px ${team.hue}55` : "none",
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team ? team.name : (f.bye && align === "right" ? "—" : "TBD")}</span>
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: !team && (align === "left" ? slotA : slotB) ? "normal" : "nowrap" }}>{team ? team.name : (f.bye && align === "right" ? "—" : (align === "left" ? slotA : slotB) || "TBD")}</span>
       {align === "right" && <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />}
     </div>
   );
@@ -1889,9 +1948,46 @@ function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false })
 }
 
 // editable score row for a single match — now the shared fixture card.
-function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, stage, big }) {
-  return <FixtureCard match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage} big={big}
+function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, stage, big, slotA, slotB }) {
+  return <FixtureCard match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage} big={big} slotA={slotA} slotB={slotB}
     A={{ onSetMap, onSetBo, onSetTime, onVote }} />;
+}
+
+// A playoff match that doesn't exist yet: the fixture card's shape, dimmed and
+// not clickable, naming the seed and the team currently in line for it.
+function SlotCard({ m, teamOf, stage, bo, big = false }) {
+  const side = (s, align) => {
+    const team = s.team ? teamOf(s.team) : null;
+    const mono = <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />;
+    return (
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
+        {align === "left" && mono}
+        <div style={{ minWidth: 0, textAlign: align }}>
+          <div style={{ fontWeight: 700, textTransform: "uppercase", fontSize: team ? (big ? 20 : 16.5) : big ? 16 : 13, lineHeight: 1.1, letterSpacing: "0.02em",
+            color: team ? team.hue : "rgba(200,215,255,0.42)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: team ? "nowrap" : "normal" }}>{team ? team.name : s.label}</div>
+          {team && <div style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 700, color: "rgba(200,215,255,0.42)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</div>}
+        </div>
+        {align === "right" && mono}
+      </div>
+    );
+  };
+  const projected = m.a.projected && m.a.team || m.b.projected && m.b.team;
+  return (
+    <div style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(12,17,30,0.45)", border: `1px dashed ${big ? "rgba(255,209,102,0.3)" : "rgba(120,150,220,0.22)"}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 0" }}>
+        <span style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", fontWeight: 700 }}>{stage}</span>
+        <span style={{ fontSize: 9.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.35)" }}>BO{bo || 1}</span>
+        {projected && <span style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(125,166,255,0.3)", padding: "0 5px" }}>Projected</span>}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontWeight: 700, fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", whiteSpace: "nowrap", color: "rgba(200,215,255,0.3)" }}>Time TBC</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: big ? "14px 16px 14px" : "10px 14px 12px" }}>
+        {side(m.a, "left")}
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 11, letterSpacing: "0.2em", color: "rgba(200,215,255,0.3)", minWidth: 40, textAlign: "center" }}>VS</div>
+        {side(m.b, "right")}
+      </div>
+    </div>
+  );
 }
 
 // standings table
@@ -2464,9 +2560,14 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
   // Knockout rounds before the semis exist only once the groups finish; until
   // then show where they will be, so the bracket shape is visible from day one.
   const G = t.groups?.length || 0;
-  const koSeeds = G * (G > 2 && t.advance === 2 ? 2 : 1);
   const koExpected = t.format === "group" && t.playoff === "semis" && (G > 4 || (G > 2 && t.advance === 2));
   const top2of3 = t.format === "group" && G === 3 && t.advance === 2;
+  const preview = t.format === "group" ? playoffPreview(t) : null;
+  // Whichever quarterfinal feeds this semifinal slot, while it's still to play.
+  const qfSlot = (i) => {
+    const last = t.ko?.[t.ko.length - 1], m = last?.[i];
+    return m && !m.bye ? `Winner of QF${last.slice(0, i + 1).filter((x) => !x.bye).length}` : undefined;
+  };
   let champion = null;
   if (t.format === "single" && t.rounds?.length) { const fm = t.rounds[t.rounds.length - 1][0]; if (fm?.done) champion = teamOf(fm.winner); }
   // Any format that ends in a decider (group final, or the league Sunday final)
@@ -2569,18 +2670,25 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             ))}
           </div>
           {/* knockout rounds before the semis (more than four qualifiers) */}
-          {!t.ko?.length && koExpected && (
-            <TPanel hue="#7da6ff" title={koSeeds > 8 ? "Round of 16" : "Quarterfinals"} className="mb-6">
-              <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
-                {top2of3
-                  ? "Group winners are seeds 1–3 and runners-up seeds 4–6, each ranked by points, then round difference. Seeds 1 and 2 go straight to the semis; seed 3 plays seed 6 and seed 4 plays seed 5."
-                  : `${t.advance === 2 ? "Group winners and runners-up" : "Group winners"}, seeded by record. Teams from the same group are kept apart where possible.`}
-              </p>
-              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
-                Complete every group match and the {koSeeds > 8 ? "first round" : "quarterfinals"} will seed themselves.
-              </p>
-            </TPanel>
-          )}
+          {!t.ko?.length && koExpected && preview?.ko.map((r, ri) => {
+            const qf = ri === preview.ko.length - 1;
+            return (
+              <TPanel key={ri} hue="#7da6ff" title={qf ? "Quarterfinals" : "Round of 16"} className="mb-6">
+                {ri === 0 && (
+                  <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
+                    {top2of3
+                      ? "Group winners are seeds 1–3 and runners-up 4–6, ranked by points, then round difference. Teams from the same group are kept apart here."
+                      : `${t.advance === 2 ? "Group winners and runners-up" : "Group winners"}, seeded by record. Teams from the same group are kept apart where possible.`}
+                  </p>
+                )}
+                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
+                  {r.filter((m) => !m.through).map((m, k) => (
+                    <SlotCard key={k} m={m} teamOf={teamOf} bo={t.bo} stage={`${qf ? "Quarterfinal" : "Round of 16"} ${k + 1}`} />
+                  ))}
+                </div>
+              </TPanel>
+            );
+          })}
           {t.ko?.length > 0 && t.ko.map((r, ri) => {
             const name = ri === t.ko.length - 1 ? "Quarterfinal" : "Round of 16";
             const real = r.map((m, mi) => [m, mi]).filter(([m]) => !m.bye);
@@ -2602,43 +2710,33 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           {/* semifinals, when the bracket has them */}
           {t.playoff === "semis" && (
             <TPanel hue="#7da6ff" title="Semifinals" className="mb-6">
-              <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
-                {top2of3
-                  ? "Seed 1 meets the winner of seed 4 v seed 5; seed 2 meets the winner of seed 3 v seed 6."
-                  : t.ko?.length || koExpected
-                  ? "The quarterfinal winners."
-                  : (t.groups?.length || 2) === 2
-                  ? "Winner of each group meets the other group's runner-up."
-                  : t.groups.length === 3
-                    ? "The three group winners and the best runner-up, seeded by record."
-                    : "The four group winners, seeded by record — 1 v 4, 2 v 3."}
-              </p>
-              {t.semis?.length ? (
-                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
-                  {t.semis.map((m, si) => (
-                    <TMatchRow key={m.id} match={m} locator={{ kind: "semi", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`Semifinal ${si + 1}`} {...A} />
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
-                  {t.ko?.length || koExpected ? "Waiting on the quarterfinals." : "Complete every group match and the semis will seed themselves."}
+              {!top2of3 && (
+                <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
+                  {t.ko?.length || koExpected
+                    ? "The quarterfinal winners."
+                    : (t.groups?.length || 2) === 2
+                    ? "Winner of each group meets the other group's runner-up."
+                    : t.groups.length === 3
+                      ? "The three group winners and the best runner-up, seeded by record."
+                      : "The four group winners, seeded by record — 1 v 4, 2 v 3."}
                 </p>
               )}
+              <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
+                {t.semis?.length
+                  ? t.semis.map((m, si) => (
+                      <TMatchRow key={m.id} match={m} locator={{ kind: "semi", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`Semifinal ${si + 1}`} slotA={qfSlot(si * 2)} slotB={qfSlot(si * 2 + 1)} {...A} />
+                    ))
+                  : preview?.semis.map((m, si) => <SlotCard key={si} m={m} teamOf={teamOf} bo={t.bo} stage={`Semifinal ${si + 1}`} />)}
+              </div>
             </TPanel>
           )}
           {/* the final */}
           <TPanel hue="#ffd166" title="★ Grand final">
-            {t.final ? (
-              <div className="max-w-xl mx-auto">
-                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Grand final" big {...A} />
-              </div>
-            ) : (
-              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
-                {t.playoff === "semis"
-                  ? "Awaiting both semifinal winners."
-                  : "Awaiting both group winners — complete every group match to set the final."}
-              </p>
-            )}
+            <div className="max-w-xl mx-auto">
+              {t.final
+                ? <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Grand final" big {...A} />
+                : preview && <SlotCard m={preview.final} teamOf={teamOf} bo={t.bo} stage="Grand final" big />}
+            </div>
           </TPanel>
         </>
       )}
