@@ -4,18 +4,28 @@
 // Idempotent: each match is stamped `predictedAt` / `remindedAt` on the board
 // once posted, so repeated runs never double-post. Safe to call every few minutes.
 //
-// One ping per match, never two. A card the timer opens carries the role ping
-// itself and gets no last call. A card the host opened by hand (no ping, so
-// publishing a whole schedule doesn't notify everyone nine times) gets its one
-// ping as a last call an hour out.
+// Pings: group-stage matches are never pinged by the timer. A knockout card
+// the timer opens carries the role ping itself and gets no last call; a
+// knockout card the host opened by hand (no ping) gets one last call an hour
+// out. So a knockout match pings at most once, and the group stage not at all.
+//
+// The timer also does two posts per match night, neither of which pings:
+//   * a match-day post six hours before the night's first kick-off: every game
+//     that night, the pick split so far, and buttons to pick from right there;
+//   * a player-of-the-night post once that night's stats are reported (or 12
+//     hours after the last kick-off, with whatever was reported).
 //
 // Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY, VOLT_NOTIFY_SECRET
 import { cors } from "./_cors.js";
 
 const API = "https://discord.com/api/v10";
-const WINDOW_MINS = 60;        // last call, for cards the host opened by hand
+const WINDOW_MINS = 60;        // last call, for knockout cards the host opened by hand
 const AUTO_OPEN_MINS = 180;    // post any unopened card this close to kick-off
 const SAME_NIGHT_MINS = 180;   // and bring the rest of that night's cards with it
+const MATCHDAY_MINS = 360;     // match-day post: this long before the night's first game
+const NIGHT_MINS = 360;        // games within this long of the first are the same night
+const POTN_WAIT_H = 12;        // post player of the night by then even if a match is unreported
+const POTN_GIVE_UP_H = 48;     // a night older than this (or never reported) is skipped
 
 export default async function handler(req, res) {
   if (cors(req, res)) return;   // the phone app calls from its own origin
@@ -74,7 +84,7 @@ export default async function handler(req, res) {
       }
       due = [...opens.map((m) => ({ ...m, kind: "open", auto: true })), ...(reminds || []).map((m) => ({ ...m, kind: "remind" }))];
     }
-    if (!Array.isArray(due) || !due.length) return res.status(200).json({ posted: 0, mode });
+    if (!Array.isArray(due)) due = [];
 
     let posted = 0;
     const errors = [];
@@ -109,8 +119,9 @@ export default async function handler(req, res) {
       };
       // The ping rides on the timer's own card, or on the last call for a card
       // the host opened by hand — and only on the first message of a run, so a
-      // burst of cards is one notification.
-      const ping = (kind === "remind" || m.auto) && !pinged.has(m.communityId);
+      // burst of cards is one notification. Never for a group-stage match (the
+      // last call already skips them; this covers the card the timer opens).
+      const ping = (kind === "remind" || (m.auto && m.stage !== "group")) && !pinged.has(m.communityId);
       let role = null;
       if (ping) {
         role = (await community(m.communityId))?.discord_role_id;
@@ -133,11 +144,143 @@ export default async function handler(req, res) {
       if (m.auto) await rpc("volt_pred_mark", { p_event: m.eventId, p_match: m.matchId, p_field: "remindedAt" });
       posted++;
     }
-    return res.status(200).json({ posted, mode, errors });
+    // The night-level posts are the timer's alone. Each is wrapped so a failure
+    // in one never stops the cards above or the other post.
+    let days = 0, potn = 0;
+    if (mode === "remind") {
+      try { days = await matchDay(token, errors); } catch (e) { console.error("match day", e); errors.push(`match day: ${e.message}`); }
+      try { potn = await playerOfNight(token, errors); } catch (e) { console.error("player of the night", e); errors.push(`player of the night: ${e.message}`); }
+    }
+    return res.status(200).json({ posted, days, potn, mode, errors });
   } catch (e) {
     console.error("predictions failed", e);
     return res.status(500).json({ error: e.message || "failed" });
   }
+}
+
+const byEvent = (rows) => {
+  const out = new Map();
+  for (const r of rows || []) { if (!out.has(r.eventId)) out.set(r.eventId, []); out.get(r.eventId).push(r); }
+  for (const list of out.values()) list.sort((x, y) => x.at - y.at);
+  return out;
+};
+// The first night in a sorted list: the first game and everything within
+// NIGHT_MINS of it.
+const firstNight = (list) => list.filter((m) => m.at <= list[0].at + NIGHT_MINS * 60);
+
+async function channelFor(guild, communityId, ref) {
+  return (await rpc("volt_dc_channel", { p_guild: guild, p_ref: ref }))?.channel
+    || (await community(communityId))?.discord_channel_id || null;
+}
+
+/* ── Match day: tonight's games and how the picks stand ─────────────────── */
+
+// "DEKU 63% ██████░░░░ 37% CLOWN TOWN", or a plain line before anyone picks.
+function splitLine(m) {
+  const a = Number(m.votesA) || 0, b = Number(m.votesB) || 0, n = a + b;
+  if (!n) return "-# No picks yet";
+  const pa = Math.round((a / n) * 100), k = Math.round(pa / 10);
+  return `\`${"█".repeat(k)}${"░".repeat(10 - k)}\` **${pa}%** ${m.a} · **${100 - pa}%** ${m.b} (${n} pick${n === 1 ? "" : "s"})`;
+}
+
+export function matchDayMessage(night) {
+  const n = night.length;
+  const content = [
+    `## 🎮 Match day — <t:${night[0].at}:D>`,
+    `${n === 1 ? "One match" : `${n} matches`} tonight. Here's how the picks stand.`,
+    "",
+    ...night.flatMap((m) => [`**${m.a}  vs  ${m.b}** · <t:${m.at}:t> (<t:${m.at}:R>)${m.bo ? ` · Bo${m.bo}` : ""}`, splitLine(m), ""]),
+    "-# Picks close at kick-off. Tap a team below to pick, or to change your pick.",
+  ].join("\n");
+  // One row of two buttons per match; Discord allows five rows.
+  const components = night.slice(0, 5).flatMap((m) => buttons(m.matchId, m.a, m.b));
+  return { content: content.slice(0, 2000), components, allowed_mentions: { parse: [] } };
+}
+
+async function matchDay(token, errors) {
+  const first = await rpc("volt_pred_due", { p_mins: MATCHDAY_MINS, p_mode: "matchday" });
+  if (!first?.length) return 0;
+  const wide = byEvent(await rpc("volt_pred_due", { p_mins: MATCHDAY_MINS + NIGHT_MINS, p_mode: "matchday" }));
+  let posted = 0;
+  for (const [eventId, due] of byEvent(first)) {
+    const night = firstNight(wide.get(eventId) || due);
+    const ch = await channelFor(due[0].guild, due[0].communityId, "predictions");
+    if (!ch) { errors.push("match day: no channel"); continue; }
+    const r = await call(token, `/channels/${ch}/messages`, "POST", matchDayMessage(night));
+    if (!r.ok) { errors.push(`match day: ${r.reason}`); continue; }
+    for (const m of night) await rpc("volt_pred_mark", { p_event: eventId, p_match: m.matchId, p_field: "dayPostedAt" });
+    posted++;
+  }
+  return posted;
+}
+
+/* ── Player of the night ─────────────────────────────────────────────────── */
+
+// Match reports are filed under the fixture's label, "A vs B · 3F2K": the
+// last four characters of the match id. That's the link back to the match.
+const labelFor = (matchId) => String(matchId).slice(-4).toUpperCase();
+const perfOf = (sp) => Number(sp?.ps ?? sp?.acs ?? 0) || 0;
+const played = (sp) => perfOf(sp) > 0 || Number(sp?.k || 0) > 0 || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
+
+export function playerOfNightMessage(night, rows, names, reported) {
+  // Each player's best game of the night, so one player can't fill the podium.
+  const seen = new Set();
+  const ranked = rows.filter((r) => played(r.stat_payload))
+    .sort((x, y) => perfOf(y.stat_payload) - perfOf(x.stat_payload) || Number(y.stat_payload?.k || 0) - Number(x.stat_payload?.k || 0))
+    .filter((r) => { const k = r.user_id || r.stat_payload?.name; if (seen.has(k)) return false; seen.add(k); return true; });
+  if (!ranked.length) return null;
+  const who = (r) => names[r.user_id] || r.stat_payload?.name || "Player";
+  const unit = (sp) => (sp?.ps == null && sp?.acs != null ? "ACS" : "performance");
+  const top = ranked[0], sp = top.stat_payload || {};
+  const next = ranked.slice(1, 3).map((r) => `**${who(r)}** ${perfOf(r.stat_payload)}`).join(" · ");
+  const of = reported < night.length ? `${reported} of ${night.length} reported matches` : `${night.length === 1 ? "the match" : `all ${night.length} matches`}`;
+  return {
+    content: [
+      `## ⭐ Player of the night — <t:${night[0].at}:D>`,
+      `**${who(top)}**${sp.team ? ` · ${sp.team}` : ""}`,
+      `**${perfOf(sp)}** ${unit(sp)} · ${Number(sp.k || 0)} kills · ${Number(sp.a || 0)} assists`,
+      `-# Best ${unit(sp) === "ACS" ? "ACS" : "performance score"} across ${of}.${next ? ` Next best: ${next}` : ""}`,
+    ].join("\n"),
+    allowed_mentions: { parse: [] },
+  };
+}
+
+async function playerOfNight(token, errors) {
+  const kicked = await rpc("volt_pred_due", { p_mins: 0, p_mode: "potn" });
+  if (!kicked?.length) return 0;
+  const all = byEvent(await rpc("volt_pred_due", { p_mins: 0, p_mode: "potnall" }));
+  const now = Date.now() / 1000;
+  let posted = 0;
+  for (const [eventId] of byEvent(kicked)) {
+    const list = all.get(eventId) || [];
+    if (!list.length) continue;
+    const night = firstNight(list);
+    const last = night[night.length - 1].at;
+    if (last > now) continue;                                   // the night's still going
+    const stamp = async () => { for (const m of night) await rpc("volt_pred_mark", { p_event: eventId, p_match: m.matchId, p_field: "potnAt" }); };
+    if (last < now - POTN_GIVE_UP_H * 3600) { await stamp(); continue; }   // too old to celebrate
+
+    const ids = new Map(night.map((m) => [labelFor(m.matchId), m.matchId]));
+    const rows = (await sb(`/rest/v1/match_results?event_id=eq.${eventId}&select=user_id,match_label,stat_payload`) || [])
+      .filter((r) => ids.has(String(r.match_label || "").split(" · ").pop().toUpperCase()));
+    const reported = new Set(rows.map((r) => String(r.match_label).split(" · ").pop().toUpperCase())).size;
+    const waited = now > last + POTN_WAIT_H * 3600;
+    if (reported < night.length && !waited) continue;           // stats still coming in
+    if (!reported) continue;                                    // nothing yet; the give-up rule retires it
+
+    const uids = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
+    const us = uids.length ? await sb(`/rest/v1/users?id=in.(${uids.join(",")})&select=id,display_name`) : [];
+    const names = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
+    const msg = playerOfNightMessage(night, rows, names, reported);
+    if (!msg) { await stamp(); continue; }
+    const ch = await channelFor(night[0].guild, night[0].communityId, "results");
+    if (!ch) { errors.push("player of the night: no channel"); continue; }
+    const r = await call(token, `/channels/${ch}/messages`, "POST", msg);
+    if (!r.ok) { errors.push(`player of the night: ${r.reason}`); continue; }
+    await stamp();
+    posted++;
+  }
+  return posted;
 }
 
 // Labels are the team names themselves — clearer than "Team A"/"Team B" when

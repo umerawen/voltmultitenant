@@ -16605,6 +16605,10 @@ async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
     }).catch(() => {});
     await send("results", {
       teamA: A.name, teamB: B.name,
+      // The label ends in the fixture's id; with the winner, the bot finds the
+      // match's picks and adds who called it.
+      label: rows[0]?.match_label || null,
+      winnerName: winner === "A" ? A.name : winner === "B" ? B.name : null,
       scoreA: scoreA !== "" ? scoreA : (winner === "A" ? "W" : "L"),
       scoreB: scoreB !== "" ? scoreB : (winner === "B" ? "W" : "L"),
       players,

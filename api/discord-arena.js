@@ -382,17 +382,65 @@ async function postResult(ctx, payload) {
     // perf from the current app; acs from a build from before the switch.
     .map((p) => `\`${String(p.perf ?? p.acs ?? "—").padStart(4)}\` **${p.name}** ${p.kills ?? 0}/${p.deaths ?? 0}/${p.assists ?? 0}`)
     .join("\n");
+  // Who called it. Best effort: a result without its prediction line is still
+  // a result, so any failure here is logged and the post goes out without it.
+  let calls = null;
+  try { calls = await predictionLine(ctx, payload); } catch (e) { console.error("prediction line", e); }
   const embed = {
     title: `${payload.teamA} ${payload.scoreA ?? ""} — ${payload.scoreB ?? ""} ${payload.teamB}`,
     color: 0x3d7bff,
     description: (payload.map ? `**${payload.map}**\n` : "") + (rows
-      ? `-# Performance score · K/D/A\n${rows}` : "_No player stats recorded._"),
+      ? `-# Performance score · K/D/A\n${rows}` : "_No player stats recorded._")
+      + (calls ? `\n\n${calls}` : ""),
     footer: { text: payload.tag || ctx.ev.weekend_label || "" },
   };
   const r = await call(ctx.token, `/channels/${ch}/messages`, "POST",
     { embeds: [embed], allowed_mentions: { parse: [] } });
   if (!r.ok) throw new Error(`Couldn't post the result — ${r.reason}`);
   return { ok: true };
+}
+
+// Every match in a tournament, whatever the format.
+function boardMatches(t) {
+  if (!t) return [];
+  const flat = (x) => (Array.isArray(x) ? x : []).flat().filter(Boolean);
+  if (t.format === "group") return [...Object.values(t.matches || {}).flat(), ...flat(t.ko), ...flat(t.semis), ...(t.final ? [t.final] : [])];
+  if (t.format === "single") return flat(t.rounds);
+  return [...(Array.isArray(t.matches) ? t.matches : []), ...(t.final ? [t.final] : [])];
+}
+
+// "🔮 12 of 19 called it (63%): Nia, Axel, … Upset!" for the result post.
+// The report's label ends in the fixture's id ("A vs B · 3F2K"), which finds
+// the match and its picks on the board. Picks made in Discord are mentions
+// (the post pings nobody); picks made on the site use the player's name.
+export async function predictionLine(ctx, payload, read = sb) {
+  const tail = String(payload?.label || "").split(" · ").pop();
+  if (!tail || tail === payload?.label || !payload?.winnerName) return null;
+  const [row] = await read(`/rest/v1/community_kv?community_id=eq.${ctx.community}` +
+    `&k=eq.${encodeURIComponent("volt-auction-v2::" + ctx.eventId)}&shared=eq.true&user_id=is.null&select=val`);
+  const board = typeof row?.val === "string" ? JSON.parse(row.val) : row?.val;
+  if (!board?.tournament) return null;
+  const nameOf = (id) => (board.teams || []).find((t) => t.id === id)?.name;
+  const pair = new Set([payload.teamA, payload.teamB]);
+  const m = boardMatches(board.tournament).find((x) => String(x.id).slice(-4).toUpperCase() === tail.toUpperCase()
+    && pair.has(nameOf(x.teamA)) && pair.has(nameOf(x.teamB)));
+  if (!m) return null;
+  const votes = Object.entries(m.votes && typeof m.votes === "object" ? m.votes : {});
+  if (!votes.length) return null;
+  const won = nameOf(m.teamA) === payload.winnerName ? "a" : nameOf(m.teamB) === payload.winnerName ? "b" : null;
+  if (!won) return null;
+  const right = votes.filter(([, v]) => v?.side === won).map(([k]) => k);
+  const pct = Math.round((right.length / votes.length) * 100);
+
+  const site = right.filter((k) => !k.startsWith("dc:"));
+  const us = site.length ? await read(`/rest/v1/users?id=in.(${site.join(",")})&select=id,display_name`) : [];
+  const names = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
+  const shown = right.slice(0, 12).map((k) => (k.startsWith("dc:") ? `<@${k.slice(3)}>` : names[k] || "a player"));
+  const more = right.length - shown.length;
+  const upset = pct < 40 ? ` Upset: most picked ${won === "a" ? nameOf(m.teamB) : nameOf(m.teamA)}.` : "";
+  if (!right.length) return `🔮 **Nobody called it.** All ${votes.length} picks were on ${won === "a" ? nameOf(m.teamB) : nameOf(m.teamA)}.`;
+  return `🔮 **${right.length} of ${votes.length}** called it (${pct}%).${upset}\n` +
+    `-# ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
 }
 
 // Like standings, this edits one message rather than posting a new one. A
