@@ -1,15 +1,21 @@
-// api/discord-predictions.js — posts a prediction card an hour before kick-off.
+// api/discord-predictions.js — posts prediction cards before kick-off.
 //
 // Called on a schedule by the DB tick (volt_run_predictions, every 5 min).
-// Idempotent: each match is stamped `remindedAt` on the board once nudged, so
-// repeated runs never double-post. Safe to call every few minutes.
+// Idempotent: each match is stamped `predictedAt` / `remindedAt` on the board
+// once posted, so repeated runs never double-post. Safe to call every few minutes.
+//
+// One ping per match, never two. A card the timer opens carries the role ping
+// itself and gets no last call. A card the host opened by hand (no ping, so
+// publishing a whole schedule doesn't notify everyone nine times) gets its one
+// ping as a last call an hour out.
 //
 // Env: DISCORD_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_KEY, VOLT_NOTIFY_SECRET
 import { cors } from "./_cors.js";
 
 const API = "https://discord.com/api/v10";
-const WINDOW_MINS = 60;        // last-call reminder
+const WINDOW_MINS = 60;        // last call, for cards the host opened by hand
 const AUTO_OPEN_MINS = 180;    // post any unopened card this close to kick-off
+const SAME_NIGHT_MINS = 180;   // and bring the rest of that night's cards with it
 
 export default async function handler(req, res) {
   if (cors(req, res)) return;   // the phone app calls from its own origin
@@ -51,17 +57,28 @@ export default async function handler(req, res) {
       // The timer does two jobs. It opens any card still unposted 3 hours
       // before kick-off (opening was manual only, so a match whose teams were
       // settled late — the final, after the semis — never got one), and it
-      // sends the last call an hour out.
-      const [opens, reminds] = await Promise.all([
+      // sends the last call an hour out for cards the host opened by hand.
+      const [first, reminds] = await Promise.all([
         rpc("volt_pred_due", { p_mins: AUTO_OPEN_MINS, p_mode: "autoopen" }),
         rpc("volt_pred_due", { p_mins: WINDOW_MINS, p_mode: "remind" }),
       ]);
-      due = [...(opens || []).map((m) => ({ ...m, kind: "open" })), ...(reminds || []).map((m) => ({ ...m, kind: "remind" }))];
+      let opens = first || [];
+      if (opens.length) {
+        // A match night is several games back to back. Post the whole night's
+        // cards together, so the league is pinged once, not once per game.
+        const night = await rpc("volt_pred_due", { p_mins: AUTO_OPEN_MINS + SAME_NIGHT_MINS, p_mode: "autoopen" });
+        const events = new Set(opens.map((m) => m.eventId));
+        const seen = new Set(opens.map((m) => m.matchId));
+        opens = [...opens, ...(night || []).filter((m) => events.has(m.eventId) && !seen.has(m.matchId))]
+          .sort((x, y) => x.at - y.at);
+      }
+      due = [...opens.map((m) => ({ ...m, kind: "open", auto: true })), ...(reminds || []).map((m) => ({ ...m, kind: "remind" }))];
     }
     if (!Array.isArray(due) || !due.length) return res.status(200).json({ posted: 0, mode });
 
     let posted = 0;
     const errors = [];
+    const pinged = new Set();   // leagues already pinged in this run
     for (const m of due) {
       const kind = m.kind || mode;
       // Where to post. Falls back to the announcements channel if the league
@@ -90,21 +107,30 @@ export default async function handler(req, res) {
         components: buttons(m.matchId, m.a, m.b),
         allowed_mentions: { parse: [] },
       };
-      // The reminder pings the role; the opening card doesn't, so posting six
-      // at once doesn't notify everyone six times.
-      if (kind === "remind") {
-        const role = (await community(m.communityId))?.discord_role_id;
+      // The ping rides on the timer's own card, or on the last call for a card
+      // the host opened by hand — and only on the first message of a run, so a
+      // burst of cards is one notification.
+      const ping = (kind === "remind" || m.auto) && !pinged.has(m.communityId);
+      let role = null;
+      if (ping) {
+        role = (await community(m.communityId))?.discord_role_id;
         if (role) {
-          payload.content = `<@&${role}>  ${payload.content}`;
+          // On its own line: a heading only renders at the start of a line.
+          payload.content = kind === "remind"
+            ? `<@&${role}>  ${payload.content}`
+            : `<@&${role}> predictions are open.\n${payload.content}`;
           payload.allowed_mentions = { parse: [], roles: [role] };
         }
       }
       const r = await call(token, `/channels/${ch}/messages`, "POST", payload);
       if (!r.ok) { errors.push(`${m.a} vs ${m.b}: ${r.reason}`); continue; }
+      if (role) pinged.add(m.communityId);
 
       // Stamp only after a successful post, so a failure retries next tick.
+      // A card the timer opened is marked reminded too: it has had its ping.
       await rpc("volt_pred_mark", { p_event: m.eventId, p_match: m.matchId,
         p_field: kind === "open" ? "predictedAt" : "remindedAt" });
+      if (m.auto) await rpc("volt_pred_mark", { p_event: m.eventId, p_match: m.matchId, p_field: "remindedAt" });
       posted++;
     }
     return res.status(200).json({ posted, mode, errors });
