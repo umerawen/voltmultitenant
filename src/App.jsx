@@ -2204,8 +2204,8 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
               i === advance - 1 && rows.length > advance && (
                 <tr key="cut">
                   <td colSpan={9} style={{ padding: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 10px 3px" }}>
-                      <span style={{ fontSize: 9.5, letterSpacing: "0.2em", fontWeight: 700, textTransform: "uppercase", whiteSpace: "nowrap", color: hue === "#3d7bff" ? "#7da6ff" : hue }}>▲ {advance === 1 ? "Winner goes through" : `Top ${advance} go through`}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px 5px" }}>
+                      <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 12.5, letterSpacing: "0.01em", fontWeight: 600, whiteSpace: "nowrap", color: hue === "#3d7bff" ? "#a9c4ff" : hue }}>▲ {advance === 1 ? "Winner goes through" : `Top ${advance} go through`}</span>
                       <span style={{ flex: 1, height: 0, borderTop: `1px dashed ${hue}99` }} />
                     </div>
                   </td>
