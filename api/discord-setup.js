@@ -26,7 +26,8 @@ const COMMANDS = [
     name: "leaderboard",
     description: "Season leaderboard",
     options: [{ name: "sort", description: "What to rank by", type: 3, required: false,
-      choices: [{ name: "Average combat score", value: "acs" }, { name: "Season points", value: "points" }] }],
+      // The value stays "acs" so commands registered before the switch keep working.
+      choices: [{ name: "Performance score", value: "acs" }, { name: "Season points", value: "points" }] }],
   },
   { name: "predictions", description: "Who's calling matches best this season" },
   { name: "subs",        description: "Who's available to sub in" },

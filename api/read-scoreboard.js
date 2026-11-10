@@ -1,8 +1,14 @@
 // api/read-scoreboard.js — Vercel serverless function.
 //
 // Reads a Valorant end-of-match scoreboard screenshot and returns one row per
-// player: name, ACS, kills, assists. Those three are the only stats VOLT's
-// scoring formula uses (+50 win · ACS÷4 · K+⅓A), so nothing else is requested.
+// player: name, performance score, kills, assists. Those are the only stats
+// VOLT's scoring formula uses (+50 win · score÷4 · K+⅓A), so nothing else is
+// requested.
+//
+// Patch 13.06 (Sept 2026) replaced ACS on the scoreboard with Performance
+// Score (0-500). Older screenshots still show ACS, so the reader says which one
+// it found (`kind`) and the app saves it under the right name. Each row also
+// carries the number as `acs`, for app builds from before the switch.
 //
 // The Gemini key lives here as an environment variable and never reaches the
 // browser. Do NOT move this logic client-side: a key in the bundle can be lifted
@@ -24,26 +30,33 @@ const SCHEMA = {
         type: "OBJECT",
         properties: {
           name: { type: "STRING" },
-          acs: { type: "INTEGER" },
+          score: { type: "INTEGER" },
           kills: { type: "INTEGER" },
           assists: { type: "INTEGER" },
         },
-        propertyOrdering: ["name", "acs", "kills", "assists"],
-        required: ["name", "acs", "kills", "assists"],
+        propertyOrdering: ["name", "score", "kills", "assists"],
+        required: ["name", "score", "kills", "assists"],
       },
     },
+    scoreKind: { type: "STRING", enum: ["performance", "acs"] },
   },
-  propertyOrdering: ["rows"],
-  required: ["rows"],
+  propertyOrdering: ["scoreKind", "rows"],
+  required: ["scoreKind", "rows"],
 };
 
 const PROMPT = `This is a Valorant end-of-match scoreboard.
 
 Read every player row and return one object per player.
 
+First, "scoreKind": current scoreboards show a Performance Score for each
+player (a whole number from 0 to 500; the scoreboard is ranked by it). Older
+scoreboards show ACS (Average Combat Score) instead. Set "performance" if the
+scoreboard has a performance score, or "acs" if it only has ACS. If it shows
+both, use the performance score.
+
 For each row:
 - "name": the player's display name exactly as shown, without the #TAG if one is present.
-- "acs": the Average Combat Score column (a whole number, usually 100-500).
+- "score": that player's performance score (or their ACS, if scoreKind is "acs").
 - "kills": the FIRST number in the K/D/A group.
 - "assists": the THIRD number in the K/D/A group.
 
@@ -163,21 +176,26 @@ export default async function handler(req, res) {
     }
 
     const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
-    // Normalise and clamp: a hallucinated 99999 ACS should not reach the UI.
+    const kind = parsed?.scoreKind === "acs" ? "acs" : "ps";
+    // Normalise and clamp: a hallucinated 99999 should not reach the UI.
+    // Performance score tops out at 500; ACS can run past it in a stomp.
     const clean = rows
       .filter((x) => x && typeof x.name === "string" && x.name.trim())
       .slice(0, 12)
-      .map((x) => ({
-        name: String(x.name).trim().slice(0, 40),
-        acs: clampInt(x.acs, 0, 1000),
-        kills: clampInt(x.kills, 0, 200),
-        assists: clampInt(x.assists, 0, 200),
-      }));
+      .map((x) => {
+        const score = clampInt(x.score, 0, kind === "ps" ? 500 : 1000);
+        return {
+          name: String(x.name).trim().slice(0, 40),
+          perf: score, acs: score,
+          kills: clampInt(x.kills, 0, 200),
+          assists: clampInt(x.assists, 0, 200),
+        };
+      });
 
     if (!clean.length) {
       return res.status(422).json({ error: "No player rows found in that image." });
     }
-    return res.status(200).json({ rows: clean });
+    return res.status(200).json({ rows: clean, kind });
   } catch (e) {
     console.error("read-scoreboard failed", e);
     return res.status(500).json({ error: "Couldn't reach the reader. Try again, or type the stats in." });

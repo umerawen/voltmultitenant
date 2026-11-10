@@ -179,7 +179,7 @@ async function onCommand(out, body, guild, discordId, origin) {
     if (m?.error === "link") return needsLink(out);
     return reply(out,
       `**${m.name}** · ${m.rank} · ${m.role}${m.agent && m.agent !== "—" ? ` (${m.agent})` : ""}\n` +
-      `KDA ${num(m.kda)} · ACS ${num(m.acs, 0)} · HS ${num(m.hs, 0)}%\n` +
+      `KDA ${num(m.kda)} · tracker ACS ${num(m.acs, 0)} · HS ${num(m.hs, 0)}%\n` +
       `Season: **${num(m.points, 0)}** points from ${m.matches} match${m.matches === 1 ? "" : "es"}` +
       (m.streak > 0 ? ` · 🏆 ${m.streak} weekend streak` : ""));
   }
@@ -210,26 +210,28 @@ async function onCommand(out, body, guild, discordId, origin) {
   }
 
   if (name === "leaderboard") {
-    // `sort` comes from the slash-command option; defaults to ACS. The printed
-    // number MUST be the one being ranked on — showing points while ordering by
-    // ACS is what made this list look scrambled.
-    const sort = String(opt("sort") || "acs").toLowerCase() === "points" ? "pts" : "acs";
+    // `sort` comes from the slash-command option; defaults to performance score
+    // (registered with the value "acs", from before Valorant's switch). The
+    // printed number MUST be the one being ranked on — showing points while
+    // ordering by score is what made this list look scrambled.
+    const sort = String(opt("sort") || "perf").toLowerCase() === "points" ? "pts" : "perf";
     const rows = await rpc("volt_dc_leaderboard", { p_guild: guild || null, p_sort: sort });
     if (rows?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
     if (!rows?.length) return reply(out, "No matches recorded yet this season.");
     const medal = ["🥇", "🥈", "🥉"];
+    const perf = (r) => num(r.avgPerf ?? r.avgAcs, 0);
     const line = (r, i) =>
       `${medal[i] || `${i + 1}.`} **${r.name}** — ` +
       (sort === "pts"
-        ? `${num(r.pts, 0)} pts · ${num(r.avgAcs, 0)} ACS`
-        : `${num(r.avgAcs, 0)} ACS · ${num(r.pts, 0)} pts`) +
+        ? `${num(r.pts, 0)} pts · ${perf(r)} perf`
+        : `${perf(r)} perf · ${num(r.pts, 0)} pts`) +
       ` (${r.played} match${r.played === 1 ? "" : "es"})`;
     return reply(out,
       (sort === "pts"
-        ? "**Season leaderboard** · points\n-# 50 a win, plus ACS÷4 and kills"
-        : "**Season leaderboard** · average combat score\n-# Output per game, wins aside") +
+        ? "**Season leaderboard** · points\n-# 50 a win, plus performance ÷4 and kills"
+        : "**Season leaderboard** · average performance score\n-# Output per game, wins aside") +
       "\n" + rows.slice(0, 10).map(line).join("\n") +
-      `\n-# \`/leaderboard sort:${sort === "pts" ? "acs" : "points"}\` for the other ranking`);
+      `\n-# \`/leaderboard sort:${sort === "pts" ? "performance" : "points"}\` for the other ranking`);
   }
 
   if (name === "subs") {
@@ -267,7 +269,7 @@ async function onCommand(out, body, guild, discordId, origin) {
 
     const card =
       `**${p.name}** · ${p.rank} · ${p.role}${p.agent && p.agent !== "—" ? ` (${p.agent})` : ""}\n` +
-      `KDA ${num(p.kda)} · ACS ${num(p.acs, 0)} · HS ${num(p.hs, 0)}%\n` +
+      `KDA ${num(p.kda)} · tracker ACS ${num(p.acs, 0)} · HS ${num(p.hs, 0)}%\n` +
       `Season: **${num(p.points, 0)}** points from ${p.matches} match${p.matches === 1 ? "" : "es"}` +
       (p.wins > 0 ? ` · ${p.wins} tournament${p.wins === 1 ? "" : "s"} won` : "") +
       (p.signedUp ? `\nThis weekend: ${p.signedUp}` : "\nNot signed up this weekend.") +
@@ -303,7 +305,7 @@ const HELP =
   "**Following along**\n" +
   "`/status` — sign-ups and draft time\n" +
   "`/standings` — the tournament table\n" +
-  "`/leaderboard` — season leaderboard (`sort:` ACS or points)\n" +
+  "`/leaderboard` — season leaderboard (`sort:` performance or points)\n" +
   "`/predictions` — who's calling matches best\n" +
   "`/scout` — anyone's rank, stats and record\n" +
   "`/me` — your own card\n\n" +

@@ -379,12 +379,14 @@ async function postResult(ctx, payload) {
   if (!payload?.teamA) throw new Error("Nothing to post.");
 
   const rows = (payload.players || []).slice(0, 12)
-    .map((p) => `\`${String(p.acs ?? "—").padStart(4)}\` **${p.name}** ${p.kills ?? 0}/${p.deaths ?? 0}/${p.assists ?? 0}`)
+    // perf from the current app; acs from a build from before the switch.
+    .map((p) => `\`${String(p.perf ?? p.acs ?? "—").padStart(4)}\` **${p.name}** ${p.kills ?? 0}/${p.deaths ?? 0}/${p.assists ?? 0}`)
     .join("\n");
   const embed = {
     title: `${payload.teamA} ${payload.scoreA ?? ""} — ${payload.scoreB ?? ""} ${payload.teamB}`,
     color: 0x3d7bff,
-    description: (payload.map ? `**${payload.map}**\n` : "") + (rows || "_No player stats recorded._"),
+    description: (payload.map ? `**${payload.map}**\n` : "") + (rows
+      ? `-# Performance score · K/D/A\n${rows}` : "_No player stats recorded._"),
     footer: { text: payload.tag || ctx.ev.weekend_label || "" },
   };
   const r = await call(ctx.token, `/channels/${ch}/messages`, "POST",
@@ -478,29 +480,30 @@ async function postStandings(ctx) {
   const ch = await liveChannel(ctx, "standings");
   // Two rankings of the same players, fetched separately so each is sorted and
   // cut by its own metric — taking one list and re-sorting it in JS would show
-  // the top 25 by ACS re-ordered by points, which isn't the top 25 by points.
-  const byAcs = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "acs" });
+  // the top 25 by performance re-ordered by points, which isn't the top 25 by points.
+  const byPerf = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "perf" });
   const byPts = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "pts" });
-  if (byAcs?.error || byPts?.error) throw new Error("Couldn't read the leaderboard.");
-  if (!byAcs?.length) throw new Error("No matches recorded yet.");
+  if (byPerf?.error || byPts?.error) throw new Error("Couldn't read the leaderboard.");
+  if (!byPerf?.length) throw new Error("No matches recorded yet.");
 
   const medal = ["🥇", "🥈", "🥉"];
   // Whichever metric a section ranks by is printed first — showing points under
-  // an ACS-ordered list is what made the old post look unsorted.
+  // a performance-ordered list is what made the old post look unsorted.
+  const perf = (r) => Math.round(r.avgPerf ?? r.avgAcs);
   const list = (rows, key) => rows.slice(0, 10).map((r, i) =>
     `${medal[i] || `\`${String(i + 1).padStart(2)}\``} **${r.name}** — ` +
     (key === "pts"
-      ? `${Math.round(r.pts)} pts · ${Math.round(r.avgAcs)} ACS`
-      : `${Math.round(r.avgAcs)} ACS · ${Math.round(r.pts)} pts`) +
+      ? `${Math.round(r.pts)} pts · ${perf(r)} perf`
+      : `${perf(r)} perf · ${Math.round(r.pts)} pts`) +
     ` (${r.played})`).join("\n");
 
   const body = [
-    "### ◈ Top average combat score",
+    "### ◈ Top average performance score",
     "-# Output per game — wins aside",
-    list(byAcs, "acs"),
+    list(byPerf, "perf"),
     "",
     "### ◈ Top season points",
-    "-# 50 a win, plus ACS÷4 and kills",
+    "-# 50 a win, plus performance ÷4 and kills",
     list(byPts, "pts"),
   ].join("\n");
 

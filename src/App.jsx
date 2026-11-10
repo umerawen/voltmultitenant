@@ -4457,11 +4457,12 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
   );
 }
 
-/* ════════════════ LEADERBOARD (tournament stats, sorted by avg ACS) ══════════ */
+/* ════════════════ LEADERBOARD (tournament stats, sorted by avg performance) ══ */
 
 // SEASON LEADERBOARD — the league's single source of truth for player points.
-// Reads match_results (host's Report Match) and ranks by AVERAGE ACS across
-// every match of every tournament.
+// Reads match_results (host's Report Match) and ranks by AVERAGE PERFORMANCE
+// SCORE across every match of every tournament (ACS for matches from before
+// Valorant's switch; see perfOf).
 //
 // Average rather than total, so someone who plays six matches isn't ahead of
 // someone who played three and outperformed them. No qualifying minimum: one
@@ -4477,7 +4478,7 @@ function LbPodium({ rows, metric }) {
       alignItems: "end", marginBottom: 18 }}>
       {order.map((idx, k) => {
         const r = rows[idx]; const c = MED[idx]; const first = idx === 0;
-        const val = metric === "acs" ? r.avgAcs : r.pts;
+        const val = metric === "perf" ? r.avgPerf : r.pts;
         return (
           <div key={r.id || idx} className="volt-pod" style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
             position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(14),
@@ -4499,12 +4500,12 @@ function LbPodium({ rows, metric }) {
             <div className="volt-pod-val" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
               color: c, marginTop: 14, textShadow: `0 0 24px ${c}55` }}>
               <CountUp to={val} dur={1000} delay={k * 90} />
-              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "acs" ? "ACS" : "PTS"}</span>
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "perf" ? "PERF" : "PTS"}</span>
             </div>
             <div className="volt-pod-meta" style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 12, fontFamily: "'IBM Plex Mono',monospace",
               fontSize: 11, color: "rgba(200,215,255,0.5)" }}>
               <span>{r.m} played</span><span style={{ color: "#3ddc84" }}>{r.w}W</span>
-              <span>{metric === "acs" ? `${r.pts} pts` : `${r.avgAcs} ACS`}</span>
+              <span>{metric === "perf" ? `${r.pts} pts` : `${r.avgPerf} perf`}</span>
             </div>
           </div>
         );
@@ -4516,18 +4517,18 @@ function LbPodium({ rows, metric }) {
 function Leaderboard({ isAdmin }) {
   // Two honest answers to "who's best".
   //
-  // Average ACS is pure output per game — it doesn't care whether you won or
-  // how many you played. Points reward turning up and winning: 50 a win, plus
-  // ACS÷4 and kills. Someone can lead one and not the other, and that gap is
-  // interesting rather than a bug, so both are one tap away.
-  const [sortBy, setSortBy] = useState("acs");
+  // Average performance score is output per game — it doesn't care whether
+  // you won or how many you played. Points reward turning up and winning: 50 a
+  // win, plus performance ÷4 and kills. Someone can lead one and not the other,
+  // and that gap is interesting rather than a bug, so both are one tap away.
+  const [sortBy, setSortBy] = useState("perf");
   const [rows, setRows] = useState(null);
-  // Ties fall back to the other metric, so equal ACS is settled by the better
-  // season and vice versa — never by whatever order the rows arrived in.
+  // Ties fall back to the other metric, so an equal score is settled by the
+  // better season and vice versa — never by whatever order the rows arrived in.
   const sorted = [...(rows || [])].sort((x, y) =>
-    sortBy === "acs"
-      ? y.avgAcs - x.avgAcs || y.pts - x.pts || y.m - x.m
-      : y.pts - x.pts || y.avgAcs - x.avgAcs || y.m - x.m);
+    sortBy === "perf"
+      ? y.avgPerf - x.avgPerf || y.pts - x.pts || y.m - x.m
+      : y.pts - x.pts || y.avgPerf - x.avgPerf || y.m - x.m);
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -4546,25 +4547,25 @@ function Leaderboard({ isAdmin }) {
         // subbed out, or replaced by a stand-in. Averaging those in halves a
         // real score, so they're counted as "not played" rather than as a
         // zero-scoring game.
-        const didPlay = (sp) => Number(sp?.acs || 0) > 0 || Number(sp?.k || 0) > 0
+        const didPlay = (sp) => perfOf(sp) > 0 || Number(sp?.k || 0) > 0
                              || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
         const agg = {};
         (mrs || []).forEach(r => {
           // Stand-ins without an account have no user_id; keyed on null they all
           // merged into one phantom "Player" row with everyone's stats.
           if (!r.user_id) return;
-          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, acsSum: 0 });
+          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, perfSum: 0 });
           a.pts += Number(r.points_computed || 0);
           const sp = r.stat_payload || {};
           if (!didPlay(sp)) return;                 // rostered, didn't play
           a.m++; if (r.team_won) a.w++;
-          a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.acsSum += Number(sp.acs || 0);
+          a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.perfSum += perfOf(sp);
         });
-        // Unsorted here — the view sorts, so switching between ACS and points
+        // Unsorted here — the view sorts, so switching between the two rankings
         // is instant instead of a refetch.
         setRows(Object.values(agg)
           .filter(a => a.m > 0)                     // nobody ranks off zero appearances
-          .map(a => ({ ...a, pts: Math.round(a.pts), avgAcs: Math.round(a.acsSum / a.m) })));
+          .map(a => ({ ...a, pts: Math.round(a.pts), avgPerf: Math.round(a.perfSum / a.m) })));
       } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
     }
     load();
@@ -4583,13 +4584,13 @@ function Leaderboard({ isAdmin }) {
       <div style={{ ...SEC_LABEL, color: "#7da6ff", marginBottom: 6 }}>// Season standings · every match counts</div>
       <h1 className="font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.01em", fontSize: "clamp(34px, 4.6vw, 52px)", lineHeight: 0.95, textShadow: "0 0 36px rgba(61,123,255,0.35)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
       <p className="volt-desc text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
-        {sortBy === "acs"
-          ? "Ranked by average combat score — output per game, wins aside."
-          : "Ranked by season points — 50 a win, plus ACS÷4 and kills."}
+        {sortBy === "perf"
+          ? "Ranked by average performance score — output per game, wins aside."
+          : "Ranked by season points — 50 a win, plus performance ÷4 and kills."}
         {isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}
       </p>
       <div className="flex gap-2">
-        {[["acs", "Top ACS"], ["pts", "Top points"]].map(([k, label]) => (
+        {[["perf", "Top performance"], ["pts", "Top points"]].map(([k, label]) => (
           <button key={k} onClick={() => setSortBy(k)}
             className="text-xs uppercase tracking-widest px-4 py-2"
             style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
@@ -4616,14 +4617,14 @@ function Leaderboard({ isAdmin }) {
       {rows && rows.length > 0 && (
         <div>
           <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
-            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg ACS</span>
+            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg perf</span>
           </div>
           <div className="grid gap-1.5">
             {sorted.map((r, i) => {
               if (i < 3 && sorted.length > 3) return null;   // the podium shows them
               const rc = (RANKS[r.rank] || {}).c || "#8d97a8";
-              const topV = sortBy === "acs" ? sorted[0].avgAcs : sorted[0].pts;
-              const myV = sortBy === "acs" ? r.avgAcs : r.pts;
+              const topV = sortBy === "perf" ? sorted[0].avgPerf : sorted[0].pts;
+              const myV = sortBy === "perf" ? r.avgPerf : r.pts;
               return (
                 <div key={i} className="grid items-center px-4 py-3 volt-lb-row" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
                   <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff" }}>{String(i + 1).padStart(2, "0")}</span>
@@ -4646,9 +4647,9 @@ function Leaderboard({ isAdmin }) {
                     fontSize: sortBy === "pts" ? 15 : 13,
                     color: sortBy === "pts" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.pts}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
-                    fontWeight: sortBy === "acs" ? 700 : 400,
-                    fontSize: sortBy === "acs" ? 15 : 13,
-                    color: sortBy === "acs" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.avgAcs}</span>
+                    fontWeight: sortBy === "perf" ? 700 : 400,
+                    fontSize: sortBy === "perf" ? 15 : 13,
+                    color: sortBy === "perf" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.avgPerf}</span>
                 </div>
               );
             })}
@@ -8754,7 +8755,7 @@ const MOBILE_CSS = `
         grid-template-columns: 30px minmax(0,1fr) auto auto !important;
         gap: 10px; padding-left: 12px !important; padding-right: 12px !important;
       }
-      /* keep rank, name, points and ACS; drop matches, W, K, A */
+      /* keep rank, name, points and performance; drop matches, W, K, A */
       .volt-lb-row > *:nth-child(n+3):nth-child(-n+6) { display: none; }
 
       /* Leaderboard podium: three cards in ~110px each — smaller type, the
@@ -10002,8 +10003,8 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
   // Season aggregates from banked match results.
   const pts = mrs.reduce((a, x) => a + Number(x.points_computed || 0), 0);
   const wins = mrs.filter(x => x.team_won).length;
-  const acsRows = mrs.map(x => Number(x.stat_payload?.acs || 0)).filter(Boolean);
-  const avgAcs = acsRows.length ? Math.round(acsRows.reduce((a, b) => a + b, 0) / acsRows.length) : null;
+  const perfRows = mrs.map(x => perfOf(x.stat_payload)).filter(Boolean);
+  const avgPerf = perfRows.length ? Math.round(perfRows.reduce((a, b) => a + b, 0) / perfRows.length) : null;
   const winRate = mrs.length ? Math.round(wins / mrs.length * 100) : null;
   const evMap = {}; evs.forEach(e => { evMap[e.id] = e; });
   const champEvents = evs.filter(e => Array.isArray(e.recap?.ids) && e.recap.ids.includes(userId));
@@ -10051,8 +10052,8 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
           {/* identity panel — contained gradient, watermark lives INSIDE it (no bleed) */}
           <div style={{ position: "relative", overflow: "hidden", borderRadius: 14, padding: "22px 22px 18px", border: "1px solid rgba(255,255,255,0.08)",
             background: `linear-gradient(120deg, ${hue}3a, ${hue}18 55%, rgba(10,13,22,0.35))` }}>
-            <span style={{ position: "absolute", right: -8, top: -22, fontSize: 128, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.04em", color: "rgba(255,255,255,0.07)", fontFamily: "'Rajdhani',sans-serif", pointerEvents: "none", userSelect: "none" }}>{avgAcs || p.acs || ""}</span>
-            {(avgAcs || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>ACS</span> : null}
+            <span style={{ position: "absolute", right: -8, top: -22, fontSize: 128, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.04em", color: "rgba(255,255,255,0.07)", fontFamily: "'Rajdhani',sans-serif", pointerEvents: "none", userSelect: "none" }}>{avgPerf || p.acs || ""}</span>
+            {(avgPerf || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>{avgPerf ? "PERF" : "ACS"}</span> : null}
             <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
               <RankCrest rank={rank} div={rankDiv} />
               <div style={{ minWidth: 0 }}>
@@ -10099,7 +10100,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
           {/* scouting stats — value-first, exactly the card's Stat treatment */}
           {hasScout ? (
             <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: "auto" }}>
-              {[["KDA", p.kda != null ? p.kda : null, "#00e5ff"], ["ACS", p.acs != null ? p.acs : null, "#ff4655"], ["HS %", p.hs != null ? p.hs + "%" : null, "#9d6bff"], ["WIN %", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
+              {[["KDA", p.kda != null ? p.kda : null, "#00e5ff"], ["Tracker ACS", p.acs != null ? p.acs : null, "#ff4655"], ["HS %", p.hs != null ? p.hs + "%" : null, "#9d6bff"], ["WIN %", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
                 <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "12px 4px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                   <span style={{ fontSize: 21, fontWeight: 700, lineHeight: 1, color: v == null ? "rgba(200,215,255,0.3)" : c, fontFamily: "'Rajdhani',sans-serif", textShadow: v == null ? "none" : `0 0 14px ${c}66` }}>{v == null ? "—" : v}</span>
                   <span style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(236,243,255,0.5)", fontWeight: 600 }}>{lb}</span>
@@ -10128,7 +10129,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
         {bigTile("Matches", mrs.length, "#5b8dff")}
         {bigTile("Wins", wins, "#3ddc84", winRate != null ? winRate + "% win rate" : null)}
         {bigTile("Tournaments won", u.weekends_won || 0, "#f5c453")}
-        {bigTile("Avg ACS", avgAcs, "#ff4655")}
+        {bigTile("Avg performance", avgPerf, "#ff4655")}
       </div>
       <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
 
@@ -12484,25 +12485,26 @@ function CardArt({ hue, agent }) {
   );
 }
 
-// Your form, oldest to newest: a line of ACS per match with each point
-// coloured by result. The chips underneath say W/L without needing the key.
+// Your form, oldest to newest: a line of performance score per match (ACS for
+// matches from before Valorant's switch), each point coloured by result. The
+// chips underneath say W/L without needing the key.
 function FormStrip({ games, part = "both", w = 150 }) {
   if (!games.length) return null;
   const h = 34, pad = 4;
-  const vals = games.map((g) => g.acs);
+  const vals = games.map((g) => g.perf);
   const lo = Math.min(...vals), hi = Math.max(...vals);
   const x = (i) => games.length === 1 ? w / 2 : pad + (i * (w - pad * 2)) / (games.length - 1);
   const y = (v) => hi === lo ? h / 2 : h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
-  const line = games.map((g, i) => `${x(i)},${y(g.acs)}`).join(" ");
+  const line = games.map((g, i) => `${x(i)},${y(g.perf)}`).join(" ");
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
       {part !== "chips" && <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
         <polyline points={line} fill="none" stroke="rgba(125,166,255,0.6)" strokeWidth="1.5"
           strokeLinejoin="round" className="volt-radar-shape" pathLength="1" />
         {games.map((g, i) => (
-          <circle key={i} cx={x(i)} cy={y(g.acs)} r={i === games.length - 1 ? 3.6 : 2.6}
+          <circle key={i} cx={x(i)} cy={y(g.perf)} r={i === games.length - 1 ? 3.6 : 2.6}
             fill={g.won ? "#3ddc84" : "#ff4655"}>
-            <title>{`${g.acs} ACS · ${g.won ? "won" : "lost"}`}</title>
+            <title>{`${g.perf} ${g.unit === "ACS" ? "ACS" : "performance"} · ${g.won ? "won" : "lost"}`}</title>
           </circle>
         ))}
       </svg>}
@@ -12541,20 +12543,20 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           __sb.from("player_profiles").select("kda, acs, hs, win, rank").eq("community_id", cid),
         ]);
         // Same "didn't actually play" rule as the leaderboard.
-        const played = (sp) => Number(sp?.acs || 0) > 0 || Number(sp?.k || 0) > 0
+        const played = (sp) => perfOf(sp) > 0 || Number(sp?.k || 0) > 0
                              || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
         const agg = {};
         for (const r of mrs || []) {
           if (!played(r.stat_payload)) continue;
           const a = (agg[r.user_id] ||= { sum: 0, n: 0 });
-          a.sum += Number(r.stat_payload.acs || 0); a.n++;
+          a.sum += perfOf(r.stat_payload); a.n++;
         }
-        const table = Object.entries(agg).map(([id, a]) => ({ id, acs: a.sum / a.n, n: a.n }))
-          .sort((x, y) => y.acs - x.acs || y.n - x.n);
+        const table = Object.entries(agg).map(([id, a]) => ({ id, perf: a.sum / a.n, n: a.n }))
+          .sort((x, y) => y.perf - x.perf || y.n - x.n);
         const pos = table.findIndex((r) => r.id === viewerId);
         const mine = (mrs || []).filter((r) => r.user_id === viewerId && played(r.stat_payload))
           .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
-          .map((r) => ({ acs: Math.round(Number(r.stat_payload.acs || 0)), won: !!r.team_won }));
+          .map((r) => ({ perf: Math.round(perfOf(r.stat_payload)), unit: perfUnit(r.stat_payload), won: !!r.team_won }));
         // League average of the same tracker stats the radar plots, so the two
         // shapes are like for like.
         const mean = (k) => {
@@ -12565,9 +12567,9 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
         const avgRank = ranks.length ? RANK_LIST[Math.round(ranks.reduce((a, b) => a + b, 0) / ranks.length)] : null;
         if (ok) setLg({
           pos: pos >= 0 ? pos + 1 : null, of: table.length,
-          avg: pos >= 0 ? Math.round(table[pos].acs) : null,
+          avg: pos >= 0 ? Math.round(table[pos].perf) : null,
           played: mine.length, wins: mine.filter((g) => g.won).length,
-          best: mine.reduce((m, g) => Math.max(m, g.acs), 0),
+          best: mine.reduce((m, g) => Math.max(m, g.perf), 0),
           points: Math.round((mrs || []).filter((r) => r.user_id === viewerId)
             .reduce((n, r) => n + Number(r.points_computed || 0), 0)),
           recent: mine.slice(-8),
@@ -12817,25 +12819,22 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             )}
             {lg?.best > 0 && (
               <div>
-                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> ACS</span></div>
+                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> perf</span></div>
                 <div style={LBL}>Best game</div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Baseline: this league's ACS and record, form under the figure. */}
+        {/* Baseline: this league's performance score and record, form under the
+            figure. No arrow against the tracker any more: that's ACS, this isn't. */}
         <div style={{ display: "flex", alignItems: "flex-end", gap: 40, flexWrap: "wrap" }}>
           {lg && lg.played > 0 ? <>
             <div>
               <div style={BIG("#00e5ff")}>
                 <CountUp to={lg.avg} />
-                {profile.acs != null && (
-                  <span style={{ fontSize: 12, marginLeft: 10, color: lg.avg >= Number(profile.acs) ? "#3ddc84" : "#ff8f9a" }}>
-                    {lg.avg >= Number(profile.acs) ? "▲" : "▼"} {Math.abs(lg.avg - Math.round(Number(profile.acs)))}</span>
-                )}
               </div>
-              <div style={LBL}>ACS here · vs tracker</div>
+              <div style={LBL}>Avg performance here</div>
             </div>
             <div>
               <div style={BIG("#3ddc84")}>{lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}</div>
@@ -12843,7 +12842,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             </div>
             <div className="volt-yc-form" style={{ marginLeft: "auto" }}>
               <FormStrip games={lg.recent} part="line" w={160} />
-              <div style={LBL}>Form · ACS per match</div>
+              <div style={LBL}>Form · performance per match</div>
             </div>
           </> : lg && !lg.failed ? <>
             {tiles.slice(2).map((t) => (
@@ -13124,16 +13123,16 @@ function LeaderGlance({ viewerId, onOpen }) {
         const agg = {};
         for (const r of mrs || []) {
           const sp = r.stat_payload || {};
-          const played = Number(sp.acs || 0) > 0 || Number(sp.k || 0) > 0
+          const played = perfOf(sp) > 0 || Number(sp.k || 0) > 0
                       || Number(sp.a || 0) > 0 || Number(sp.d || 0) > 0;
           if (!played) continue;
           const a = (agg[r.user_id] ||= { sum: 0, n: 0 });
-          a.sum += Number(sp.acs || 0); a.n++;
+          a.sum += perfOf(sp); a.n++;
         }
         const out = Object.entries(agg)
-          .map(([id, a]) => ({ id, name: name[id] || "Player", acs: Math.round(a.sum / a.n), n: a.n,
+          .map(([id, a]) => ({ id, name: name[id] || "Player", perf: Math.round(a.sum / a.n), n: a.n,
             rank: prof[id]?.rank, div: prof[id]?.rank_div }))
-          .sort((x, y) => y.acs - x.acs || y.n - x.n);
+          .sort((x, y) => y.perf - x.perf || y.n - x.n);
         if (ok) setRows(out);
       } catch (e) { console.error("leader glance", e); if (ok) setRows([]); }
     })();
@@ -13142,7 +13141,7 @@ function LeaderGlance({ viewerId, onOpen }) {
 
   if (!rows) return <Skeleton rows={6} />;
   if (!rows.length) return <Empty title="No matches yet" hint="Once a result is reported, the best performers rank here." />;
-  const top = rows[0].acs || 1;
+  const top = rows[0].perf || 1;
   const pos = rows.findIndex((r) => r.id === viewerId);
   const shown = rows.slice(0, 5).map((r, i) => ({ ...r, i }));
   if (pos >= 5) shown.push({ ...rows[pos], i: pos, pinned: true });
@@ -13174,7 +13173,7 @@ function LeaderGlance({ viewerId, onOpen }) {
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {r.name}{r.pinned ? "  · you" : ""}
               </PName>
-              <Bar pct={(r.acs / top) * 100} h={lead ? 4 : 2.5} i={r.pinned ? 5 : r.i}
+              <Bar pct={(r.perf / top) * 100} h={lead ? 4 : 2.5} i={r.pinned ? 5 : r.i}
                 color={lead ? "linear-gradient(90deg,#f5c453,#ffdf9a)" : me ? "#7da6ff" : "#00e5ff"}
                 opacity={lead || me ? 1 : 0.45} style={{ marginTop: 4 }} />
             </div>
@@ -13182,9 +13181,9 @@ function LeaderGlance({ viewerId, onOpen }) {
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
                 fontSize: lead ? 19 : 13, lineHeight: 1,
                 color: lead ? "#f5c453" : "#00e5ff" }}>
-                {lead ? <CountUp to={r.acs} /> : r.acs}
+                {lead ? <CountUp to={r.perf} /> : r.perf}
               </span>
-              <span style={{ fontSize: 8, letterSpacing: "0.16em", color: "rgba(200,215,255,0.28)" }}>ACS</span>
+              <span style={{ fontSize: 8, letterSpacing: "0.16em", color: "rgba(200,215,255,0.28)" }}>PERF</span>
             </div>
           </div>
         );
@@ -14773,7 +14772,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     loadPlayerBoard();
   }
 
-  // Player season leaderboard: sum of every match's points (+50 win · ACS÷4 · K+⅓A).
+  // Player season leaderboard: sum of every match's points (+50 win · perf÷4 · K+⅓A).
   async function loadPlayerBoard() {
     try {
       const { data: mrs } = await __sb.from("match_results")
@@ -15141,7 +15140,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Season race ──
   if (page === "season") return wrap(<>
-    <PageHead league={leagueName} title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, ACS ÷ 4, and kills plus a third of assists." accent="#f5c453" />
+    <PageHead league={leagueName} title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, performance score ÷ 4, and kills plus a third of assists." accent="#f5c453" />
     {board && board.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
         {board.slice(0, 3).map((r, i) => {
@@ -15168,7 +15167,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <div>
       <TabPanel label="League" tabs={[
         { key: "race", label: "Season race",
-          hint: "+50 a win, ACS\u00f74, K+\u2153A. Every match counts, subs included.",
+          hint: "+50 a win, performance\u00f74, K+\u2153A. Every match counts, subs included.",
           node: board ? (
             <div style={{ display: "grid", gap: 6 }}>
             {board.map((r, i) => (
@@ -15609,11 +15608,19 @@ async function activeStrikeCount(userId) {
 }
 
 // ── SEASON SCORING — per-match player points ────────────────────────────
-//   +50 win bonus (heaviest) · ACS÷4 (middle) · K + ⅓A (lightest)
+//   +50 win bonus (heaviest) · performance score ÷4 (middle) · K + ⅓A (lightest)
 //   Season total = sum of every match's points across all tournaments.
-function matchPoints({ won, acs, kills, assists }) {
+//
+// Valorant's scoreboard swapped ACS for Performance Score (0-500) in patch
+// 13.06. Matches reported since carry stat_payload.ps; older ones only have
+// .acs. perfOf reads one or the other, so a season spanning the switch still
+// averages (the two share a range). Tracker profiles are still ACS and never
+// go through this.
+function perfOf(sp) { return Number(sp?.ps ?? sp?.acs ?? 0) || 0; }
+const perfUnit = (sp) => (sp?.ps == null && sp?.acs != null ? "ACS" : "PERF");
+function matchPoints({ won, perf: score, kills, assists }) {
   const win = won ? 50 : 0;
-  const perf = Math.round((Number(acs) || 0) / 4);
+  const perf = Math.round((Number(score) || 0) / 4);
   const frags = Math.round((Number(kills) || 0) + (Number(assists) || 0) / 3);
   return win + perf + frags;
 }
@@ -16577,7 +16584,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
 
 /* ════════════════════════════════════════════════════════════════════
    MATCH REPORT — host records a match; every player earns season points.
-   +50 win · ACS÷4 · K+⅓A  → one match_results row per player.
+   +50 win · performance÷4 · K+⅓A  → one match_results row per player.
    ════════════════════════════════════════════════════════════════════ */
 // Fire-and-forget: the match is already banked by the time this runs, so every
 // failure is logged and swallowed rather than surfaced. Standings are refreshed
@@ -16588,9 +16595,9 @@ async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
     const jwt = sess?.session?.access_token;
     if (!jwt) return;
     const players = rows.map((r) => ({
-      name: r.stat_payload?.name, acs: r.stat_payload?.acs,
+      name: r.stat_payload?.name, perf: perfOf(r.stat_payload), unit: perfUnit(r.stat_payload),
       kills: r.stat_payload?.k, assists: r.stat_payload?.a, deaths: r.stat_payload?.d ?? 0,
-    })).sort((x, y) => (y.acs || 0) - (x.acs || 0));
+    })).sort((x, y) => (y.perf || 0) - (x.perf || 0));
     const send = (mode, payload) => fetch(apiUrl("/api/discord-arena"), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
@@ -16623,7 +16630,10 @@ function MatchReport({ ev, onDone, prefill }) {
     if (Number.isFinite(x) && Number.isFinite(y) && x !== y) setWinner(x > y ? "A" : "B");
   };
   const [label, setLabel] = useState("");
-  const [lines, setLines] = useState({});     // userId → {k,a,acs}
+  // userId → {k, a, ps, unit}. `ps` holds the scoreboard's performance score;
+  // unit "acs" marks a line that came from an ACS scoreboard (a match from
+  // before Valorant's switch, being corrected), so it's saved back as ACS.
+  const [lines, setLines] = useState({});
   const [extras, setExtras] = useState({ A: [], B: [] }); // subs pulled into this match
   const [allRegs, setAllRegs] = useState([]); // every registrant this tournament (sub pool)
   const [saved, setSaved] = useState([]);     // reported matches for this tournament
@@ -16631,11 +16641,12 @@ function MatchReport({ ev, onDone, prefill }) {
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(null); // match_label being edited (null = new match)
   // Screenshot reader. `shot` holds the parsed rows awaiting review — nothing is
-  // written to the stat grid until the host confirms, because a misread ACS
+  // written to the stat grid until the host confirms, because a misread score
   // becomes wrong season points that look plausible.
   const [shotBusy, setShotBusy] = useState(false);
   const [shotErr, setShotErr] = useState("");
-  const [shot, setShot] = useState(null);   // [{ srcName, playerId|null, acs, kills, assists }]
+  const [shot, setShot] = useState(null);   // [{ srcName, playerId|null, perf, kills, assists }]
+  const [shotUnit, setShotUnit] = useState("ps");   // what the last screenshot showed: "ps" or "acs"
   const fileRef = useRef(null);
 
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
@@ -16707,7 +16718,8 @@ function MatchReport({ ev, onDone, prefill }) {
     const ls = {};
     rows.forEach(r => {
       const sp = r.stat_payload || {};
-      ls[r.user_id] = { k: String(sp.k ?? ""), a: String(sp.a ?? ""), acs: String(sp.acs ?? "") };
+      ls[r.user_id] = { k: String(sp.k ?? ""), a: String(sp.a ?? ""), ps: String(sp.ps ?? sp.acs ?? ""),
+        unit: sp.ps == null && sp.acs != null ? "acs" : "ps" };
     });
     setLines(ls);
     // Anyone in the saved match who isn't on the current roster is a sub.
@@ -16728,9 +16740,9 @@ function MatchReport({ ev, onDone, prefill }) {
   function cancelEdit() {
     setEditing(null); setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setErr("");
   }
-  const line = (uid) => lines[uid] || { k: "", a: "", acs: "" };
+  const line = (uid) => lines[uid] || { k: "", a: "", ps: "", unit: "ps" };
   const setLine = (uid, k, v) => setLines(ls => ({ ...ls, [uid]: { ...line(uid), [k]: v.replace(/[^0-9]/g, "") } }));
-  const ptsFor = (uid, won) => matchPoints({ won, acs: line(uid).acs, kills: line(uid).k, assists: line(uid).a });
+  const ptsFor = (uid, won) => matchPoints({ won, perf: line(uid).ps, kills: line(uid).k, assists: line(uid).a });
 
   async function readScreenshot(file) {
     if (!file) return;
@@ -16760,8 +16772,10 @@ function MatchReport({ ev, onDone, prefill }) {
         const avail = pool.filter((p) => !used.has(p.id));
         const m = matchScoreboardName(row.name, avail);
         if (m) used.add(m.id);
-        return { srcName: row.name, playerId: m ? m.id : null, acs: row.acs, kills: row.kills, assists: row.assists };
+        // `perf` from the current reader; `acs` from a reader deployed before the switch.
+        return { srcName: row.name, playerId: m ? m.id : null, perf: row.perf ?? row.acs, kills: row.kills, assists: row.assists };
       });
+      setShotUnit(body.kind === "acs" ? "acs" : "ps");
       setShot(mapped);
     } catch (e) {
       setShotErr(e.message || "Couldn't read that screenshot.");
@@ -16776,7 +16790,7 @@ function MatchReport({ ev, onDone, prefill }) {
       const next = { ...ls };
       for (const row of shot) {
         if (!row.playerId) continue;
-        next[row.playerId] = { k: String(row.kills), a: String(row.assists), acs: String(row.acs) };
+        next[row.playerId] = { k: String(row.kills), a: String(row.assists), ps: String(row.perf), unit: shotUnit };
       }
       return next;
     });
@@ -16805,7 +16819,10 @@ function MatchReport({ ev, onDone, prefill }) {
             // teamId is the board's stable slot id — it survives a captain
             // renaming the team. `team` is the name as it stood when reported,
             // kept so historical results read correctly.
-            stat_payload: { name: p.name, team: team.name, teamId: team.id || null, k: +l.k || 0, a: +l.a || 0, acs: +l.acs || 0,
+            // Performance score saves as `ps`. Only a line that came from an ACS
+            // scoreboard saves as `acs`, so the two are never confused later.
+            stat_payload: { name: p.name, team: team.name, teamId: team.id || null, k: +l.k || 0, a: +l.a || 0,
+              ...(l.unit === "acs" ? { acs: +l.ps || 0 } : { ps: +l.ps || 0 }),
               // Round score, same on every row of the match — the only place it
               // can live, since match_results has no score column of its own.
               ...(scoreA !== "" && scoreB !== "" ? { scoreA: +scoreA, scoreB: +scoreB } : {}) },
@@ -16913,9 +16930,11 @@ function MatchReport({ ev, onDone, prefill }) {
                 {p.isCaptain && <span style={{ fontSize: 9.5, letterSpacing: "0.1em", color: "#f5c453", marginLeft: 6 }}>CAPT</span>}
                 {!ok && <span title="No account — stats can't be saved for this player" style={{ display: "block", fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(245,196,83,0.85)", fontWeight: 700 }}>no account · won't save</span>}
               </span>
-              {/* ACS first, then K then A — the column order Valorant's scoreboard
+              {/* Score first, then K then A — the column order Valorant's scoreboard
                   uses, so you read across the game screen and type across the row. */}
-              <input placeholder="ACS" value={line(p.id).acs} onChange={e => setLine(p.id, "acs", e.target.value)} style={fieldS} aria-label={`${p.name} ACS`} />
+              <input placeholder={line(p.id).unit === "acs" ? "ACS" : "PERF"} title={line(p.id).unit === "acs" ? "ACS (match from before the performance score)" : "Performance score"}
+                value={line(p.id).ps} onChange={e => setLine(p.id, "ps", e.target.value)} style={fieldS}
+                aria-label={`${p.name} ${line(p.id).unit === "acs" ? "ACS" : "performance score"}`} />
               <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
               <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} style={fieldS} aria-label={`${p.name} assists`} />
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: won ? "#3ddc84" : "#7da6ff", width: 58, textAlign: "right" }}>{ptsFor(p.id, won)} pts</span>
@@ -16945,7 +16964,7 @@ function MatchReport({ ev, onDone, prefill }) {
       <div style={{ textAlign: "center", marginBottom: 24 }}>
         <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)} · Match report</div>
         <h1 style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Record a <span style={{ color: "#3d7bff" }}>Match</span></h1>
-        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · ACS÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · performance score÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
       </div>
       <div style={panel}>
         <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
@@ -17073,9 +17092,9 @@ function MatchReport({ ev, onDone, prefill }) {
                         ))}
                       </select>
                       <span style={{ flex: 1 }} />
-                      {["acs", "kills", "assists"].map((f) => (
+                      {["perf", "kills", "assists"].map((f) => (
                         <label key={f} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>{f === "acs" ? "ACS" : f === "kills" ? "K" : "A"}</span>
+                          <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>{f === "perf" ? (shotUnit === "acs" ? "ACS" : "PERF") : f === "kills" ? "K" : "A"}</span>
                           <input value={row[f]} inputMode="numeric"
                             onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setShot((rs) => rs.map((r, k) => k === i ? { ...r, [f]: v === "" ? 0 : Number(v) } : r)); }}
                             style={{ width: 52, padding: "4px 6px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(120,150,220,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, textAlign: "center" }} />

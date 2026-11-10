@@ -206,10 +206,10 @@ export const demoProfile = REAL?.me || {
 
 // Season leaderboard rows (the view sorts them).
 export const demoLeaderboard = REAL?.leaderboard
-  ? REAL.leaderboard.map(([name, rank, rankDiv, role, m, w, k, as, pts, avgAcs], i) => ({ id: "real-l-" + i, name, rank, rankDiv, role, m, w, k, as, pts, avgAcs }))
+  ? REAL.leaderboard.map(([name, rank, rankDiv, role, m, w, k, as, pts, avgPerf], i) => ({ id: "real-l-" + i, name, rank, rankDiv, role, m, w, k, as, pts, avgPerf }))
   : PLAYERS.slice(0, 16).map(([name, rank, rankDiv, role, , , acs], i) => {
     const m = 4 + (i % 3), w = Math.max(0, 3 - (i % 4));
-    return { id: "demo-l-" + i, name, rank, rankDiv, role, m, w, k: 40 + ((i * 13) % 45), as: 10 + ((i * 7) % 18), pts: Math.round(acs / 4 * m + w * 50), avgAcs: acs };
+    return { id: "demo-l-" + i, name, rank, rankDiv, role, m, w, k: 40 + ((i * 13) % 45), as: 10 + ((i * 7) % 18), pts: Math.round(acs / 4 * m + w * 50), avgPerf: acs };
   });
 
 // The league page.
