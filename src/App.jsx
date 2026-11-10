@@ -1764,6 +1764,9 @@ const fxNameCls = (name, slot) => "volt-fx-name" + (slot ? " is-slot" : String(n
 const TOPBAR = { background: "linear-gradient(180deg, rgba(20,29,54,0.86), rgba(13,19,36,0.74))", borderBottom: "1px solid rgba(61,123,255,0.24)",
   backdropFilter: "blur(16px) saturate(150%)", WebkitBackdropFilter: "blur(16px) saturate(150%)",
   boxShadow: "0 8px 26px rgba(3,6,14,0.38), inset 0 1px 0 rgba(150,180,255,0.07)" };
+const TABBAR = { background: "linear-gradient(180deg, rgba(17,25,47,0.88), rgba(20,29,54,0.95))", borderTop: "1px solid rgba(61,123,255,0.3)",
+  backdropFilter: "blur(16px) saturate(150%)", WebkitBackdropFilter: "blur(16px) saturate(150%)",
+  boxShadow: "0 -8px 26px rgba(3,6,14,0.42), inset 0 1px 0 rgba(150,180,255,0.08)" };
 const TOPBAR_LINE = { position: "absolute", left: 0, right: 0, bottom: -1, height: 12, pointerEvents: "none",
   background: "linear-gradient(90deg, #3d7bff, rgba(61,123,255,0.3) 24%, transparent 62%) bottom / 100% 1px no-repeat, radial-gradient(ellipse 34% 100% at 10% 100%, rgba(61,123,255,0.2), transparent 72%)" };
 
@@ -1811,7 +1814,7 @@ function FxCountdown({ at }) {
 function FxStatus({ f, match }) {
   const now = useNow(30000);
   const left = f.at ? f.at.getTime() - now : null;
-  const base = { fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", whiteSpace: "nowrap" };
+  const base = { fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap" };
   if (f.bye) return <span style={{ ...base, color: "rgba(200,215,255,0.35)" }}>Bye</span>;
   if (match.done) return <span style={{ ...base, color: "#3ddc84" }}>Final</span>;
   if (f.started || (left != null && left <= 0)) return <span style={{ ...base, color: "#ff4655", display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -1823,7 +1826,7 @@ function FxStatus({ f, match }) {
     return <span className="volt-fx-when" style={{ ...base, fontSize: 12.5, color: left <= 36e5 ? "#ffe2a0" : "#c4fcdc", letterSpacing: "0.07em", padding: "2px 8px", background: `rgba(${rgb},0.1)`, border: `1px solid rgba(${rgb},0.28)` }}>
       {left <= 864e5 ? `${f.at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · in ${fxIn(left)}` : fxWhen(f.at)}</span>;
   }
-  return <span style={{ ...base, color: "rgba(200,215,255,0.3)" }}>Time TBC</span>;
+  return <span style={{ ...base, color: "rgba(200,215,255,0.45)" }}>Time TBC</span>;
 }
 
 // Thin vote split along the bottom of a card: who people are backing, at a glance.
@@ -1955,8 +1958,8 @@ function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false, s
           background: lead ? `linear-gradient(90deg, ${lead.hue}14, rgba(12,17,30,0.7) 45%)` : "rgba(12,17,30,0.7)",
           border: `1px solid ${big ? "rgba(255,209,102,0.35)" : "rgba(120,150,220,0.16)"}`, clipPath: FX_NOTCH(10) }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 0" }}>
-          <span style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{stage || "Match"}</span>
-          <span style={{ fontSize: 9.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.35)" }}>BO{f.bo}</span>
+          <span style={{ fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{stage || "Match"}</span>
+          <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>BO{f.bo}</span>
           <span style={{ flex: 1 }} />
           <FxStatus f={f} match={match} />
         </div>
@@ -1970,12 +1973,12 @@ function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false, s
         </div>
         {(canVote || mine || (isAdmin && !f.bye && f.a && f.b) || f.statsRecorded || (f.scoreIn && f.canReport)) && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 14px 10px", flexWrap: "wrap" }}>
-            {mine ? <span style={{ fontSize: 10.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.08em" }}>✓ You picked {mine === "a" ? f.a?.name : f.b?.name}</span>
-              : canVote ? <span style={{ fontSize: 10.5, color: "#9af5c2", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>◈ Make your prediction →</span> : null}
+            {mine ? <span style={{ fontSize: 12, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.06em" }}>✓ You picked {mine === "a" ? f.a?.name : f.b?.name}</span>
+              : canVote ? <span style={{ fontSize: 12, color: "#9af5c2", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>◈ Make your prediction →</span> : null}
             <span style={{ flex: 1 }} />
-            {f.statsRecorded ? <span style={{ fontSize: 9.5, color: "#3ddc84", fontWeight: 700, letterSpacing: "0.14em" }}>✓ STATS</span>
-              : f.scoreIn && f.canReport ? <span style={{ fontSize: 9.5, color: "#f5c453", fontWeight: 700, letterSpacing: "0.14em" }}>⚠ STATS NEEDED</span> : null}
-            {isAdmin && !f.bye && f.a && f.b && <span style={{ fontSize: 9.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.14em" }}>EDIT ▸</span>}
+            {f.statsRecorded ? <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, letterSpacing: "0.1em" }}>✓ STATS</span>
+              : f.scoreIn && f.canReport ? <span style={{ fontSize: 11.5, color: "#f5c453", fontWeight: 700, letterSpacing: "0.1em" }}>⚠ STATS NEEDED</span> : null}
+            {isAdmin && !f.bye && f.a && f.b && <span style={{ fontSize: 11.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.1em" }}>EDIT ▸</span>}
           </div>
         )}
         <FxVoteBar f={f} />
@@ -2013,11 +2016,11 @@ function SlotCard({ m, teamOf, stage, bo, big = false }) {
   return (
     <div className="volt-fx-card" style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(12,17,30,0.45)", border: `1px dashed ${big ? "rgba(255,209,102,0.3)" : "rgba(120,150,220,0.22)"}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 0" }}>
-        <span style={{ fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", fontWeight: 700 }}>{stage}</span>
-        <span style={{ fontSize: 9.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.35)" }}>BO{bo || 1}</span>
-        {projected && <span style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(125,166,255,0.3)", padding: "0 5px" }}>Projected</span>}
+        <span style={{ fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{stage}</span>
+        <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>BO{bo || 1}</span>
+        {projected && <span style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(125,166,255,0.3)", padding: "0 5px" }}>Projected</span>}
         <span style={{ flex: 1 }} />
-        <span style={{ fontWeight: 700, fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", whiteSpace: "nowrap", color: "rgba(200,215,255,0.3)" }}>Time TBC</span>
+        <span style={{ fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap", color: "rgba(200,215,255,0.45)" }}>Time TBC</span>
       </div>
       <div className="volt-fx-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: big ? "14px 16px 14px" : "10px 14px 12px" }}>
         {side(m.a, "left")}
@@ -2070,7 +2073,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
   const posChip = (teamId, right) => {
     if (!anyPlayed) return null;
     const p = pos[teamId]; if (!p) return null;
-    return <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>#{p.rank} · {p.pts} PTS</span>;
+    return <span style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.75)" }}>#{p.rank} · {p.pts} PTS</span>;
   };
   const pips = (teamId) => {
     if (!anyPlayed) return null;
@@ -2089,10 +2092,10 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
   };
 
   const roundTag = (k) => isDone(k)
-    ? <span style={{ fontSize: 10, letterSpacing: "0.2em", color: "#3ddc84", fontWeight: 700 }}>✓ COMPLETE</span>
+    ? <span style={{ fontSize: 11.5, letterSpacing: "0.12em", color: "#3ddc84", fontWeight: 700 }}>✓ COMPLETE</span>
     : k === active
-      ? <span className="inline-flex items-center gap-1.5" style={{ fontSize: 10, letterSpacing: "0.2em", color: "#5b8dff", fontWeight: 700 }}><span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#5b8dff", boxShadow: "0 0 8px rgba(61,123,255,0.9)" }} />IN PLAY</span>
-      : <span style={{ fontSize: 10, letterSpacing: "0.2em", color: "rgba(200,215,255,0.5)", fontWeight: 700 }}>UPCOMING</span>;
+      ? <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11.5, letterSpacing: "0.12em", color: "#7da6ff", fontWeight: 700 }}><span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#5b8dff", boxShadow: "0 0 8px rgba(61,123,255,0.9)" }} />IN PLAY</span>
+      : <span style={{ fontSize: 11.5, letterSpacing: "0.12em", color: "rgba(200,215,255,0.6)", fontWeight: 700 }}>UPCOMING</span>;
 
   return (
     <div className="flex flex-col gap-5">
@@ -2118,7 +2121,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
                       <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 17, fontWeight: 700, color: "#eaf1ff" }}>{sc ? `${sc[0]} : ${sc[1]}` : "—"}</span>
                       <span className="font-bold uppercase text-right" style={{ minWidth: 0, lineHeight: 1.1, overflowWrap: "anywhere", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, color: b?.hue, opacity: winA ? 0.45 : 1, textShadow: !winA ? `0 0 12px ${b?.hue}66` : "none", flex: 1 }}>{!winA && "✓ "}{b?.name}</span>
                     </div>
-                    <div className="flex items-center justify-center">{mvpChip(m) || (isAdmin && window.__VOLT?.openReport && <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: fxLabel(a, b, m), winner: winA ? "A" : "B", ...fixtureScore(m) })} className="uppercase" style={{ fontSize: 9.5, letterSpacing: "0.14em", color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>▦ add player stats</button>)}</div>
+                    <div className="flex items-center justify-center">{mvpChip(m) || (isAdmin && window.__VOLT?.openReport && <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: fxLabel(a, b, m), winner: winA ? "A" : "B", ...fixtureScore(m) })} className="uppercase" style={{ fontSize: 11.5, letterSpacing: "0.1em", color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>▦ add player stats</button>)}</div>
                   </div>
                 );
               })}
@@ -2133,7 +2136,7 @@ function TMatchdays({ t, teamOf, isAdmin, A }) {
                 const st = b ? stakesOf(m) : null;
                 return (
                   <div key={m.id} className="flex flex-col gap-1.5 min-w-0">
-                    {st && <div className="text-center uppercase" style={{ fontSize: 10, letterSpacing: "0.22em", color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>⚡ {st}</div>}
+                    {st && <div className="text-center uppercase" style={{ fontSize: 12.5, letterSpacing: "0.12em", color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>⚡ {st}</div>}
                     {b && (
                       <div className="flex items-center justify-between px-1">
                         <span className="flex items-center gap-2">{posChip(m.teamA)}{pips(m.teamA)}</span>
@@ -6966,8 +6969,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         <nav aria-label="Tournament" className="volt-tabbar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 90,
           display: "grid", gridTemplateColumns: `repeat(${mobileTabs.length + 1}, minmax(0, 1fr))`,
           padding: "6px 6px calc(6px + env(safe-area-inset-bottom))",
-          background: "linear-gradient(180deg, rgba(10,14,25,0.94), rgba(6,9,16,0.98))", backdropFilter: "blur(14px)",
-          borderTop: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 -10px 30px rgba(0,0,0,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>
+          ...TABBAR, fontFamily: "'Rajdhani',sans-serif" }}>
           {[...mobileTabs.map((id) => ({ id, glyph: navById[id]?.glyph, label: TAB_LABEL[id] || navById[id]?.label })), { id: "__more", glyph: null, label: "More" }].map((t) => {
             const on = t.id === "__more" ? drawerOpen || (!mobileTabs.includes(view)) : view === t.id && !drawerOpen;
             const live = t.id === "block" && (block || spinLive);
@@ -14956,8 +14958,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         <nav aria-label="League" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 90,
           display: "grid", gridTemplateColumns: `repeat(${hubTabs.length + (hubMore.length ? 1 : 0)}, minmax(0, 1fr))`,
           padding: "6px 6px calc(6px + env(safe-area-inset-bottom))",
-          background: "linear-gradient(180deg, rgba(10,14,25,0.94), rgba(6,9,16,0.98))", backdropFilter: "blur(14px)",
-          borderTop: "1px solid rgba(61,123,255,0.28)", boxShadow: "0 -10px 30px rgba(0,0,0,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>
+          ...TABBAR, fontFamily: "'Rajdhani',sans-serif" }}>
           {[...hubTabs, ...(hubMore.length ? [["__more", "More", null]] : [])].map(([k, label, glyph]) => {
             const on = k === "__more" ? (hubMoreOpen || (!showPlayer && hubMore.some(([m]) => m === page))) : page === k && !showPlayer && !hubMoreOpen;
             return (
