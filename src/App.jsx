@@ -5946,6 +5946,18 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     } catch (e) { console.error("late merge", e); }
   }, [browse, mutate]);
   const latePhase = chrome?.phase === "drafting" || chrome?.phase === "matches_live";
+  // Staff clients pick up approvals made elsewhere (another host, auto-approve).
+  // The hook has to sit up here, above the "board still loading" return: a hook
+  // below an early return crashes the whole view on the next render. Whether
+  // the viewer is staff is only known further down, hence the ref.
+  const lateMergeOk = useRef(false);
+  useEffect(() => {
+    if (!latePhase || browse || !HAS_SUPABASE) return;
+    const tick = () => { if (lateMergeOk.current) mergeLateRegs(); };
+    const t = setTimeout(tick, 4000);
+    const stop = visInterval(tick, 30000);
+    return () => { clearTimeout(t); stop(); };
+  }, [latePhase, browse, mergeLateRegs]);
   const SPIN_MS = 7200, REVEAL_MS = 2000;
   // `reserve` decides which hub a hand-added player belongs to. It reuses
   // poolEligible rather than adding a second flag: false already means "not in
@@ -6778,12 +6790,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // are independent. Only an explicit choice to spectate stands them down.
   const isStaffRole = auth?.role === "host" || auth?.role === "moderator";
   const isAdmin = isStaffRole ? identity !== "spectator" : identity === "admin";
-  useEffect(() => {
-    if (!isAdmin || !latePhase || browse || !HAS_SUPABASE) return;
-    const t = setTimeout(mergeLateRegs, 4000);
-    const stop = visInterval(mergeLateRegs, 30000);
-    return () => { clearTimeout(t); stop(); };
-  }, [isAdmin, latePhase, browse, mergeLateRegs]);
+  lateMergeOk.current = isAdmin;
   // Moderators share the admin identity but not the live auction. window.__VOLT
   // .isHost is strictly the league owner; it is undefined in the no-Supabase
   // preview, so treat undefined as allowed there.
