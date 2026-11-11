@@ -4,9 +4,15 @@ Multi-tenant Valorant league platform: sign-ups, live auction draft, teams,
 tournament bracket, predictions, leaderboard, plus a Discord bot.
 
 ## Layout
-- `src/App.jsx` — the entire React frontend (~15k lines, one file). Talks to
-  Supabase directly with the anon key; the draft board lives in `community_kv`
-  behind the `window.storage` shim at the top of the file.
+- `src/App.jsx` — the React frontend that loads first: landing page, sign-in, the
+  league hub, and every shared helper and component. Talks to Supabase directly
+  with the anon key; the draft board lives in `community_kv` behind the
+  `window.storage` shim at the top of the file.
+- `src/tournament.jsx` — everything inside a tournament (draft room, fixtures,
+  match reports, registration desk). Loaded on demand by `App.jsx`
+  (`loadTournament`), so it must not be imported statically. It imports shared
+  code from `App.jsx`; anything it needs from there has to be in the `export {}`
+  list at the bottom of `App.jsx`.
 - `api/*.js` — Vercel serverless functions (Discord bot, notifications, Gemini
   screenshot readers). They use `SUPABASE_SERVICE_KEY`; browser callers must
   send their Supabase session as `Authorization: Bearer <jwt>` and are checked
@@ -24,7 +30,9 @@ tournament bracket, predictions, leaderboard, plus a Discord bot.
   user id as a parameter) must be revoked and granted to `service_role`.
 - Pushing to `main` deploys to production on Vercel immediately. The owner
   wants changes shipped straight to `main` (no preview branch, no PR to
-  merge), so `npm run build` must pass before every push. If a deploy breaks
+  merge), so `npm run build` must pass before every push. The build first runs
+  `scripts/check-hooks.mjs`, which fails on a React hook placed after a
+  component's early return (that crashes the screen at runtime, not at build). If a deploy breaks
   the live site, roll back in Vercel (Instant Rollback) and then fix.
 - Vercel is on the Hobby plan: crons can run at most once a day. Frequent jobs
   run from Supabase `pg_cron` (`volt_cron_tick`, every 5 minutes).

@@ -1,0 +1,10779 @@
+// The tournament shell: everything that only runs once someone opens a
+// tournament. Split out of App.jsx so the hub, sign-in and landing page don't
+// download it; App.jsx loads this file on demand. Shared helpers stay in
+// App.jsx and are imported from there.
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { apiUrl, haptic } from "./native.js";
+import {
+  ART, AccountChip, AccountView, Bar, Cell, CountUp, DASH_CSS, DEMO,
+  DiscordLinkCard, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
+  MOBILE_CSS, NAV, NotifBell, PANEL, PHASE_COLOR, PHASE_LABEL, Pip, PlayToggle,
+  PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
+  SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,
+  TOPBAR, TOPBAR_LINE, TOURNEY_NAV, TeamMono, VoltDateTime, VoltOverlay, __openDialog, __sb,
+  activeStrikeCount, downscaleImage, fmt, glyphNode, hasDivisions, loadDemo, loadProfileGate, perfOf,
+  profileIsComplete, rankLabel, rankOf, shellBtn, useNarrow, visInterval, voltConfirm, voltNotify,
+  voltNow, voltToast, weekendName,
+} from "./App.jsx";
+
+// Full-body agent cutouts for the player card (transparent WebP, in
+// public/img/). Reyna stands in for anyone whose main has no art yet —
+// dropping in another file and adding a line here is all a new agent needs.
+const AGENT_ART = {
+  Reyna: "/img/reyna.webp",
+  Jett: "/img/jett.webp",
+  Raze: "/img/raze.webp",
+  Neon: "/img/neon.webp",
+  Yoru: "/img/yoru.webp",
+  Brimstone: "/img/brimstone.webp",
+  Viper: "/img/viper.webp",
+  Sova: "/img/sova.webp",
+  Breach: "/img/breach.webp",
+  Fade: "/img/fade.webp",
+  Gekko: "/img/gekko.webp",
+  Killjoy: "/img/killjoy.webp",
+  Cypher: "/img/cypher.webp",
+  Sage: "/img/sage.webp",
+  Chamber: "/img/chamber.webp",
+  Deadlock: "/img/deadlock.webp",
+  Phoenix: "/img/phoenix.webp",
+  Astra: "/img/astra.webp",
+  Harbor: "/img/harbor.webp",
+  "KAY/O": "/img/kayo.webp",
+  Iso: "/img/iso.webp",
+  Omen: "/img/omen.webp",
+  Vyse: "/img/vyse.webp",
+  Tejo: "/img/tejo.webp",
+};
+
+const agentArt = (agent) => AGENT_ART[agent] || AGENT_ART.Reyna;
+
+const IMG_HERO = "/img/hero.webp";
+
+// The board key is scoped per tournament so each tournament runs its own isolated
+// draft (within its community, which the storage layer already scopes).
+// window.__VOLT.weekendId is set by the season shell; null → the community's
+// standing/default board (back-compatible with the old single-board behavior).
+const STORE_KEY_BASE = "volt-auction-v2";
+
+function boardKey() {
+  const w = (typeof window !== "undefined" && window.__VOLT && window.__VOLT.weekendId) || null;
+  return w ? `${STORE_KEY_BASE}::${w}` : STORE_KEY_BASE;
+}
+
+const POLL_MS = 2500;
+
+// active-tab auction poll (was 1500 — every 300ms saved adds up across clients)
+const POLL_MS_SAFETY = 20000;
+
+// Realtime is up — poll only to catch a dead socket
+const POLL_MS_HOT = 1200;
+
+// a player is on the block: bids are contended, so sync hard. With
+                             // conditional GET an extra poll is a ~43-byte probe — the full board
+                             // only downloads when it actually changed, so this costs almost nothing.
+const POLL_MS_HIDDEN = 15000;
+
+// Hardcoded access codes (baked into the build — nobody sets these in-app).
+// Host: 1218.  Captains: by seat order, seat 1 → "0001" ... seat 8 → "0008".
+const COMMISH_CODE = "1218";
+
+const seatCode = (seatIndex) => String(seatIndex + 1).padStart(4, "0");
+
+// Ranks arrive from player_profiles.rank, a free-text column with no CHECK —
+// so an unexpected value (legacy row, hand-edited data) must not crash a lookup.
+// Everything that indexes RANKS from data should go through these.
+const rankKey = (r) => (RANKS[r] ? r : "Silver");
+
+const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
+
+const ROLE_ABBR  = { Duelist: "DUE", Initiator: "INI", Controller: "CON", Sentinel: "SEN", Flex: "FLX" };
+
+const AGENTS = ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Omen","Brimstone","Viper","Astra","Harbor","Clove","Sova","Skye","Breach","Fade","KAY/O","Gekko","Killjoy","Cypher","Sage","Chamber","Deadlock","Vyse","Tejo","Waylay","Veto"];
+
+const TEAM_HUES = ["#ff4655", "#00e5ff", "#9d6bff", "#5ad1ff", "#ff8a3d", "#e35cff", "#3ddc84", "#f5c453", "#ff6fae", "#7c9cff", "#ffd24a", "#4dd6c1"];
+
+const MIN_TEAMS = 2;
+
+// no maximum — a league runs as many teams as it has captains
+// Group stage: up to eight groups. Past four qualifiers the group stage feeds a
+// knockout (round of 16 / quarterfinals) ahead of the semis, so big leagues still
+// get a real bracket instead of four huge groups and four playoff spots.
+const MAX_GROUPS = 8;
+
+// Team colour for the nth team. The hand-picked palette covers the first dozen;
+// past that, colours are generated on the golden angle so a 20-team league still
+// gets visually distinct teams instead of team 13 looking identical to team 1.
+function teamHue(i) {
+  if (i < TEAM_HUES.length) return TEAM_HUES[i];
+  const h = (i * 137.508) % 360;                  // golden angle → maximally spread
+  const l = 58 + ((i % 3) - 1) * 7;               // nudge lightness so neighbours differ
+  return `hsl(${h.toFixed(0)}, 78%, ${l}%)`;
+}
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+// Tally win/loss/points across all of a tournament's tournament matches (+3 per win),
+// used to snapshot standings into the season log at settle time.
+// Every match in a tournament, whatever the format: group matches (stored as
+// { groupId: [...] }), semis and final; league/round-robin matches and final;
+// bracket rounds. Module scope so the draft room and the settle flow agree.
+function tournamentMatches(t) {
+  if (!t) return [];
+  const out = [];
+  if (Array.isArray(t.matches)) t.matches.forEach((m) => out.push(m));
+  else if (t.matches && typeof t.matches === "object") Object.values(t.matches).forEach((a) => Array.isArray(a) && a.forEach((m) => out.push(m)));
+  (t.ko || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
+  (t.semis || []).forEach((m) => out.push(m));
+  if (t.final) out.push(t.final);
+  (t.rounds || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
+  return out.filter(Boolean);
+}
+
+function computeSeasonPoints(s) {
+  const t = s.tournament; if (!t) return [];
+  const acc = {};
+  const ensure = (id) => { if (id && !acc[id]) acc[id] = { teamId: id, won: 0, lost: 0, pts: 0 }; };
+  const allMatches = tournamentMatches(t);
+  for (const m of allMatches) {
+    if (!m || !m.done || m.teamA == null || m.teamB == null) continue;
+    ensure(m.teamA); ensure(m.teamB);
+    if (m.winner === m.teamA) { acc[m.teamA].won++; acc[m.teamA].pts += 3; acc[m.teamB].lost++; }
+    else if (m.winner === m.teamB) { acc[m.teamB].won++; acc[m.teamB].pts += 3; acc[m.teamA].lost++; }
+  }
+  return Object.values(acc);
+}
+
+// Normalize a registration row (as returned by fetchRosterForEvent, which keys
+// people by `userId`) into a board player keyed by `id`. Shared by freshState
+// and the live registration preview so both produce identical shapes — folding
+// a raw registration row straight into state.players yields a card with no id
+// and no rank, which then breaks every lookup that assumes a real player.
+function regToPlayer(p, isCap) {
+  return {
+    id: p.userId, status: "pool", soldTo: null, soldPrice: null,
+    ...(isCap ? { isCaptain: true } : {}),
+    name: p.name, ign: p.ign ?? null, rank: rankKey(p.rank), rankDiv: p.rankDiv ?? null,
+    peakRank: p.peakRank ?? null, peakRankDiv: p.peakRankDiv ?? null,
+    role: p.role || "Flex", agent: p.agent || "—",
+    kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
+    badges: p.badges || [], tracker: p.tracker || null, trophies: p.trophies || 0,
+    discord: p.discord || null,
+    poolEligible: p.poolEligible !== false,
+    // false once they've tapped "Can't make it" — the Reserve Hub has to show
+    // this or a captain will call someone who has already said no.
+    available: p.available !== false,
+  };
+}
+
+// A player the host typed in by hand has a short generated id; anyone
+// who registered carries their auth uuid. Manual entries have no registration
+// to rebuild from, so they must be carried across board rebuilds explicitly.
+const isManualPlayer = (p) => !(typeof p?.id === "string" && p.id.length > 30);
+
+// Give rebuilt teams the ids their captains already had. Mock Draft plans are
+// stored per team id, so renumbering t5 → t4 hid a captain's saved plans.
+function keepTeamIds(built, prior) {
+  const prev = {};
+  (prior?.teams || []).forEach((t) => { if (t.captainUserId) prev[t.captainUserId] = t.id; });
+  const taken = new Set();
+  built.teams.forEach((t) => {
+    const id = prev[t.captainUserId];
+    if (id && !taken.has(id)) { t.id = id; taken.add(id); } else t.id = null;
+  });
+  let n = 1;
+  built.teams.forEach((t) => { if (!t.id) { while (taken.has("t" + n)) n++; t.id = "t" + n; taken.add(t.id); } });
+  return built;
+}
+
+function freshState(captains, poolPlayers) {  // captains: optional [{ userId, name, teamName? }] from the real community.
+  // When present, teams are built from real registered captains (each tied to a
+  // userId so login-based seat claiming maps to the right seat). Otherwise the
+  // old demo seeds are used (preview / first-run before captains exist).
+  // poolPlayers: optional [{ userId, name, rank, role, agent, kda, acs, hs, win, badges }]
+  // — the tournament's registered (non-captain) players with their scouting stats.
+  const capList = (captains && captains.length) ? captains : [];
+  const poolList = (poolPlayers && poolPlayers.length) ? poolPlayers : [];
+  // Teams need at least MIN_TEAMS captains to be a real draft. Below that the
+  // board stays team-less while sign-ups run — but everyone who registered is
+  // still listed below, so the Scout Hub fills up from the first registration.
+  const teamDefs = capList.length >= MIN_TEAMS
+    ? capList.map((c, i) => ({
+        name: c.teamName || `TEAM ${String(i + 1).padStart(2, "0")}`,
+        captain: c.name,
+        captainUserId: c.userId,
+        hue: teamHue(i),
+      }))
+    : [];
+  const poolDefs = [
+    ...capList.map((c) => regToPlayer(c, true)),
+    ...poolList.map((p) => regToPlayer(p, false)),
+  ];
+  return {
+    v: 2,
+    teams: teamDefs.map((t, i) => ({ id: "t" + (i + 1), ...t, budget: 10000, roster: [] })),
+    players: poolDefs,
+    block: null,
+    spin: null,
+    draftAt: null, // auction start comes from the tournament (events.draft_at)
+    commishCode: null, // set by the first host; required thereafter
+    teamCodes: {}, // { teamId: passcode } gating each captain's War Room; set once by that captain
+    bidHistory: [],   // [{teamId, amount, ts}] for active block
+    soldFlash: null,  // ts of last sale (for red flash)
+    lastSoldTo: null, // teamId that secured the most recent sale (for won/lost audio)
+    recentSales: [],  // [{playerId, name, teamId, price, bidCount, ts}] newest-first, for the auction feed ticker
+    tournament: null, // { format, matchType, groups, matches, slots, ... } — built by Host
+    log: [],
+    stamp: Date.now(),
+  };
+}
+
+// Every client drops a board whose stamp isn't newer than the one it holds, so
+// stamps must only go up. Date.now() alone doesn't: a device whose clock runs
+// behind would write "older" boards that everyone ignores.
+const nextStamp = (base) => Math.max(Date.now(), ((base && base.stamp) || 0) + 1);
+
+// Board-read cache, keyed by boardKey(), so polling can use a conditional GET:
+// when the row hasn't changed since we last read it, nothing is downloaded and
+// we hand back the parsed object we already have. This is what keeps a live
+// auction (8+ clients polling every ~2s) from re-downloading the whole board
+// blob on every tick — the dominant source of Supabase egress.
+const __boardCache = new Map();
+
+// key -> { updatedAt, parsed }
+async function readState() {
+  const key = boardKey();
+  try {
+    const cached = __boardCache.get(key);
+    const r = await window.storage.getIfChanged(key, true, cached ? cached.updatedAt : null);
+    if (!r) { __boardCache.delete(key); return null; }        // row gone
+    if (r.unchanged) return cached ? cached.parsed : null;    // nothing downloaded
+    const parsed = JSON.parse(r.value);
+    __boardCache.set(key, { updatedAt: r.updatedAt, parsed });
+    return parsed;
+  } catch { const cached = __boardCache.get(key); return cached ? cached.parsed : null; }
+}
+
+// The updatedAt this client last saw for the board — the version token that
+// makes a write conditional. Null means we've never read it, so the write goes
+// through unconditionally.
+function boardVersion() {
+  const c = __boardCache.get(boardKey());
+  return c ? c.updatedAt : null;
+}
+
+// Unconditional write — for building, rebuilding and resetting the board, where
+// overwriting whatever is there IS the intent.
+async function writeState(s) {
+  if (!s.stamp) s.stamp = Date.now();
+  const key = boardKey();
+  const json = JSON.stringify(s);
+  // Deliberately NOT swallowing errors: a silent failure here is what made
+  // edits appear to "revert" — the UI kept the optimistic value while the
+  // server never received it, then the next poll painted the old state back.
+  const r = await window.storage.cas(key, null, json);
+  // Prime the cache with the server's own updated_at so our next poll neither
+  // re-downloads what we just wrote nor misses what someone else writes next.
+  if (r && r.updatedAt) __boardCache.set(key, { updatedAt: r.updatedAt, parsed: JSON.parse(json) });
+  else __boardCache.delete(key);
+  return s;
+}
+
+// Conditional write — lands only if nobody else has written since we last read.
+// On conflict, returns the state that won so the caller can re-apply on top of
+// it. This is what stops two simultaneous bids from erasing each other.
+async function writeStateChecked(s, expected) {
+  if (!s.stamp) s.stamp = Date.now();
+  const key = boardKey();
+  const json = JSON.stringify(s);
+  const r = await window.storage.cas(key, expected, json);
+  if (r.ok) {
+    if (r.updatedAt) __boardCache.set(key, { updatedAt: r.updatedAt, parsed: JSON.parse(json) });
+    return { ok: true, state: s };
+  }
+  let current = null;
+  try { current = r.value ? JSON.parse(r.value) : null; } catch { current = null; }
+  if (current && r.updatedAt) __boardCache.set(key, { updatedAt: r.updatedAt, parsed: current });
+  return { ok: false, current };
+}
+
+/* ── private (per-captain) war-room storage: shared=false keeps it off the synced board ── */
+const warRoomKey = (teamId) => `volt-warroom-${teamId}`;
+
+async function readWarRoom(teamId) {
+  try { const r = await window.storage.get(warRoomKey(teamId), false); return r ? JSON.parse(r.value) : null; }
+  catch { return null; }
+}
+
+async function writeWarRoom(teamId, data) {
+  try { await window.storage.set(warRoomKey(teamId), JSON.stringify(data), false); } catch (e) { console.error(e); }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TOURNAMENT ENGINE — pure helpers for groups, brackets & standings.
+   Formats: "group" (N groups, round-robin each, top advances to final),
+            "roundrobin" (one table, everyone plays once),
+            "single" (single-elimination bracket).
+   A match: { id, teamA, teamB, bo, maps:[{a,b}], done, winner }
+     - bo: 1 or 3 (best-of). maps holds per-map scores {a,b}.
+     - winner: teamId or null. For byes, teamB=null and winner=teamA.
+   ════════════════════════════════════════════════════════════════════ */
+const tuid = () => "m" + Math.random().toString(36).slice(2, 9);
+
+// A Bo1 fixture's round score, to pre-fill the match report so it isn't typed
+// twice. Bo3 totals don't map onto one score, so those are left to the host.
+function fixtureScore(m) {
+  const mp = (m?.bo || 1) === 1 ? m?.maps?.[0] : null;
+  return mp && mp.a != null && mp.b != null ? { scoreA: mp.a, scoreB: mp.b } : {};
+}
+
+// stats label linking a fixture to its match_results rows (must stay stable)
+function fxLabel(a, b, match) {
+  return a && b ? `${a.name} vs ${b.name}${match.id ? " · " + String(match.id).slice(-4).toUpperCase() : ""}` : null;
+}
+
+// round-robin pairing for a list of teamIds (each plays each once)
+function roundRobinMatches(teamIds, bo) {
+  const ms = [];
+  for (let i = 0; i < teamIds.length; i++)
+    for (let j = i + 1; j < teamIds.length; j++)
+      ms.push({ id: tuid(), teamA: teamIds[i], teamB: teamIds[j], bo, maps: [], done: false, winner: null });
+  return ms;
+}
+
+// League Play fixtures — no bracket. Circle-method rotation for 4 rounds so
+// every team plays 4 matches per tournament (vs 4 different opponents when the
+// team count allows; small leagues see a rematch, odd counts a bye per round).
+function leagueMatches(teamIds, bo) {
+  const arr = [...teamIds];
+  if (arr.length % 2) arr.push(null); // bye slot
+  const n = arr.length, ms = [];
+  const rounds = Math.min(4, Math.max(1, 4)); // 4 matches per team per tournament
+  for (let r = 0; r < rounds; r++) {
+    for (let i = 0; i < n / 2; i++) {
+      const a = arr[i], b = arr[n - 1 - i];
+      if (a != null && b != null) ms.push({ id: tuid(), round: r + 1, teamA: a, teamB: b, bo, maps: [], done: false, winner: null });
+    }
+    arr.splice(1, 0, arr.pop()); // rotate, first seat fixed
+  }
+  return ms;
+}
+
+// next power of two >= n
+const nextPow2 = (n) => { let p = 1; while (p < n) p *= 2; return p; };
+
+// Standard bracket order for n seeds: 1 v n, and 1 and 2 can only meet in the
+// final. n=8 → [1,8,4,5,2,7,3,6].
+function seedOrder(n) {
+  let order = [1];
+  while (order.length < n) { const m = order.length * 2; order = order.flatMap((s) => [s, m + 1 - s]); }
+  return order;
+}
+
+// build a single-elim bracket from a seed list (slotIds[0] = seed 1; nulls are
+// empty seeds, which become byes for the top seeds)
+function buildSingleElim(slotIds, bo) {
+  const size = Math.max(nextPow2(slotIds.length || 2), 2);
+  const seeds = seedOrder(size).map((s) => slotIds[s - 1] ?? null);
+  const rounds = [];
+  // round 0: pair 0-1, 2-3, ...
+  let r0 = [];
+  for (let i = 0; i < size; i += 2) {
+    const a = seeds[i], b = seeds[i + 1];
+    const m = { id: tuid(), teamA: a, teamB: b, bo, maps: [], done: false, winner: null };
+    if (a && !b) { m.done = true; m.winner = a; m.bye = true; }       // bye
+    else if (!a && b) { m.done = true; m.winner = b; m.bye = true; }   // bye
+    r0.push(m);
+  }
+  rounds.push(r0);
+  // subsequent rounds: empty matches fed by winners
+  let count = r0.length;
+  while (count > 1) {
+    const r = [];
+    for (let i = 0; i < count; i += 2)
+      r.push({ id: tuid(), teamA: null, teamB: null, bo, maps: [], done: false, winner: null, from: [count > 0 ? i : null, i + 1] });
+    rounds.push(r);
+    count = r.length;
+  }
+  return rounds;
+}
+
+// Maps a side has to win: 1 for a Bo1, 2 for a Bo3, 3 for a Bo5.
+const boNeed = (bo) => (Number(bo) === 5 ? 3 : Number(bo) === 3 ? 2 : 1);
+
+// has this match been decided by its map scores? sets winner + returns it
+function resolveMatch(m) {
+  // One side empty: only a genuine bye (marked when the bracket is built or
+  // propagated) advances the other team. Otherwise the opponent is just not
+  // decided yet — treating that as a bye crowned a champion as soon as one
+  // semifinal finished.
+  if (m.teamA == null || m.teamB == null) {
+    const solo = m.teamA ?? m.teamB ?? null;
+    m.done = !!(m.bye && solo); m.winner = m.done ? solo : null; return m;
+  }
+  // A forfeit (the side named gave it up) decides the match whatever the maps say.
+  if (m.forfeit === "a" || m.forfeit === "b") { m.done = true; m.winner = m.forfeit === "a" ? m.teamB : m.teamA; return m; }
+  const need = boNeed(m.bo);
+  let aw = 0, bw = 0;
+  for (const mp of (m.maps || [])) {
+    if (mp.a == null || mp.b == null) continue;
+    if (mp.a > mp.b) aw++; else if (mp.b > mp.a) bw++;
+  }
+  if (aw >= need) { m.done = true; m.winner = m.teamA; }
+  else if (bw >= need) { m.done = true; m.winner = m.teamB; }
+  else { m.done = false; m.winner = null; }
+  return m;
+}
+
+// round tallies for one team from one resolved match (sum of all map rounds)
+function matchTally(m, teamId) {
+  let rf = 0, ra = 0;
+  for (const mp of (m.maps || [])) {
+    if (mp.a == null || mp.b == null) continue;
+    if (m.teamA === teamId) { rf += mp.a; ra += mp.b; }
+    else if (m.teamB === teamId) { rf += mp.b; ra += mp.a; }
+  }
+  return { rf, ra };
+}
+
+// standings table for a set of teamIds across a set of matches
+// returns sorted rows: { teamId, played, won, lost, pts, rf, ra, diff }
+function computeStandings(teamIds, matches, overrides) {
+  const row = {};
+  teamIds.forEach((id) => { row[id] = { teamId: id, played: 0, won: 0, lost: 0, pts: 0, rf: 0, ra: 0, diff: 0 }; });
+  for (const m of matches) {
+    if (!m.done || m.teamA == null || m.teamB == null) continue;
+    if (!row[m.teamA] || !row[m.teamB]) continue;
+    const ta = matchTally(m, m.teamA), tb = matchTally(m, m.teamB);
+    row[m.teamA].rf += ta.rf; row[m.teamA].ra += ta.ra;
+    row[m.teamB].rf += tb.rf; row[m.teamB].ra += tb.ra;
+    row[m.teamA].played++; row[m.teamB].played++;
+    if (m.winner === m.teamA) { row[m.teamA].won++; row[m.teamA].pts += 3; row[m.teamB].lost++; }
+    else if (m.winner === m.teamB) { row[m.teamB].won++; row[m.teamB].pts += 3; row[m.teamA].lost++; }
+  }
+  let rows = teamIds.map((id) => { const r = row[id]; r.diff = r.rf - r.ra; return r; });
+  // apply manual overrides (host can hand-edit pts/diff)
+  if (overrides) rows = rows.map((r) => overrides[r.teamId] ? { ...r, ...overrides[r.teamId], _ov: true } : r);
+  // head-to-head helper between two teams
+  const h2h = (x, y) => {
+    for (const m of matches) {
+      if (!m.done) continue;
+      if ((m.teamA === x && m.teamB === y) || (m.teamA === y && m.teamB === x)) {
+        if (m.winner === x) return -1; if (m.winner === y) return 1;
+      }
+    }
+    return 0;
+  };
+  rows.sort((a, b) =>
+    b.pts - a.pts || b.diff - a.diff || b.rf - a.rf || h2h(a.teamId, b.teamId) || 0
+  );
+  return rows;
+}
+
+// locate a match inside a tournament by locator: {kind, ...}
+//  group: {kind:"group", groupId, matchId}  | rr: {kind:"rr", matchId}
+//  final: {kind:"final"} | elim: {kind:"elim", round, idx}
+//  ko: {kind:"ko", round, idx} (group-stage knockout rounds before the semis)
+function findMatch(t, loc) {
+  if (!loc) return null;
+  if (loc.kind === "group") return (t.matches?.[loc.groupId] || []).find((m) => m.id === loc.matchId) || null;
+  if (loc.kind === "rr") return (t.matches || []).find((m) => m.id === loc.matchId) || null;
+  if (loc.kind === "final") return t.final || null;
+  if (loc.kind === "semi") return (t.semis || []).find((m) => m.id === loc.matchId) || null;
+  if (loc.kind === "elim") return t.rounds?.[loc.round]?.[loc.idx] || null;
+  if (loc.kind === "ko") return t.ko?.[loc.round]?.[loc.idx] || null;
+  return null;
+}
+
+// after a single-elim result, feed winners into the next round's matches
+function propagateElim(t) {
+  if (!t.rounds?.length) return;
+  // A feeder is "dead" when it can never produce a team: an empty first-round
+  // pairing, or a later match fed only by dead ones. Only a dead side makes the
+  // other team's match a bye; an undecided live side is TBD.
+  const dead = t.rounds.map(() => []);
+  t.rounds[0].forEach((m, i) => {
+    dead[0][i] = !m.teamA && !m.teamB;
+    // Boards built before byes were flagged.
+    if (!m.teamA !== !m.teamB) { m.bye = true; m.done = true; m.winner = m.teamA || m.teamB; }
+  });
+  for (let r = 0; r < t.rounds.length - 1; r++) {
+    t.rounds[r + 1].forEach((nm, slot) => {
+      const fa = t.rounds[r][slot * 2], fb = t.rounds[r][slot * 2 + 1];
+      const aDead = !fa || dead[r][slot * 2], bDead = !fb || dead[r][slot * 2 + 1];
+      dead[r + 1][slot] = aDead && bDead;
+      const wa = fa?.done ? fa.winner : null, wb = fb?.done ? fb.winner : null;
+      // A result recorded between two other teams means nothing for the new pair.
+      if (nm.teamA !== wa || nm.teamB !== wb) { nm.teamA = wa; nm.teamB = wb; nm.maps = []; nm.winner = null; nm.done = false; }
+      nm.bye = !!((wa && !wb && bDead) || (!wa && wb && aDead));
+      resolveMatch(nm);
+    });
+  }
+}
+
+const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
+
+// The final's best-of: Bo3 unless the host picks otherwise (t.finalBo). The
+// rest of the tournament keeps t.bo.
+const finalBoOf = (t) => [1, 3, 5].includes(Number(t?.finalBo)) ? Number(t.finalBo) : 3;
+
+// The knockout draw: group winners seeded by record, then runners-up by record;
+// standard bracket order (1 v 8, 4 v 5, …) with byes for the top seeds, and a
+// first-round pairing of two teams from the same group swapped where a swap
+// keeps both pairs apart. syncFinal builds the real bracket from this and
+// playoffPreview shows it early, so the two can't disagree.
+function koSeedOrder(groups, adv, keepApart = true) {
+  const seeds = [
+    ...groups.map((g, gi) => ({ ...g.rows[0], gi })).sort(byRecord),
+    ...(adv === 2 ? groups.map((g, gi) => ({ ...g.rows[1], gi })).sort(byRecord) : []),
+  ].map((x, i) => ({ ...x, seed: i + 1 }));
+  const size = Math.max(8, nextPow2(seeds.length));
+  const order = seedOrder(size).map((n) => seeds[n - 1] || null);
+  if (keepApart) for (let i = 0; i < size; i += 2) {
+    const a = order[i], b = order[i + 1];
+    if (!a || !b || a.gi !== b.gi) continue;
+    for (let j = 0; j < size; j += 2) {
+      const c = order[j], d = order[j + 1];
+      if (j === i || !c || !d) continue;
+      if (d.gi !== a.gi && c.gi !== b.gi) { order[i + 1] = d; order[j + 1] = b; break; }
+    }
+  }
+  return { size, order };
+}
+
+// The playoff matches before they exist: seed labels from the start, and the
+// teams that would be there if the groups ended now once every group has a
+// result. For display only; nothing here is saved to the board.
+function playoffPreview(t) {
+  const G = t.groups?.length || 0;
+  if (G < 2) return null;
+  const tables = t.groups.map((g) => {
+    const ms = t.matches[g.id] || [];
+    return { name: g.name, played: ms.some((m) => m.done), rows: computeStandings(g.teamIds, ms, t.overrides) };
+  });
+  const live = tables.every((x) => x.played && x.rows.length >= 2);
+  const adv = G > 2 && t.advance === 2 ? 2 : 1;
+  const blank = { pts: 0, diff: 0, rf: 0 };
+  const groups = live ? tables : tables.map(() => ({ rows: [blank, blank] }));
+  const seat = (s) => ({ label: s ? `Seed ${s.seed}` : "TBD", team: s?.teamId || null, projected: !!s?.teamId });
+  const placed = (x, i) => ({ label: `${x.name} ${i ? "runner-up" : "winner"}`, team: live ? x.rows[i]?.teamId || null : null, projected: live });
+  const feed = (m) => m.through || { label: `Winner of ${m.tag}`, team: null };
+
+  const ko = [];
+  let semis;
+  if (G > 4 || (G > 2 && adv === 2)) {
+    const { size, order } = koSeedOrder(groups, adv, live);
+    let round = [];
+    for (let i = 0; i < size; i += 2) {
+      const a = order[i], b = order[i + 1];
+      round.push(a && b ? { a: seat(a), b: seat(b), tag: `${a.seed}v${b.seed}` } : { through: seat(a || b) });
+    }
+    ko.push(round);
+    while (round.length > 4) {
+      const prev = round;
+      round = Array.from({ length: prev.length / 2 }, (_, i) => ({ a: feed(prev[i * 2]), b: feed(prev[i * 2 + 1]), tag: `QF${i + 1}` }));
+      ko.push(round);
+    }
+    semis = [{ a: feed(round[0]), b: feed(round[1]) }, { a: feed(round[2]), b: feed(round[3]) }];
+  } else if (G === 2) {
+    const [A, B] = tables;
+    semis = [{ a: placed(A, 0), b: placed(B, 1) }, { a: placed(B, 0), b: placed(A, 1) }];
+  } else {
+    const seeds = groups.map((g) => g.rows[0]);
+    if (G === 3) seeds.push(groups.map((g) => g.rows[1]).sort(byRecord)[0]);
+    const ranked = seeds.sort(byRecord).map((x, i) => ({ ...x, seed: i + 1 }));
+    semis = [{ a: seat(ranked[0]), b: seat(ranked[3]) }, { a: seat(ranked[1]), b: seat(ranked[2]) }];
+  }
+  const semiWinner = (i) => {
+    const m = t.semis?.[i];
+    return { label: `Winner of SF${i + 1}`, team: m?.done ? m.winner || null : null };
+  };
+  const final = t.playoff === "semis"
+    ? { a: semiWinner(0), b: semiWinner(1) }
+    : { a: placed(tables[0], 0), b: placed(tables[1], 0) };
+  return { ko, semis, final };
+}
+
+// Group stage → knockout: seeds the semis (and any rounds before them) from
+// the finished group tables, and the final from the semis. Pure: board in, board out.
+function syncFinal(s, t) {
+  const table = (g) => {
+    const ms = t.matches[g.id] || [];
+    const done = ms.length > 0 && ms.every((m) => m.done);
+    const rows = computeStandings(g.teamIds, ms, t.overrides);
+    return { done, rows };
+  };
+  const groups = t.groups.map(table);
+  const allGroupsDone = groups.length > 0 && groups.every((g) => g.done);
+
+  // Two groups default to semis. Straight-to-final discards both runners-up,
+  // so second place in a group is worth nothing and half the teams are done
+  // after the group stage. Explicitly choosing "final" still works for two
+  // groups. Three or four groups always need semis — a final only has room
+  // for two group winners, and the old code silently dropped the rest.
+  if (t.groups.length > 2) t.playoff = "semis";
+  const wantSemis = t.playoff === "semis" || (t.playoff == null && t.groups.length === 2);
+  // Top one or two from each group. More than four qualifiers (five+ groups,
+  // or the top two from three+ groups) adds knockout rounds before the semis.
+  const adv = t.groups.length > 2 && t.advance === 2 ? 2 : 1;
+  const koOn = t.groups.length > 4 || (t.groups.length > 2 && adv === 2);
+  const koPlayed = () => (t.ko || []).some((r) => (r || []).some((m) => m.done && !m.bye));
+  if (!wantSemis) {
+    t.semis = null;
+    const winners = groups.map((g) => (g.done && g.rows.length ? g.rows[0].teamId : null));
+    if (winners.length >= 2 && winners[0] && winners[1]) {
+      if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: finalBoOf(t), maps: [], done: false, winner: null };
+      else if (!t.final.done) { t.final.teamA = winners[0]; t.final.teamB = winners[1]; }
+    } else if (t.final && !t.final.done) t.final = null;
+    return;
+  }
+
+  // Crossover semis: winner of one group meets the runner-up of the other, so
+  // topping your group is worth something rather than just qualifying.
+  if (!allGroupsDone || groups.length < 2 || groups.some((g) => g.rows.length < 2)) {
+    if (t.ko && !koPlayed()) { t.ko = null; t.koSeed = null; }
+    if (t.semis && !t.semis.some((m) => m.done)) t.semis = null;
+    if (t.final && !t.final.done) t.final = null;
+    return;
+  }
+  let pairs;
+  if (!koOn) { t.ko = null; t.koSeed = null; }
+  if (koOn) {
+    const { size, order } = koSeedOrder(groups, adv);
+    const sig = order.map((x) => x?.teamId || "-").join(",");
+    if (!t.ko || (!koPlayed() && t.koSeed !== sig)) {
+      // first round from the ordered slots, then empty rounds down to the last eight
+      const rounds = [];
+      let r0 = [];
+      for (let i = 0; i < size; i += 2) {
+        const a = order[i]?.teamId || null, b = order[i + 1]?.teamId || null;
+        const m = { id: tuid(), teamA: a, teamB: b, bo: t.bo, maps: [], done: false, winner: null };
+        if (!!a !== !!b) { m.done = true; m.winner = a || b; m.bye = true; }
+        r0.push(m);
+      }
+      rounds.push(r0);
+      for (let n = size / 4; n >= 4; n /= 2)
+        rounds.push(Array.from({ length: n }, () => ({ id: tuid(), teamA: null, teamB: null, bo: t.bo, maps: [], done: false, winner: null })));
+      t.ko = rounds; t.koSeed = sig;
+    }
+    propagateElim({ rounds: t.ko });
+    const w = t.ko[t.ko.length - 1].map((m) => (m.done ? m.winner : null));
+    pairs = [{ id: "sf1", teamA: w[0], teamB: w[1] }, { id: "sf2", teamA: w[2], teamB: w[3] }];
+  } else if (groups.length === 2) {
+    const [A, B] = groups;
+    pairs = [
+      { id: "sf1", teamA: A.rows[0].teamId, teamB: B.rows[1].teamId },
+      { id: "sf2", teamA: B.rows[0].teamId, teamB: A.rows[1].teamId },
+    ];
+  } else {
+    // Three or four groups: every group winner (plus the best runner-up when
+    // there are three) goes through, seeded by record — 1 v 4, 2 v 3.
+    const seeds = groups.map((g) => g.rows[0]);
+    if (groups.length === 3) seeds.push(groups.map((g) => g.rows[1]).sort(byRecord)[0]);
+    seeds.sort(byRecord);
+    pairs = [
+      { id: "sf1", teamA: seeds[0].teamId, teamB: seeds[3].teamId },
+      { id: "sf2", teamA: seeds[1].teamId, teamB: seeds[2].teamId },
+    ];
+  }
+  if (!t.semis) {
+    t.semis = pairs.map((x) => ({ ...x, bo: t.bo, maps: [], done: false, winner: null }));
+  } else {
+    // Re-seed only what hasn't been played, so correcting an earlier group
+    // result can't rewrite a semi that already happened.
+    t.semis = pairs.map((x) => {
+      const prev = t.semis.find((m) => m.id === x.id);
+      if (prev?.done) return prev;
+      return { ...(prev || {}), ...x, bo: prev?.bo ?? t.bo, maps: prev?.maps || [], done: false, winner: null };
+    });
+  }
+
+  const w = t.semis.map((m) => (m.done ? m.winner : null));
+  if (w[0] && w[1]) {
+    if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: finalBoOf(t), maps: [], done: false, winner: null };
+    else if (!t.final.done) { t.final.teamA = w[0]; t.final.teamB = w[1]; }
+  } else if (t.final && !t.final.done) t.final = null;
+}
+
+// aggregate a player's per-match tournament stats: K/D/A totaled, ACS averaged
+const emptySlots = (t) => 4 - ((t?.roster || []).length);
+
+// Starting-bid value for an available player (rank-priced). Lower = cheaper.
+const playerBidValue = (p) => (rankOf(p.rank)?.bid ?? 0);
+
+// The N cheapest available players' starting bids, summed.
+// `availablePlayers` = the live pool (status === "pool"), i.e. NOT the player on the block and NOT sold.
+// N = roster slots this captain must still fill AFTER the current pick succeeds.
+//   Each captain drafts 4 players, so after winning the player on the block they have
+//   (4 - roster.length - 1) slots left. Clamped at 0 (never negative).
+const reserveFor = (t, availablePlayers) => {
+  const slotsAfterThisPick = Math.max(4 - t.roster.length - 1, 0);
+  if (slotsAfterThisPick === 0) return 0;
+  // sort by actual starting-bid value (not rank label) so equal-priced ranks tie correctly
+  const cheapest = availablePlayers
+    .map(playerBidValue)
+    .sort((a, b) => a - b)
+    .slice(0, slotsAfterThisPick);
+  return cheapest.reduce((sum, v) => sum + v, 0);
+};
+
+// Live max bid: budget minus the reserve needed to still fill remaining slots
+// from the cheapest players left in the pool. Recomputed against the live pool,
+// so any captain buying a cheap player shifts every captain's ceiling.
+const maxAllowedBid = (t, availablePlayers = []) => t.budget - reserveFor(t, availablePlayers);
+
+const requiredBid = (b) => (b.leaderId ? b.currentBid + 100 : b.startingBid);
+
+// notched HUD panel wrapper
+// The fixtures screen's panel: the dashboard cells' chrome (bracket, corner
+// hatching, // label header) so it reads as the same product as the home page.
+function TPanel({ children, hue = "#3d7bff", className = "", style = {}, title, right }) {
+  return (
+    <div className={"relative p-5 " + className} style={{ background: "linear-gradient(160deg, rgba(17,23,40,0.78), rgba(10,13,22,0.78))", border: `1px solid ${hue}33`, clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", ...style }}>
+      <span aria-hidden className="absolute" style={{ right: 0, top: 0, width: 140, height: 90, pointerEvents: "none",
+        background: `repeating-linear-gradient(135deg, ${hue}17 0 1px, transparent 1px 8px)`,
+        maskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)", WebkitMaskImage: "radial-gradient(circle at 100% 0, #000, transparent 72%)" }} />
+      <span className="absolute left-0 top-0" style={{ width: 11, height: 11, borderLeft: `2px solid ${hue}`, borderTop: `2px solid ${hue}` }} />
+      <div className="relative">
+        {title && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <span style={{ ...SEC_LABEL, fontSize: 11, color: hue === "#3d7bff" ? "#7da6ff" : hue }}>// {title}</span>
+            <span style={{ ...SEC_RULE, background: `linear-gradient(90deg, ${hue}55, transparent)` }} />
+            {right}
+          </div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// a small team chip
+function TTeamChip({ team, onClick, active, sub }) {
+  if (!team) return <span className="uppercase tracking-widest" style={{ fontSize: 14, color: "rgba(200,215,255,0.3)", fontFamily: "'Rajdhani',sans-serif" }}>— TBD —</span>;
+  return (
+    <button onClick={onClick} disabled={!onClick} className="flex items-center gap-2 px-3 py-2 transition-all"
+      style={{ cursor: onClick ? "pointer" : "default", background: active ? team.hue + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${active ? team.hue : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
+      <TeamMono name={team.name} hue={team.hue} size={18} />
+      <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 16, color: team.hue, letterSpacing: "0.03em" }}>{team.name}</span>
+      {sub && <span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>{sub}</span>}
+    </button>
+  );
+}
+
+// ── Match scheduling — green time chip everyone sees; hosts get the picker ──
+function MatchSchedule({ match, locator, isAdmin, onSetTime }) {
+  const iso = match.scheduledAt || null;
+  const toLocalInput = (v) => {
+    if (!v) return "";
+    const d = new Date(v); if (isNaN(d)) return "";
+    const p = (x) => String(x).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const pretty = iso ? (() => {
+    const d = new Date(iso); if (isNaN(d)) return null;
+    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }).toUpperCase()
+      + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  })() : null;
+  if (!pretty && !isAdmin) return null;
+  return (
+    <div className="flex items-center justify-center gap-2 flex-wrap">
+      {pretty && (
+        <span className="inline-flex items-center gap-2" style={{ padding: "6px 13px", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.4)", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>
+          <span style={{ color: "#3ddc84", fontSize: 12 }}>◷</span>
+          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9af5c2" }}>{pretty}</span>
+        </span>
+      )}
+      {isAdmin && onSetTime && (
+        <VoltDateTime value={iso} onChange={(v) => onSetTime(locator, v)} placeholder="Set match time" />
+      )}
+    </div>
+  );
+}
+
+// ── Final prediction — one vote per person, publicly attributed. Expand to
+//    see who backed which side. Locks once the match is played. ──
+function MatchPrediction({ match, locator, a, b, onVote }) {
+  const [open, setOpen] = useState(false);
+  // Re-render on a timer so voting closes the moment kick-off passes, rather
+  // than whenever something else happens to re-render the page.
+  const [, tick] = useState(0);
+  const started = !!(match.scheduledAt && voltNow() >= new Date(match.scheduledAt).getTime());
+  useEffect(() => {
+    if (match.done || !match.scheduledAt || started) return;
+    const ms = new Date(match.scheduledAt).getTime() - voltNow();
+    const t = setTimeout(() => tick((n) => n + 1), Math.min(Math.max(ms, 0) + 500, 2147483000));
+    return () => clearTimeout(t);
+  }, [match.scheduledAt, match.done, started]);
+  const votes = match.votes && typeof match.votes === "object" ? match.votes : {};
+  const list = Object.entries(votes);
+  const aV = list.filter(([, v]) => v.side === "a");
+  const bV = list.filter(([, v]) => v.side === "b");
+  const total = list.length;
+  const uid = window.__VOLT?.userId;
+  const mine = uid ? votes[uid]?.side : null;
+  const canVote = !!(onVote && uid && !match.done && !started && a && b);
+  if (!a || !b) return null;
+  if (match.done && total === 0) return null;
+  const aPct = total ? (aV.length / total) * 100 : 50;
+  const hueA = a.hue, hueB = b.hue;
+  const side = (label, arr, hue, align) => (
+    <div style={{ flex: 1, minWidth: 0, padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: `1px solid ${hue}33`, clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: hue, textAlign: align }}>{label} · {arr.length}</div>
+      <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.6)", marginTop: 5, lineHeight: 1.5, textAlign: align }}>
+        {arr.length ? arr.map(([, v]) => v.name).join(", ") : "—"}
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ borderTop: "1px dashed rgba(120,150,220,0.18)", paddingTop: 9, marginTop: 2 }}>
+      <div className="flex items-center justify-between gap-2">
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(160,185,235,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>
+          Who wins?{mine ? <span style={{ color: "#7da6ff" }}> · you picked {mine === "a" ? a.name : b.name}</span> : null}
+          {/* Say why the buttons are gone. A control that silently disappears
+              reads as a bug rather than a deadline. */}
+          {started && !match.done && <span style={{ color: "rgba(245,196,83,0.85)" }}> · closed at kick-off</span>}
+          {match.forfeit && <span style={{ color: "rgba(245,196,83,0.85)" }}> · forfeit, picks don't count</span>}
+        </span>
+        <button onClick={() => setOpen(o => !o)} disabled={!total}
+          style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: total ? "rgba(200,215,255,0.55)" : "rgba(200,215,255,0.25)", background: "none", border: "none", cursor: total ? "pointer" : "default", fontFamily: "'Rajdhani',sans-serif" }}>
+          {total} vote{total === 1 ? "" : "s"} {total ? (open ? "▲" : "▼") : ""}
+        </button>
+      </div>
+      {/* split bar */}
+      <div className="flex" style={{ height: 7, marginTop: 7, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+        <div style={{ width: `${total ? aPct : 50}%`, background: hueA, opacity: total ? 1 : 0.25, transition: "width .25s ease" }} />
+        <div style={{ flex: 1, background: hueB, opacity: total ? 1 : 0.25 }} />
+      </div>
+      {open && total > 0 && (
+        <div className="flex gap-2 mt-2.5 flex-wrap">
+          {side(a.name, aV, hueA, "left")}
+          {side(b.name, bV, hueB, "right")}
+        </div>
+      )}
+      {canVote && (
+        <div className="flex items-center justify-center gap-2 mt-2.5">
+          {[["a", a, hueA], ["b", b, hueB]].map(([sd, tm, hue]) => (
+            <button key={sd} onClick={() => onVote(locator, sd)}
+              style={{ flex: 1, maxWidth: 200, padding: "7px 12px", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Rajdhani',sans-serif", cursor: "pointer",
+                background: mine === sd ? `${hue}26` : "rgba(255,255,255,0.03)",
+                border: `1px solid ${mine === sd ? hue : "rgba(120,150,220,0.22)"}`,
+                color: mine === sd ? hue : "rgba(200,215,255,0.6)",
+                clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
+              {mine === sd ? "✓ " : ""}{tm.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Format switcher — swap the tournament's bracket format in place. Played
+//    fixtures for the same team pairing are carried over (same match id), so
+//    reported stats stay linked and every leaderboard keeps reading the same
+//    match_results rows regardless of format. ──
+function FormatSwitcher({ t, actions }) {
+  const [open, setOpen] = useState(false);
+  const [fmt, setFmt] = useState(t.format);
+  const [bo, setBo] = useState(t.bo === 3 ? "bo3" : "bo1");
+  const [groups, setGroups] = useState(t.groups?.length || 2);
+  const OPTS = [
+    { id: "league", name: "League", desc: "Auto round-robin — the standard tournament." },
+    { id: "group", name: "Group Stage", desc: "Groups, then semifinals and a final." },
+    { id: "single", name: "Single Elim", desc: "Straight knockout bracket." },
+    { id: "roundrobin", name: "Round Robin", desc: "One table, everyone once." },
+  ];
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="text-xs uppercase tracking-widest px-3 py-1.5"
+        style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(61,123,255,0.35)", background: "rgba(61,123,255,0.06)" }}>⇄ Change format</button>
+      {open && (
+        <VoltOverlay onClose={() => setOpen(false)} zIndex={130} dim="rgba(4,6,12,0.85)">
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", padding: "24px 26px", fontFamily: "'Rajdhani',sans-serif" }}>
+            <div className="flex items-center justify-between gap-3">
+              <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// Change format</span>
+              <button onClick={() => setOpen(false)} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
+            </div>
+            <p style={{ fontSize: 13, color: "rgba(200,215,255,0.6)", margin: "10px 0 16px", lineHeight: 1.5 }}>
+              Matches already played are kept — if the same two teams meet in the new format, their score, time and votes carry over. Player points are never affected.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-2 mb-4">
+              {OPTS.map((o) => (
+                <button key={o.id} onClick={() => setFmt(o.id)} style={{ textAlign: "left", padding: "11px 13px", cursor: "pointer",
+                  background: fmt === o.id ? "rgba(61,123,255,0.14)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${fmt === o.id ? "#3d7bff" : "rgba(120,150,220,0.2)"}`,
+                  clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: fmt === o.id ? "#ecf3ff" : "rgba(200,215,255,0.75)" }}>{o.name}</div>
+                  <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.45)", marginTop: 2 }}>{o.desc}</div>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap mb-5">
+              <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.5)", fontWeight: 700 }}>Match type</span>
+              {["bo1", "bo3"].map((b) => (
+                <button key={b} onClick={() => setBo(b)} style={{ padding: "6px 14px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", cursor: "pointer",
+                  background: bo === b ? "rgba(61,123,255,0.16)" : "transparent", border: `1px solid ${bo === b ? "#3d7bff" : "rgba(120,150,220,0.25)"}`, color: bo === b ? "#ecf3ff" : "rgba(200,215,255,0.55)" }}>{b.toUpperCase()}</button>
+              ))}
+              {fmt === "group" && (
+                <>
+                  <span style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.5)", fontWeight: 700, marginLeft: 6 }}>Groups</span>
+                  <input type="number" min="2" max={MAX_GROUPS} value={groups} onChange={(e) => setGroups(Math.min(MAX_GROUPS, Math.max(2, Number(e.target.value) || 2)))}
+                    style={{ width: 60, padding: "6px 8px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} />
+                </>
+              )}
+            </div>
+            <button onClick={() => { actions.tSwitchFormat(fmt, bo, groups); setOpen(false); }}
+              style={{ width: "100%", padding: "13px", fontSize: 13, fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", cursor: "pointer",
+                background: "rgba(61,123,255,0.16)", border: "1px solid #3d7bff", color: "#ecf3ff",
+                clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+              Switch to {OPTS.find((o) => o.id === fmt)?.name} →
+            </button>
+            <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 10, textAlign: "center" }}>You'll re-seed the teams, then lock it in.</p>
+          </div>
+        </VoltOverlay>
+      )}
+    </>
+  );
+}
+
+// ── Match cards ─────────────────────────────────────────────────────────
+// Every fixture in every format is drawn by the same two pieces: a compact
+// card (teams, score, when) and a match panel that opens on click with the
+// time, prediction, score entry and player stats. Cards used to carry all of
+// that inline, which made them different heights and broke the bracket.
+const FX_NOTCH = (n) => `polygon(0 0, calc(100% - ${n}px) 0, 100% ${n}px, 100% 100%, ${n}px 100%, 0 calc(100% - ${n}px))`;
+
+// Cards are clipped (notched corners), which also clips outlines and shadows,
+// so hover and keyboard focus are shown by brightening the border instead.
+const FX_CSS = `
+  .volt-fx { transition: border-color .15s, transform .15s, filter .15s; }
+  .volt-fx[role="button"]:hover { border-color: rgba(125,166,255,0.7) !important; transform: translateY(-1px); filter: brightness(1.08); }
+  .volt-fx:focus-visible { outline: none; border-color: #9cc0ff !important; filter: brightness(1.15); }
+  @keyframes voltFxDot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .volt-fx-dot { display: inline-block; border-radius: 50%; background: currentColor; animation: voltFxDot 1.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .volt-fx { transition: none; } .volt-fx[role="button"]:hover { transform: none; } .volt-fx-dot { animation: none; } }
+  /* Team names: two lines before they are ever cut, and smaller type once the
+     card itself is narrow (a phone, or two cards side by side on a tablet). */
+  .volt-fx-card { container-type: inline-size; }
+  .volt-fx-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; min-width: 0; }
+  @container (max-width: 360px) {
+    .volt-fx-name { font-size: 14.5px !important; }
+    .volt-fx-name.is-long, .volt-fx-name.is-slot { font-size: 12.5px !important; }
+    .volt-fx-mid.is-vs { min-width: 26px !important; }
+    .volt-fx-when { font-size: 11px !important; padding: 2px 6px !important; letter-spacing: 0.04em !important; }
+    .volt-fx-row { gap: 8px !important; padding-left: 12px !important; padding-right: 12px !important; }
+  }
+  /* Fixtures banner: the copy keeps to the clean side of the key art. */
+  @media (min-width: 701px) { .volt-fxhero-copy, .volt-fxhero-actions { max-width: min(640px, 58%) !important; } }
+`;
+
+const fxNameCls = (name, slot) => "volt-fx-name" + (slot ? " is-slot" : String(name || "").split(/\s+/).some((w) => w.length > 9) ? " is-long" : "");
+
+function matchFacts(match, teamOf) {
+  const a = teamOf(match.teamA), b = teamOf(match.teamB);
+  const bo = match.bo || 1;
+  const bye = !!match.bye || (match.done && (match.teamA == null) !== (match.teamB == null));
+  const maps = (match.maps || []).filter((m) => m && m.a != null && m.b != null);
+  const score = (who) => {
+    if (!maps.length) return null;
+    if (bo === 1) return maps[0][who];
+    return maps.filter((m) => (who === "a" ? m.a > m.b : m.b > m.a)).length;
+  };
+  const at = match.scheduledAt ? new Date(match.scheduledAt) : null;
+  const started = !!(at && !isNaN(at) && voltNow() >= at.getTime());
+  const statsLabel = fxLabel(a, b, match);
+  return {
+    a, b, bo, bye, at: at && !isNaN(at) ? at : null, started,
+    winA: match.done && match.winner === match.teamA,
+    winB: match.done && match.winner === match.teamB,
+    sA: score("a"), sB: score("b"),
+    scoreIn: !!(match.done || (match.maps || []).some((m) => m && (m.a != null || m.b != null))),
+    statsLabel, statsRecorded: !!(statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel)),
+    // Nobody played a forfeited match, so there are no player stats to report.
+    forfeit: match.forfeit === "a" || match.forfeit === "b" ? match.forfeit : null,
+    canReport: !!(a && b && !match.forfeit && window.__VOLT?.openReport),
+    votes: match.votes && typeof match.votes === "object" ? Object.values(match.votes) : [],
+  };
+}
+
+// "SUN 4 OCT · 7:00 PM" — short enough for a bracket card.
+const fxWhen = (d) => d
+  ? d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }).toUpperCase().replace(",", "")
+    + " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+  : null;
+
+// Status line for a card: final, live, the kick-off time, or "time TBC".
+// "2d 4h", "2h 05m", "14m": how long until a kick-off.
+const fxIn = (ms) => {
+  const m = Math.max(1, Math.ceil(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${String(mm).padStart(2, "0")}m` : `${mm}m`;
+};
+
+function FxCountdown({ at }) {
+  const left = at.getTime() - useNow(30000);
+  return left > 0 ? `in ${fxIn(left)}` : "live now";
+}
+
+function FxStatus({ f, match }) {
+  const now = useNow(30000);
+  const left = f.at ? f.at.getTime() - now : null;
+  const base = { fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap" };
+  if (f.bye) return <span style={{ ...base, color: "rgba(200,215,255,0.35)" }}>Bye</span>;
+  if (match.done) return match.forfeit
+    ? <span style={{ ...base, color: "#f5c453" }}>Forfeit</span>
+    : <span style={{ ...base, color: "#3ddc84" }}>Final</span>;
+  if (f.started || (left != null && left <= 0)) return <span style={{ ...base, color: "#ff4655", display: "inline-flex", alignItems: "center", gap: 6 }}>
+    <span className="volt-fx-dot" style={{ width: 6, height: 6 }} />Live</span>;
+  if (f.at) {
+    // Inside a day the date is noise: show the time and how long is left,
+    // and turn amber for the last hour.
+    const rgb = left <= 36e5 ? "255,209,102" : "154,245,194";
+    return <span className="volt-fx-when" style={{ ...base, fontSize: 12.5, color: left <= 36e5 ? "#ffe2a0" : "#c4fcdc", letterSpacing: "0.07em", padding: "2px 8px", background: `rgba(${rgb},0.1)`, border: `1px solid rgba(${rgb},0.28)` }}>
+      {left <= 864e5 ? `${f.at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · in ${fxIn(left)}` : fxWhen(f.at)}</span>;
+  }
+  return <span style={{ ...base, color: "rgba(200,215,255,0.45)" }}>Time TBC</span>;
+}
+
+// Thin vote split along the bottom of a card: who people are backing, at a glance.
+function FxVoteBar({ f }) {
+  if (!f.a || !f.b || f.bye) return null;
+  const n = f.votes.length;
+  const aPct = n ? (f.votes.filter((v) => v.side === "a").length / n) * 100 : 50;
+  return (
+    <div aria-hidden style={{ display: "flex", height: 3, opacity: n ? 0.9 : 0.18 }}>
+      <div style={{ width: `${aPct}%`, background: f.a.hue, transition: "width .3s" }} />
+      <div style={{ flex: 1, background: f.b.hue }} />
+    </div>
+  );
+}
+
+// Host score entry, one box pair per map.
+function ScoreEntry({ match, locator, onSetMap, onSetBo }) {
+  const bo = match.bo || 1;
+  const n = [3, 5].includes(Number(bo)) ? Number(bo) : 1, need = boNeed(bo);
+  const box = { width: 56, height: 40, background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff",
+    fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, fontWeight: 700, textAlign: "center", outline: "none" };
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+      {Array.from({ length: n }).map((_, mi) => {
+        const mp = match.maps?.[mi] || { a: null, b: null };
+        // A series stops once it's won: no box for a map that isn't played.
+        const before = (match.maps || []).slice(0, mi).filter((x) => x && x.a != null && x.b != null);
+        const decidedEarly = before.filter((x) => x.a > x.b).length >= need || before.filter((x) => x.b > x.a).length >= need;
+        if (decidedEarly && mp.a == null) return null;
+        return (
+          <span key={mi} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {n > 1 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace", marginRight: 2 }}>MAP {mi + 1}</span>}
+            <input type="number" inputMode="numeric" min="0" aria-label={`Map ${mi + 1}, first team's rounds`} value={mp.a == null ? "" : mp.a}
+              onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–" style={box} />
+            <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 18 }}>:</span>
+            <input type="number" inputMode="numeric" min="0" aria-label={`Map ${mi + 1}, second team's rounds`} value={mp.b == null ? "" : mp.b}
+              onChange={(e) => onSetMap(locator, mi, mp.a, e.target.value)} placeholder="–" style={box} />
+          </span>
+        );
+      })}
+      {onSetBo && locator?.kind !== "final" && (
+        <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} title="Switch this match's length"
+          style={shellBtn("ghost", { padding: "8px 12px", fontSize: 10.5 })}>Make it BO{bo === 1 ? 3 : 1}</button>
+      )}
+    </div>
+  );
+}
+
+// A team that doesn't show. The other side takes a 13–0 win on each map it
+// needed, with no player stats and no prediction points. Host only.
+function ForfeitEntry({ locator, f, onForfeit }) {
+  if (!onForfeit) return null;
+  const small = { fontSize: 12.5, color: "rgba(214,226,255,0.7)", fontFamily: READ_FONT, lineHeight: 1.45 };
+  if (f.forfeit) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap", textAlign: "center" }}>
+      <span style={small}>Recorded as a forfeit: no player stats, and predictions on this match don't count.</span>
+      <button onClick={() => onForfeit(locator, null)} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 10.5 })}>Undo forfeit</button>
+    </div>
+  );
+  if (f.scoreIn) return null;
+  const go = async (side) => {
+    const out = side === "a" ? f.a : f.b, win = side === "a" ? f.b : f.a;
+    if (!(await voltConfirm(`${win.name} take a 13–0 win. No player stats are recorded and predictions on this match won't count. You can undo it afterwards.`,
+      { title: `${out.name} forfeit?`, confirmLabel: "Record forfeit" }))) return;
+    onForfeit(locator, side);
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+      <span style={{ ...small, fontSize: 12 }}>A team didn't show?</span>
+      <button onClick={() => go("a")} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 10.5 })}>{f.a.name} forfeit</button>
+      <button onClick={() => go("b")} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 10.5 })}>{f.b.name} forfeit</button>
+    </div>
+  );
+}
+
+// Player-stats state and the button into the report.
+function StatsActions({ match, f }) {
+  if (f.bye || !(f.canReport || f.statsRecorded)) return null;
+  const chip = (txt, col) => <span style={{ fontSize: 10, color: col, border: `1px solid ${col}66`, background: `${col}12`, padding: "4px 9px",
+    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", clipPath: FX_NOTCH(6) }}>{txt}</span>;
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+      {f.statsRecorded ? chip("✓ Stats recorded", "#3ddc84") : f.scoreIn ? chip("⚠ Stats still needed", "#f5c453") : null}
+      {f.canReport && (
+        <button onClick={() => window.__VOLT.openReport({ teamAName: f.a.name, teamBName: f.b.name, label: f.statsLabel,
+            winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null, ...fixtureScore(match) })}
+          style={shellBtn(f.statsRecorded ? "ghost" : f.scoreIn ? "warn" : "accent", { padding: "8px 14px", fontSize: 11 })}>
+          ▦ {f.statsRecorded ? "Edit player stats" : "Add player stats"}</button>
+      )}
+    </div>
+  );
+}
+
+// The match panel. Opened from any card; everything you can do to a match is here.
+function MatchModal({ match, locator, teamOf, isAdmin, A, stage, onClose }) {
+  const f = matchFacts(match, teamOf);
+  const side = (team, win, lose, s, align) => (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: align, gap: 8, opacity: lose ? 0.5 : 1 }}>
+      <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={40} />
+      <div style={{ fontSize: "clamp(17px, 2.4vw, 24px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 1, textAlign: align === "flex-end" ? "right" : "left",
+        color: team ? team.hue : "rgba(200,215,255,0.4)", textShadow: win && team ? `0 0 20px ${team.hue}66` : "none", maxWidth: "100%", overflowWrap: "anywhere" }}>
+        {team ? team.name : "TBD"}</div>
+      {win && <span style={{ fontSize: 9.5, letterSpacing: "0.2em", color: "#3ddc84", fontWeight: 700 }}>✓ WINNER</span>}
+    </div>
+  );
+  const label = (t) => <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0 10px" }}>
+    <span style={{ ...SEC_LABEL, fontSize: 9.5 }}>// {t}</span><span style={SEC_RULE} /></div>;
+  return (
+    <VoltOverlay onClose={onClose} zIndex={130} dim="rgba(4,6,12,0.82)">
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`${f.a?.name || "TBD"} vs ${f.b?.name || "TBD"}`}
+        style={{ width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", position: "relative", padding: "22px 24px 24px",
+          background: "linear-gradient(160deg, rgba(20,26,42,0.99), rgba(10,13,22,0.99))", border: "1px solid rgba(61,123,255,0.4)",
+          clipPath: FX_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={SEC_LABEL}>// {stage || "Match"}</span>
+          <span style={{ fontSize: 10, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.45)", border: "1px solid rgba(120,150,220,0.2)", padding: "1px 6px" }}>BO{f.bo}</span>
+          <span style={SEC_RULE} />
+          <FxStatus f={f} match={match} />
+          <button onClick={onClose} aria-label="Close" style={shellBtn("ghost", { padding: "4px 10px", fontSize: 11, marginLeft: 4 })}>✕</button>
+        </div>
+        {/* Scoreboard */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 20 }}>
+          {side(f.a, f.winA, f.winB, f.sA, "flex-start")}
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: "clamp(30px, 5vw, 44px)", lineHeight: 1, color: "#eaf1ff", whiteSpace: "nowrap" }}>
+            {f.sA == null ? <span style={{ fontSize: 18, color: "rgba(200,215,255,0.35)", letterSpacing: "0.2em" }}>VS</span>
+              : <>{f.sA}<span style={{ color: "rgba(200,215,255,0.3)", margin: "0 8px" }}>:</span>{f.sB}</>}
+          </div>
+          {side(f.b, f.winB, f.winA, f.sB, "flex-end")}
+        </div>
+        {f.forfeit && <div style={{ textAlign: "center", marginTop: 12, fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#f5c453" }}>
+          {(f.forfeit === "a" ? f.a : f.b)?.name || "A team"} forfeited</div>}
+        {!f.bye && (isAdmin || f.at) && <>{label("When")}<MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={A.onSetTime} /></>}
+        {!f.bye && f.a && f.b && (f.votes.length > 0 || !match.done) && <>{label("Prediction")}<MatchPrediction match={match} locator={locator} a={f.a} b={f.b} onVote={A.onVote} /></>}
+        {isAdmin && !f.bye && f.a && f.b && <>{label("Result")}
+          {!f.forfeit && <ScoreEntry match={match} locator={locator} onSetMap={A.onSetMap} onSetBo={A.onSetBo} />}
+          <ForfeitEntry locator={locator} f={f} onForfeit={A.onForfeit} /></>}
+        {!f.bye && (f.canReport || f.statsRecorded) && <>{label("Player stats")}<StatsActions match={match} f={f} /></>}
+      </div>
+    </VoltOverlay>
+  );
+}
+
+// List card: used by groups, playoffs, finals and the league's live round.
+function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false, slotA, slotB }) {
+  const [open, setOpen] = useState(false);
+  const f = matchFacts(match, teamOf);
+  const mine = window.__VOLT?.userId && match.votes?.[window.__VOLT.userId]?.side;
+  const canVote = !!(A.onVote && window.__VOLT?.userId && !match.done && !f.started && f.a && f.b && !f.bye);
+  const lead = f.winA ? f.a : f.winB ? f.b : null;
+  const name = (team, win, lose, align) => (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, justifyContent: align === "right" ? "flex-end" : "flex-start", opacity: lose ? 0.45 : 1 }}>
+      {align === "left" && <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />}
+      <span className={fxNameCls(team?.name, !team && (align === "left" ? slotA : slotB))} style={{ fontWeight: 700, textTransform: "uppercase", fontSize: !team && (align === "left" ? slotA : slotB) ? (big ? 16 : 13) : big ? 20 : 16.5, lineHeight: 1.12, letterSpacing: "0.02em", textAlign: align,
+        color: team ? team.hue : "rgba(200,215,255,0.35)", textShadow: win && team ? `0 0 16px ${team.hue}55` : "none" }}>{team ? team.name : (f.bye && align === "right" ? "—" : (align === "left" ? slotA : slotB) || "TBD")}</span>
+      {align === "right" && <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />}
+    </div>
+  );
+  return (
+    <>
+      <div role="button" tabIndex={0} onClick={() => setOpen(true)} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setOpen(true))}
+        className="volt-fx volt-fx-card" style={{ position: "relative", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+          background: lead ? `linear-gradient(90deg, ${lead.hue}14, rgba(12,17,30,0.7) 45%)` : "rgba(12,17,30,0.7)",
+          border: `1px solid ${big ? "rgba(255,209,102,0.35)" : "rgba(120,150,220,0.16)"}`, clipPath: FX_NOTCH(10) }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 0" }}>
+          <span style={{ fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{stage || "Match"}</span>
+          <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>BO{f.bo}</span>
+          <span style={{ flex: 1 }} />
+          <FxStatus f={f} match={match} />
+        </div>
+        <div className="volt-fx-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: big ? "14px 16px 14px" : "10px 14px 12px" }}>
+          {name(f.a, f.winA, f.winB, "left")}
+          <div className={"volt-fx-mid" + (f.sA == null ? " is-vs" : "")} style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: big ? 26 : 20, color: "#eaf1ff", minWidth: 64, textAlign: "center", whiteSpace: "nowrap" }}>
+            {f.sA == null ? <span style={{ fontSize: 11, letterSpacing: "0.2em", color: "rgba(200,215,255,0.3)" }}>VS</span>
+              : <>{f.sA}<span style={{ color: "rgba(200,215,255,0.3)", margin: "0 5px" }}>:</span>{f.sB}</>}
+          </div>
+          {name(f.b, f.winB, f.winA, "right")}
+        </div>
+        {(canVote || mine || (isAdmin && !f.bye && f.a && f.b) || f.statsRecorded || (f.scoreIn && f.canReport)) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 14px 10px", flexWrap: "wrap" }}>
+            {mine ? <span style={{ fontSize: 12, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.06em" }}>✓ You picked {mine === "a" ? f.a?.name : f.b?.name}</span>
+              : canVote ? <span style={{ fontSize: 12, color: "#9af5c2", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>◈ Make your prediction →</span> : null}
+            <span style={{ flex: 1 }} />
+            {f.statsRecorded ? <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, letterSpacing: "0.1em" }}>✓ STATS</span>
+              : f.scoreIn && f.canReport ? <span style={{ fontSize: 11.5, color: "#f5c453", fontWeight: 700, letterSpacing: "0.1em" }}>⚠ STATS NEEDED</span> : null}
+            {isAdmin && !f.bye && f.a && f.b && <span style={{ fontSize: 11.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.1em" }}>EDIT ▸</span>}
+          </div>
+        )}
+        <FxVoteBar f={f} />
+      </div>
+      {open && <MatchModal match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} A={A} stage={stage} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+// editable score row for a single match — now the shared fixture card.
+function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, onForfeit, stage, big, slotA, slotB }) {
+  return <FixtureCard match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage} big={big} slotA={slotA} slotB={slotB}
+    A={{ onSetMap, onSetBo, onSetTime, onVote, onForfeit }} />;
+}
+
+// Host control on the final's panel: Bo1 / Bo3 / Bo5. Read-only once played.
+function FinalBoPicker({ t, onPick }) {
+  const cur = t.final?.bo ? Number(t.final.bo) : finalBoOf(t);
+  if (!onPick || t.final?.done) return null;
+  return (
+    <span className="inline-flex items-center gap-1.5" title="Best-of for the final">
+      {[1, 3, 5].map((n) => (
+        <button key={n} onClick={() => n !== cur && onPick(n)} aria-pressed={n === cur}
+          style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", padding: "4px 10px",
+            color: n === cur ? "#ffe2a0" : "rgba(200,215,255,0.5)",
+            border: `1px solid ${n === cur ? "rgba(255,209,102,0.7)" : "rgba(120,150,220,0.22)"}`,
+            background: n === cur ? "rgba(255,209,102,0.14)" : "transparent", cursor: n === cur ? "default" : "pointer" }}>
+          BO{n}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+// A playoff match that doesn't exist yet: the fixture card's shape, dimmed and
+// not clickable, naming the seed and the team currently in line for it.
+function SlotCard({ m, teamOf, stage, bo, big = false }) {
+  const side = (s, align) => {
+    const team = s.team ? teamOf(s.team) : null;
+    const mono = <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />;
+    return (
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 10, justifyContent: align === "right" ? "flex-end" : "flex-start" }}>
+        {align === "left" && mono}
+        <div style={{ minWidth: 0, textAlign: align }}>
+          <div className={fxNameCls(team?.name, !team)} style={{ fontWeight: 700, textTransform: "uppercase", fontSize: team ? (big ? 20 : 16.5) : big ? 16 : 13, lineHeight: 1.12, letterSpacing: "0.02em",
+            color: team ? team.hue : "rgba(200,215,255,0.42)" }}>{team ? team.name : s.label}</div>
+          {team && <div style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 700, color: "rgba(200,215,255,0.42)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</div>}
+        </div>
+        {align === "right" && mono}
+      </div>
+    );
+  };
+  const projected = m.a.projected && m.a.team || m.b.projected && m.b.team;
+  return (
+    <div className="volt-fx-card" style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(12,17,30,0.45)", border: `1px dashed ${big ? "rgba(255,209,102,0.3)" : "rgba(120,150,220,0.22)"}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px 0" }}>
+        <span style={{ fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{stage}</span>
+        <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>BO{bo || 1}</span>
+        {projected && <span style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(125,166,255,0.3)", padding: "0 5px" }}>Projected</span>}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap", color: "rgba(200,215,255,0.45)" }}>Time TBC</span>
+      </div>
+      <div className="volt-fx-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: big ? "14px 16px 14px" : "10px 14px 12px" }}>
+        {side(m.a, "left")}
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 11, letterSpacing: "0.2em", color: "rgba(200,215,255,0.3)", minWidth: 40, textAlign: "center" }}>VS</div>
+        {side(m.b, "right")}
+      </div>
+    </div>
+  );
+}
+
+// standings table
+// ── MATCHDAY VIEW — the league's fixtures as a season, not a form ──
+//    Completed rounds collapse to result strips (score, winner glow, match MVP),
+//    the active matchday gets full cards with stakes/form context, future
+//    rounds wait dimmed. Standings feed position chips + stakes lines.
+function TMatchdays({ t, teamOf, isAdmin, A }) {
+  const standings = computeStandings(t.teamIds, t.matches, t.overrides);
+  const pos = {}; standings.forEach((r, i) => { pos[r.teamId] = { rank: i + 1, pts: r.pts }; });
+  const topPts = standings[0]?.pts ?? 0;
+  const anyPlayed = standings.some(r => r.played > 0); // no context noise at 0-0
+  const n = standings.length;
+  const rounds = {}; (t.matches || []).forEach(m => { const r = m.round || 1; (rounds[r] = rounds[r] || []).push(m); });
+  const keys = Object.keys(rounds).map(Number).sort((x, y) => x - y);
+  const isDone = (k) => rounds[k].every(m => m.done || m.teamB == null);
+  const active = keys.find(k => !isDone(k)) ?? keys[keys.length - 1];
+
+  const formOf = (teamId) => (t.matches || []).filter(m => m.done && (m.teamA === teamId || m.teamB === teamId)).slice(-4).map(m => m.winner === teamId);
+  const streakOf = (teamId) => { const f = formOf(teamId); let s = 0; for (let i = f.length - 1; i >= 0 && f[i]; i--) s++; return s; };
+  const scoreOf = (m) => {
+    const maps = (m.maps || []).filter(x => x && x.a != null && x.b != null);
+    if (!maps.length) return null;
+    if ((m.bo || 1) === 1) return [maps[0].a, maps[0].b];
+    return [maps.filter(x => Number(x.a) > Number(x.b)).length, maps.filter(x => Number(x.b) > Number(x.a)).length];
+  };
+  const stakesOf = (m) => {
+    if (!anyPlayed || topPts === 0) return null; // stakes only exist once the table does
+    const a = pos[m.teamA], b = pos[m.teamB];
+    if (!a || !b) return null;
+    if (a.rank <= 2 && b.rank <= 2) return "TOP-OF-THE-TABLE CLASH";
+    // "go top": a non-leader whose win overtakes or ties the current leader
+    if ((a.rank !== 1 && a.pts + 3 >= topPts) || (b.rank !== 1 && b.pts + 3 >= topPts)) return "WINNER CAN GO TOP";
+    if (n >= 4 && a.rank >= n - 1 && b.rank >= n - 1) return "BASEMENT BATTLE";
+    return null;
+  };
+  const mvpOf = (m) => {
+    const a = teamOf(m.teamA), b = teamOf(m.teamB);
+    const lbl = fxLabel(a, b, m);
+    return lbl ? window.__VOLT?.reportedStats?.[lbl] : null;
+  };
+  const posChip = (teamId, right) => {
+    if (!anyPlayed) return null;
+    const p = pos[teamId]; if (!p) return null;
+    return <span style={{ fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.75)" }}>#{p.rank} · {p.pts} PTS</span>;
+  };
+  const pips = (teamId) => {
+    if (!anyPlayed) return null;
+    const f = formOf(teamId); if (!f.length) return null;
+    const s = streakOf(teamId);
+    return (
+      <span className="inline-flex items-center gap-1">
+        {f.map((w, i) => <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: w ? "#3ddc84" : "rgba(255,70,85,0.7)", boxShadow: w ? "0 0 5px rgba(61,220,132,0.6)" : "none" }} />)}
+        {s >= 3 && <span style={{ fontSize: 10, color: "#f5c453", fontWeight: 700, fontFamily: "'Rajdhani',sans-serif" , display: "inline-flex", alignItems: "center", gap: 2 }}><Icon name="flame" size={11} />{s}W</span>}
+      </span>
+    );
+  };
+  const mvpChip = (m) => {
+    const v = mvpOf(m); if (!v) return null;
+    return <span className="uppercase" style={{ fontSize: 10.5, color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.1em", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="star" size={12} />{v.name} · {v.pts} PTS</span>;
+  };
+
+  const roundTag = (k) => isDone(k)
+    ? <span style={{ fontSize: 11.5, letterSpacing: "0.12em", color: "#3ddc84", fontWeight: 700 }}>✓ COMPLETE</span>
+    : k === active
+      ? <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11.5, letterSpacing: "0.12em", color: "#7da6ff", fontWeight: 700 }}><span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#5b8dff", boxShadow: "0 0 8px rgba(61,123,255,0.9)" }} />IN PLAY</span>
+      : <span style={{ fontSize: 11.5, letterSpacing: "0.12em", color: "rgba(200,215,255,0.6)", fontWeight: 700 }}>UPCOMING</span>;
+
+  return (
+    <div className="flex flex-col gap-5">
+      {keys.map(k => (
+        <div key={k} style={{ opacity: !isDone(k) && k !== active ? 0.85 : 1 }}>
+          <div className="flex items-center gap-3 mb-2">
+            <span className="uppercase font-bold tracking-widest" style={{ color: k === active && !isDone(k) ? "#eaf1ff" : "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontSize: 14 }}>Round {k}</span>
+            {roundTag(k)}
+            <span className="flex-1" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.3), transparent)" }} />
+          </div>
+
+          {/* completed round → result strips */}
+          {isDone(k) && (
+            <div className="grid sm:grid-cols-2 gap-2">
+              {rounds[k].map(m => {
+                const a = teamOf(m.teamA), b = teamOf(m.teamB);
+                if (!b) return null;
+                const sc = scoreOf(m); const winA = m.winner === m.teamA;
+                return (
+                  <div key={m.id} className="flex flex-col gap-1 px-4 py-2.5" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.12)", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold uppercase" style={{ minWidth: 0, lineHeight: 1.1, overflowWrap: "anywhere", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, color: a?.hue, opacity: winA ? 1 : 0.45, textShadow: winA ? `0 0 12px ${a?.hue}66` : "none", flex: 1 }}>{a?.name}{winA && " ✓"}</span>
+                      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 17, fontWeight: 700, color: "#eaf1ff" }}>{sc ? `${sc[0]} : ${sc[1]}` : "—"}</span>
+                      <span className="font-bold uppercase text-right" style={{ minWidth: 0, lineHeight: 1.1, overflowWrap: "anywhere", fontFamily: "'Rajdhani',sans-serif", fontSize: 15, color: b?.hue, opacity: winA ? 0.45 : 1, textShadow: !winA ? `0 0 12px ${b?.hue}66` : "none", flex: 1 }}>{!winA && "✓ "}{b?.name}</span>
+                    </div>
+                    <div className="flex items-center justify-center">{mvpChip(m) || (isAdmin && window.__VOLT?.openReport && <button onClick={() => window.__VOLT.openReport({ teamAName: a.name, teamBName: b.name, label: fxLabel(a, b, m), winner: winA ? "A" : "B", ...fixtureScore(m) })} className="uppercase" style={{ fontSize: 11.5, letterSpacing: "0.1em", color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>▦ add player stats</button>)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* active round → full cards with context */}
+          {!isDone(k) && k === active && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {rounds[k].map(m => {
+                const a = teamOf(m.teamA), b = teamOf(m.teamB);
+                const st = b ? stakesOf(m) : null;
+                return (
+                  <div key={m.id} className="flex flex-col gap-1.5 min-w-0">
+                    {st && <div className="text-center uppercase" style={{ fontSize: 12.5, letterSpacing: "0.12em", color: "#f5c453", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>⚡ {st}</div>}
+                    {b && (
+                      <div className="flex items-center justify-between px-1">
+                        <span className="flex items-center gap-2">{posChip(m.teamA)}{pips(m.teamA)}</span>
+                        <span className="flex items-center gap-2">{pips(m.teamB)}{posChip(m.teamB)}</span>
+                      </div>
+                    )}
+                    <TMatchRow match={m} locator={{ kind: "rr", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`Round ${k}`} {...A} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* future rounds → quiet schedule */}
+          {!isDone(k) && k !== active && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {rounds[k].map(m => {
+                const a = teamOf(m.teamA), b = teamOf(m.teamB);
+                return (
+                  <div key={m.id} className="flex items-center justify-between px-4 py-2" style={{ background: "rgba(255,255,255,0.015)", border: "1px solid rgba(120,150,220,0.08)" }}>
+                    <span className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, color: a?.hue, flex: 1 }}>{a?.name || "TBD"}</span>
+                    <span style={{ fontSize: 10, color: "rgba(200,215,255,0.3)", fontFamily: "'IBM Plex Mono',monospace", padding: "0 10px" }}>VS</span>
+                    <span className="font-bold uppercase truncate text-right" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 13.5, color: b?.hue, flex: 1 }}>{b?.name || (m.teamA ? "BYE" : "TBD")}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#3d7bff" }) {
+  const rows = computeStandings(teamIds, matches, overrides);
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full volt-stand" style={{ borderCollapse: "collapse", fontFamily: "'Rajdhani',sans-serif" }}>
+        <thead>
+          <tr style={{ color: "rgba(200,215,255,0.5)" }}>
+            {["#", "Team", "P", "W", "L", "RF", "RA", "DIFF", "PTS"].map((h, i) => (
+              <th key={h} className="text-left uppercase py-2.5 px-2.5" style={{ fontSize: 10.5, letterSpacing: "0.2em", fontWeight: 700, textAlign: i < 2 ? "left" : "center", borderBottom: "1px solid rgba(120,150,220,0.18)", whiteSpace: "nowrap" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const tm = teamOf(r.teamId); const adv = i < advance;
+            return [
+              <tr key={r.teamId} style={{ background: adv ? `linear-gradient(90deg, ${hue}1c, ${hue}08 60%, transparent)` : "transparent", borderBottom: "1px solid rgba(120,150,220,0.08)", boxShadow: adv ? `inset 3px 0 0 ${hue}` : "none" }}>
+                <td className="py-3 px-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: adv ? hue : "rgba(200,215,255,0.5)", fontWeight: 700, whiteSpace: "nowrap" }}>{i + 1}{adv && <span style={{ color: hue }}> ▲</span>}</td>
+                <td className="py-3 px-2.5">
+                  <span className="flex items-center gap-2.5">
+                    <TeamMono name={tm?.name} hue={tm?.hue} size={20} />
+                    <span className="font-bold uppercase truncate" style={{ color: tm?.hue, fontSize: 18 }}>{tm?.name}{r._ov && <span title="manually adjusted" style={{ color: "#ffb020" }}> *</span>}</span>
+                  </span>
+                </td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(236,243,255,0.7)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.played}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "#3ddc84", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.won}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(255,120,135,0.8)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.lost}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(236,243,255,0.55)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.rf}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "rgba(236,243,255,0.55)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.ra}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: r.diff > 0 ? "#3ddc84" : r.diff < 0 ? "rgba(255,120,135,0.8)" : "rgba(236,243,255,0.55)", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16 }}>{r.diff > 0 ? "+" : ""}{r.diff}</td>
+                <td className="text-center py-3 px-2.5" style={{ color: "#5b8dff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 19, fontWeight: 700, textShadow: "0 0 10px rgba(61,123,255,0.5)" }}>{r.pts}</td>
+              </tr>,
+              // The cut: everyone above this line is through.
+              i === advance - 1 && rows.length > advance && (
+                <tr key="cut">
+                  <td colSpan={9} style={{ padding: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px 5px" }}>
+                      <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 12.5, letterSpacing: "0.01em", fontWeight: 600, whiteSpace: "nowrap", color: hue === "#3d7bff" ? "#a9c4ff" : hue }}>▲ {advance === 1 ? "Winner goes through" : `Top ${advance} go through`}</span>
+                      <span style={{ flex: 1, height: 0, borderTop: `1px dashed ${hue}99` }} />
+                    </div>
+                  </td>
+                </tr>
+              ),
+            ];
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// One bracket match. Fixed height on purpose: the bracket lines up by rows,
+// so a card that grows (a vote, a time picker) would knock every connector
+// off its centre. Everything else lives in the match panel it opens.
+const BK_CARD_H = 104;
+
+const BK_ROW_H = 124;
+
+// card + breathing room between cards in round one
+function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, onForfeit, stage, tag }) {
+  const [open, setOpen] = useState(false);
+  const f = matchFacts(match, teamOf);
+  const row = (team, win, lose, s, who) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, height: 36, padding: "0 10px 0 11px",
+      background: win && team ? `linear-gradient(90deg, ${team.hue}2a, transparent 85%)` : "transparent",
+      borderLeft: `3px solid ${win && team ? team.hue : "transparent"}`, opacity: lose ? 0.42 : 1 }}>
+      <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={18} />
+      <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase", fontSize: 15, letterSpacing: "0.02em",
+        color: team ? team.hue : "rgba(200,215,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {team ? team.name : (f.bye && who === "b" ? "—" : "TBD")}</span>
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700, minWidth: 22, textAlign: "right",
+        color: win ? "#eaf1ff" : "rgba(200,215,255,0.45)" }}>{s == null ? "" : s}</span>
+    </div>
+  );
+  return (
+    <>
+      <div role="button" tabIndex={0} aria-label={`${tag || stage}: ${f.a?.name || "TBD"} vs ${f.b?.name || "TBD"}`}
+        onClick={() => !f.bye && setOpen(true)} onKeyDown={(e) => !f.bye && (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setOpen(true))}
+        className="volt-fx" style={{ position: "relative", height: BK_CARD_H, display: "flex", flexDirection: "column", cursor: f.bye ? "default" : "pointer",
+          background: "rgba(12,17,30,0.85)", border: `1px solid ${match.done ? "rgba(120,150,220,0.2)" : f.a && f.b ? "rgba(61,123,255,0.35)" : "rgba(120,150,220,0.14)"}`,
+          clipPath: FX_NOTCH(9), opacity: f.bye ? 0.5 : 1, fontFamily: "'Rajdhani',sans-serif" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, height: 26, padding: "0 10px 0 11px", borderBottom: "1px solid rgba(120,150,220,0.12)" }}>
+          <span style={{ fontSize: 9.5, letterSpacing: "0.18em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)", fontWeight: 700 }}>{tag}</span>
+          <span style={{ flex: 1 }} />
+          <FxStatus f={f} match={match} />
+        </div>
+        {row(f.a, f.winA, f.winB, f.sA, "a")}
+        {row(f.b, f.winB, f.winA || f.bye, f.sB, "b")}
+        <span style={{ flex: 1 }} />
+        <FxVoteBar f={f} />
+      </div>
+      {open && <MatchModal match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage}
+        A={{ onSetMap, onSetBo, onSetTime, onVote, onForfeit }} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, onForfeit }) {
+  const narrow = useNarrow(640);
+  const firstOpen = Math.max(0, rounds.findIndex((r) => !r.every((m) => m.done)));
+  const [phRound, setPhRound] = useState(null);
+  const R = rounds.length;
+  const N = rounds[0]?.length || 1;
+  const roundName = (ri) => {
+    const fromEnd = R - 1 - ri;
+    if (fromEnd === 0) return "Final";
+    if (fromEnd === 1) return "Semifinals";
+    if (fromEnd === 2) return "Quarterfinals";
+    return "Round of " + rounds[ri].length * 2;
+  };
+  const tagOf = (ri, idx) => {
+    const fromEnd = R - 1 - ri;
+    if (fromEnd === 0) return "Final";
+    return (fromEnd === 1 ? "SF" : fromEnd === 2 ? "QF" : "R" + (ri + 1)) + " " + (idx + 1);
+  };
+  const LINE = "rgba(110,150,230,0.38)";
+  const CONN = 44;
+  const cols = rounds.map((_, ri) => (ri < R - 1 ? `minmax(230px, 1fr) ${CONN}px` : "minmax(230px, 1fr)")).join(" ");
+  // Phones: one round at a time, as a list, instead of a bracket you scroll sideways.
+  if (narrow) {
+    const cur = phRound ?? firstOpen;
+    return (
+      <div style={{ fontFamily: "'Rajdhani',sans-serif" }}>
+        <div className="volt-hscroll" style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 14 }}>
+          {rounds.map((round, ri) => {
+            const on = ri === cur, done = round.every((m) => m.done), fin = ri === R - 1;
+            return (
+              <button key={ri} onClick={() => setPhRound(ri)} style={{ flexShrink: 0, padding: "9px 14px", cursor: "pointer", fontSize: 12, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase",
+                color: on ? "#eaf1ff" : fin ? "#ffd166" : "rgba(200,215,255,0.6)", background: on ? (fin ? "rgba(255,209,102,0.16)" : "rgba(61,123,255,0.2)") : "rgba(255,255,255,0.03)",
+                border: `1px solid ${on ? (fin ? "rgba(255,209,102,0.6)" : "rgba(61,123,255,0.6)") : "rgba(120,150,220,0.2)"}`, clipPath: SHELL_NOTCH(7) }}>
+                {roundName(ri)}{done && <span style={{ color: "#3ddc84", marginLeft: 6 }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {rounds[cur].map((m, idx) => (
+            <TBracketMatch key={m.id} match={m} locator={{ kind: "elim", round: cur, idx }} teamOf={teamOf} isAdmin={isAdmin}
+              stage={roundName(cur)} tag={tagOf(cur, idx)} onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} onForfeit={onForfeit} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ overflowX: "auto", paddingBottom: 6 }}>
+      <div style={{ display: "grid", gridTemplateColumns: cols, gridTemplateRows: `auto repeat(${N}, ${BK_ROW_H}px)`,
+        minWidth: R * 230 + (R - 1) * CONN, fontFamily: "'Rajdhani',sans-serif" }}>
+        {rounds.map((round, ri) => {
+          const col = ri * 2 + 1;
+          const span = 2 ** ri;
+          const done = round.every((m) => m.done);
+          return [
+            <div key={"h" + ri} style={{ gridColumn: col, gridRow: 1, display: "flex", alignItems: "center", gap: 8, padding: "0 2px 14px" }}>
+              <span style={{ ...SEC_LABEL, color: ri === R - 1 ? "#ffd166" : "#7da6ff" }}>{roundName(ri)}</span>
+              <span style={{ ...SEC_RULE, background: `linear-gradient(90deg, ${ri === R - 1 ? "rgba(255,209,102,0.35)" : "rgba(61,123,255,0.3)"}, transparent)` }} />
+              {done && <span style={{ fontSize: 9, letterSpacing: "0.18em", color: "#3ddc84", fontWeight: 700 }}>✓</span>}
+            </div>,
+            ...round.map((m, idx) => (
+              <div key={m.id} style={{ gridColumn: col, gridRow: `${2 + idx * span} / span ${span}`, alignSelf: "center" }}>
+                <TBracketMatch match={m} locator={{ kind: "elim", round: ri, idx }} teamOf={teamOf} isAdmin={isAdmin}
+                  stage={roundName(ri)} tag={tagOf(ri, idx)}
+                  onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} onForfeit={onForfeit} />
+              </div>
+            )),
+            // Connectors into the next round: one elbow per pair of matches.
+            ...(ri < R - 1 ? Array.from({ length: Math.ceil(round.length / 2) }).map((_, pi) => (
+              <div key={"c" + ri + "-" + pi} aria-hidden style={{ gridColumn: col + 1, gridRow: `${2 + pi * span * 2} / span ${span * 2}`, position: "relative" }}>
+                <div style={{ position: "absolute", left: 0, width: "50%", top: "25%", borderTop: `2px solid ${LINE}` }} />
+                <div style={{ position: "absolute", left: 0, width: "50%", top: "75%", borderTop: `2px solid ${LINE}` }} />
+                <div style={{ position: "absolute", left: "50%", top: "25%", height: "50%", borderLeft: `2px solid ${LINE}` }} />
+                <div style={{ position: "absolute", left: "50%", right: 0, top: "50%", borderTop: `2px solid ${LINE}` }} />
+              </div>
+            )) : []),
+          ];
+        })}
+      </div>
+    </div>
+  );
+}
+
+// champion banner once a bracket / final resolves
+function TChampion({ team }) {
+  if (!team) return null;
+  return (
+    <div className="relative flex flex-col items-center gap-1 py-7 px-8 mx-auto overflow-hidden" style={{ maxWidth: 560, background: `linear-gradient(160deg, ${team.hue}22, rgba(10,15,28,0.6))`, border: `1px solid ${team.hue}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", boxShadow: `0 0 50px ${team.hue}33` }}>
+      <KeyArt src={ART.sageGold} center opacity={0.6} pos="60% 30%" />
+      <p className="uppercase text-xs font-bold tracking-[0.3em] relative" style={{ color: "#ffd166", fontFamily: "'Rajdhani',sans-serif" }}>★ Champion ★</p>
+      <p className="font-bold uppercase relative" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.8rem", lineHeight: 1, color: team.hue, letterSpacing: "0.03em", textShadow: `0 0 30px ${team.hue}88` }}>{team.name}</p>
+    </div>
+  );
+}
+
+// ── main tournament view ──
+function TournamentView({ state, isAdmin, teamOf, actions }) {
+  const t = state.tournament;
+  const [draftFormat, setDraftFormat] = useState("group");
+  const [draftBo, setDraftBo] = useState("bo1");
+  const [draftGroups, setDraftGroups] = useState(2);
+  const [pickGroup, setPickGroup] = useState(null); // active group id for assignment
+
+  const header = (eyebrow, word1, word2) => (
+    <div className="flex flex-col items-center text-center mb-7">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>{eyebrow}</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+      </div>
+      <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>{word1} <span style={{ color: "#3d7bff" }}>{word2}</span></h2>
+    </div>
+  );
+
+  // ── EMPTY STATE: no tournament yet ──
+  if (!t) {
+    if (!isAdmin) return (
+      <div className="view-in page-wrap py-12 flex flex-col items-center text-center">
+        {header("Competition", "Tournament", "Brackets")}
+        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>No tournament has been set up yet. The host will configure the format and brackets — they'll appear here live once it begins.</p>
+      </div>
+    );
+    const maxGroups = Math.max(2, Math.min(MAX_GROUPS, Math.floor(state.teams.length / 2))); // every group needs two teams
+    return (
+      <div className="view-in page-wrap py-10 flex flex-col items-center">
+        {header("Competition", "New", "Tournament")}
+        <div className="w-full max-w-2xl flex flex-col gap-5">
+          <TPanel>
+            <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>1 · Format</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[
+                { id: "group", name: "Group Stage", desc: "Split into groups, round-robin each, then semifinals and a final." },
+                { id: "roundrobin", name: "Round Robin", desc: "One table — every team plays every other team once." },
+                { id: "league", name: "League Play", desc: "No bracket — 4 matches per team, every match banks points." },
+                { id: "single", name: "Single Elim", desc: "Seeded knockout bracket. Lose once, you're out." },
+              ].map((f) => (
+                <button key={f.id} onClick={() => setDraftFormat(f.id)} className="text-left p-3 transition-all"
+                  style={{ background: draftFormat === f.id ? "rgba(61,123,255,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${draftFormat === f.id ? "#3d7bff" : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  <p className="font-bold uppercase text-sm mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", color: draftFormat === f.id ? "#aec6ff" : "#dce6ff" }}>{f.name}</p>
+                  <p className="text-xs leading-snug" style={{ color: "rgba(200,215,255,0.45)" }}>{f.desc}</p>
+                </button>
+              ))}
+            </div>
+          </TPanel>
+
+          <TPanel>
+            <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>2 · Default match length</p>
+            <div className="flex gap-3">
+              {[{ id: "bo1", name: "Best of 1", desc: "One map per match" }, { id: "bo3", name: "Best of 3", desc: "First to 2 maps" }].map((b) => (
+                <button key={b.id} onClick={() => setDraftBo(b.id)} className="flex-1 text-left p-3 transition-all"
+                  style={{ background: draftBo === b.id ? "rgba(61,123,255,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${draftBo === b.id ? "#3d7bff" : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  <p className="font-bold uppercase text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: draftBo === b.id ? "#aec6ff" : "#dce6ff" }}>{b.name}</p>
+                  <p className="text-xs" style={{ color: "rgba(200,215,255,0.45)" }}>{b.desc}</p>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>You can switch any single match (e.g. the final) to a different length later.</p>
+          </TPanel>
+
+          {draftFormat === "group" && (
+            <TPanel>
+              <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>3 · Number of groups</p>
+              <div className="flex gap-2 flex-wrap">
+                {Array.from({ length: maxGroups - 1 }).map((_, i) => {
+                  const n = i + 2;
+                  return (
+                    <button key={n} onClick={() => setDraftGroups(n)} className="w-12 h-12 font-bold transition-all"
+                      style={{ fontFamily: "'IBM Plex Mono',monospace", background: draftGroups === n ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.03)", border: `1px solid ${draftGroups === n ? "#3d7bff" : "rgba(120,150,220,0.18)"}`, color: draftGroups === n ? "#aec6ff" : "#dce6ff", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{n}</button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] mt-2" style={{ color: "rgba(200,215,255,0.4)" }}>{state.teams.length} teams available · {draftGroups > 4 ? "the group winners go through to the quarterfinals" : "the top of each group goes through to the semifinals"}. You can take the top two from each group later.</p>
+            </TPanel>
+          )}
+
+          {(() => {
+            const nTeams = state.teams.length;
+            const need = draftFormat === "group" ? draftGroups * 2 : 2;
+            const short = nTeams < need;
+            return (
+              <>
+                <button disabled={short} onClick={() => actions.tCreate(draftFormat, draftBo, draftGroups)} className="gate-cta py-3.5 font-bold uppercase tracking-[0.2em]"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: short ? "rgba(120,150,220,0.08)" : "rgba(61,123,255,0.18)", border: `1px solid ${short ? "rgba(120,150,220,0.3)" : "#3d7bff"}`, color: short ? "rgba(200,215,255,0.4)" : "#eaf1ff", cursor: short ? "not-allowed" : "pointer" }}>
+                  Create Tournament →
+                </button>
+                {short && (
+                  <p className="text-center text-[12px] mt-2" style={{ color: "#f5c453", fontFamily: "'Rajdhani',sans-serif" }}>
+                    {nTeams === 0
+                      ? "No teams yet — run the auction (or add teams in the Locker Room) first."
+                      : draftFormat === "group"
+                        ? `${nTeams} team${nTeams === 1 ? "" : "s"} on the board — ${draftGroups} groups needs at least ${need}. Add teams or pick fewer groups.`
+                        : `${nTeams} team${nTeams === 1 ? "" : "s"} on the board — you need at least 2.`}
+                  </p>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </div>
+    );
+  }
+
+  // ── SETUP STATE: tournament exists but not locked ──
+  const unassigned = state.teams.filter((tm) => {
+    if (t.format === "group") return !t.groups.some((g) => g.teamIds.includes(tm.id));
+    if ((t.format === "roundrobin" || t.format === "league")) return !t.teamIds.includes(tm.id);
+    if (t.format === "single") return !t.slots.includes(tm.id);
+    return false;
+  });
+
+  const fmtName = t.format === "group" ? "Group Stage" : t.format === "single" ? "Single Elimination" : t.format === "league" ? "League Play" : "Round Robin";
+
+  if (!t.locked) {
+    if (!isAdmin) return (
+      <div className="view-in page-wrap py-12 flex flex-col items-center text-center">
+        {header("Competition", "Tournament", "Setup")}
+        <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The host is setting up a <b style={{ color: "#7da6ff" }}>{fmtName}</b> ({"BO" + t.bo}). Brackets will appear here once it's locked in.</p>
+      </div>
+    );
+
+    const canLock = t.format === "group" ? t.groups.every((g) => g.teamIds.length >= 2)
+      : (t.format === "roundrobin" || t.format === "league") ? t.teamIds.length >= 2
+      : t.slots.filter(Boolean).length >= 2;
+
+    return (
+      <div className="view-in page-wrap py-10">
+        {header("Competition", fmtName.split(" ")[0], fmtName.split(" ").slice(1).join(" ") || "Setup")}
+        <div className="flex items-center justify-center gap-3 mb-6 flex-wrap">
+          <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo}</span>
+          <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "rgba(10,13,22,0.6)" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>
+        </div>
+
+        {/* unassigned pool (group / round-robin only — single elim uses seed dropdowns) */}
+        {t.format !== "single" && (
+        <TPanel className="mb-5">
+          <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>
+            {t.format === "group" ? (pickGroup ? `Tap a team to add to ${t.groups.find((g) => g.id === pickGroup)?.name}` : "Pick a group below, then tap teams to fill it") : "Tap teams to add them to the bracket"}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {unassigned.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.4)" }}>All teams assigned.</span>
+              : unassigned.map((tm) => (
+                <TTeamChip key={tm.id} team={tm} onClick={() => {
+                  if (t.format === "group") { if (pickGroup) actions.tAssign(pickGroup, tm.id); }
+                  else actions.tAssign(null, tm.id);
+                }} />
+              ))}
+          </div>
+        </TPanel>
+        )}
+
+        {/* group format: group columns */}
+        {t.format === "group" && (
+          <div className="grid sm:grid-cols-2 gap-4 mb-6">
+            {t.groups.map((g) => (
+              <TPanel key={g.id} hue={pickGroup === g.id ? "#5b8dff" : "#3d7bff"} style={{ outline: pickGroup === g.id ? "1px solid #5b8dff" : "none" }}>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="uppercase text-base font-bold tracking-widest" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>{g.name}</p>
+                  <button onClick={() => setPickGroup(pickGroup === g.id ? null : g.id)} className="text-[11px] uppercase tracking-widest px-2.5 py-1" style={{ color: pickGroup === g.id ? "#06080e" : "#7da6ff", fontFamily: "'Rajdhani',sans-serif", background: pickGroup === g.id ? "#5b8dff" : "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.4)" }}>{pickGroup === g.id ? "Selected" : "Select"}</button>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {g.teamIds.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.35)" }}>Empty — select this group, then tap teams above.</span>
+                    : g.teamIds.map((id) => <div key={id} className="flex items-center justify-between"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} aria-label="Remove team from group" className="text-xs px-2" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
+                </div>
+              </TPanel>
+            ))}
+          </div>
+        )}
+
+        {/* roundrobin: single list */}
+        {(t.format === "roundrobin" || t.format === "league") && (
+          <TPanel className="mb-6">
+            <p className="uppercase text-base font-bold tracking-widest mb-3" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Participants ({t.teamIds.length})</p>
+            <div className="flex flex-wrap gap-2">
+              {t.teamIds.length === 0 ? <span className="text-sm" style={{ color: "rgba(200,215,255,0.35)" }}>None yet — tap teams above.</span>
+                : t.teamIds.map((id) => <div key={id} className="flex items-center gap-1"><TTeamChip team={teamOf(id)} /><button onClick={() => actions.tAssign(null, id)} aria-label="Remove team from group" className="text-xs px-1" style={{ color: "rgba(255,120,135,0.7)" }}>✕</button></div>)}
+            </div>
+          </TPanel>
+        )}
+
+        {/* single elim: numbered bracket slots */}
+        {t.format === "single" && (
+          <TPanel className="mb-6">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+              <p className="uppercase text-base font-bold tracking-widest" style={{ color: "#aec6ff", fontFamily: "'Rajdhani',sans-serif" }}>Bracket Seeding</p>
+              <div className="flex items-center gap-2">
+                <span className="uppercase" style={{ fontSize: 13, color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.1em" }}>Bracket size</span>
+                <select value={t.slots.length} onChange={(e) => actions.tSetSlotCount(Number(e.target.value))}
+                  className="px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 15 }}>
+                  {[2, 4, 8, 16, 32].map((n) => <option key={n} value={n} style={{ background: "#0a0d18" }}>{n} teams</option>)}
+                </select>
+              </div>
+            </div>
+            <p className="mb-4" style={{ fontSize: 13, color: "rgba(200,215,255,0.4)" }}>Pick the team for each seed, strongest first. Seed 1 opens against the lowest seed, and seeds 1 &amp; 2 can only meet in the final. Leave the bottom seeds empty and the top seeds get byes.</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              {t.slots.map((id, i) => {
+                const taken = new Set(t.slots.filter((x, k) => x && k !== i));
+                return (
+                  <div key={i} className="flex items-center gap-3 px-3 py-2.5" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(120,150,220,0.16)", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
+                    <span className="grid place-items-center shrink-0 font-bold" style={{ width: 34, height: 34, fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: "#5b8dff", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.3)" }}>{i + 1}</span>
+                    <select value={id || ""} onChange={(e) => actions.tSetSlot(i, e.target.value || null)}
+                      className="flex-1 min-w-0 px-2.5 py-2 outline-none uppercase" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.22)", color: id ? (teamOf(id)?.hue || "#ecf3ff") : "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 16, letterSpacing: "0.03em" }}>
+                      <option value="" style={{ background: "#0a0d18", color: "#8aa" }}>— Bye / empty —</option>
+                      {state.teams.map((tm) => (
+                        <option key={tm.id} value={tm.id} disabled={taken.has(tm.id)} style={{ background: "#0a0d18", color: "#ecf3ff" }}>{tm.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </TPanel>
+        )}
+
+        <div className="flex justify-center">
+          <button onClick={() => canLock && actions.tLock()} disabled={!canLock} className="gate-cta py-3.5 px-12 font-bold uppercase tracking-[0.2em]"
+            style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: canLock ? "rgba(61,123,255,0.18)" : "rgba(255,255,255,0.04)", border: `1px solid ${canLock ? "#3d7bff" : "rgba(255,255,255,0.1)"}`, color: canLock ? "#eaf1ff" : "rgba(236,243,255,0.3)", cursor: canLock ? "pointer" : "not-allowed" }}>
+            Lock & Generate Matches →
+          </button>
+        </div>
+        {!canLock && <p className="text-center text-xs mt-3" style={{ color: "rgba(255,120,135,0.7)" }}>{t.format === "group" ? "Each group needs at least 2 teams." : "Add at least 2 teams."}</p>}
+      </div>
+    );
+  }
+
+  // ── LIVE STATE: locked, scores being entered ──
+  const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo, onSetTime: actions.tSetTime, onVote: actions.tVote, onForfeit: actions.tSetForfeit };
+  // Knockout rounds before the semis exist only once the groups finish; until
+  // then show where they will be, so the bracket shape is visible from day one.
+  const G = t.groups?.length || 0;
+  const koExpected = t.format === "group" && t.playoff === "semis" && (G > 4 || (G > 2 && t.advance === 2));
+  const top2of3 = t.format === "group" && G === 3 && t.advance === 2;
+  const preview = t.format === "group" ? playoffPreview(t) : null;
+  // Whichever quarterfinal feeds this semifinal slot, while it's still to play.
+  const qfSlot = (i) => {
+    const last = t.ko?.[t.ko.length - 1], m = last?.[i];
+    return m && !m.bye ? `Winner of QF${last.slice(0, i + 1).filter((x) => !x.bye).length}` : undefined;
+  };
+  let champion = null;
+  if (t.format === "single" && t.rounds?.length) { const fm = t.rounds[t.rounds.length - 1][0]; if (fm?.done) champion = teamOf(fm.winner); }
+  // Any format that ends in a decider (group final, or the league Sunday final)
+  if (!champion && t.final?.done && t.final.winner) champion = teamOf(t.final.winner);
+
+  // Progress for the banner: every real fixture, including ones whose teams
+  // aren't decided yet (a semifinal is still a match to play), but not byes.
+  const allFx = tournamentMatches(t).filter((m) => !m.bye && !(m.done && (m.teamA == null) !== (m.teamB == null)));
+  const playedFx = allFx.filter((m) => m.done).length;
+  const nextFx = allFx.filter((m) => !m.done && m.scheduledAt).sort((x, y) => new Date(x.scheduledAt) - new Date(y.scheduledAt))[0];
+  const H = champion ? "#ffd166" : "#3d7bff";
+
+  return (
+    <div className="view-in page-wrap py-8">
+      <style>{FX_CSS + SWEEP_CSS}</style>
+      <div className="volt-fxhero" style={{ ...PANEL(`${H}55`, "26px 30px 22px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18, fontFamily: "'Rajdhani',sans-serif" }}>
+        <KeyArt src={champion ? ART.sageGold : ART.jett} width="54%" />
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
+        <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
+        <div className="volt-fxhero-copy" style={{ position: "relative", maxWidth: 640 }}>
+          <div style={{ ...SEC_LABEL, color: champion ? "#ffd166" : "#7da6ff" }}>// {champion ? "Tournament complete" : "Live competition"}</div>
+          <div style={{ fontSize: "clamp(30px, 4.4vw, 52px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 0.95, marginTop: 8,
+            letterSpacing: "0.01em", textShadow: `0 0 36px ${H}50` }}>{fmtName}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 12, flexWrap: "wrap", fontSize: 13, color: "rgba(200,215,255,0.6)" }}>
+            <span><b style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{playedFx}</b> of <b style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{allFx.length}</b> matches played</span>
+            {allFx.length > 0 && <span aria-hidden style={{ width: 120, height: 4, background: "rgba(255,255,255,0.08)", position: "relative" }}>
+              <span style={{ position: "absolute", inset: 0, width: `${(playedFx / allFx.length) * 100}%`, background: H, boxShadow: `0 0 10px ${H}` }} /></span>}
+          </div>
+          {nextFx && !champion && (
+            <div style={{ display: "flex", alignItems: "baseline", gap: "4px 10px", flexWrap: "wrap", marginTop: 10, fontSize: 13.5, textShadow: "0 1px 8px rgba(5,8,16,0.95)" }}>
+              <span style={{ fontSize: 10, letterSpacing: "0.22em", fontWeight: 700, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>Next</span>
+              <b style={{ color: "#ecf3ff", textTransform: "uppercase", letterSpacing: "0.03em" }}>{teamOf(nextFx.teamA)?.name || "TBD"} vs {teamOf(nextFx.teamB)?.name || "TBD"}</b>
+              <span style={{ color: "#9af5c2", fontWeight: 700 }}>{fxWhen(new Date(nextFx.scheduledAt))} · <FxCountdown at={new Date(nextFx.scheduledAt)} /></span>
+            </div>
+          )}
+        </div>
+      <div className="volt-fxhero-actions flex items-center gap-3 flex-wrap" style={{ position: "relative", marginTop: 18 }}>
+        <span className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace", border: "1px solid rgba(61,123,255,0.3)", background: "rgba(61,123,255,0.06)" }}>{"BO" + t.bo} default</span>
+        {isAdmin && t.format === "group" && t.groups?.length === 2 && actions.tSetPlayoff && (() => {
+          // Two explicit options rather than one toggle. The old button showed
+          // its current state, which reads as the action — pressing a button
+          // labelled "Semis + final" turned semis OFF.
+          const semis = t.playoff === "semis" || t.playoff == null;
+          const opt = (on, label, mode, tip) => (
+            <button key={mode} onClick={() => actions.tSetPlayoff(mode)} title={tip}
+              className="text-xs uppercase tracking-widest px-3 py-1.5"
+              style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+                color: on ? "#cfe0ff" : "rgba(200,215,255,0.45)",
+                border: `1px solid ${on ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.2)"}`,
+                background: on ? "rgba(61,123,255,0.18)" : "transparent" }}>
+              {label}
+            </button>
+          );
+          return (
+            <span className="inline-flex items-center gap-2">
+              <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Playoff</span>
+              {opt(semis, "Semis + final", "semis", "Top two from each group. Winner of A plays runner-up of B, and vice versa.")}
+              {opt(!semis, "Final only", "final", "Group winners go straight to the final. Runners-up are eliminated.")}
+            </span>
+          );
+        })()}
+        {isAdmin && t.format === "group" && (t.groups?.length || 0) > 2 && actions.tSetAdvance && (() => {
+          const two = t.advance === 2, G = t.groups.length;
+          const opt = (on, label, n, tip) => (
+            <button key={n} onClick={() => actions.tSetAdvance(n)} title={tip}
+              className="text-xs uppercase tracking-widest px-3 py-1.5"
+              style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+                color: on ? "#cfe0ff" : "rgba(200,215,255,0.45)",
+                border: `1px solid ${on ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.2)"}`,
+                background: on ? "rgba(61,123,255,0.18)" : "transparent" }}>
+              {label}
+            </button>
+          );
+          return (
+            <span className="inline-flex items-center gap-2">
+              <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Playoff</span>
+              {opt(!two, "Top 1 per group", 1, G === 3 ? "The three group winners and the best runner-up." : `The ${G} group winners.`)}
+              {opt(two, "Top 2 per group", 2, `Winners and runners-up: ${G * 2} teams in the knockout.`)}
+            </span>
+          );
+        })()}
+        {isAdmin && actions.tSwitchFormat && <FormatSwitcher t={t} actions={actions} />}
+        {isAdmin && <button onClick={actions.armTClear} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ color: actions.tClearArmed ? "#ffd2d7" : "rgba(255,120,135,0.8)", fontFamily: "'Rajdhani',sans-serif", border: `1px solid ${actions.tClearArmed ? "#ff4655" : "rgba(255,120,135,0.3)"}`, background: actions.tClearArmed ? "rgba(255,70,85,0.18)" : "rgba(10,13,22,0.6)" }}>{actions.tClearArmed ? "Click again to confirm" : "Clear tournament"}</button>}
+      </div>
+      </div>
+
+      {champion && <div className="mb-6"><TChampion team={champion} /></div>}
+
+      {/* GROUP STAGE */}
+      {t.format === "group" && (
+        <>
+          <div className="grid lg:grid-cols-2 gap-6 mb-8">
+            {t.groups.map((g) => (
+              <div key={g.id} className="flex flex-col gap-4">
+                <TPanel title={`${g.name} · Standings`}>
+                  <TStandings teamIds={g.teamIds} matches={t.matches[g.id] || []} overrides={t.overrides} teamOf={teamOf} advance={(t.playoff === "semis" && t.groups.length === 2) || (t.groups.length > 2 && t.advance === 2) ? 2 : 1} />
+                </TPanel>
+                <TPanel title={`${g.name} · Matches`}>
+                  <div className="flex flex-col gap-2">
+                    {(t.matches[g.id] || []).map((m, mi) => (
+                      <TMatchRow key={m.id} match={m} locator={{ kind: "group", groupId: g.id, matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`${g.name} · Match ${mi + 1}`} {...A} />
+                    ))}
+                  </div>
+                </TPanel>
+              </div>
+            ))}
+          </div>
+          {/* knockout rounds before the semis (more than four qualifiers) */}
+          {!t.ko?.length && koExpected && preview?.ko.map((r, ri) => {
+            const qf = ri === preview.ko.length - 1;
+            return (
+              <TPanel key={ri} hue="#7da6ff" title={qf ? "Quarterfinals" : "Round of 16"} className="mb-6">
+                {ri === 0 && (
+                  <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
+                    {top2of3
+                      ? "Group winners are seeds 1–3 and runners-up 4–6, ranked by points, then round difference. Teams from the same group are kept apart here."
+                      : `${t.advance === 2 ? "Group winners and runners-up" : "Group winners"}, seeded by record. Teams from the same group are kept apart where possible.`}
+                  </p>
+                )}
+                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
+                  {r.filter((m) => !m.through).map((m, k) => (
+                    <SlotCard key={k} m={m} teamOf={teamOf} bo={t.bo} stage={`${qf ? "Quarterfinal" : "Round of 16"} ${k + 1}`} />
+                  ))}
+                </div>
+              </TPanel>
+            );
+          })}
+          {t.ko?.length > 0 && t.ko.map((r, ri) => {
+            const name = ri === t.ko.length - 1 ? "Quarterfinal" : "Round of 16";
+            const real = r.map((m, mi) => [m, mi]).filter(([m]) => !m.bye);
+            return (
+              <TPanel key={ri} hue="#7da6ff" title={ri === t.ko.length - 1 ? "Quarterfinals" : "Round of 16"} className="mb-6">
+                {ri === 0 && (
+                  <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
+                    {t.advance === 2 ? "Group winners and runners-up" : "Group winners"}, seeded by record{r.some((m) => m.bye) ? " — the top seeds get a bye" : ""}. Teams from the same group are kept apart where possible.
+                  </p>
+                )}
+                <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
+                  {real.map(([m, mi], k) => (
+                    <TMatchRow key={m.id} match={m} locator={{ kind: "ko", round: ri, idx: mi }} teamOf={teamOf} isAdmin={isAdmin} stage={`${name} ${k + 1}`} {...A} />
+                  ))}
+                </div>
+              </TPanel>
+            );
+          })}
+          {/* semifinals, when the bracket has them */}
+          {t.playoff === "semis" && (
+            <TPanel hue="#7da6ff" title="Semifinals" className="mb-6">
+              {!top2of3 && (
+                <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
+                  {t.ko?.length || koExpected
+                    ? "The quarterfinal winners."
+                    : (t.groups?.length || 2) === 2
+                    ? "Winner of each group meets the other group's runner-up."
+                    : t.groups.length === 3
+                      ? "The three group winners and the best runner-up, seeded by record."
+                      : "The four group winners, seeded by record — 1 v 4, 2 v 3."}
+                </p>
+              )}
+              <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(300px,100%),1fr))" }}>
+                {t.semis?.length
+                  ? t.semis.map((m, si) => (
+                      <TMatchRow key={m.id} match={m} locator={{ kind: "semi", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`Semifinal ${si + 1}`} slotA={qfSlot(si * 2)} slotB={qfSlot(si * 2 + 1)} {...A} />
+                    ))
+                  : preview?.semis.map((m, si) => <SlotCard key={si} m={m} teamOf={teamOf} bo={t.bo} stage={`Semifinal ${si + 1}`} />)}
+              </div>
+            </TPanel>
+          )}
+          {/* the final */}
+          <TPanel hue="#ffd166" title="★ Grand final" right={isAdmin ? <FinalBoPicker t={t} onPick={actions.tSetFinalBo} /> : null}>
+            <div className="max-w-xl mx-auto">
+              {t.final
+                ? <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Grand final" big {...A} />
+                : preview && <SlotCard m={preview.final} teamOf={teamOf} bo={finalBoOf(t)} stage="Grand final" big />}
+            </div>
+          </TPanel>
+        </>
+      )}
+
+      {/* ROUND ROBIN */}
+      {(t.format === "roundrobin" || t.format === "league") && (
+        <div className="flex flex-col gap-6">
+          <TPanel title="Standings">
+            <TStandings teamIds={t.teamIds} matches={t.matches} overrides={t.overrides} teamOf={teamOf} advance={2} />
+          </TPanel>
+          <TPanel title="Fixtures">
+            <TMatchdays t={t} teamOf={teamOf} isAdmin={isAdmin} A={A} />
+          </TPanel>
+
+          {/* ── THE SUNDAY FINAL — top two from the table settle the tournament ── */}
+          <TPanel hue="#ffd166" title="★ Sunday final" right={isAdmin ? (
+                <span className="inline-flex items-center gap-2 flex-wrap justify-end">
+                  {t.finalLock && !t.final?.done && actions.tResetFinal && (
+                    <button onClick={actions.tResetFinal} className="text-[11px] uppercase tracking-widest px-3 py-1.5"
+                      style={{ color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(120,150,220,0.3)", background: "transparent" }}>↺ Use table seeding</button>
+                  )}
+                  <FinalBoPicker t={t} onPick={actions.tSetFinalBo} />
+                </span>
+              ) : null}>
+            {t.final ? (
+              <div className="max-w-xl mx-auto">
+                <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Sunday final" big {...A} />
+                {t.finalLock && !t.final.done && (
+                  <p className="text-center text-[11px] mt-2" style={{ color: "rgba(255,209,102,0.7)" }}>Teams set manually — the table won't re-seed this.</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-center text-sm" style={{ color: "rgba(200,215,255,0.45)" }}>
+                {(t.matches || []).length === 0
+                  ? "Lock the fixtures first."
+                  : "Report every round and the top two seed automatically."}
+              </p>
+            )}
+            {/* host override — pick either side by hand */}
+            {isAdmin && !t.final?.done && actions.tSetFinalTeam && (
+              <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
+                {["a", "b"].map((side) => (
+                  <select key={side} value={(side === "a" ? t.final?.teamA : t.final?.teamB) || ""}
+                    onChange={(e) => actions.tSetFinalTeam(side, e.target.value || null)}
+                    style={{ padding: "7px 10px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(255,209,102,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 600 }}>
+                    <option value="">{side === "a" ? "— Team A —" : "— Team B —"}</option>
+                    {t.teamIds.map((id) => { const tm = teamOf(id); return tm ? <option key={id} value={id}>{tm.name}</option> : null; })}
+                  </select>
+                ))}
+              </div>
+            )}
+          </TPanel>
+        </div>
+      )}
+
+      {/* SINGLE ELIM */}
+      {t.format === "single" && (
+        <TPanel title="Bracket" right={<span style={{ fontSize: 11, color: "rgba(200,215,255,0.45)" }}>Tap a match for times, predictions{isAdmin ? " and scores" : ""}</span>}>
+          <TBracket rounds={t.rounds} teamOf={teamOf} isAdmin={isAdmin} {...A} />
+        </TPanel>
+      )}
+
+      {/* manual override panel (admin) */}
+      {isAdmin && (t.format === "group" || (t.format === "roundrobin" || t.format === "league")) && (
+        <TPanel className="mt-6" hue="#ffb020" title="⚙ Manual standings override">
+          <p className="text-[11px] mb-3" style={{ color: "rgba(200,215,255,0.45)" }}>Force points / round-diff for a team (forfeits, penalties). Leave blank to clear. Overridden teams show a *.</p>
+          <TOverrideEditor state={state} t={t} teamOf={teamOf} onOverride={actions.tOverride} />
+        </TPanel>
+      )}
+    </div>
+  );
+}
+
+// small override editor
+function TOverrideEditor({ state, t, teamOf, onOverride }) {
+  const ids = t.format === "group" ? t.groups.flatMap((g) => g.teamIds) : t.teamIds;
+  const [sel, setSel] = useState(ids[0] || "");
+  const [pts, setPts] = useState("");
+  const [diff, setDiff] = useState("");
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <select value={sel} onChange={(e) => setSel(e.target.value)} className="px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13 }}>
+        {ids.map((id) => <option key={id} value={id} style={{ background: "#0a0d18" }}>{teamOf(id)?.name}</option>)}
+      </select>
+      <div className="flex flex-col"><span className="text-[10px] uppercase" style={{ color: "rgba(200,215,255,0.4)" }}>pts</span><input type="number" value={pts} onChange={(e) => setPts(e.target.value)} placeholder="—" className="w-16 px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} /></div>
+      <div className="flex flex-col"><span className="text-[10px] uppercase" style={{ color: "rgba(200,215,255,0.4)" }}>diff</span><input type="number" value={diff} onChange={(e) => setDiff(e.target.value)} placeholder="—" className="w-16 px-2 py-1.5 outline-none" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }} /></div>
+      <button onClick={() => { const patch = {}; if (pts !== "") patch.pts = Number(pts); if (diff !== "") patch.diff = Number(diff); onOverride(sel, Object.keys(patch).length ? patch : null); }} className="px-3 py-1.5 text-xs uppercase tracking-widest" style={{ color: "#06080e", background: "#ffb020", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>Apply</button>
+      <button onClick={() => onOverride(sel, null)} className="px-3 py-1.5 text-xs uppercase tracking-widest" style={{ color: "rgba(255,176,32,0.9)", border: "1px solid rgba(255,176,32,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Clear</button>
+    </div>
+  );
+}
+
+function RankBadge({ rank, div, size = "md", solidDiv = false }) {
+  const r = RANKS[rank] || RANKS.Iron;
+  const dim = size === "xl" ? 80 : size === "lg" ? 64 : size === "md" ? 34 : 24;
+  const showDiv = hasDivisions(rank) && !!div;
+  return (
+    <div className="relative grid place-items-center" style={{ width: dim, height: dim }}>
+      <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full">
+        <polygon points="50,4 93,27 93,73 50,96 7,73 7,27" fill={r.c + "14"} stroke={r.c} strokeWidth="5"
+          style={{ filter: `drop-shadow(0 0 ${size === "lg" || size === "xl" ? 10 : 5}px ${r.glow})` }} />
+        <polygon points="50,22 76,36 76,64 50,78 24,64 24,36" fill={r.c} opacity="0.9" />
+      </svg>
+      <span className="relative font-bold text-black" style={{ fontSize: dim * 0.34, fontFamily: "'Rajdhani',sans-serif" }}>
+        {rank === "Radiant" ? "R" : (rank || "?")[0]}
+      </span>
+      {/* Division rides in the corner rather than inside the crest — at 24px the
+          hexagon has no room for two glyphs without both becoming unreadable. */}
+      {showDiv && (
+        <span style={{ position: "absolute", right: dim * (solidDiv ? 0.02 : -0.06), bottom: dim * (solidDiv ? 0.06 : -0.04),
+          minWidth: dim * (solidDiv ? 0.27 : 0.38), height: dim * (solidDiv ? 0.27 : 0.38), display: "grid", placeItems: "center",
+          fontSize: dim * (solidDiv ? 0.2 : 0.28), lineHeight: 1, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif",
+          color: solidDiv ? "#0a0d18" : r.c, background: solidDiv ? r.c : "#0a0d18",
+          border: solidDiv ? "none" : `1px solid ${r.c}`, borderRadius: dim * (solidDiv ? 0.06 : 0.1),
+          padding: `0 ${dim * 0.05}px`, boxShadow: solidDiv ? `0 0 10px ${r.glow}` : "none" }}>{div}</span>
+      )}
+    </div>
+  );
+}
+
+function Tag({ children, hue = "#9d6bff" }) {
+  return (
+    <span className="inline-flex items-center px-3.5 py-1.5 text-xs uppercase tracking-widest font-semibold leading-none"
+      style={{ fontFamily: "'Rajdhani',sans-serif", color: hue, border: `1px solid ${hue}55`, background: `${hue}14`,
+        clipPath: "polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)" }}>
+      {children}
+    </span>
+  );
+}
+
+function Stat({ label, value, hue }) {
+  return (
+    <div className="flex flex-col items-center gap-1 px-3 py-2 rounded-md"
+      style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <span className="text-2xl font-bold leading-none" style={{ fontFamily: "'Rajdhani',sans-serif", color: hue, textShadow: `0 0 14px ${hue}66` }}>{value}</span>
+      <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.5)" }}>{label}</span>
+    </div>
+  );
+}
+
+function PlayerCard({ player, lite = false }) {
+  if (!player) return null;
+  const r = RANKS[player.rank] || RANKS.Iron;
+  return (
+    <div className="relative mx-auto w-full" style={{ maxWidth: 420 }}>
+      {/* closest-side so the glow fades out inside its own box (no flat band above the card) */}
+      <div className="absolute -inset-10 pointer-events-none"
+        style={{ background: `radial-gradient(closest-side at 50% 40%, ${r.glow}, transparent)`, filter: "blur(12px)" }} />
+      <div className="relative overflow-hidden"
+        style={{
+          clipPath: "polygon(0 0, calc(100% - 26px) 0, 100% 26px, 100% 100%, 26px 100%, 0 calc(100% - 26px))",
+          background: "linear-gradient(160deg, rgba(20,26,42,0.92), rgba(10,13,22,0.92))",
+          border: `1px solid ${r.c}66`, boxShadow: `0 0 0 1px rgba(255,255,255,0.04) inset, 0 30px 60px rgba(0,0,0,0.6)`,
+          backdropFilter: lite ? undefined : "blur(14px)",
+        }}>
+        {!lite && <div className="absolute inset-0 pointer-events-none holo-sweep" />}
+        <div className="absolute inset-0 pointer-events-none" style={{ background: "repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 4px)" }} />
+        <div className="flex items-center justify-between px-5 pt-5">
+          <span className="text-xs uppercase tracking-widest font-semibold" style={{ color: r.c, fontFamily: "'Rajdhani',sans-serif" }}>// SCOUT FILE</span>
+          <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.4)" }}>{ROLE_GLYPH[player.role]} {player.role}</span>
+        </div>
+        <div className="relative flex flex-col items-center pt-8 pb-5 mt-4 mx-3 rounded-xl overflow-hidden"
+          style={{ background: `linear-gradient(115deg, rgba(255,70,85,0.34), rgba(157,107,255,0.22) 60%, rgba(0,229,255,0.10))`, border: "1px solid rgba(255,255,255,0.08)" }}>
+          <span className="absolute pointer-events-none select-none font-bold leading-none"
+            style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 150, right: -10, top: -18, color: "rgba(255,255,255,0.07)", letterSpacing: "-0.04em" }}>{player.acs}</span>
+          <span className="absolute pointer-events-none select-none uppercase font-bold"
+            style={{ fontFamily: "'Rajdhani',sans-serif", right: 14, top: 112, fontSize: 12, letterSpacing: 3, color: "rgba(255,255,255,0.18)" }}>ACS</span>
+          <div className={lite ? "" : "float-soft"}><RankCrest rank={player.rank} div={player.rankDiv} /></div>
+          <h2 className="relative mt-6 text-5xl font-bold uppercase leading-none text-center px-4"
+            style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", letterSpacing: "0.04em", textShadow: `0 0 24px ${r.glow}` }}>{player.name}</h2>
+          <div className="relative mt-4 flex items-center gap-3 pb-2">
+            <span className="uppercase tracking-widest font-semibold" style={{ color: r.c, fontFamily: "'Rajdhani',sans-serif", textShadow: `0 0 10px ${r.glow}` }}>{rankLabel(player.rank, player.rankDiv)}</span>
+            <span style={{ color: "rgba(236,243,255,0.35)" }}>·</span>
+            <span className="uppercase tracking-widest text-sm" style={{ color: "rgba(236,243,255,0.75)" }}>{player.agent}</span>
+          </div>
+          {/* Peak sits under the current rank, deliberately quieter — it's context
+              for a captain, not the number the auction runs on. */}
+          {player.peakRank && (
+            <div className="relative flex items-center gap-2 pb-1" title="Highest rank ever reached. Does not affect the opening bid.">
+              <span className="uppercase text-[10px] tracking-[0.2em]" style={{ color: "rgba(236,243,255,0.35)", fontFamily: "'Rajdhani',sans-serif" }}>Peak</span>
+              <span className="uppercase text-xs font-semibold tracking-widest" style={{ color: rankOf(player.peakRank).c, opacity: 0.85, fontFamily: "'Rajdhani',sans-serif" }}>{rankLabel(player.peakRank, player.peakRankDiv)}</span>
+            </div>
+          )}
+        </div>
+        {/* Only stats the player actually has — a tile of dashes reads as broken. */}
+        {(() => { const st = [
+            player.kda != null && <Stat key="k" label="KDA" value={Number(player.kda).toFixed(2)} hue="#00e5ff" />,
+            player.acs != null && <Stat key="a" label="ACS" value={player.acs} hue="#ff4655" />,
+            player.hs != null && <Stat key="h" label="HS %" value={player.hs + "%"} hue="#9d6bff" />,
+          ].filter(Boolean);
+          return st.length ? <div className="grid gap-2 px-5 pt-5" style={{ gridTemplateColumns: `repeat(${st.length}, minmax(0, 1fr))` }}>{st}</div>
+            : <div className="px-5 pt-5 text-center text-xs" style={{ color: "rgba(200,215,255,0.35)" }}>No tracker stats on file</div>; })()}
+        <div className="px-5 pt-5 pb-7">
+          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "rgba(236,243,255,0.4)" }}>Trophy cabinet</p>
+          <div className="flex flex-wrap items-center gap-2" style={{ minHeight: 40 }}>
+            {player.trophies > 0 && <Tag hue="#f5c453"><Icon name="trophy" size={12} /> ×{player.trophies} in a row</Tag>}
+            {player.badges?.length ? player.badges.map((b, i) => <Tag key={i} hue={i % 2 ? "#00e5ff" : "#9d6bff"}>{b}</Tag>)
+              : !player.trophies && <span className="text-sm" style={{ color: "rgba(236,243,255,0.3)" }}>No titles yet — write the first chapter.</span>}
+          </div>
+        </div>
+        <div style={{ height: 4, background: `linear-gradient(90deg, transparent, ${r.c}, transparent)` }} />
+      </div>
+    </div>
+  );
+}
+
+/* Phones: the player on the block as a header strip — crest, name, rank,
+   the three numbers — so the bid and the SOLD button are on the first screen.
+   The full card is a tap away (it opens the scout file). */
+function PlayerCardCompact({ player }) {
+  if (!player) return null;
+  const r = RANKS[player.rank] || RANKS.Iron;
+  const st = [
+    player.kda != null && ["KDA", Number(player.kda).toFixed(2), "#00e5ff"],
+    player.acs != null && ["ACS", player.acs, "#ff4655"],
+    player.hs != null && ["HS", player.hs + "%", "#9d6bff"],
+  ].filter(Boolean);
+  return (
+    <div className="relative w-full overflow-hidden text-left" style={{ padding: "14px 16px 14px",
+      clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))",
+      background: `linear-gradient(115deg, ${r.c}38, rgba(157,107,255,0.16) 55%, rgba(10,13,22,0.94))`, border: `1px solid ${r.c}66` }}>
+      <span className="absolute pointer-events-none select-none font-bold leading-none" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 96, right: -6, top: -14, color: "rgba(255,255,255,0.06)" }}>{player.acs}</span>
+      <div className="relative flex items-center gap-3">
+        <div style={{ width: 66, height: 66, position: "relative", flex: "0 0 auto" }}>
+          <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%) scale(0.62)" }}><RankCrest rank={player.rank} div={player.rankDiv} /></div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 30, fontWeight: 700, textTransform: "uppercase", lineHeight: 0.95, color: "#ecf3ff", textShadow: `0 0 20px ${r.glow}` }}>{player.name}</div>
+          <div className="truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 6, color: "rgba(236,243,255,0.6)" }}>
+            <span style={{ color: r.c }}>{rankLabel(player.rank, player.rankDiv)}</span>{player.role ? ` · ${player.role}` : ""}{player.agent ? ` · ${player.agent}` : ""}</div>
+        </div>
+      </div>
+      {st.length > 0 && (
+        <div className="relative grid gap-2 mt-3" style={{ gridTemplateColumns: `repeat(${st.length}, minmax(0, 1fr))` }}>
+          {st.map(([k, v, c]) => (
+            <div key={k} style={{ padding: "7px 8px", background: "rgba(8,11,20,0.55)", border: "1px solid rgba(255,255,255,0.07)", textAlign: "center" }}>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 17, color: c, lineHeight: 1 }}>{v}</div>
+              <div style={{ fontSize: 9.5, letterSpacing: "0.18em", color: "rgba(200,215,255,0.45)", marginTop: 4, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>{k}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── full scouting modal with radar ── */
+function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptain, onViewProfile, onMoveReserve }) {
+  const [confirmDel, setConfirmDel] = useState(false);
+  useEffect(() => { setConfirmDel(false); }, [player && player.id]);
+  // Close on Escape for keyboard users.
+  useEffect(() => {
+    if (!player) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [player, onClose]);
+  if (!player) return null;
+  const r = rankOf(player.rank);
+  const drafted = player.status === "sold";
+  return (
+    <div role="dialog" aria-modal="true" aria-label={`Scouting report for ${player.name}`} className="fixed inset-0 z-50 flex overflow-y-auto overflow-x-hidden p-4" style={{ background: "rgba(5,6,12,0.84)", backdropFilter: "blur(8px)", overscrollBehavior: "contain" }} onClick={onClose}>
+      {/* m-auto: centred when it fits, scrolls from the top when it doesn't (phones). */}
+      <div className="relative w-full grid md:grid-cols-2 gap-6 items-stretch m-auto" style={{ maxWidth: 820 }} onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} aria-label="Close" className="absolute -top-2 right-0 md:-right-2 z-10 w-9 h-9 grid place-items-center rounded-full"
+          style={{ background: "rgba(61,123,255,0.12)", border: "1px solid rgba(61,123,255,0.4)", color: "#ecf3ff" }}>✕</button>
+        <PlayerCard player={player} />
+        <div className="p-5 flex flex-col" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.55))", border: `1px solid ${r.c}44`, backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
+          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: r.c }}>Performance profile</p>
+          <div className="grid place-items-center flex-1 pt-4"><StatRadar player={player} hue={r.c} size={300} /></div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Role</span><span style={{ color: "#ecf3ff" }}>{player.role}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Agent</span><span style={{ color: "#ecf3ff" }}>{player.agent}</span></div>
+            {/* Naming the tier here removes the ambiguity a peak rank introduces:
+                the opener comes from CURRENT rank, never peak. */}
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }} title="Set by current rank — peak rank never affects the price"><span style={{ color: "rgba(200,215,255,0.5)" }}>Opens at</span><span style={{ fontFamily: "'IBM Plex Mono',monospace", color: r.c }}>{fmt(r.bid)} <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, opacity: 0.6, textTransform: "uppercase", letterSpacing: "0.08em" }}>{player.rank}</span></span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Status</span><span style={{ color: player.status === "sold" ? "#3ddc84" : "#5b8dff" }}>{player.status === "sold" ? "Drafted" : player.status === "block" ? "On block" : "Available"}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Current</span><span style={{ color: r.c, fontWeight: 600 }}>{rankLabel(player.rank, player.rankDiv)}</span></div>
+            <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }} title="Highest rank ever reached. Does not affect the opening bid."><span style={{ color: "rgba(200,215,255,0.5)" }}>Peak</span><span style={{ color: player.peakRank ? (rankOf(player.peakRank).c) : "rgba(200,215,255,0.35)", fontWeight: 600 }}>{player.peakRank ? rankLabel(player.peakRank, player.peakRankDiv) : "—"}</span></div>
+          </div>
+          {onViewProfile && typeof player.id === "string" && player.id.length > 30 && (
+            <button onClick={() => onViewProfile(player.id)}
+              className="mt-3 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: `${r.c}1f`, border: `1px solid ${r.c}`, color: r.c, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", textShadow: `0 0 12px ${r.c}66` }}>
+              ⊹ View full profile →
+            </button>
+          )}
+          {player.tracker && (
+            <a href={player.tracker} target="_blank" rel="noopener noreferrer"
+              className="mt-3 block w-full py-2.5 text-center text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(0,229,255,0.08)", border: "1px solid rgba(0,229,255,0.45)", color: "#7deaff", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", textDecoration: "none" }}>
+              ⌖ View tracker profile ↗
+            </a>
+          )}
+          {isAdmin && (
+            <button onClick={() => onEdit(player)} className="mt-4 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+              ✎ Edit player profile
+            </button>
+          )}
+          {isAdmin && (
+            <button onClick={() => onToggleCaptain(player.id)} className="mt-2 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif",
+                background: player.isCaptain ? "rgba(245,196,83,0.18)" : "rgba(255,255,255,0.04)",
+                border: `1px solid ${player.isCaptain ? "#f5c453" : "rgba(120,150,220,0.3)"}`,
+                color: player.isCaptain ? "#f5d58a" : "rgba(200,215,255,0.6)",
+                clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+              {player.isCaptain ? "★ Captain — excluded from draw" : "☆ Tag as captain"}
+            </button>
+          )}
+          {isAdmin && typeof player.id === "string" && player.id.length > 30 && (
+            <p className="mt-2 text-center" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, color: "rgba(200,215,255,0.4)", letterSpacing: "0.06em" }}>Registered player — leaves the pool by dropping their tournament registration.</p>
+          )}
+          {isAdmin && !(typeof player.id === "string" && player.id.length > 30) && (
+            confirmDel ? (
+              <div className="mt-2 flex gap-2">
+                <button onClick={() => { onDelete(player.id); onClose(); }} className="flex-1 py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,70,85,0.2)", border: "1px solid #ff4655", color: "#ff8a94", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  Confirm delete
+                </button>
+                <button onClick={() => setConfirmDel(false)} className="px-4 py-2.5 text-sm font-bold uppercase tracking-widest"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.16)", color: "rgba(236,243,255,0.6)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmDel(true)} className="mt-2 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+                style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,70,85,0.1)", border: "1px solid rgba(255,70,85,0.45)", color: "#ff8a94", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+                {drafted ? "✕ Delete player (drafted)" : "✕ Delete player"}
+              </button>
+            )
+          )}
+          {isAdmin && onMoveReserve && !player.isCaptain && (
+            <button onClick={async () => {
+                const toReserve = player.poolEligible !== false;
+                if (toReserve && player.status === "sold" && !(await voltConfirm(
+                  `${fmt(Number(player.soldPrice) || 0)} goes back to their team and the roster slot reopens.`,
+                  { title: `Move ${player.name} to reserves?`, confirmLabel: "Move to reserves" }))) return;
+                onMoveReserve(player.id, !toReserve);
+                onClose();
+              }}
+              className="mt-2 w-full py-2.5 text-sm font-bold uppercase tracking-widest transition-transform active:scale-95"
+              style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+              {player.poolEligible === false ? "⊞ Move to draft pool" : "⊕ Move to reserves"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ FATE WHEEL ══════════════════════════════════════ */
+const REEL_SCALE = 0.66;
+
+// scale applied to the real 420px PlayerCard
+const REEL_CARD_H = 520;
+
+// fixed slot height — fits the taller portrait card
+const REEL_CARD_W = 292;
+
+// full slot width incl. gap (scaled card ≈277 + small gap)
+const REEL_GAP = 14;
+
+const REEL_TRAVEL = 60;
+
+// cards the strip passes on every draw (~13 a second at full speed)
+const REEL_LEAD = 6;
+
+// cards already on the strip, left of the start, so it never begins half-empty
+const REEL_INNER = REEL_CARD_W - REEL_GAP;
+
+/* mini player card used inside the reel */
+// Two-phase reel easing: constant-speed cruise (first 45% of time → 71% of distance),
+// then a velocity-continuous cubic ease-out that glides to ZERO velocity at the end.
+// This avoids the abrupt stop a single cubic-bezier produces.
+const REEL_T1 = 0.45;
+
+// cruise portion of the timeline
+const REEL_D1 = (3 * REEL_T1) / (1 + 2 * REEL_T1);
+
+// distance covered during cruise (velocity-matched)
+function REEL_EASE(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  if (t <= REEL_T1) return (REEL_D1 / REEL_T1) * t;          // linear cruise
+  const u = (t - REEL_T1) / (1 - REEL_T1);
+  return REEL_D1 + (1 - REEL_D1) * (1 - Math.pow(1 - u, 3)); // soft ease-out tail
+}
+
+// Memoised: while the strip spins only the card entering and the card leaving the
+// centre change props, so only those two re-render.
+const ReelCard = memo(function ReelCard({ player, center, dim, idle, lite }) {
+  // render the REAL trading card, scaled to fit the reel slot; center card grows
+  return (
+    <div className="relative shrink-0 overflow-visible" style={{
+      width: REEL_INNER, height: REEL_CARD_H, marginRight: REEL_GAP,
+      opacity: idle ? 0.82 : dim ? 0.4 : 1,
+      transform: center ? "scale(1.1)" : idle ? "scale(0.92)" : "scale(0.9)",
+      transition: idle ? "none" : "opacity 220ms, transform 220ms",
+      zIndex: center ? 3 : 1,
+    }}>
+      <div className="absolute left-1/2 top-1/2 volt-reel-stage" style={{ width: 420, transform: `translate(-50%, -50%) scale(${REEL_SCALE})` }}>
+        <PlayerCard player={player} lite={lite || !center} />
+      </div>
+    </div>
+  );
+});
+
+function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
+  // active draw if a spin exists and hasn't fully revealed yet, OR landed (show winner)
+  const drawing = !!spin;
+  const wheelPool = drawing ? spin.pool.map((id) => players.find((p) => p.id === id)).filter(Boolean) : pool;
+  const n = Math.max(wheelPool.length, 1);
+
+  // Measure the reel box itself: the red marker sits at its exact centre, so the
+  // landing maths has to use the same width. (Deriving it from the window width
+  // missed the shell's padding and side rails, so the winner stopped off-centre.)
+  const reelRef = useRef(null);
+  const [stageW, setStageW] = useState(() => (typeof window !== "undefined" ? Math.min(window.innerWidth - 40, 1720) : 1200));
+  useEffect(() => {
+    const el = reelRef.current;
+    if (!el) return;
+    const measure = () => { if (el.clientWidth) setStageW(el.clientWidth); };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // The strip's position is written straight to the DOM every frame (a React
+  // render per frame made the spin stutter on phones); React only hears about
+  // which card is centred, and when the reel lands.
+  const stripRef = useRef(null);
+  const xRef = useRef(0);
+  const [centerIdx, setCenterIdx] = useState(0);
+  const [landed, setLanded] = useState(false);
+  const narrow = useNarrow(640);
+
+  // ── DRAW animation ──
+  // The same journey whatever the pool size: the strip always travels REEL_TRAVEL
+  // cards and lands on the winner. Instead of looping the pool a fixed number of
+  // times (a short crawl with 3 players, a blur with 100), it STARTS at whichever
+  // player puts the winner exactly REEL_TRAVEL cards away. Every client derives
+  // the same start from the spin, so everyone sees the same reel.
+  const winnerPoolIdx = drawing ? Math.max(spin.pool.indexOf(spin.playerId), 0) : 0;
+  // REEL_LEAD cards sit to the left of the starting card so the strip is full
+  // from the first frame, not empty on one side.
+  const startPoolIdx = (((winnerPoolIdx - REEL_TRAVEL - REEL_LEAD) % n) + n) % n;
+  const winnerIndex = REEL_LEAD + REEL_TRAVEL;
+  const drawReel = drawing ? Array.from({ length: REEL_LEAD + REEL_TRAVEL + 9 }, (_, i) => wheelPool[(startPoolIdx + i) % n]) : [];
+  const winner = drawing ? players.find((p) => p.id === spin.playerId) : null;
+  const wr = winner ? rankOf(winner.rank) : RANKS.Iron;
+  const done = drawing && Date.now() >= spin.startTs + spin.duration;
+
+  useEffect(() => {
+    if (!drawing) return;
+    const startX = stageW / 2 - (REEL_LEAD * REEL_CARD_W + (REEL_CARD_W - REEL_GAP) / 2);
+    const finalX = -(winnerIndex * REEL_CARD_W + (REEL_CARD_W - REEL_GAP) / 2) + stageW / 2;
+    const total = startX - finalX;
+    let lastTickIdx = -1;
+    setLanded(false);
+    const apply = (t) => {
+      const curX = startX - total * REEL_EASE(t);
+      xRef.current = curX;
+      if (stripRef.current) stripRef.current.style.transform = `translate3d(${curX}px, -50%, 0)`;
+      if (t >= 1) setLanded(true);
+      const idx = Math.round((stageW / 2 - curX - (REEL_CARD_W - REEL_GAP) / 2) / REEL_CARD_W);
+      const clamped = Math.max(0, Math.min(idx, drawReel.length - 1));
+      setCenterIdx(clamped);
+      // play a mechanical tick on each new card that crosses center (skip the very first frame)
+      if (clamped !== lastTickIdx) {
+        if (lastTickIdx !== -1 && t < 0.999) SndFX.play("tick", t);
+        lastTickIdx = clamped;
+      }
+    };
+    if (Date.now() - spin.startTs >= spin.duration) { apply(1); return; }
+    let frame;
+    const step = () => {
+      const t = Math.min((Date.now() - spin.startTs) / spin.duration, 1);
+      apply(t);
+      if (t < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [spin?.startTs, drawing, stageW]); // eslint-disable-line
+
+  // ── IDLE slow drift (CSS-driven, no per-frame React renders) ──
+  // strip is two identical halves; CSS shifts it -50% then loops seamlessly
+  // idle strip only needs enough cards to fill the visible stage (×2 for seamless loop), not the whole pool
+  const idleCount = Math.min(n, Math.ceil(stageW / REEL_CARD_W) + 2);
+  const idleHalf = Array.from({ length: Math.max(idleCount, 4) }, (_, i) => wheelPool[i % n]);
+  const idleReel = drawing ? [] : [...idleHalf, ...idleHalf];
+
+  const headline = drawing ? (done ? "Target acquired" : "Drawing the next player") : "The draft pool";
+  const glow = drawing ? (done ? wr.glow : "rgba(61,123,255,0.32)") : "rgba(61,123,255,0.22)";
+
+  return (
+    <div className="w-full flex flex-col items-center">
+      {/* heading */}
+      <div className="text-center mb-4">
+        <p className="uppercase tracking-[0.35em] font-bold text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#5b8dff", textShadow: "0 0 14px rgba(61,123,255,0.7)" }}>{drawing ? "// FATE PROTOCOL ENGAGED" : "// AWAITING DRAW"}</p>
+        <h2 className="text-3xl md:text-4xl font-bold uppercase mt-1" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff", letterSpacing: "0.06em" }}>{headline}</h2>
+      </div>
+
+      {/* reel */}
+      <div ref={reelRef} className="relative w-full mt-4" style={{ height: REEL_CARD_H + 50, overflow: "hidden" }}>
+        {/* closest-side: the glow reaches zero before the box's edges, so the
+            reel's overflow can't slice it into a hard line top and bottom */}
+        <div className="absolute pointer-events-none" style={{ left: "26%", right: "26%", top: 0, bottom: 0, background: `radial-gradient(closest-side, ${glow}, transparent)`, transition: "background 600ms" }} />
+        {/* edge fades */}
+        <div className="absolute inset-y-0 left-0 z-10 pointer-events-none" style={{ width: 80, background: "linear-gradient(90deg, #0a0d18, transparent)" }} />
+        <div className="absolute inset-y-0 right-0 z-10 pointer-events-none" style={{ width: 80, background: "linear-gradient(270deg, #0a0d18, transparent)" }} />
+        {/* center marker */}
+        <div className="absolute left-1/2 top-0 bottom-0 z-20 pointer-events-none" style={{ transform: "translateX(-50%)" }}>
+          <div className="absolute left-1/2" style={{ top: -14, transform: "translateX(-50%)", filter: "drop-shadow(0 0 9px rgba(255,70,85,0.9))" }}>
+            <div style={{ width: 0, height: 0, borderLeft: "11px solid transparent", borderRight: "11px solid transparent", borderTop: "18px solid #ff4655" }} />
+          </div>
+          <div className="absolute left-1/2" style={{ bottom: -14, transform: "translateX(-50%)", filter: "drop-shadow(0 0 9px rgba(255,70,85,0.9))" }}>
+            <div style={{ width: 0, height: 0, borderLeft: "11px solid transparent", borderRight: "11px solid transparent", borderBottom: "18px solid #ff4655" }} />
+          </div>
+          <div className="absolute top-0 bottom-0 left-1/2" style={{ width: 2, transform: "translateX(-50%)", background: "linear-gradient(180deg, transparent, rgba(255,70,85,0.45), transparent)" }} />
+        </div>
+
+        {drawing ? (
+          <div ref={stripRef} className="absolute top-1/2 flex items-center" style={{ left: 0, transform: `translate3d(${xRef.current}px, -50%, 0)`, willChange: "transform" }}>
+            {drawReel.map((p, i) => {
+              // windowing: only mount real cards near the visible center; far cards are width-preserving spacers
+              const WIN = narrow ? 3 : 7;
+              if (Math.abs(i - centerIdx) > WIN) {
+                return <div key={i} className="shrink-0" style={{ width: REEL_INNER, height: REEL_CARD_H, marginRight: REEL_GAP }} />;
+              }
+              return <ReelCard key={i} player={p} center={i === centerIdx} dim={i !== centerIdx} lite={!landed && !done} />;
+            })}
+          </div>
+        ) : (
+          <div className="absolute top-1/2 flex items-center reel-drift" style={{ left: 0, transform: "translateY(-50%)", willChange: "transform" }}>
+            {idleReel.map((p, i) => <ReelCard key={i} player={p} center={false} dim idle />)}
+          </div>
+        )}
+      </div>
+
+      {/* status / controls */}
+      <div className="mt-5 min-h-[88px] flex flex-col items-center justify-center text-center">
+        {drawing && done && winner ? (
+          <div className="bid-pop">
+            <p className="text-5xl font-bold uppercase leading-none" style={{ fontFamily: "'Rajdhani',sans-serif", color: wr.c, textShadow: `0 0 30px ${wr.glow}` }}>{winner.name}</p>
+            <p className="uppercase tracking-widest text-sm mt-2" style={{ color: "rgba(236,243,255,0.6)" }}>{winner.rank} · heads to the block at {fmt(rankOf(winner.rank).bid)}</p>
+          </div>
+        ) : drawing ? (
+          <p className="uppercase tracking-widest text-sm animate-pulse" style={{ color: "rgba(236,243,255,0.45)" }}>{n} candidates in the draw…</p>
+        ) : isAdmin ? (
+          <>
+            <p className="text-sm mb-4" style={{ color: "rgba(236,243,255,0.5)" }}>{canDraw ? `${pool.length} players in the pool. Hit draw and fate decides who's up.` : "Pool is empty — add players in the Scout Hub."}</p>
+            <button onClick={onDraw} disabled={!canDraw} className={"ea-btn relative" + (canDraw ? "" : " ea-disabled")}
+              style={{ display: "inline-block", padding: "2px", clipPath: "polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px))", background: canDraw ? "#3d7bff" : "rgba(120,140,180,0.25)", boxShadow: canDraw ? "0 0 34px rgba(61,123,255,0.45)" : "none", cursor: canDraw ? "pointer" : "not-allowed" }}>
+              <span className="ea-fill flex items-center justify-center gap-3 font-bold uppercase tracking-[0.28em]"
+                style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "clamp(1rem,1.8vw,1.5rem)", lineHeight: 1, padding: "18px 44px", clipPath: "polygon(0 0, calc(100% - 19px) 0, 100% 19px, 100% 100%, 19px 100%, 0 calc(100% - 19px))", background: "linear-gradient(180deg, #0b1426, #070d18)", color: canDraw ? "#cfe0ff" : "rgba(200,215,255,0.3)" }}>
+                <span className="ea-arrow" style={{ fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1, position: "relative", top: "-0.04em" }}>⇆</span>
+                <span style={{ lineHeight: 1 }}>Draw a Player</span>
+              </span>
+            </button>
+          </>
+        ) : (
+          <p className="text-sm uppercase tracking-widest animate-pulse" style={{ color: "rgba(236,243,255,0.45)" }}>Waiting for the host to draw the next player…</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ ADD PLAYER FORM ═════════════════════════════════ */
+const inputCls = "w-full px-3 py-2 rounded-sm text-sm outline-none";
+
+const inputStyle = { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif" };
+
+function Field({ label, children }) {
+  return <label className="flex flex-col gap-1"><span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>{label}</span>{children}</label>;
+}
+
+function AddPlayerForm({ onAdd, editing, onSave, onCancel }) {
+  const str = (v) => (v != null ? String(v) : "");
+  const init = editing
+    ? { name: editing.name, rank: editing.rank, role: editing.role, agent: editing.agent, kda: str(editing.kda), acs: str(editing.acs), hs: str(editing.hs), win: str(editing.win), badgeInput: "", badges: editing.badges || [] }
+    : { name: "", rank: "Gold", role: "Duelist", agent: "Jett", kda: "", acs: "", hs: "", win: "", badgeInput: "", badges: [] };
+  const [f, setF] = useState(init);
+  // re-seed when switching which player is being edited
+  useEffect(() => { setF(init); }, [editing?.id]); // eslint-disable-line
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const addBadge = () => { const b = f.badgeInput.trim(); if (b) setF({ ...f, badges: [...f.badges, b], badgeInput: "" }); };
+  const submit = () => {
+    if (!f.name.trim()) return;
+    // Blank stays blank. Defaulting to 1.00 / 200 / 20% / 50% invented stats,
+    // and for registered players editPlayer saved them into their real profile.
+    const num = (v, parse) => { const s = String(v ?? "").trim(); if (!s) return null; const n = parse(s); return Number.isFinite(n) ? n : null; };
+    const win = num(f.win, parseInt);
+    const data = { name: f.name.trim(), rank: f.rank, role: f.role, agent: f.agent, kda: num(f.kda, parseFloat), acs: num(f.acs, parseInt), hs: num(f.hs, parseInt), win: win == null ? null : Math.max(0, Math.min(win, 100)), badges: f.badges };
+    if (editing) { onSave({ ...editing, ...data }); }
+    else { onAdd({ id: uid(), ...data, status: "pool", soldTo: null, soldPrice: null }); setF(init); }
+  };
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <Field label="Player name"><input className={inputCls} style={inputStyle} value={f.name} onChange={set("name")} placeholder="e.g. Zephyr" /></Field>
+      <Field label="Rank"><select className={inputCls} style={inputStyle} value={f.rank} onChange={set("rank")}>{RANK_LIST.map((r) => <option key={r}>{r}</option>)}</select></Field>
+      <Field label="Primary role"><select className={inputCls} style={inputStyle} value={f.role} onChange={set("role")}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></Field>
+      <Field label="Main agent"><select className={inputCls} style={inputStyle} value={f.agent} onChange={set("agent")}>{AGENTS.map((a) => <option key={a}>{a}</option>)}</select></Field>
+      <Field label="KDA"><input className={inputCls} style={inputStyle} value={f.kda} onChange={set("kda")} placeholder="1.24" /></Field>
+      <Field label="ACS"><input className={inputCls} style={inputStyle} value={f.acs} onChange={set("acs")} placeholder="245" /></Field>
+      <Field label="Headshot %"><input className={inputCls} style={inputStyle} value={f.hs} onChange={set("hs")} placeholder="28" /></Field>
+      <Field label="Win %"><input className={inputCls} style={inputStyle} value={f.win} onChange={set("win")} placeholder="52" /></Field>
+      <Field label="Add badge / title">
+        <div className="flex gap-2">
+          <input className={inputCls} style={inputStyle} value={f.badgeInput} onChange={set("badgeInput")} onKeyDown={(e) => e.key === "Enter" && addBadge()} placeholder="MVP, IGL…" />
+          <button onClick={addBadge} className="px-3 rounded-sm text-sm font-bold" style={{ background: "#3d7bff22", border: "1px solid #3d7bff66", color: "#aec6ff" }}>+</button>
+        </div>
+      </Field>
+      {f.badges.length > 0 && (
+        <div className="col-span-2 lg:col-span-4 flex flex-wrap gap-2">
+          {f.badges.map((b, i) => <button key={i} onClick={() => setF({ ...f, badges: f.badges.filter((_, j) => j !== i) })}><Tag hue="#3d7bff">{b} ✕</Tag></button>)}
+        </div>
+      )}
+      <div className="col-span-2 lg:col-span-4 flex gap-3">
+        <button onClick={submit} className="flex-1 py-3 font-bold uppercase tracking-widest text-sm transition-transform active:scale-95"
+          style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(14px 0,100% 0,calc(100% - 14px) 100%,0 100%)", background: editing ? "linear-gradient(90deg,#3ddc8422,#3ddc8444)" : "linear-gradient(90deg,#3d7bff22,#3d7bff44)", border: `1px solid ${editing ? "#3ddc8488" : "#3d7bff88"}`, color: editing ? "#9af5c2" : "#aec6ff" }}>
+          {editing ? "Save changes" : "Add to draft pool"}
+        </button>
+        {editing && <button onClick={onCancel} className="px-6 py-3 text-sm font-bold uppercase tracking-widest rounded-sm" style={{ border: "1px solid rgba(120,150,220,0.2)", color: "rgba(200,215,255,0.6)" }}>Cancel</button>}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ TEAM CARD (locker room, editable by admin) ══════ */
+function TeamCard({ team, players, lead, isAdmin, onRename, onScout, onRemove, canRemove, onAddToRoster, onRemoveFromRoster, onSetBudget, collapsible = false, defaultOpen = false }) {
+  const [editing, setEditing] = useState(false);
+  // Phones: a stack of collapsed headers you open one at a time.
+  const [open, setOpen] = useState(defaultOpen);
+  const shut = collapsible && !open && !editing;
+  const [name, setName] = useState(team.name);
+  const [cap, setCap] = useState(team.captain);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addPid, setAddPid] = useState("");
+  const [addPrice, setAddPrice] = useState("");
+  const [budgetEdit, setBudgetEdit] = useState(false);
+  const [budgetVal, setBudgetVal] = useState(String(team.budget));
+  useEffect(() => { if (!budgetEdit) setBudgetVal(String(team.budget)); }, [team.budget, budgetEdit]);
+  useEffect(() => { if (!editing) { setName(team.name); setCap(team.captain); setConfirmDel(false); } }, [team.name, team.captain, editing]);
+  const saveBudget = () => { const v = Math.max(0, parseInt(budgetVal, 10) || 0); onSetBudget(team.id, v); setBudgetEdit(false); };
+
+  const rosterPlayers = team.roster.map((id) => players.find((p) => p.id === id)).filter(Boolean);
+  const rolesHave = new Set(rosterPlayers.map((p) => p.role));
+  const rolesNeed = ROLES.filter((r) => r !== "Flex" && !rolesHave.has(r));
+  // Same definition the auction uses: captains and late sign-ups can't be bought,
+  // so they must not count toward the budget a captain has to hold back.
+  const availablePool = players.filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false);
+  const submitAdd = () => { if (!addPid) return; onAddToRoster(team.id, addPid, addPrice === "" ? 0 : Number(addPrice)); setAddPid(""); setAddPrice(""); setAddOpen(false); };
+  const save = () => { onRename(team.id, name, cap); setEditing(false); };
+
+  return (
+    <div className={"relative overflow-hidden flex flex-col" + (shut ? " volt-tc-shut" : "")} style={{ background: `linear-gradient(165deg, ${team.hue}22, rgba(10,13,22,0.88) 55%)`, border: `1px solid ${lead ? "#3ddc84" : team.hue + "55"}`, boxShadow: lead ? "0 0 24px rgba(61,220,132,0.3)" : "0 14px 30px rgba(0,0,0,0.35)", clipPath: SHELL_NOTCH(16) }}>
+      <div style={{ height: 3, background: `linear-gradient(90deg, ${team.hue}, transparent)` }} />
+      <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11, borderRight: `2px solid ${team.hue}`, borderBottom: `2px solid ${team.hue}` }} />
+      <div className={"volt-tc-body flex flex-col flex-1 " + (collapsible ? "px-3.5 py-3 gap-3" : "p-4 gap-3")}>
+        <div className="flex items-start justify-between gap-2" onClick={collapsible && !editing ? () => setOpen((o) => !o) : undefined}
+          style={collapsible && !editing ? { cursor: "pointer" } : undefined}>
+          {editing ? (
+            <div className="flex-1 flex flex-col gap-1.5">
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Team name" maxLength={22}
+                className="w-full px-2 py-1.5 rounded text-sm font-bold uppercase outline-none"
+                style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(255,255,255,0.06)", border: `1px solid ${team.hue}66`, color: team.hue }} />
+              <input value={cap} onChange={(e) => setCap(e.target.value)} placeholder="Captain" maxLength={18}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+                className="w-full px-2 py-1 rounded text-xs outline-none"
+                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }} />
+              <div className="flex flex-wrap gap-2 mt-1">
+                <button onClick={save} className="px-3 py-1 text-xs font-bold uppercase tracking-widest rounded" style={{ background: "rgba(61,220,132,0.18)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>Save</button>
+                <button onClick={() => setEditing(false)} className="px-3 py-1 text-xs uppercase tracking-widest rounded" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>Cancel</button>
+                {canRemove && (
+                  <button onClick={() => { if (confirmDel) { onRemove(team.id); } else { setConfirmDel(true); setTimeout(() => setConfirmDel(false), 4000); } }}
+                    className="ml-auto px-3 py-1 text-xs uppercase tracking-widest rounded"
+                    style={{ background: confirmDel ? "rgba(255,70,85,0.25)" : "transparent", border: "1px solid rgba(255,70,85,0.5)", color: "#ff8a94" }}>
+                    {confirmDel ? "Tap to confirm" : "Delete team"}
+                  </button>
+                )}
+              </div>
+              {confirmDel && (
+                <p className="text-[11px] leading-snug" style={{ color: "#ff8a94" }}>
+                  Deletes this roster.{rosterPlayers.length ? " Its players go back to the pool." : ""} The captain returns to the draw.
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="min-w-0 flex items-center gap-2.5">
+                <TeamMono name={team.name} hue={team.hue} size={30} />
+                <div className="min-w-0">
+                  <h3 className="font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: team.hue, fontSize: 20 }}>{team.name}</h3>
+                  <p className="text-xs" style={{ color: "rgba(236,243,255,0.5)" }}>Capt. {team.captain}</p>
+                </div>
+              </div>
+              {collapsible && (
+                <div className="ml-auto shrink-0 flex items-center gap-2.5 self-center" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                  <div className="text-right">
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#ecf3ff", lineHeight: 1 }}>{fmt(team.budget)}</div>
+                    <div style={{ fontSize: 9.5, color: "rgba(200,215,255,0.45)", marginTop: 3, letterSpacing: "0.08em" }}>{rosterPlayers.length}/4 · left</div>
+                  </div>
+                  <span style={{ color: team.hue, fontSize: 11, transform: open ? "rotate(180deg)" : "none", transition: "transform .18s" }}>▼</span>
+                </div>
+              )}
+              {isAdmin && (!collapsible || open) && (
+                <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} title="Rename team" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-xs"
+                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(236,243,255,0.6)" }}>✎</button>
+              )}
+            </>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="px-3 py-2" style={{ background: "rgba(10,13,22,0.6)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
+            <div className="flex items-center gap-1">
+              <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Budget</p>
+              {isAdmin && !budgetEdit && (
+                <button onClick={() => { setBudgetVal(String(team.budget)); setBudgetEdit(true); }} title="Edit budget" className="ml-auto text-[10px] leading-none px-1 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(236,243,255,0.55)" }}>✎</button>
+              )}
+            </div>
+            {isAdmin && budgetEdit ? (
+              <div className="flex items-center gap-1 mt-0.5">
+                <input value={budgetVal} onChange={(e) => setBudgetVal(e.target.value.replace(/[^0-9]/g, ""))}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveBudget(); if (e.key === "Escape") setBudgetEdit(false); }}
+                  inputMode="numeric" autoFocus
+                  className="w-full px-1.5 py-0.5 rounded text-base font-bold outline-none"
+                  style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(10,14,24,0.9)", border: `1px solid ${team.hue}88`, color: "#ecf3ff" }} />
+                <button onClick={saveBudget} className="text-[11px] px-1.5 py-1 rounded shrink-0" style={{ background: "rgba(61,220,132,0.2)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>✓</button>
+                <button onClick={() => setBudgetEdit(false)} aria-label="Cancel budget edit" className="text-[11px] px-1.5 py-1 rounded shrink-0" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>✕</button>
+              </div>
+            ) : (
+              <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(team.budget)}</p>
+            )}
+          </div>
+          <div className="px-3 py-2" style={{ background: "rgba(10,13,22,0.6)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
+            <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Max bid</p>
+            <p className="text-lg font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#5b8dff" }}>{fmt(Math.max(maxAllowedBid(team, players.filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false)), 0))}</p>
+          </div>
+        </div>
+        {/* How much of the purse is gone. */}
+        <div style={{ height: 4, background: "rgba(255,255,255,0.06)", marginTop: -2 }}>
+          <div style={{ height: "100%", width: `${Math.max(0, Math.min(100, (team.budget / 10000) * 100))}%`,
+            background: `linear-gradient(90deg, ${team.hue}, ${team.hue}88)`, transition: "width 500ms" }} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 px-2 py-1.5" style={{ background: team.hue + "1a", borderLeft: `2px solid ${team.hue}` }}>
+            <span style={{ color: team.hue }}>★</span>
+            <span className="text-sm font-semibold truncate" style={{ color: "#ecf3ff" }}>{team.captain}</span>
+            <span className="ml-auto text-xs uppercase shrink-0" style={{ color: "rgba(236,243,255,0.4)" }}>Captain</span>
+          </div>
+          {rosterPlayers.map((p) => { const r = rankOf(p.rank); return (
+            <div key={p.id} className="flex items-center gap-1.5">
+              <button onClick={() => onScout(p.id)} className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded text-left" style={{ background: "rgba(255,255,255,0.04)" }}>
+                <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+                <div className="min-w-0">
+                  <p className="text-sm truncate" style={{ color: "#ecf3ff" }}>{p.name}</p>
+                  <p className="text-xs truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role}</p>
+                </div>
+                <span className="ml-auto text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.55)" }}>{fmt(p.soldPrice)}</span>
+              </button>
+              {isAdmin && (
+                <button onClick={() => onRemoveFromRoster(team.id, p.id)} title="Remove from roster (returns to pool)"
+                  className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-xs"
+                  style={{ background: "rgba(255,70,85,0.1)", border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94" }}>✕</button>
+              )}
+            </div>
+          ); })}
+          {Array.from({ length: emptySlots(team) }).map((_, i) => {
+            if (isAdmin && i === 0) {
+              return addOpen ? (
+                <div key={i} className="flex flex-col gap-1.5 p-2 rounded" style={{ border: `1px solid ${team.hue}55`, background: "rgba(255,255,255,0.03)" }}>
+                  <select value={addPid} onChange={(e) => setAddPid(e.target.value)}
+                    className="w-full px-2 py-1.5 rounded text-xs outline-none"
+                    style={{ background: "rgba(10,14,24,0.9)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }}>
+                    <option value="">Select player…</option>
+                    {availablePool.map((p) => <option key={p.id} value={p.id}>{p.name} · {ROLE_GLYPH[p.role]} {p.role} · {rankLabel(p.rank, p.rankDiv)}</option>)}
+                  </select>
+                  <input value={addPrice} onChange={(e) => setAddPrice(e.target.value.replace(/[^0-9]/g, ""))} placeholder="Price label (optional)"
+                    inputMode="numeric"
+                    className="w-full px-2 py-1.5 rounded text-xs outline-none"
+                    style={{ fontFamily: "'IBM Plex Mono',monospace", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)", color: "#ecf3ff" }} />
+                  <div className="flex gap-2">
+                    <button onClick={submitAdd} disabled={!addPid} className="px-3 py-1 text-xs font-bold uppercase tracking-widest rounded disabled:opacity-40" style={{ background: "rgba(61,220,132,0.18)", border: "1px solid #3ddc8488", color: "#9af5c2" }}>Add</button>
+                    <button onClick={() => { setAddOpen(false); setAddPid(""); setAddPrice(""); }} className="px-3 py-1 text-xs uppercase tracking-widest rounded" style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(236,243,255,0.5)" }}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button key={i} onClick={() => setAddOpen(true)} className="px-2 py-1.5 rounded text-xs uppercase tracking-widest text-center"
+                  style={{ border: `1px dashed ${team.hue}66`, color: team.hue + "cc", background: team.hue + "0d" }}>+ Add player</button>
+              );
+            }
+            return <div key={i} className="px-2 py-1.5 rounded text-xs uppercase tracking-widest text-center" style={{ border: "1px dashed rgba(255,255,255,0.12)", color: "rgba(236,243,255,0.25)" }}>open slot</div>;
+          })}
+        </div>
+        <div className="mt-auto pt-2">
+          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "rgba(236,243,255,0.4)" }}>{emptySlots(team) === 0 ? "Squad complete" : "Roles still open"}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {emptySlots(team) === 0 ? <span className="text-xs" style={{ color: "#3ddc84" }}>✓ Full roster locked in</span>
+              : rolesNeed.length ? rolesNeed.map((r) => <span key={r} className="px-2 py-0.5 text-xs uppercase tracking-widest rounded" style={{ background: "rgba(255,70,85,0.12)", color: "#ff8a94" }}>{ROLE_GLYPH[r]} {r}</span>)
+              : <span className="text-xs" style={{ color: "rgba(236,243,255,0.5)" }}>Core roles covered</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ SEAT GATE ═══════════════════════════════════════ */
+function RoleGate({ teams, onPick, auth }) {
+  const [mode, setMode] = useState("seats"); // seats | commish | captain
+  const [seat, setSeat] = useState(null);     // team being unlocked (captain mode)
+  const [seatIdx, setSeatIdx] = useState(0);  // its seat index (for the code)
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const loggedIn = !!auth;           // authenticated via Supabase → no passcodes
+  const isHost = auth?.role === "host";
+
+  const submit = () => {
+    setErr("");
+    if (code.trim() === COMMISH_CODE) { onPick("admin"); }
+    else { setErr("Incorrect passcode."); setCode(""); }
+  };
+
+  // Logged in → seats are LOCKED to their assigned captain (captainUserId).
+  // Unowned seats (legacy/guest boards) stay claimable. Legacy → passcode step.
+  const openSeat = (t, i) => {
+    if (loggedIn) {
+      if (t.captainUserId && t.captainUserId !== auth.userId) {
+        setErr(`${t.name} is locked to its captain. Enter as a spectator to watch.`); return;
+      }
+      onPick(t.id); return;
+    }
+    setSeat(t); setSeatIdx(i); setMode("captain"); setCode(""); setErr("");
+  };
+
+  // Host: hosts enter directly; legacy asks for passcode.
+  const enterCommish = () => {
+    if (isHost) { onPick("admin"); return; }
+    if (loggedIn) { setErr("Only the community host can enter here."); return; }
+    setMode("commish"); setCode(""); setErr("");
+  };
+
+  const submitSeat = () => {
+    setErr("");
+    if (code.trim() === seatCode(seatIdx)) { onPick(seat.id); }
+    else { setErr("Incorrect seat passcode."); setCode(""); }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 py-14 relative overflow-hidden">
+      {/* faint hero art backdrop */}
+      <img src={IMG_HERO} alt="" className="absolute pointer-events-none select-none" style={{ right: "-8%", top: "50%", transform: "translateY(-50%)", height: "112%", width: "auto", opacity: 0.16, objectFit: "cover", maskImage: "linear-gradient(90deg, transparent, #000 55%)", WebkitMaskImage: "linear-gradient(90deg, transparent, #000 55%)" }} />
+      <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 70% 50% at 50% 38%, rgba(61,123,255,0.10), transparent 70%)" }} />
+
+      <div className="relative w-full max-w-4xl flex flex-col items-center">
+        {/* eyebrow with HUD ticks */}
+        <div className="flex items-center gap-3 mb-4">
+          <span style={{ width: 22, height: 2, background: "#3d7bff" }} />
+          <p className="uppercase text-sm" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 600, letterSpacing: "0.4em" }}>{(window.__VOLT.communityName || "VOLT Protocol")} — {(window.__VOLT.weekendLabel || "Auction Draft")}</p>
+          <span style={{ width: 22, height: 2, background: "#3d7bff" }} />
+        </div>
+
+        {/* Tungsten headline, matching the hero */}
+        <h1 className="font-bold uppercase text-center" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(3.4rem,9vw,7rem)", lineHeight: 0.82, letterSpacing: "0.04em" }}>
+          <span style={{ color: "#f4f8ff" }}>Auction </span><span style={{ color: "#3d7bff" }}>Draft</span>
+        </h1>
+
+        {mode === "seats" ? (
+          <>
+            <p className="mt-4 text-center max-w-md uppercase" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.18em", fontSize: "0.85rem" }}>Claim your seat — everything syncs live to every open session</p>
+            <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+              {teams.map((t, i) => {
+                return (
+                <button key={t.id} onClick={() => openSeat(t, i)} className="seat-card relative p-6 text-left flex items-center gap-4"
+                  style={{ "--hue": t.hue, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", background: "linear-gradient(160deg, rgba(61,123,255,0.05), rgba(10,15,28,0.55))", border: "1px solid rgba(120,150,220,0.18)", backdropFilter: "blur(8px)" }}>
+                  {/* team-color HUD corner bracket */}
+                  <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: `2px solid ${t.hue}`, borderTop: `2px solid ${t.hue}` }} />
+                  {/* seat number tab */}
+                  <span className="shrink-0 flex items-center justify-center font-bold" style={{ width: 52, height: 52, fontFamily: "'IBM Plex Mono',monospace", fontSize: "1.05rem", color: t.hue, background: `${t.hue}1a`, border: `1px solid ${t.hue}66`, clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{String(i + 1).padStart(2, "0")}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "1.35rem", letterSpacing: "0.04em", color: t.hue }}>{t.name}</span>
+                    <span className="block text-sm mt-0.5" style={{ color: "rgba(220,230,255,0.55)", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.05em" }}>Captain · {t.captain}</span>
+                  </span>
+                  <span className="seat-go shrink-0 font-bold uppercase text-xs tracking-widest flex items-center gap-1.5" style={{ fontFamily: "'Rajdhani',sans-serif", color: t.hue }}>
+                    Claim <span style={{ fontFamily: "'IBM Plex Mono',monospace" }}>→</span>
+                  </span>
+                </button>
+                );
+              })}
+            </div>
+            <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+              <button onClick={() => onPick("spectator")} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
+                style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(120,160,255,0.08)", border: "1px solid rgba(120,160,255,0.4)", color: "#cfe0ff" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square" style={{ flexShrink: 0 }}>
+                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3" opacity="0.7" />
+                  <circle cx="12" cy="12" r="6.5" />
+                  <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+                </svg>
+                Enter as Player
+              </button>
+              {(!loggedIn || isHost) && <button onClick={enterCommish} className="gate-cta px-10 py-3.5 font-bold uppercase tracking-[0.22em] flex items-center gap-3"
+                style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.95rem", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.55)", color: "#aec6ff" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square" strokeLinejoin="miter" style={{ flexShrink: 0 }}>
+                  <path d="M12 2.5l7 3v5.5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V5.5z" />
+                  <path d="M9.4 11.8l1.9 1.9 3.6-3.9" />
+                </svg>
+                Enter as host
+              </button>}
+            </div>
+            <p className="mt-4 text-xs text-center max-w-md" style={{ color: "rgba(200,215,255,0.4)" }}>Players can watch the auction, rosters and scouting reports live, but can't place bids.</p>
+          </>
+        ) : mode === "captain" ? (
+          <div className="mt-10 w-full max-w-sm flex flex-col gap-3 p-7 relative" style={{ background: `linear-gradient(160deg, ${seat.hue}1c, rgba(10,15,28,0.6))`, border: `1px solid ${seat.hue}66`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", backdropFilter: "blur(10px)", boxShadow: `0 0 50px ${seat.hue}22` }}>
+            <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: `2px solid ${seat.hue}`, borderTop: `2px solid ${seat.hue}` }} />
+            <p className="uppercase tracking-[0.25em] text-sm font-bold text-center" style={{ fontFamily: "'Rajdhani',sans-serif", color: seat.hue }}>{seat.name}</p>
+            <p className="text-xs text-center -mt-1 leading-relaxed" style={{ color: "rgba(220,230,255,0.5)" }}>
+              Enter this seat's captain passcode to take control.
+            </p>
+            <input type="password" autoFocus value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitSeat()}
+              placeholder="Passcode" className="px-3 py-2.5 rounded-lg outline-none text-center tracking-widest"
+              style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }} />
+            {err && <p className="text-xs text-center" style={{ color: "#ff6b7d" }}>{err}</p>}
+            <button onClick={submitSeat} className="gate-cta py-3 font-bold uppercase tracking-[0.2em]"
+              style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", background: `${seat.hue}28`, border: `1px solid ${seat.hue}`, color: "#eaf1ff" }}>
+              Unlock seat
+            </button>
+            <button onClick={() => { setMode("seats"); setSeat(null); setErr(""); }} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>← back to seats</button>
+          </div>
+        ) : (
+          <div className="mt-10 w-full max-w-sm flex flex-col gap-3 p-7 relative" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.08), rgba(10,15,28,0.6))", border: "1px solid rgba(61,123,255,0.4)", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))", backdropFilter: "blur(10px)", boxShadow: "0 0 50px rgba(61,123,255,0.18)" }}>
+            <span className="absolute left-0 top-0" style={{ width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+            <p className="uppercase tracking-[0.25em] text-sm font-bold text-center" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#7da6ff" }}>Host Access</p>
+            <p className="text-xs text-center -mt-1 leading-relaxed" style={{ color: "rgba(220,230,255,0.5)" }}>
+              Enter the host passcode.
+            </p>
+            <input type="password" autoFocus value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
+              placeholder="Passcode" className="px-3 py-2.5 rounded-lg outline-none text-center tracking-widest"
+              style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }} />
+            {err && <p className="text-xs text-center" style={{ color: "#ff6b7d" }}>{err}</p>}
+            <button onClick={submit} className="gate-cta py-3 font-bold uppercase tracking-[0.2em]"
+              style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))", background: "rgba(61,123,255,0.18)", border: "1px solid #3d7bff", color: "#eaf1ff" }}>
+              Unlock
+            </button>
+            <button onClick={() => { setMode("seats"); setErr(""); }} className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>← back to seats</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ COUNTDOWN ═══════════════════════════════════════ */
+function useCountdown(target) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const diff = Math.max(target - now, 0);
+  return { d: Math.floor(diff / 86400000), h: Math.floor(diff / 3600000) % 24, m: Math.floor(diff / 60000) % 60, s: Math.floor(diff / 1000) % 60, live: diff === 0 };
+}
+
+/* ════════════════ WAR ROOM (private captain sandbox) ══════════════ */
+const WR_BUDGET = 10000;
+
+const WR_SLOTS = 4;
+
+// captain is the 5th player, so they draft 4
+const WR_PLANS = 5;
+
+const emptyLineup = () => Array.from({ length: WR_SLOTS }, () => ({ playerId: "", target: "" }));
+
+function PlayerPicker({ value, players, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const sel = players.find((p) => p.id === value);
+  const list = players.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()) || (p.agent || "").toLowerCase().includes(q.toLowerCase()));
+  // The list is portalled to <body>: each War Room slot row has notched corners
+  // (clip-path), which clips every descendant, so an absolutely positioned list
+  // was sliced off at the bottom of its row and couldn't be used.
+  const boxRef = useRef(null);
+  const [anchor, setAnchor] = useState(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (boxRef.current && boxRef.current.contains(e.target)) return;
+      if (e.target.closest && e.target.closest("[data-volt-pickpanel]")) return;
+      setOpen(false); setQ("");
+    };
+    const onKey = (e) => { if (e.key === "Escape") { setOpen(false); setQ(""); } };
+    const place = () => {
+      const r = boxRef.current?.getBoundingClientRect();
+      if (r) setAnchor({ top: r.top, bottom: r.bottom, left: r.left, width: r.width });
+    };
+    place();
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+  const panelPos = () => {
+    const vh = window.innerHeight, vw = window.innerWidth;
+    const H = 270;                       // search box + 220px list
+    const width = Math.min(Math.max(anchor.width, 280), vw - 16);
+    const left = Math.max(8, Math.min(anchor.left, vw - width - 8));
+    const flip = anchor.bottom + 4 + H > vh - 8 && anchor.top - 4 - H > 8;
+    return flip ? { bottom: vh - anchor.top + 4, left, width } : { top: anchor.bottom + 4, left, width };
+  };
+  return (
+    <div ref={boxRef} className="relative flex-1 min-w-0">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-left"
+        style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${sel ? rankOf(sel.rank).c + "66" : "rgba(255,255,255,0.12)"}`, color: "#ecf3ff" }}>
+        {sel ? (
+          <>
+            <RankBadge rank={sel.rank} div={sel.rankDiv} size="sm" />
+            <span className="font-semibold truncate" style={{ fontFamily: "'Rajdhani',sans-serif" }}>{sel.name}</span>
+            <span className="text-xs truncate" style={{ color: rankOf(sel.rank).c }}>{ROLE_GLYPH[sel.role]} {sel.role}</span>
+          </>
+        ) : <span className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>Select a player…</span>}
+        <span className="ml-auto text-xs" style={{ color: "rgba(236,243,255,0.4)" }}>▾</span>
+      </button>
+      {open && anchor && createPortal(
+        <div data-volt-pickpanel="1" className="rounded-lg overflow-hidden" style={{ position: "fixed", zIndex: 200, ...panelPos(), background: "#0d1120", border: "1px solid rgba(255,255,255,0.15)", boxShadow: "0 20px 40px rgba(0,0,0,0.6)" }}>
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="w-full px-3 py-2 text-sm outline-none" style={{ background: "rgba(255,255,255,0.05)", color: "#ecf3ff", borderBottom: "1px solid rgba(255,255,255,0.1)" }} />
+          <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            {value && <button onClick={() => { onChange(""); setOpen(false); setQ(""); }} className="w-full text-left px-3 py-2 text-xs uppercase tracking-widest" style={{ color: "#ff8a94" }}>✕ Clear slot</button>}
+            {list.map((p) => { const r = rankOf(p.rank); return (
+              <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); setQ(""); }} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80" style={{ background: p.id === value ? r.c + "1f" : "transparent" }}>
+                <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+                <span className="text-sm truncate" style={{ color: "#ecf3ff" }}>{p.name}</span>
+                <span className="text-xs truncate" style={{ color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span>
+                <span className="ml-auto text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.5)" }}>{fmt(r.bid)}</span>
+              </button>
+            ); })}
+            {list.length === 0 && <p className="px-3 py-3 text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>No matches.</p>}
+          </div>
+        </div>, document.body
+      )}
+    </div>
+  );
+}
+
+function WarRoom({ teamId, teamHue, players: allPlayers }) {
+  // Only people who can actually be bought. Mirrors the draw's filter exactly:
+  // captains lead teams and never enter the pool, and reserves are cover for
+  // the weekend rather than auction lots. Planning around someone who can't be
+  // nominated is worse than not seeing them — the captain builds a lineup that
+  // can't happen and finds out on the night.
+  const players = (allPlayers || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
+  const [plans, setPlans] = useState(() => Array.from({ length: WR_PLANS }, () => emptyLineup()));
+  const [active, setActive] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  const [dropped, setDropped] = useState([]);
+
+  // Load this captain's private plans, ONCE per team.
+  //
+  // This used to depend on `allPlayers` as well. The auction poll rebuilds the
+  // board every 1.2–2.5s and hands down a fresh array each time, so the effect
+  // refired constantly and re-read the last SAVED plans straight over whatever
+  // the captain had just typed — picks appeared to delete themselves seconds
+  // after being added. Saving is manual, so unsaved work was simply lost.
+  //
+  // `playersRef` gives the loader the current pool without making the pool a
+  // dependency.
+  const playersRef = useRef(players);
+  playersRef.current = players;
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const data = await readWarRoom(teamId);
+      if (!alive) return;
+      const pool = playersRef.current || [];
+      const draftable = new Set(pool.map((p) => p.id));
+      // Names of anyone dropped, so the captain is told rather than quietly
+      // finding a hole in a plan they'd already made.
+      const dropped = [];
+      const nameOf = (id) => (allPlayers || []).find((x) => x.id === id)?.name || "a player";
+      if (data?.plans?.length) setPlans(data.plans.map((pl) => {
+        const norm = emptyLineup();
+        (pl || []).slice(0, WR_SLOTS).forEach((s, i) => {
+          const pid = s?.playerId || "";
+          // Drop picks that can no longer be drafted — moved to reserves, or
+          // promoted to captain. Only when the pool is actually known, though:
+          // on a cold mount the board may not have arrived, and an empty pool
+          // would read as "nobody is draftable" and wipe every saved pick.
+          const keep = pool.length === 0 || (pid && draftable.has(pid));
+          if (pid && !keep) dropped.push(nameOf(pid));
+          norm[i] = { playerId: keep ? pid : "", target: s?.target ?? "" };
+        });
+        return norm;
+      }).concat(Array.from({ length: Math.max(0, WR_PLANS - data.plans.length) }, () => emptyLineup())).slice(0, WR_PLANS));
+      if (dropped.length) setDropped([...new Set(dropped)]);
+      setLoaded(true);
+    })();
+    return () => { alive = false; };
+  }, [teamId]);
+
+  const lineup = plans[active];
+  const setSlot = (i, patch) => {
+    setPlans((prev) => prev.map((pl, pi) => pi === active ? pl.map((s, si) => si === i ? { ...s, ...patch } : s) : pl));
+    setDirty(true);
+  };
+
+  // browser filters + tap-to-fill
+  const [wrRank, setWrRank] = useState("All");
+  const [wrRole, setWrRole] = useState("All");
+  const [wrQuery, setWrQuery] = useState("");
+  const tapToFill = (p) => {
+    const emptyIdx = lineup.findIndex((s) => !s.playerId);
+    if (emptyIdx === -1) return; // all 4 slots full
+    setSlot(emptyIdx, { playerId: p.id, target: String(rankOf(p.rank).bid) });
+  };
+  const wrChip = (active2, hue = "#3d7bff") => ({
+    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+    background: active2 ? hue + "22" : "rgba(255,255,255,0.04)",
+    border: `1px solid ${active2 ? hue : "rgba(120,150,220,0.18)"}`,
+    color: active2 ? hue : "rgba(200,215,255,0.55)",
+  });
+
+  const projected = lineup.reduce((sum, s) => sum + (s.playerId ? (parseInt(s.target) || 0) : 0), 0);
+  const over = projected > WR_BUDGET;
+  const pct = Math.min((projected / WR_BUDGET) * 100, 100);
+  const filledCount = lineup.filter((s) => s.playerId).length;
+
+  const save = async () => {
+    await writeWarRoom(teamId, { plans, savedAt: Date.now() });
+    setSavedAt(Date.now()); setDirty(false);
+  };
+
+  // Autosave once the captain stops typing. Saving was manual, so a tab close,
+  // a phone locking, or navigating to the pool lost the plan — and on draft
+  // night nobody remembers to press Save. Debounced so a run of edits is one
+  // write rather than one per keystroke.
+  useEffect(() => {
+    if (!loaded || !dirty) return;
+    const t = setTimeout(() => { save(); }, 1200);
+    return () => clearTimeout(t);
+  }, [plans, dirty, loaded]);
+
+  // Belt and braces: flush on the way out, in case the debounce hasn't fired.
+  // Read through a ref — with plans as a dependency, this cleanup ran (and
+  // wrote) on every single edit, defeating the debounce above.
+  const latestRef = useRef({ plans, dirty });
+  latestRef.current = { plans, dirty };
+  useEffect(() => {
+    const flush = () => { const l = latestRef.current; if (l.dirty) writeWarRoom(teamId, { plans: l.plans, savedAt: Date.now() }); };
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); flush(); };
+  }, [teamId]);
+  const clearPlan = () => { setPlans((prev) => prev.map((pl, pi) => pi === active ? emptyLineup() : pl)); setDirty(true); };
+
+  const chosenIds = new Set(lineup.filter((s) => s.playerId).map((s) => s.playerId));
+
+  return (
+    <div className="view-in page-wrap py-6">
+      {/* A pick disappearing without explanation is the thing captains complain
+          about. Say who went and why. */}
+      {dropped.length > 0 && (
+        <div style={{ marginBottom: 14, padding: "11px 15px", fontSize: 12.5, lineHeight: 1.6,
+          color: "#ffe4a0", background: "rgba(245,196,83,0.08)",
+          border: "1px solid rgba(245,196,83,0.4)", clipPath: SHELL_NOTCH(8),
+          display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ flex: 1 }}>
+            <b>{dropped.join(", ")}</b> {dropped.length === 1 ? "is" : "are"} no longer in the
+            draft pool — moved to reserves or made a captain — so {dropped.length === 1 ? "their" : "those"} slot
+            {dropped.length === 1 ? "" : "s"} {dropped.length === 1 ? "has" : "have"} been cleared.
+          </span>
+          <button onClick={() => setDropped([])}
+            style={shellBtn("ghost", { padding: "5px 12px", fontSize: 10.5 })}>Got it</button>
+        </div>
+      )}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: teamHue }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: teamHue, fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Captain sandbox</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: teamHue }}>Room</span></h2>
+        </div>
+        <span className="text-xs px-3 py-1 inline-flex items-center gap-2" style={{ clipPath: SHELL_NOTCH(6), background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(236,243,255,0.6)" }}>
+          <span style={{ color: "#3ddc84" }}>●</span> Private to you
+        </span>
+      </div>
+      <p className="text-sm mb-5" style={{ color: "rgba(236,243,255,0.5)" }}>Brainstorm mock lineups and target bids before the auction. Only you can see these — not other captains, not the host.</p>
+
+      {/* projected spend bar */}
+      <div className="p-4 mb-5" style={{ clipPath: SHELL_NOTCH(14), background: `linear-gradient(160deg, ${teamHue}18, rgba(10,13,22,0.85) 60%)`, border: `1px solid ${over ? "#ff4655" : "rgba(255,255,255,0.1)"}`, boxShadow: over ? "0 0 24px rgba(255,70,85,0.3)" : "none", transition: "all 250ms" }}>
+        <div className="flex items-end justify-between mb-2 flex-wrap gap-2">
+          <div>
+            <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.5)" }}>Total projected spend</p>
+            <p className="text-4xl font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: over ? "#ff4655" : "#5b8dff", textShadow: over ? "0 0 18px rgba(255,70,85,0.6)" : "0 0 14px rgba(61,123,255,0.45)" }}>{fmt(projected)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.5)" }}>Budget</p>
+            <p className="text-xl font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(WR_BUDGET)}</p>
+          </div>
+        </div>
+        <div className="h-3 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
+          <div style={{ width: pct + "%", height: "100%", borderRadius: 999, background: over ? "linear-gradient(90deg,#ff4655,#ff2d55)" : `linear-gradient(90deg, ${teamHue}, #3d7bff)`, boxShadow: over ? "0 0 12px rgba(255,70,85,0.8)" : `0 0 10px ${teamHue}`, transition: "width 300ms" }} />
+        </div>
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-xs uppercase tracking-widest" style={{ color: over ? "#ff8a94" : "rgba(236,243,255,0.45)" }}>
+            {over ? `⚠ Over budget by ${fmt(projected - WR_BUDGET)}` : `${fmt(WR_BUDGET - projected)} remaining · ${filledCount}/${WR_SLOTS} slots`}
+          </span>
+          {!over && filledCount === WR_SLOTS && <span className="text-xs uppercase tracking-widest" style={{ color: "#3ddc84" }}>✓ Full lineup within budget</span>}
+        </div>
+      </div>
+
+      {/* plan tabs */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        {plans.map((pl, i) => {
+          const used = pl.some((s) => s.playerId);
+          const isActive = i === active;
+          return (
+            <button key={i} onClick={() => setActive(i)} className="px-4 py-2 text-sm font-bold uppercase tracking-widest transition-all"
+              style={{ clipPath: SHELL_NOTCH(8), fontFamily: "'Rajdhani',sans-serif", background: isActive ? teamHue + "22" : "rgba(255,255,255,0.04)", border: `1px solid ${isActive ? teamHue : "rgba(255,255,255,0.12)"}`, color: isActive ? teamHue : "rgba(236,243,255,0.55)" }}>
+              Plan {String.fromCharCode(65 + i)}{used && <span className="ml-1.5" style={{ color: "#3ddc84" }}>●</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* slots */}
+      <div className="flex flex-col gap-3">
+        {lineup.map((slot, i) => {
+          const avail = players.filter((p) => !chosenIds.has(p.id) || p.id === slot.playerId);
+          const sel = players.find((p) => p.id === slot.playerId);
+          const r = sel ? rankOf(sel.rank) : null;
+          return (
+            <div key={i} className="flex items-center gap-4 p-3" style={{ clipPath: SHELL_NOTCH(10), background: "rgba(10,13,22,0.6)", border: `1px solid ${r ? r.c + "44" : "rgba(255,255,255,0.08)"}` }}>
+              <span className="w-7 h-7 grid place-items-center rounded-lg text-sm font-bold shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: teamHue, fontFamily: "'Rajdhani',sans-serif" }}>{i + 1}</span>
+              <div className="shrink-0" style={{ width: 300 }}>
+                <PlayerPicker value={slot.playerId} players={avail} onChange={(id) => { const np = players.find((p) => p.id === id); const minBid = np ? rankOf(np.rank).bid : 0; setSlot(i, { playerId: id, target: id ? String(minBid) : "" }); }} />
+              </div>
+              {/* slider target bid */}
+              <div className="flex-1 min-w-0 flex items-center gap-4" style={{ opacity: slot.playerId ? 1 : 0.35, pointerEvents: slot.playerId ? "auto" : "none" }}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)" }}>Target bid</span>
+                    {sel && <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.35)" }}>opens {fmt(rankOf(sel.rank).bid)}</span>}
+                  </div>
+                  <input type="range" min="0" max={WR_BUDGET} step="100" disabled={!slot.playerId}
+                    value={parseInt(slot.target) || 0} onChange={(e) => { const minBid = sel ? rankOf(sel.rank).bid : 0; setSlot(i, { target: String(Math.max(minBid, parseInt(e.target.value) || 0)) }); }}
+                    className="wr-slider w-full" style={{ "--wr-hue": r ? r.c : teamHue, "--wr-pct": ((parseInt(slot.target) || 0) / WR_BUDGET) * 100 + "%" }} />
+                </div>
+                <div className="shrink-0 flex items-center gap-1 px-3 py-2 rounded-lg" style={{ width: 130, background: "rgba(255,255,255,0.05)", border: `1px solid ${r ? r.c + "55" : "rgba(255,255,255,0.12)"}` }}>
+                  <span style={{ color: "rgba(236,243,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>$</span>
+                  <input type="number" min={sel ? rankOf(sel.rank).bid : 0} max={WR_BUDGET} step="100" disabled={!slot.playerId} value={slot.target}
+                    onChange={(e) => setSlot(i, { target: e.target.value })}
+                    onBlur={(e) => { const minBid = sel ? rankOf(sel.rank).bid : 0; const v = parseInt(e.target.value) || 0; if (slot.playerId && v < minBid) setSlot(i, { target: String(minBid) }); }}
+                    placeholder={sel ? String(rankOf(sel.rank).bid) : "0"}
+                    className="w-full bg-transparent outline-none text-right font-bold" style={{ color: r ? r.c : "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* actions */}
+      <div className="flex items-center gap-3 mt-5 flex-wrap">
+        <button onClick={save} className="px-8 py-3 font-bold uppercase tracking-widest transition-all active:scale-95"
+          style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(16px 0,100% 0,calc(100% - 16px) 100%,0 100%)", background: `linear-gradient(90deg, ${teamHue}, #3d7bff)`, color: "#06080e", boxShadow: `0 0 24px ${teamHue}66` }}>
+          Save Plan {String.fromCharCode(65 + active)}
+        </button>
+        <button onClick={clearPlan} className="px-5 py-3 text-sm font-bold uppercase tracking-widest" style={{ border: "1px solid rgba(255,70,85,0.4)", color: "#ff8a94" }}>Clear plan</button>
+        {dirty ? <span className="text-xs uppercase tracking-widest" style={{ color: "#f5c453" }}>Unsaved changes</span>
+          : savedAt ? <span className="text-xs uppercase tracking-widest" style={{ color: "#3ddc84" }}>✓ Saved</span> : null}
+      </div>
+
+      {/* ── player browser (filterable, tap to fill next slot) ── */}
+      <div className="mt-8 pt-6" style={{ borderTop: "1px solid rgba(61,123,255,0.16)" }}>
+        <div className="flex items-center gap-2 mb-3">
+          <span style={{ width: 14, height: 2, background: teamHue }} />
+          <p className="uppercase text-xs font-bold" style={{ color: teamHue, fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.26em" }}>Operator Database</p>
+          <span className="text-xs ml-auto" style={{ color: "rgba(200,215,255,0.4)" }}>Tap a card to fill the next open slot</span>
+        </div>
+
+        <div className="flex items-center gap-2 mb-3 p-2" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+          <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
+          <input value={wrQuery} onChange={(e) => setWrQuery(e.target.value)} placeholder="Search players or agents…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
+        </div>
+        <div className="flex flex-wrap gap-2 mb-2">
+          <button onClick={() => setWrRank("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRank === "All")}>All ranks</button>
+          {RANK_LIST.map((r) => <button key={r} onClick={() => setWrRank(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRank === r, RANKS[r].c)}>{r}</button>)}
+        </div>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button onClick={() => setWrRole("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRole === "All")}>All roles</button>
+          {ROLES.map((r) => <button key={r} onClick={() => setWrRole(r)} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRole === r)}>{ROLE_GLYPH[r]} {r}</button>)}
+        </div>
+
+        <div className="wr-grid">
+          {players
+            .filter((p) => (wrRank === "All" || p.rank === wrRank) && (wrRole === "All" || p.role === wrRole) && (!wrQuery || p.name.toLowerCase().includes(wrQuery.toLowerCase()) || p.agent.toLowerCase().includes(wrQuery.toLowerCase())))
+            .map((p) => {
+              const r = rankOf(p.rank); const picked = chosenIds.has(p.id); const full = lineup.every((s) => s.playerId);
+              const disabled = picked || full;
+              return (
+                <button key={p.id} onClick={() => tapToFill(p)} disabled={disabled}
+                  className="relative text-left p-3 overflow-hidden transition-transform"
+                  style={{ background: picked ? "rgba(61,220,132,0.08)" : `linear-gradient(150deg, ${r.c}18, rgba(10,15,28,0.5) 60%)`,
+                    border: `1px solid ${picked ? "rgba(61,220,132,0.5)" : r.c + "44"}`,
+                    clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))",
+                    opacity: disabled && !picked ? 0.4 : 1, cursor: disabled ? "default" : "pointer",
+                    transform: disabled ? "none" : undefined }}>
+                  <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-base font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
+                      <p className="text-[11px] uppercase tracking-widest mt-1" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role}</p>
+                    </div>
+                    <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+                  </div>
+                  <div className="flex items-center gap-3 mt-2.5" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                    <span className="text-xs"><span style={{ color: "#5b8dff" }}>{p.acs}</span><span className="text-[9px] ml-0.5" style={{ color: "rgba(200,215,255,0.4)" }}>ACS</span></span>
+                    <span className="text-xs"><span style={{ color: "#3be8d8" }}>{p.kda}</span><span className="text-[9px] ml-0.5" style={{ color: "rgba(200,215,255,0.4)" }}>KDA</span></span>
+                    <span className="text-xs"><span style={{ color: "#c08bff" }}>{p.hs}%</span><span className="text-[9px] ml-0.5" style={{ color: "rgba(200,215,255,0.4)" }}>HS</span></span>
+                    {!picked && <span className="ml-auto text-xs" style={{ color: "rgba(236,243,255,0.55)" }}>{fmt(r.bid)}</span>}
+                  </div>
+                  {picked && <span className="absolute bottom-2 right-2.5 text-[10px] uppercase tracking-widest font-bold" style={{ color: "#3ddc84" }}>✓ In plan</span>}
+                </button>
+              );
+            })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════ MAP VETO (host pick/ban tool — local, not synced) ══════ */
+const ALL_MAPS = ["Ascent", "Bind", "Breeze", "Corrode", "Fracture", "Haven", "Icebox", "Lotus", "Pearl", "Split", "Summit", "Sunset", "Abyss"];
+
+// Map splash thumbnails. Paste a URL or base64 data URI per map; blanks render a styled placeholder.
+// Served from public/img/maps/ — see README. Keeping these out of the bundle
+// means the browser fetches them in parallel and caches them separately.
+const MAP_IMG = {
+  Ascent: "/img/maps/ascent.jpg?v=2",
+  Bind: "/img/maps/bind.jpg?v=2",
+  Breeze: "/img/maps/breeze.jpg?v=2",
+  Corrode: "/img/maps/corrode.jpg?v=2",
+  Fracture: "/img/maps/fracture.jpg?v=2",
+  Haven: "/img/maps/haven.jpg?v=2",
+  Icebox: "/img/maps/icebox.jpg?v=2",
+  Lotus: "/img/maps/lotus.jpg?v=2",
+  Pearl: "/img/maps/pearl.jpg?v=2",
+  Split: "/img/maps/split.jpg?v=2",
+  Summit: "/img/maps/summit.jpg?v=2",
+  Sunset: "/img/maps/sunset.jpg?v=2",
+  Abyss: "/img/maps/abyss.jpg?v=2",
+};
+
+// Distinct placeholder tint per map so the grid reads as cards before real art is supplied.
+const MAP_TINT = {
+  Ascent: "#6b8cff", Bind: "#d9a441", Breeze: "#4fc4d6", Corrode: "#b56ad9",
+  Fracture: "#7a8a55", Haven: "#c4773f", Icebox: "#73b4e6", Lotus: "#5fae7a",
+  Pearl: "#4f8fd9", Split: "#8a93a8", Summit: "#5fc9b8", Sunset: "#e08a5a", Abyss: "#5566aa",
+};
+
+// One card. `state` = "active" | "off" (setup, toggled out) | "banned" | "decider" | "live".
+// `stamp` is the small label shown at the bottom (e.g. "BANNED · TEAM" or "★ DECIDER").
+/* shared HUD panel — notched clip + corner brackets, matching the Lobby command-center style */
+function HudPanel({ children, className = "", accent = "#3d7bff", pad = "px-4 py-3.5", style = {} }) {
+  return (
+    <div className={`relative ${pad} ${className}`} style={{
+      background: "linear-gradient(180deg, rgba(11,16,28,0.82), rgba(8,11,20,0.6))",
+      border: `1px solid ${accent}44`,
+      clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))",
+      backdropFilter: "blur(4px)",
+      boxShadow: "0 8px 34px rgba(0,0,0,0.4)",
+      ...style,
+    }}>
+      <span className="absolute left-0 top-0" style={{ width: 14, height: 14, borderLeft: `2px solid ${accent}`, borderTop: `2px solid ${accent}` }} />
+      <span className="absolute right-0 bottom-0" style={{ width: 14, height: 14, borderRight: `2px solid ${accent}`, borderBottom: `2px solid ${accent}` }} />
+      {children}
+    </div>
+  );
+}
+
+/* small section eyebrow — dot + label + gradient rule, like System Status */
+function HudLabel({ children, dot = "#3d7bff" }) {
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 6, height: 6, background: dot, boxShadow: `0 0 8px ${dot}`, borderRadius: 1 }} />
+        <p className="uppercase text-xs" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, letterSpacing: "0.28em" }}>{children}</p>
+      </div>
+      <div className="mb-3" style={{ height: 1, background: "linear-gradient(90deg, rgba(61,123,255,0.5), transparent)" }} />
+    </>
+  );
+}
+
+/* HUD coin — octagonal clip, blue HUD frame, monospace face */
+// A struck octagonal token with two faces, spun about the X axis.
+//
+// Two things matter here and both are easy to get wrong:
+//
+//   1. No `filter` anywhere on the rotating element. A filter forces a
+//      containing block and FLATTENS transform-style: preserve-3d, collapsing
+//      both faces into one plane — the back face then shows through mirrored,
+//      which is exactly what "HEADS" rendered backwards was.
+//   2. clip-path clips box-shadow, so depth is built from stacked octagons —
+//      rim, bevel, field, inner disc — rather than from shadows.
+const OCT = "polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%)";
+
+function CoinFace({ label, back, team }) {
+  const hue = team?.hue || "#6f9dff";
+  const layer = (inset, style) => (
+    <div className="absolute" style={{ inset, clipPath: OCT, ...style }} />
+  );
+  return (
+    <div className="absolute inset-0" style={{
+      backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
+      transform: back ? "rotateX(180deg)" : "none",
+    }}>
+      {/* Rim, catching light from the top-left like a milled edge. */}
+      {layer(0, { background: `linear-gradient(155deg, ${hue} 0%, ${hue}88 38%, #0d122a 100%)` })}
+      {/* Bevel — a darker step in from the rim gives the edge thickness. */}
+      {layer(3, { background: "linear-gradient(155deg,#1b2c52,#0a1020)" })}
+      {/* Field, with a soft highlight where the light lands. */}
+      {layer(5, {
+        background: `radial-gradient(120% 100% at 28% 22%, ${hue}55, rgba(10,16,32,0.96) 62%)`,
+      })}
+      {/* Inner disc the legend sits on. */}
+      <div className="absolute grid place-items-center" style={{
+        inset: "22%", clipPath: OCT,
+        background: `linear-gradient(155deg, ${hue}33, rgba(8,12,24,0.5))`,
+        border: `1px solid ${hue}88`,
+      }}>
+        {team ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <TeamMono name={team.name} hue={team.hue} size={34} />
+            <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: "0.12em",
+              color: "#e8f0ff", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              textShadow: `0 0 10px ${hue}` }}>{team.name}</span>
+          </div>
+        ) : (
+          <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14,
+            letterSpacing: "0.16em", color: "#e8f0ff", textShadow: "0 0 10px rgba(120,170,255,0.9)" }}>
+            {label}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HudCoin({ coin, deg = 0, flipping, a, b, size = 112, glow = "rgba(61,123,255,0.34)" }) {
+  const lit = !!coin || flipping;
+  return (
+    <div className="relative" style={{ width: size, height: size, perspective: 760 }}>
+      {/* Glow sits behind and never rotates — putting it on the coin would
+          flatten the 3D and mirror the far face. */}
+      <div className="absolute" style={{
+        inset: -18, borderRadius: "50%", pointerEvents: "none",
+        background: `radial-gradient(circle, ${glow}, transparent 68%)`,
+        opacity: lit ? 1 : 0.25, transition: "opacity .4s ease",
+      }} />
+      <div className="relative" style={{
+        width: "100%", height: "100%",
+        transformStyle: "preserve-3d", WebkitTransformStyle: "preserve-3d",
+        transform: `rotateX(${deg}deg)`,
+        // Slow enough to read as a coin settling rather than a blur.
+        transition: "transform 1.9s cubic-bezier(.12,.78,.16,1)",
+      }}>
+        <CoinFace label="HEADS" team={a} />
+        <CoinFace label="TAILS" back team={b} />
+      </div>
+    </div>
+  );
+}
+
+function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
+  const img = MAP_IMG[m];
+  const tint = MAP_TINT[m] || "#5b8dff";
+  const dimmed = state === "off" || state === "banned";
+  const isDecider = state === "decider";
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className="relative rounded-lg overflow-hidden group text-left"
+      style={{
+        aspectRatio: "16 / 10", containerType: "inline-size",
+        border: `1px solid ${isDecider ? "#3ddc84" : state === "banned" ? "rgba(255,70,85,0.4)" : state === "off" ? "rgba(120,150,220,0.15)" : tint + "99"}`,
+        boxShadow: isDecider ? "0 0 26px rgba(61,220,132,0.45)" : "none",
+        cursor: disabled ? "default" : "pointer",
+        transition: "all .18s ease",
+      }}>
+      {/* art layer (image if supplied, otherwise tinted gradient placeholder).
+          Images get a slight scale-up so the source art's soft/blurred baked-in
+          edges crop out beyond the card frame. */}
+      <div className="absolute inset-0" style={{
+        background: img ? `url("${img}") center/cover no-repeat` : `linear-gradient(150deg, ${tint}55, #0a0f1c 75%)`,
+        transform: img ? "scale(1.08)" : "none",
+        filter: dimmed ? "grayscale(1) brightness(0.4)" : "none",
+        transition: "filter .18s ease",
+      }} />
+      {/* hover accent for clickable cards */}
+      {!disabled && <div className="absolute inset-0 opacity-0 group-hover:opacity-100" style={{ background: `linear-gradient(to top, ${tint}22, transparent 60%)`, transition: "opacity .15s" }} />}
+      {/* a shade along the bottom so the name always reads */}
+      <div className="absolute inset-x-0 bottom-0 pointer-events-none" style={{ height: "62%", background: "linear-gradient(to top, rgba(5,8,16,0.88), rgba(5,8,16,0.35) 55%, transparent)" }} />
+      {!dimmed && <span className="absolute left-0 bottom-0 pointer-events-none" style={{ width: 3, height: "46%", background: tint, boxShadow: `0 0 10px ${tint}` }} />}
+      {/* name — bottom-left, sized to the tile so long names (Fracture, Corrode) fit */}
+      <span className="absolute left-0 right-0 bottom-0 font-bold uppercase pointer-events-none" style={{ padding: "0 8% 7% 9%", fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(14px, 16cqi, 2.4rem)", lineHeight: 1, letterSpacing: "0.04em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: dimmed ? "rgba(236,243,255,0.5)" : "#f4f8ff", textShadow: "0 2px 12px rgba(0,0,0,0.8)" }}>{m}</span>
+      {/* decider checkmark, corner-style like the in-game select */}
+      {isDecider && (
+        <>
+          <span className="absolute top-0 left-0" style={{ width: 0, height: 0, borderTop: "26px solid #3ddc84", borderRight: "26px solid transparent" }} />
+          <span className="absolute top-1.5 left-1/2 -translate-x-1/2" style={{ fontSize: 30, color: "#3ddc84", textShadow: "0 0 14px rgba(61,220,132,0.7)" }}>✓</span>
+        </>
+      )}
+      {/* off (toggled out in setup) marker */}
+      {state === "off" && <span className="absolute top-1.5 right-2 text-xs font-bold uppercase tracking-widest" style={{ color: "rgba(255,138,148,0.7)" }}>OUT</span>}
+      {/* bottom stamp */}
+      {stamp && <span className="absolute left-1/2 -translate-x-1/2 bottom-2 text-[10px] font-semibold tracking-widest whitespace-nowrap" style={{ color: stampColor || "rgba(236,243,255,0.6)" }}>{stamp}</span>}
+    </button>
+  );
+}
+
+// SEASON LEADERBOARD — the league's single source of truth for player points.
+// Reads match_results (host's Report Match) and ranks by AVERAGE PERFORMANCE
+// SCORE across every match of every tournament (ACS for matches from before
+// Valorant's switch; see perfOf).
+//
+// Average rather than total, so someone who plays six matches isn't ahead of
+// someone who played three and outperformed them. No qualifying minimum: one
+// strong game can top the table, and that's the intended behaviour.
+// Top three on a podium: second, first, third, with first raised. Gold,
+// silver and bronze edges; the metric being ranked on is the big number.
+function LbPodium({ rows, metric }) {
+  if (!rows.length) return null;
+  const MED = ["#f5c453", "#d7e1ee", "#c08a52"];
+  const order = rows.length === 3 ? [1, 0, 2] : rows.map((_, i) => i);
+  return (
+    <div className="volt-podium" style={{ display: "grid", gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))`, gap: 12,
+      alignItems: "end", marginBottom: 18 }}>
+      {order.map((idx, k) => {
+        const r = rows[idx]; const c = MED[idx]; const first = idx === 0;
+        const val = metric === "perf" ? r.avgPerf : r.pts;
+        return (
+          <div key={r.id || idx} className="volt-pod" style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
+            position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(14),
+            background: `linear-gradient(170deg, ${c}${first ? "26" : "18"}, rgba(10,13,22,0.9) 60%)`,
+            animation: `voltRise .5s ${k * 90}ms backwards`, textAlign: "center" }}>
+            {first && <span aria-hidden className="volt-shimmer" />}
+            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
+              borderLeft: `2px solid ${c}`, borderTop: `2px solid ${c}` }} />
+            <div style={{ position: "absolute", right: 14, top: 8, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+              fontSize: first ? 64 : 48, lineHeight: 1, color: c, opacity: 0.14 }}>{idx + 1}</div>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <RankBadge rank={r.rank || "Iron"} div={r.rankDiv} size={first ? "lg" : "md"} solidDiv />
+            </div>
+            <div className="volt-pod-name" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
+              fontSize: first ? 26 : 20, marginTop: 10, lineHeight: 1,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+            <div className="volt-pod-role" style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: RANKS[r.rank]?.c || "rgba(200,215,255,0.5)",
+              marginTop: 5, fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ") || "—"}</div>
+            <div className="volt-pod-val" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
+              color: c, marginTop: 14, textShadow: `0 0 24px ${c}55` }}>
+              <CountUp to={val} dur={1000} delay={k * 90} />
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "perf" ? "PERF" : "PTS"}</span>
+            </div>
+            <div className="volt-pod-meta" style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 12, fontFamily: "'IBM Plex Mono',monospace",
+              fontSize: 11, color: "rgba(200,215,255,0.5)" }}>
+              <span>{r.m} played</span><span style={{ color: "#3ddc84" }}>{r.w}W</span>
+              <span>{metric === "perf" ? `${r.pts} pts` : `${r.avgPerf} perf`}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Leaderboard({ isAdmin }) {
+  // Two honest answers to "who's best".
+  //
+  // Average performance score is output per game — it doesn't care whether
+  // you won or how many you played. Points reward turning up and winning: 50 a
+  // win, plus performance ÷4 and kills. Someone can lead one and not the other,
+  // and that gap is interesting rather than a bug, so both are one tap away.
+  const [sortBy, setSortBy] = useState("perf");
+  const [rows, setRows] = useState(null);
+  // Ties fall back to the other metric, so an equal score is settled by the
+  // better season and vice versa — never by whatever order the rows arrived in.
+  const sorted = [...(rows || [])].sort((x, y) =>
+    sortBy === "perf"
+      ? y.avgPerf - x.avgPerf || y.pts - x.pts || y.m - x.m
+      : y.pts - x.pts || y.avgPerf - x.avgPerf || y.m - x.m);
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      if (DEMO) { const m = await loadDemo(); if (alive) setRows(m.demoLeaderboard); return; }
+      if (!HAS_SUPABASE || !window.__VOLT.communityId) { if (alive) setRows([]); return; }
+      try {
+        const { data: mrs } = await __sb.from("match_results")
+          .select("user_id, points_computed, team_won, stat_payload")
+          .eq("community_id", window.__VOLT.communityId);
+        const { data: us } = await __sb.from("users").select("id, display_name").eq("community_id", window.__VOLT.communityId);
+        const { data: pp } = await __sb.from("player_profiles").select("user_id, rank, rank_div, role").eq("community_id", window.__VOLT.communityId);
+        if (!alive) return;
+        const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
+        const profs = {}; (pp || []).forEach(p => { profs[p.user_id] = p; });
+        // A row of all zeros is someone rostered who didn't take the server —
+        // subbed out, or replaced by a stand-in. Averaging those in halves a
+        // real score, so they're counted as "not played" rather than as a
+        // zero-scoring game.
+        const didPlay = (sp) => perfOf(sp) > 0 || Number(sp?.k || 0) > 0
+                             || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
+        const agg = {};
+        (mrs || []).forEach(r => {
+          // Stand-ins without an account have no user_id; keyed on null they all
+          // merged into one phantom "Player" row with everyone's stats.
+          if (!r.user_id) return;
+          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, perfSum: 0 });
+          a.pts += Number(r.points_computed || 0);
+          const sp = r.stat_payload || {};
+          if (!didPlay(sp)) return;                 // rostered, didn't play
+          a.m++; if (r.team_won) a.w++;
+          a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.perfSum += perfOf(sp);
+        });
+        // Unsorted here — the view sorts, so switching between the two rankings
+        // is instant instead of a refetch.
+        setRows(Object.values(agg)
+          .filter(a => a.m > 0)                     // nobody ranks off zero appearances
+          .map(a => ({ ...a, pts: Math.round(a.pts), avgPerf: Math.round(a.perfSum / a.m) })));
+      } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
+    }
+    load();
+    const stop = visInterval(load, 15000);
+    return () => { alive = false; stop(); };
+  }, []);
+
+  return (
+    <div className="view-in page-wrap py-8">
+      {/* Same banner as the home and fixtures pages, with its own picture. */}
+      <div style={{ ...PANEL("rgba(61,123,255,0.4)", "24px 28px 20px"), position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(16), marginBottom: 18 }}>
+        <KeyArt src={ART.reyna} />
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, borderRight: "2px solid #3d7bff", borderBottom: "2px solid #3d7bff" }} />
+        <div style={{ position: "relative" }}>
+      <div style={{ ...SEC_LABEL, color: "#7da6ff", marginBottom: 6 }}>// Season standings · every match counts</div>
+      <h1 className="font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.01em", fontSize: "clamp(34px, 4.6vw, 52px)", lineHeight: 0.95, textShadow: "0 0 36px rgba(61,123,255,0.35)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
+      <p className="volt-desc text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
+        {sortBy === "perf"
+          ? "Ranked by average performance score — output per game, wins aside."
+          : "Ranked by season points — 50 a win, plus performance ÷4 and kills."}
+        {isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}
+      </p>
+      <div className="flex gap-2">
+        {[["perf", "Top performance"], ["pts", "Top points"]].map(([k, label]) => (
+          <button key={k} onClick={() => setSortBy(k)}
+            className="text-xs uppercase tracking-widest px-4 py-2"
+            style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+              clipPath: SHELL_NOTCH(7),
+              color: sortBy === k ? "#cfe0ff" : "rgba(200,215,255,0.45)",
+              border: `1px solid ${sortBy === k ? "rgba(61,123,255,0.7)" : "rgba(120,150,220,0.2)"}`,
+              background: sortBy === k ? "rgba(61,123,255,0.18)" : "transparent" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+        </div>
+      </div>
+
+      <style>{DASH_CSS + SWEEP_CSS}</style>
+      {rows === null && <div style={{ ...PANEL(null, "20px 22px") }}><Skeleton rows={6} /></div>}
+      {rows && rows.length === 0 && (
+        <div style={{ ...PANEL(null, "30px 22px") }}>
+          <Empty title="No matches yet"
+            hint="Rankings start after the first reported match." />
+        </div>
+      )}
+      {rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} />}
+      {rows && rows.length > 0 && (
+        <div>
+          <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg perf</span>
+          </div>
+          <div className="grid gap-1.5">
+            {sorted.map((r, i) => {
+              if (i < 3 && sorted.length > 3) return null;   // the podium shows them
+              const rc = (RANKS[r.rank] || {}).c || "#8d97a8";
+              const topV = sortBy === "perf" ? sorted[0].avgPerf : sorted[0].pts;
+              const myV = sortBy === "perf" ? r.avgPerf : r.pts;
+              return (
+                <div key={i} className="grid items-center px-4 py-3 volt-lb-row" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+                  <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff" }}>{String(i + 1).padStart(2, "0")}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    {r.rank && <RankBadge rank={r.rank} div={r.rankDiv} size="sm" />}
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                        <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.03em", fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: "0 1 auto", minWidth: 36 }}>{r.name}</span>
+                        {(r.rank || r.role) && <span className="text-[11px] uppercase tracking-[0.1em]" style={{ color: rc, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: "1 1 0", minWidth: 0 }}>{[r.role, r.rank].filter(Boolean).join(" · ")}</span>}
+                      </span>
+                      <Bar pct={topV ? (myV / topV) * 100 : 0} h={2} i={i} color="#00e5ff" opacity={0.5} style={{ marginTop: 5, maxWidth: 260 }} />
+                    </span>
+                  </span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.m}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84" }}>{r.w}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.k}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.as}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
+                    fontWeight: sortBy === "pts" ? 700 : 400,
+                    fontSize: sortBy === "pts" ? 15 : 13,
+                    color: sortBy === "pts" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.pts}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
+                    fontWeight: sortBy === "perf" ? 700 : 400,
+                    fontSize: sortBy === "perf" ? 15 : 13,
+                    color: sortBy === "perf" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.avgPerf}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MapVeto({ teams }) {
+  // Two sides for this veto. Default to the first two seeded teams if present.
+  const seedA = teams[0] || null, seedB = teams[1] || null;
+  const [teamA, setTeamA] = useState(seedA ? seedA.id : "");
+  const [teamB, setTeamB] = useState(seedB ? seedB.id : "");
+  const [active, setActive] = useState(new Set(ALL_MAPS));    // maps eligible this veto
+  const [banned, setBanned] = useState({});                    // mapName -> teamId who banned it
+  const [decider, setDecider] = useState(null);                // final map name
+  const [sidePick, setSidePick] = useState(null);              // { teamId, side }
+  const [coin, setCoin] = useState(null);                      // "HEADS" | "TAILS"
+  const [coinDeg, setCoinDeg] = useState(0);                   // accumulated rotation
+  const [flipping, setFlipping] = useState(false);
+  const coinTimer = useRef(null);
+  // A flip left running when the panel closes would set state on a gone tree.
+  useEffect(() => () => clearTimeout(coinTimer.current), []);
+  const [coinTeam, setCoinTeam] = useState(null);              // teamId assigned the coin result
+  const [turn, setTurn] = useState(null);                      // teamId whose ban turn it is
+  const [setup, setSetup] = useState(true);                    // setup vs running
+  const [showRules, setShowRules] = useState(false);           // veto rules explainer
+
+  const resolve = (id) => teams.find((t) => t.id === id) || null;
+  const A = resolve(teamA), B = resolve(teamB);
+  const nameOf = (id) => { const t = resolve(id); return t ? t.name : "—"; };
+  const hueOf = (id) => { const t = resolve(id); return t ? t.hue : "#5b8dff"; };
+  const other = (id) => (id === teamA ? teamB : teamA);
+
+  const pool = ALL_MAPS.filter((m) => active.has(m));
+  const remaining = pool.filter((m) => !banned[m]);
+
+  const toggleActive = (m) => {
+    if (!setup) return;
+    setActive((prev) => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n; });
+  };
+
+
+  // The result is decided immediately, then the coin is spun to land on the
+  // face that shows it. Two state updates per flip instead of fourteen — the
+  // deceleration is the browser's job, not a JavaScript interval's.
+  const flip = () => {
+    if (flipping) return;
+    const result = Math.random() < 0.5 ? "HEADS" : "TAILS";
+    setCoinTeam(null);
+    setTurn(null);
+
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setCoin(result); setCoinDeg((d) => d + (result === "HEADS" ? 0 : 180));
+      if (teamA && teamB) setCoinTeam(result === "HEADS" ? teamA : teamB);
+      return;
+    }
+
+    setFlipping(true); setCoin(null);
+    setCoinDeg((d) => {
+      // Three full turns, then however much more is needed to finish with the
+      // right face toward the viewer. Always forward, so it never rewinds.
+      const base = d + 1080;
+      const want = result === "HEADS" ? 0 : 180;
+      return base + (((want - (base % 360)) % 360) + 360) % 360;
+    });
+    // Matches the CSS transition, so the result registers exactly as it settles.
+    coinTimer.current = setTimeout(() => {
+      setCoin(result); setFlipping(false);
+      // Each face carries a team, so the coin names the winner itself.
+      if (teamA && teamB) setCoinTeam(result === "HEADS" ? teamA : teamB);
+    }, 1900);
+  };
+
+  const banMap = (m) => {
+    if (setup || decider || banned[m] || !turn) return;
+    const nextBanned = { ...banned, [m]: turn };
+    const left = pool.filter((x) => !nextBanned[x]);
+    setBanned(nextBanned);
+    if (left.length === 1) {
+      // last map standing becomes the decider; the OTHER team (not whoever just banned) picks side
+      setDecider(left[0]);
+      setSidePick({ teamId: other(turn), side: null });   // sensible default; host can switch
+      setTurn(null);
+    } else {
+      setTurn(other(turn)); // alternate
+    }
+  };
+
+  const startVeto = () => {
+    if (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn) return;
+    setSetup(false);
+  };
+
+  const resetAll = () => {
+    setActive(new Set(ALL_MAPS)); setBanned({}); setDecider(null); setSidePick(null);
+    setCoin(null); setCoinTeam(null); setFlipping(false); setTurn(null); setSetup(true);
+  };
+
+  const teamPill = (id, label) => {
+    const sel = coinTeam === id;
+    return (
+      <button onClick={() => { if (setup && coin) setCoinTeam(id); }} disabled={!coin || !setup}
+        className="relative flex-1 px-3 py-2.5 text-left disabled:cursor-default"
+        style={{ background: sel ? hueOf(id) + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${sel ? hueOf(id) : "rgba(120,150,220,0.2)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", boxShadow: sel ? `0 0 18px ${hueOf(id)}33` : "none" }}>
+        <p className="text-[10px] uppercase tracking-[0.2em]" style={{ color: "rgba(236,243,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>{label}{sel ? " · WON" : ""}</p>
+        <p className="font-bold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: hueOf(id) }}>{nameOf(id) || "—"}</p>
+      </button>
+    );
+  };
+
+  return (
+    <div className="view-in page-wrap py-8">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Host Tool</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+      </div>
+      <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
+        <p className="volt-desc text-sm" style={{ color: "rgba(200,215,255,0.5)", margin: 0 }}>Flip the coin, assign who bans first, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
+        <button onClick={() => setShowRules(true)} title="How the veto works"
+          className="uppercase shrink-0" style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(61,123,255,0.4)", background: "rgba(61,123,255,0.08)", padding: "5px 11px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
+          ◈ Veto rules
+        </button>
+      </div>
+
+      {showRules && (
+        <VoltOverlay onClose={() => setShowRules(false)} zIndex={150}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto", padding: "24px 26px 22px",
+            background: "linear-gradient(160deg, rgba(20,26,42,0.98), rgba(10,13,22,0.98))", border: "1px solid rgba(61,123,255,0.45)",
+            clipPath: SHELL_NOTCH(16), fontFamily: "'Rajdhani',sans-serif" }}>
+            <div className="flex items-center justify-between gap-3">
+              <span style={{ fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>// How the veto works</span>
+              <button onClick={() => setShowRules(false)} style={{ background: "none", border: "1px solid rgba(120,150,220,0.3)", color: "rgba(200,215,255,0.6)", padding: "3px 10px", fontSize: 11, cursor: "pointer" }}>✕</button>
+            </div>
+
+            {[
+              ["1 · Coin toss", <>The coin picks a winner. The winner decides whether their team <b style={{ color: "#ecf3ff" }}>bans first or second</b>.</>],
+              ["2 · Banning", <>Teams take turns removing one map at a time until a single map is left. With an even number of maps in the pool the team that bans first removes one extra; with an odd number the bans split evenly.</>],
+              ["3 · The decider", <>The last map standing is played.</>],
+              ["4 · Sides", <>The team that did <b style={{ color: "#ecf3ff" }}>not</b> make the final ban picks <b style={{ color: "#f5c453" }}>Attack or Defence</b>; the other team takes the opposite side. The host can hand the side pick over if the captains agree.</>],
+            ].map(([title, body], i) => (
+              <div key={i} style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#7da6ff", marginBottom: 5 }}>{title}</div>
+                <p style={{ fontSize: 14, lineHeight: 1.65, color: "rgba(214,226,255,0.82)", margin: 0 }}>{body}</p>
+              </div>
+            ))}
+
+            <div style={{ marginTop: 18, padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(9) }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 7 }}>In short</div>
+              <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(200,215,255,0.7)", margin: 0 }}>
+                Ban down to one map. Whoever got the last ban gave up the side choice, so the other team picks the starting side.
+              </p>
+            </div>
+          </div>
+        </VoltOverlay>
+      )}
+
+      {/* ─── SETUP ─── */}
+      {setup && (
+        <div className="flex flex-col gap-4">
+          {/* team selectors */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[["Combatant A", teamA, setTeamA, teamB], ["Combatant B", teamB, setTeamB, teamA]].map(([label, val, setVal, exclude]) => (
+              <HudPanel key={label} accent={val ? hueOf(val) : "#3d7bff"}>
+                <HudLabel dot={val ? hueOf(val) : "#3d7bff"}>{label}</HudLabel>
+                <select value={val} onChange={(e) => setVal(e.target.value)}
+                  className="w-full px-3 py-2 text-sm outline-none uppercase font-semibold"
+                  style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.06em", background: "rgba(7,12,22,0.9)", border: "1px solid rgba(61,123,255,0.3)", color: val ? hueOf(val) : "#ecf3ff", clipPath: "polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px))" }}>
+                  <option value="">Select team…</option>
+                  {teams.filter((t) => t.id !== exclude).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </HudPanel>
+            ))}
+          </div>
+
+          {/* coin toss — each face is a team, the winner picks their ban order */}
+          <HudPanel pad="px-5 py-6">
+            <HudLabel dot="#3ddc84">Coin Toss</HudLabel>
+            {(() => {
+              const ready = A && B && teamA !== teamB;
+              const W = coinTeam ? resolve(coinTeam) : null;
+              const L = coinTeam ? resolve(other(coinTeam)) : null;
+              const side = (t, face, win) => (
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                  opacity: coinTeam && !win ? 0.35 : 1, transition: "opacity .4s" }}>
+                  <TeamMono name={t?.name} hue={t?.hue} size={win ? 46 : 38} />
+                  <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase", fontSize: win ? 22 : 18,
+                    color: t?.hue || "rgba(200,215,255,0.4)", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    textShadow: win ? `0 0 24px ${t?.hue}` : "none" }}>{t?.name || "Pick a team"}</div>
+                  <span style={{ fontSize: 9.5, letterSpacing: "0.22em", fontWeight: 700, padding: "3px 8px",
+                    color: win ? "#0a0d18" : "rgba(200,215,255,0.5)", background: win ? "#3ddc84" : "transparent",
+                    border: `1px solid ${win ? "#3ddc84" : "rgba(120,150,220,0.25)"}` }}>{win ? "WON THE TOSS" : face}</span>
+                </div>
+              );
+              return (
+                <div className="flex flex-col items-center gap-5">
+                  <div className="w-full flex items-center gap-4">
+                    {side(A, "HEADS", coinTeam && coinTeam === teamA)}
+                    <div className="flex flex-col items-center gap-3" style={{ flex: "0 0 auto" }}>
+                      <HudCoin coin={coin} deg={coinDeg} flipping={flipping} a={A} b={B} size={136}
+                        glow={W ? `${W.hue}66` : "rgba(61,123,255,0.34)"} />
+                      <button onClick={flip} disabled={flipping || !ready} className="ea-btn relative" style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "12px 32px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.85rem", letterSpacing: "0.28em", textTransform: "uppercase", color: "#cfe0ff", background: "linear-gradient(180deg, rgba(13,22,42,0.55), rgba(7,13,24,0.45))", border: "1px solid rgba(61,123,255,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)", opacity: flipping || !ready ? 0.45 : 1 }}>
+                        <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                        <span className="absolute right-0 top-0" style={{ width: 10, height: 10, borderRight: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+                        {flipping ? "Flipping…" : coin ? "Flip again" : "Flip coin"}
+                      </button>
+                    </div>
+                    {side(B, "TAILS", coinTeam && coinTeam === teamB)}
+                  </div>
+                  {!ready && <p className="text-xs text-center" style={{ color: "rgba(200,215,255,0.5)" }}>Pick both teams above to flip.</p>}
+                  {W && !flipping && (
+                    <div className="w-full" style={{ animation: "voltRise .4s backwards" }}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-center mb-3" style={{ color: "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+                        <span style={{ color: W.hue }}>{W.name}</span> chooses</p>
+                      <div className="flex gap-3">
+                        {(() => {
+                          // Who makes the final ban depends on how many bans there are
+                          // (one fewer than the maps in play), not on going second.
+                          const lastBy = (first) => ((remaining.length - 1) % 2 === 1 ? first : other(first));
+                          const tail = (first) => (lastBy(first) === coinTeam
+                            ? `${W.name} gets the last ban, ${L?.name} picks the side`
+                            : `${L?.name} gets the last ban, ${W.name} picks the side`);
+                          return [[coinTeam, "Ban first", `${W.name} opens · ${tail(coinTeam)}`], [other(coinTeam), "Ban second", `${L?.name} opens · ${tail(other(coinTeam))}`]];
+                        })().map(([first, label, sub]) => {
+                          const on = turn === first;
+                          return (
+                            <button key={label} onClick={() => setTurn(first)} className="relative flex-1 px-4 py-3 text-left"
+                              style={{ fontFamily: "'Rajdhani',sans-serif", background: on ? W.hue + "26" : "rgba(255,255,255,0.03)",
+                                border: `1px solid ${on ? W.hue : "rgba(120,150,220,0.2)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))",
+                                boxShadow: on ? `0 0 18px ${W.hue}44` : "none" }}>
+                              <div className="font-bold uppercase" style={{ fontSize: 16, letterSpacing: "0.08em", color: on ? "#ecf3ff" : W.hue }}>{on ? "✓ " : ""}{label}</div>
+                              <div className="text-xs mt-0.5" style={{ color: "rgba(200,215,255,0.5)" }}>{sub}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </HudPanel>
+
+          {/* manual override when there's no toss */}
+          {teamA && teamB && teamA !== teamB && !coinTeam && (
+            <HudPanel>
+              <HudLabel>Or set first ban manually</HudLabel>
+              <div className="flex gap-3">
+                {[teamA, teamB].map((id) => (
+                  <button key={id} onClick={() => setTurn(id)} className="relative flex-1 px-3 py-2.5 font-bold uppercase text-sm"
+                    style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.04em", background: turn === id ? hueOf(id) + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${turn === id ? hueOf(id) : "rgba(120,150,220,0.2)"}`, color: hueOf(id), clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", boxShadow: turn === id ? `0 0 18px ${hueOf(id)}33` : "none" }}>
+                    {nameOf(id)} bans 1st
+                  </button>
+                ))}
+              </div>
+            </HudPanel>
+          )}
+
+          {/* map pool toggles */}
+          <div>
+            <HudLabel>Map Pool · {remaining.length} active — tap to toggle out</HudLabel>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 sm:gap-3">
+              {ALL_MAPS.map((m) => (
+                <MapTile key={m} m={m} onClick={() => toggleActive(m)} state={active.has(m) ? "active" : "off"} />
+              ))}
+            </div>
+          </div>
+
+          <button onClick={startVeto} disabled={!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn}
+            className="ea-btn relative self-start" style={{ display: "inline-flex", alignItems: "center", gap: 14, padding: "15px 38px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.9rem", letterSpacing: "0.3em", textTransform: "uppercase", color: "#9af5c2", background: "linear-gradient(180deg, rgba(13,32,24,0.55), rgba(7,18,14,0.45))", border: "1px solid rgba(61,220,132,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)", opacity: (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn) ? 0.4 : 1 }}>
+            <span className="absolute left-0 top-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderTop: "2px solid #3ddc84" }} />
+            <span className="absolute left-0 bottom-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderBottom: "2px solid #3ddc84" }} />
+            Start veto <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400 }}>→</span>
+          </button>
+        </div>
+      )}
+
+      {/* ─── RUNNING ─── */}
+      {!setup && (
+        <div className="flex flex-col gap-4">
+          {/* status banner */}
+          <HudPanel className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5" style={{ background: hueOf(teamA), boxShadow: `0 0 8px ${hueOf(teamA)}`, borderRadius: 1 }} />
+              <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", color: hueOf(teamA) }}>{nameOf(teamA)}</span>
+              <span className="text-xs mx-1" style={{ color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace" }}>VS</span>
+              <span className="w-2.5 h-2.5" style={{ background: hueOf(teamB), boxShadow: `0 0 8px ${hueOf(teamB)}`, borderRadius: 1 }} />
+              <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", color: hueOf(teamB) }}>{nameOf(teamB)}</span>
+            </div>
+            {decider ? (
+              <span className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-widest" style={{ color: "#3ddc84" }}><span className="cd-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#3ddc84", color: "#3ddc84" }} />Decider locked</span>
+            ) : turn ? (
+              <span className="relative text-sm font-bold uppercase tracking-widest px-3 py-1" style={{ background: hueOf(turn) + "22", color: hueOf(turn), clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{nameOf(turn)} bans next</span>
+            ) : null}
+          </HudPanel>
+
+          {/* maps grid */}
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 sm:gap-3">
+            {pool.map((m) => {
+              const by = banned[m];
+              const isDecider = decider === m;
+              const state = isDecider ? "decider" : by ? "banned" : "live";
+              return (
+                <MapTile key={m} m={m} onClick={() => banMap(m)} disabled={!!by || !!decider || !turn} state={state}
+                  stamp={by ? `BANNED · ${nameOf(by)}` : isDecider ? "★ DECIDER" : null}
+                  stampColor={by ? hueOf(by) : "#3ddc84"} />
+              );
+            })}
+          </div>
+
+          {/* side pick */}
+          {decider && sidePick && (
+            <HudPanel pad="px-5 py-5" accent="#3ddc84">
+              <HudLabel dot="#3ddc84">Side Selection</HudLabel>
+              <p className="text-sm mb-3" style={{ color: "rgba(200,215,255,0.6)" }}>
+                Decider is <span className="font-bold" style={{ color: "#9af5c2" }}>{decider}</span>. <span className="font-bold uppercase" style={{ color: hueOf(sidePick.teamId), fontFamily: "'Rajdhani',sans-serif" }}>{nameOf(sidePick.teamId)}</span> picks side:
+                {!sidePick.side && (
+                  <button onClick={() => setSidePick({ teamId: other(sidePick.teamId), side: null })}
+                    className="ml-2 uppercase" style={{ fontSize: 10.5, letterSpacing: "0.12em", fontWeight: 700, color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.3)", padding: "3px 8px", background: "transparent", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>
+                    ⇄ Switch team
+                  </button>
+                )}
+              </p>
+              <div className="flex gap-3">
+                {["ATTACK", "DEFENSE"].map((s) => {
+                  const on = sidePick.side === s;
+                  const c = s === "ATTACK" ? "#ff4655" : "#3d7bff";
+                  return (
+                    <button key={s} onClick={() => setSidePick((p) => ({ ...p, side: s }))} className="relative flex-1 px-4 py-3 font-bold uppercase tracking-widest text-sm"
+                      style={{ fontFamily: "'Rajdhani',sans-serif", background: on ? c + "26" : "rgba(255,255,255,0.03)", border: `1px solid ${on ? c : "rgba(120,150,220,0.2)"}`, color: on ? (s === "ATTACK" ? "#ff8a94" : "#aec6ff") : "rgba(200,215,255,0.55)", clipPath: "polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 11px 100%, 0 calc(100% - 11px))", boxShadow: on ? `0 0 20px ${c}33` : "none" }}>{s}</button>
+                  );
+                })}
+              </div>
+              {sidePick.side && (
+                <div className="relative mt-4 text-center px-4 py-5" style={{ background: "linear-gradient(180deg, rgba(13,32,24,0.6), rgba(7,18,14,0.4))", border: "1px solid rgba(61,220,132,0.4)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
+                  <span className="absolute left-0 top-0" style={{ width: 14, height: 14, borderLeft: "2px solid #3ddc84", borderTop: "2px solid #3ddc84" }} />
+                  <span className="absolute right-0 bottom-0" style={{ width: 14, height: 14, borderRight: "2px solid #3ddc84", borderBottom: "2px solid #3ddc84" }} />
+                  <p className="text-xs uppercase tracking-[0.3em] mb-1" style={{ color: "rgba(154,245,194,0.7)", fontFamily: "'Rajdhani',sans-serif" }}>Locked In</p>
+                  <p className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "2.1rem", lineHeight: 1, letterSpacing: "0.03em", color: "#f4f8ff", textShadow: "0 0 24px rgba(61,220,132,0.4)" }}>{decider}</p>
+                  <p className="text-sm mt-2" style={{ color: "rgba(200,215,255,0.65)" }}><span style={{ color: hueOf(sidePick.teamId), fontWeight: 700 }}>{nameOf(sidePick.teamId)}</span> starts <span style={{ color: sidePick.side === "ATTACK" ? "#ff8a94" : "#aec6ff", fontWeight: 700 }}>{sidePick.side}</span> · <span style={{ color: hueOf(other(sidePick.teamId)), fontWeight: 700 }}>{nameOf(other(sidePick.teamId))}</span> takes the other side</p>
+                </div>
+              )}
+            </HudPanel>
+          )}
+
+          <button onClick={resetAll} className="relative self-start px-7 py-3 text-sm font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ff8a94", background: "linear-gradient(180deg, rgba(32,13,16,0.55), rgba(18,7,9,0.45))", border: "1px solid rgba(255,70,85,0.45)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)" }}>
+            <span className="absolute left-0 top-0" style={{ width: 10, height: 10, borderLeft: "2px solid #ff4655", borderTop: "2px solid #ff4655" }} />
+            <span className="absolute left-0 bottom-0" style={{ width: 10, height: 10, borderLeft: "2px solid #ff4655", borderBottom: "2px solid #ff4655" }} />
+            ↺ Reset veto
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   AUDIO ENGINE — synthesized cyberpunk SFX + musical ambient bed
+   Self-contained Web Audio. No files. Lazily inits on first user gesture.
+   ════════════════════════════════════════════════════════════════════ */
+const SndFX = (() => {
+  let ctx = null, master = null, ambGain = null, ambNodes = [], started = false, enabled = true;
+  const now = () => ctx.currentTime;
+
+  function ensure() {
+    if (ctx) return ctx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = 0.0;
+    master.connect(ctx.destination);
+    master.gain.setValueAtTime(0.0001, now());
+    master.gain.exponentialRampToValueAtTime(0.9, now() + 0.6);
+    return ctx;
+  }
+
+  // a short tone with an envelope
+  function blip({ type = "square", f0 = 440, f1 = null, dur = 0.08, vol = 0.18, attack = 0.004, dest = null, detune = 0 } = {}) {
+    if (!ctx || !enabled) return;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.detune.value = detune;
+    o.frequency.setValueAtTime(f0, now());
+    if (f1) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), now() + dur);
+    g.gain.setValueAtTime(0.0001, now());
+    g.gain.exponentialRampToValueAtTime(vol, now() + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, now() + dur);
+    o.connect(g); g.connect(dest || master);
+    o.start(); o.stop(now() + dur + 0.02);
+  }
+
+  // filtered noise burst — for electricity zaps / hammer crack
+  function noise({ dur = 0.12, vol = 0.2, type = "highpass", freq = 1800, q = 0.7, sweepTo = null, dest = null } = {}) {
+    if (!ctx || !enabled) return;
+    const n = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const filt = ctx.createBiquadFilter(); filt.type = type; filt.frequency.value = freq; filt.Q.value = q;
+    if (sweepTo) filt.frequency.exponentialRampToValueAtTime(Math.max(40, sweepTo), now() + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, now());
+    g.gain.exponentialRampToValueAtTime(0.0001, now() + dur);
+    src.connect(filt); filt.connect(g); g.connect(dest || master);
+    src.start(); src.stop(now() + dur + 0.02);
+  }
+
+  // ── musical cyberpunk ambient: warm minor pad + pulsing sub-bass + sparse pentatonic arp ──
+  function startAmbient() {
+    if (!ctx || ambNodes.length) return;
+    ambGain = ctx.createGain(); ambGain.gain.value = 0.0001;
+    ambGain.connect(master);
+
+    // lush space: feedback delay (cinematic tail) — kept modest so it doesn't build into a wash
+    const delay = ctx.createDelay(); delay.delayTime.value = 0.5;
+    const fb = ctx.createGain(); fb.gain.value = 0.25;
+    const wet = ctx.createGain(); wet.gain.value = 0.32;
+    delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(ambGain);
+
+    // master tone filter the whole bed runs through (warm, rounded)
+    const toneFilt = ctx.createBiquadFilter(); toneFilt.type = "lowpass"; toneFilt.frequency.value = 1400; toneFilt.Q.value = 0.5;
+    toneFilt.connect(ambGain); toneFilt.connect(delay);
+
+    ambGain.gain.exponentialRampToValueAtTime(0.04, now() + 4);
+    ambNodes = [delay, fb, wet, toneFilt, ambGain];
+
+    // ── cinematic chord progression (emotional minor-key loop): Am · F · C · G ──
+    // each entry: root sub freq + a warm triad of frequencies (close voicing)
+    const PROG = [
+      { sub: 55.00, notes: [220.00, 261.63, 329.63] }, // Am  (A C E)
+      { sub: 43.65, notes: [174.61, 220.00, 261.63] }, // F   (F A C)
+      { sub: 65.41, notes: [196.00, 261.63, 329.63] }, // C   (G C E) — C add over G-ish
+      { sub: 49.00, notes: [196.00, 246.94, 293.66] }, // G   (G B D)
+    ];
+    // a gentle melody that sits over each chord (one sustained note per chord, top-voice)
+    const MELODY = [659.25, 523.25, 587.33, 493.88]; // E5 C5 D5 B4
+
+    // play ONE chord: a slow swell in, hold, swell out — the Zimmer "breath"
+    function playChord(idx, dur) {
+      if (!ctx || !enabled || !ambNodes.length) return;
+      const c = PROG[idx % PROG.length];
+      const t0 = now();
+      const swellIn = dur * 0.4, swellOut = dur * 0.45;
+
+      // bass — soft sine, gentle (raised so it's a warm note, not a sub-rumble)
+      const subO = ctx.createOscillator(); subO.type = "sine"; subO.frequency.value = c.sub * 2;
+      const subG = ctx.createGain(); subG.gain.setValueAtTime(0.0001, t0);
+      subG.gain.exponentialRampToValueAtTime(0.05, t0 + swellIn);
+      subG.gain.setValueAtTime(0.05, t0 + dur - swellOut);
+      subG.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      subO.connect(subG); subG.connect(ambGain); subO.start(t0); subO.stop(t0 + dur + 0.1);
+
+      // triad pad — detuned triangle pairs per note, swelling
+      const oscs = [];
+      c.notes.forEach((f, i) => {
+        const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0);
+        const peak = 0.028 - i * 0.004; // top notes slightly softer
+        g.gain.exponentialRampToValueAtTime(peak, t0 + swellIn);
+        g.gain.setValueAtTime(peak, t0 + dur - swellOut);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        g.connect(toneFilt);
+        [-5, 6].forEach((det) => {
+          const o = ctx.createOscillator(); o.type = "triangle"; o.frequency.value = f; o.detune.value = det;
+          o.connect(g); o.start(t0); o.stop(t0 + dur + 0.1); oscs.push(o);
+        });
+      });
+
+      // melody note — a soft sine bell that fades in late and rings, through the delay for echoes
+      const mF = MELODY[idx % MELODY.length];
+      const mDelay = dur * 0.25;
+      const mo = ctx.createOscillator(); mo.type = "sine"; mo.frequency.value = mF;
+      const mg = ctx.createGain(); mg.gain.setValueAtTime(0.0001, t0 + mDelay);
+      mg.gain.exponentialRampToValueAtTime(0.05, t0 + mDelay + 0.5);
+      mg.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      mo.connect(mg); mg.connect(toneFilt); mg.connect(delay);
+      mo.start(t0 + mDelay); mo.stop(t0 + dur + 0.1);
+    }
+
+    // ── phrase: play the 4-chord progression, then PAUSE in silence, then return ──
+    let chordIdx = 0;
+    const CHORD_DUR = 7.5;   // seconds per chord (slow, cinematic)
+    const PHRASE_LEN = 4;    // chords per phrase (one full progression)
+    const PAUSE_MS = 22000;  // ~22s of clear silence between phrases
+
+    function runPhrase() {
+      if (!ctx || !enabled || !ambNodes.length) return;
+      for (let i = 0; i < PHRASE_LEN; i++) {
+        ambTimer = setTimeout(() => playChord(chordIdx + i, CHORD_DUR), i * CHORD_DUR * 1000);
+      }
+      chordIdx += PHRASE_LEN;
+      // schedule next phrase after this one finishes + a silent pause
+      const total = PHRASE_LEN * CHORD_DUR * 1000 + PAUSE_MS;
+      ambTimer = setTimeout(runPhrase, total);
+    }
+    // first phrase starts shortly after boot
+    ambTimer = setTimeout(runPhrase, 1200);
+  }
+  let ambTimer = null;
+
+  // ── named SFX
+  const sfx = {
+    hover() { blip({ type: "sine", f0: 880, f1: 1320, dur: 0.05, vol: 0.05 }); },
+    click() { blip({ type: "sine", f0: 520, f1: 660, dur: 0.085, vol: 0.07, attack: 0.012 }); blip({ type: "sine", f0: 1040, dur: 0.05, vol: 0.018, attack: 0.012 }); },
+    nav() { blip({ type: "triangle", f0: 480, f1: 760, dur: 0.1, vol: 0.085, attack: 0.01 }); blip({ type: "sine", f0: 960, dur: 0.06, vol: 0.025, attack: 0.01 }); },
+    enter() {
+      blip({ type: "sawtooth", f0: 180, f1: 720, dur: 0.32, vol: 0.16 });
+      blip({ type: "square", f0: 360, f1: 1440, dur: 0.34, vol: 0.08 });
+      noise({ dur: 0.4, vol: 0.12, type: "bandpass", freq: 600, q: 1.2, sweepTo: 5000 });
+    },
+    transition() { blip({ type: "sine", f0: 380, f1: 620, dur: 0.16, vol: 0.045, attack: 0.02 }); },
+    spin() { // subtle rising underlay — the per-card ticks carry the motion
+      if (!ctx || !enabled) return;
+      const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+      o.type = "sawtooth"; f.type = "bandpass"; f.Q.value = 7;
+      o.frequency.setValueAtTime(90, now()); o.frequency.exponentialRampToValueAtTime(560, now() + 2.4);
+      f.frequency.setValueAtTime(300, now()); f.frequency.exponentialRampToValueAtTime(2200, now() + 2.4);
+      g.gain.setValueAtTime(0.0001, now()); g.gain.exponentialRampToValueAtTime(0.05, now() + 0.3);
+      g.gain.exponentialRampToValueAtTime(0.0001, now() + 2.6);
+      o.connect(f); f.connect(g); g.connect(master); o.start(); o.stop(now() + 2.7);
+    },
+    tick(p = 0) { // each card pass — soft rounded tick that rises & warms as it slows (kept exciting, easy on ears)
+      const f = 600 + p * 1300;
+      blip({ type: "triangle", f0: f, f1: f * 0.78, dur: 0.03 + p * 0.035, vol: 0.045 + p * 0.06, attack: 0.006 });
+      // gentle low body so it feels tactile without the sharp noise crack
+      blip({ type: "sine", f0: f * 0.5, dur: 0.04 + p * 0.02, vol: 0.025 + p * 0.03, attack: 0.005 });
+      // soft shimmer on the final slow ticks for the climactic feel
+      if (p > 0.8) blip({ type: "sine", f0: f * 2, dur: 0.05, vol: 0.035, attack: 0.008 });
+    },
+    reveal() { // soft celebratory "confetti" — warm rising chime + scattered gentle twinkles
+      if (!ctx || !enabled) return;
+      // a warm major chord bloom underneath (C major: C E G C) — soft sines, gentle swell
+      [261.63, 329.63, 392.0, 523.25].forEach((f, i) =>
+        setTimeout(() => blip({ type: "sine", f0: f, dur: 0.7, vol: 0.07, attack: 0.04 }), i * 70)
+      );
+      // rising sparkle run up a pleasant pentatonic — soft triangles, rounded
+      const upRun = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
+      upRun.forEach((f, i) =>
+        setTimeout(() => blip({ type: "triangle", f0: f, dur: 0.28, vol: 0.06, attack: 0.015 }), 120 + i * 60)
+      );
+      // scattered confetti twinkles — many tiny soft bells at random times/pitches, fading out
+      const twinkle = [659.25, 783.99, 880.0, 987.77, 1046.5, 1318.5, 1567.98];
+      for (let i = 0; i < 14; i++) {
+        const f = twinkle[Math.floor(Math.random() * twinkle.length)];
+        const t = 150 + Math.random() * 1100;
+        const v = 0.018 + Math.random() * 0.022;
+        setTimeout(() => blip({ type: "sine", f0: f, dur: 0.2 + Math.random() * 0.2, vol: v, attack: 0.012 }), t);
+      }
+      // very soft airy shimmer (gentle, no sharp sweep)
+      noise({ dur: 0.7, vol: 0.025, type: "bandpass", freq: 6000, q: 1.2 });
+    },
+    bid() { blip({ type: "square", f0: 740, f1: 1180, dur: 0.07, vol: 0.14 }); blip({ type: "sine", f0: 1480, dur: 0.05, vol: 0.05 }); },
+    sold() { // hammer crack + triumphant chord
+      noise({ dur: 0.16, vol: 0.3, type: "lowpass", freq: 2200, sweepTo: 400 });
+      blip({ type: "sawtooth", f0: 90, f1: 60, dur: 0.3, vol: 0.2 });
+      [392, 494, 587, 784].forEach((f) => blip({ type: "triangle", f0: f, dur: 0.5, vol: 0.09 }));
+    },
+    error() { blip({ type: "sawtooth", f0: 200, f1: 120, dur: 0.2, vol: 0.16 }); },
+  };
+
+  return {
+    boot() {
+      if (started) return;
+      const c = ensure(); if (!c) return;
+      if (c.state === "suspended") c.resume();
+      started = true;
+      startAmbient();
+    },
+    play(name, ...args) {
+      const h = { bid: "medium", sold: "success", reveal: "heavy" }[name];
+      if (h) haptic(h);
+      if (!started || !enabled) return;
+      const fn = sfx[name] || (() => {});
+      if (ctx && ctx.state === "suspended") {
+        // context not running yet (first gesture) — wait for resume, then play so the sound isn't lost
+        const p = ctx.resume();
+        if (p && p.then) p.then(() => { if (enabled) fn(...args); }).catch(() => {});
+        else fn(...args);
+        return;
+      }
+      fn(...args);
+    },
+    setEnabled(on) {
+      enabled = on;
+      if (!ctx) return;
+      master.gain.cancelScheduledValues(now());
+      master.gain.setTargetAtTime(on ? 0.9 : 0.0001, now(), 0.2);
+    },
+    isEnabled() { return enabled; },
+    isStarted() { return started; },
+  };
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   MAIN
+   ════════════════════════════════════════════════════════════════════ */
+const SHELL_CSS = `
+        .volt-expand-btn { transition: background .15s, border-color .15s, transform .15s; }
+        .volt-expand-btn:hover { background: rgba(61,123,255,0.3); border-color: #6fa0ff; transform: scale(1.08); }
+        /* Dashboard cells. A clickable panel has to say so before it's clicked —
+           the rest of the product lifts and brightens on hover, so these do too. */
+        .volt-cell { transition: transform .16s cubic-bezier(.2,.8,.3,1), border-color .16s, box-shadow .16s; }
+        /* Hero card two columns wide and two rows tall; the glance cells fill
+           the third column beside it, then wrap underneath. */
+        .volt-bento { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(132px, auto); }
+        .volt-bento > *:first-child { grid-column: span 2; grid-row: span 3; }
+        /* Glance cells stretch to share the height of the hero rather than
+           sitting short with dead space under them. */
+        .volt-bento > * { min-height: 0; }
+        /* The hero is only ever as tall as the column beside it: three glances
+           make a square block, two make a shorter one, one shouldn't leave the
+           hero towering over a single small cell. */
+        .volt-bento:not(.volt-3col):has(> :nth-child(3):last-child) > *:first-child { grid-row: span 2; }
+        .volt-bento:not(.volt-3col):has(> :nth-child(2):last-child) > *:first-child { grid-row: span 1; }
+        /* Four glances: widen to four columns so the hero keeps its 2x2 block
+           and the cells fill a 2x2 beside it, instead of three stacking and one
+           orphaning onto a row of its own. */
+        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:not(.volt-3col):has(> :nth-child(5):last-child) > *:first-child { grid-row: span 2; }
+        /* Six glances: four small ones stack beside the hero, then two
+           double-width cells close the row underneath so the block ends as a
+           rectangle rather than trailing off. */
+        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .volt-bento:not(.volt-3col):has(> :nth-child(7):last-child) > *:first-child { grid-row: span 2; }
+        @media (max-width: 1100px) {
+          .volt-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; }
+          .volt-bento > *:first-child { grid-column: 1 / -1; grid-row: auto; }
+        }
+        @media (max-width: 700px) {
+          .volt-bento { grid-template-columns: minmax(0, 1fr); }
+          .volt-bento > * { grid-column: 1 / -1 !important; }
+        }
+        .volt-cell[style*="cursor: pointer"]:hover,
+        .volt-cell[style*="cursor:pointer"]:hover {
+          transform: translateY(-2px);
+          border-color: rgba(61,123,255,0.45) !important;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.45), 0 0 26px rgba(61,123,255,0.12);
+        }
+        @media (prefers-reduced-motion: reduce) { .volt-cell { transition: none; } }
+        .volt-expand-btn { animation: voltExpandHint 2.4s ease-in-out 3; }
+        @keyframes voltExpandHint {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(61,123,255,0); }
+          50%      { box-shadow: 0 0 0 4px rgba(61,123,255,0.22); }
+        }
+        @media (prefers-reduced-motion: reduce) { .volt-expand-btn { animation: none; } }
+
+        .volt-rail-item { position: relative; }
+        .volt-rail-item:hover .volt-rail-glyph { color: #eaf1ff !important; }
+        @keyframes voltTipIn { from { opacity: 0; transform: translateY(-50%) translateX(-8px); } to { opacity: 1; transform: translateY(-50%) translateX(0); } }
+      `;
+
+function DraftApp({ auth, browse, chrome, initialView }) {
+  const [state, setState] = useState(null);
+  // Auto-resolve in-app identity from the logged-in role:
+  //  host  → "admin" (Host)   ·   others start unpicked (choose seat/spectator)
+  // A moderator lands in the same "admin" identity as the host — they run the
+  // same operational screens. The narrower powers are gated separately below by
+  // isTrueHost, not by hiding whole surfaces from them.
+  const [identity, setIdentity] = useState(null);
+  const [view, setView] = useState(initialView || "lobby");
+  const [tourneyOpen, setTourneyOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false); // phones: the "More" sheet
+  const [isDesk, setIsDesk] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width: 768px)").matches : true);
+  // Expanded by default: the labels are the whole point of the rail, and a
+  // first-time host shouldn't have to decode nine glyphs. A saved "0" still
+  // wins — collapsing is a deliberate choice, an absent key is not.
+  const [railWide, setRailWide] = useState(() => {
+    try { const v = localStorage.getItem("volt_rail_wide"); return v === null ? true : v === "1"; }
+    catch { return true; }
+  });
+  useEffect(() => { try { localStorage.setItem("volt_rail_wide", railWide ? "1" : "0"); } catch {} }, [railWide]);
+  const [railTip, setRailTip] = useState(null); // { label, y } — collapsed-rail hover tooltip
+  const [nowTick, setNowTick] = useState(Date.now()); // draft countdown tick
+  useEffect(() => { if (!chrome?.draftAt) return; const t = setInterval(() => setNowTick(Date.now()), 30000); return () => clearInterval(t); }, [chrome?.draftAt]);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    const on = (e) => setIsDesk(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
+  useEffect(() => { if (!tourneyOpen) return; const close = () => setTourneyOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [tourneyOpen]);
+  useEffect(() => { if (!mobileNavOpen) return; const close = () => setMobileNavOpen(false); window.addEventListener("click", close); return () => window.removeEventListener("click", close); }, [mobileNavOpen]);
+  const [liveCount, setLiveCount] = useState(1);
+  const sessionIdRef = useRef(null);
+  if (!sessionIdRef.current) sessionIdRef.current = Math.random().toString(36).slice(2, 12);
+  useEffect(() => {
+    const sid = sessionIdRef.current;
+    const KEY = "volt-presence";   // single shared row: { sessionId: lastSeenTs, ... }
+    const FRESH_MS = 14000;        // a session is "live" if seen within 14s
+    const BEAT_MS = 5000;          // heartbeat + recount every 5s
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const r = await window.storage.get(KEY, true);
+        let map = {};
+        if (r) { try { map = JSON.parse(r.value) || {}; } catch {} }
+        const now = Date.now();
+        map[sid] = now;                                   // stamp myself
+        for (const k of Object.keys(map)) if (now - map[k] >= FRESH_MS) delete map[k]; // prune stale
+        await window.storage.set(KEY, JSON.stringify(map), true);
+        if (!cancelled) setLiveCount(Math.max(1, Object.keys(map).length));
+      } catch {}
+    };
+
+    tick();
+    // Only heartbeat while the tab is visible. A hidden tab that stops stamping
+    // simply ages out of the presence map after FRESH_MS — which is the correct
+    // behavior anyway (a backgrounded viewer isn't really "watching"), and it
+    // stops idle tabs from churning a read+write every 5s.
+    const stopBeat = visInterval(tick, BEAT_MS);
+    const onLeave = async () => {
+      try {
+        const r = await window.storage.get(KEY, true);
+        if (r) { const map = JSON.parse(r.value) || {}; delete map[sid]; await window.storage.set(KEY, JSON.stringify(map), true); }
+      } catch {}
+    };
+    window.addEventListener("beforeunload", onLeave);
+    return () => { cancelled = true; stopBeat(); onLeave(); window.removeEventListener("beforeunload", onLeave); };
+  }, []);
+  const [saveErr, setSaveErr] = useState(null); // surfaced when a board write fails
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const [scouted, setScouted] = useState(null);
+  const [profileUser, setProfileUser] = useState(null); // player profile shown inside the tournament
+  const [profileFrom, setProfileFrom] = useState(null); // view to return to
+  const [reportFrom, setReportFrom] = useState(null);   // view to return to after reporting
+  // Reporting is a view — follow chrome.reportNode in and out of it. Must live
+  // with the other hooks, above any early return, or the hook count changes
+  // between renders and React blanks the screen.
+  useEffect(() => {
+    if (chrome?.reportNode) setView(v => (v === "report" ? v : (setReportFrom(v), "report")));
+    else setView(v => (v === "report" ? (reportFrom || "bracket") : v));
+  }, [chrome?.reportNode]); // player id for modal
+  const [editingPlayer, setEditingPlayer] = useState(null); // player object being edited by admin
+  const [hostFormOpen, setHostFormOpen] = useState(false); // host add-player/reserve forms start folded
+  useEffect(() => { if (editingPlayer) { const t = setTimeout(() => document.getElementById("wr-admin-form")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); return () => clearTimeout(t); } }, [editingPlayer]);
+  const [filterRank, setFilterRank] = useState("All");
+  const [filterRole, setFilterRole] = useState("All");
+  const [query, setQuery] = useState("");
+  // Reserve Hub keeps its own filters — a different question ("who can stand in
+  // tonight") than the Scout Hub's ("who should I bid on"). These MUST live up
+  // here with the other hooks: DraftApp early-returns on `!state` further down,
+  // so a hook declared below that runs on some renders and not others, which is
+  // exactly the inconsistent hook count React #310 reports.
+  const [rQuery, setRQuery] = useState("");
+  const [rRank, setRRank] = useState("All");
+  const [rRole, setRRole] = useState("All");
+  const [replacing, setReplacing] = useState(null);   // which of my players is out
+  const [subAsk, setSubAsk] = useState(null);         // a captain's "ask the reserves" for that player
+  const [resetArmed, setResetArmed] = useState(false);
+  const [tClearArmed, setTClearArmed] = useState(false);
+  const prevBid = useRef(null);
+  const stateRef = useRef(null);
+  const localStampRef = useRef(0);
+  const writeTimerRef = useRef(null);
+  stateRef.current = state;
+
+  // ── AUDIO: boot on first user gesture, then delegate UI click/hover sounds globally
+  const [soundOn, setSoundOn] = useState(true);
+  const soundOnRef = useRef(true);
+  soundOnRef.current = soundOn;
+  useEffect(() => {
+    const boot = () => { SndFX.boot(); };
+    const onClick = (e) => {
+      SndFX.boot();
+      if (!soundOnRef.current) return;
+      const el = e.target.closest("button, a, [role=button], input, select");
+      if (!el) return;
+      if (el.dataset.snd === "off") return;
+      SndFX.play(el.dataset.snd || "click");
+    };
+    const onOver = (e) => {
+      if (!soundOnRef.current || !SndFX.isStarted()) return;
+      const el = e.target.closest("button, a, [role=button]");
+      if (!el || el.dataset.nohover === "1") return;
+      SndFX.play("hover");
+    };
+    window.addEventListener("pointerdown", boot, { once: false });
+    window.addEventListener("click", onClick, true);
+    window.addEventListener("pointerover", onOver, true);
+    return () => {
+      window.removeEventListener("pointerdown", boot);
+      window.removeEventListener("click", onClick, true);
+      window.removeEventListener("pointerover", onOver, true);
+    };
+  }, []);
+  useEffect(() => { SndFX.setEnabled(soundOn); }, [soundOn]);
+
+  // whoosh on page/view change
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) { firstView.current = false; return; }
+    if (soundOnRef.current) SndFX.play("transition");
+  }, [view]);
+
+  // Once the board loads, map a logged-in captain to their own seat automatically
+  // (matched by captainUserId). Host stays "admin"; others can still pick/spectate.
+  useEffect(() => {
+    if (!state || !auth) return;
+    // "admin" is a fallback, not a choice — if a seat exists for this account,
+    // take it. Anything the user picked deliberately is left alone.
+    if (identity && identity !== "admin") return;
+    if (identity === "admin") {
+      const seat = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
+      if (seat) setIdentity(seat.id);
+      return;
+    }
+    // Owning a seat wins over being staff. A host or moderator who captains a
+    // team needs their seat (budget, roster, War Room, bidding) — they keep their
+    // admin powers regardless, because isAdmin is derived from their role below,
+    // not from this value. Checking staff first was the bug: a host-captain was
+    // pinned to "admin", so they had no team and the War Room told them it wasn't
+    // theirs to see.
+    const mine = state.teams.find(t => t.captainUserId && t.captainUserId === auth.userId);
+    if (mine) { setIdentity(mine.id); return; }
+    if (auth.role === "host" || auth.role === "moderator") { setIdentity("admin"); return; }
+    // Browsing during registration with no seat of your own: spectate.
+    if (browse) { setIdentity("spectator"); return; }
+    // League users never self-claim seats — the host assigns captains.
+    // Anyone logged in without an owned seat watches as spectator, even on a
+    // sample/unbuilt board. The seat gate remains only for legacy/preview mode.
+    if (auth.userId) setIdentity("spectator");
+  }, [state, auth, identity, browse]);
+
+  // draft time lives in shared state so the countdown matches for everyone
+  // The auction start, from the board or the tournament itself. No invented
+  // fallback — if nothing is scheduled we say so rather than fake a countdown.
+  const draftTarget = chrome?.draftAt ? new Date(chrome.draftAt).getTime() : (state?.draftAt ?? null);
+  const cd = useCountdown(draftTarget ?? 0);
+  const hasDraftTime = Number.isFinite(draftTarget) && draftTarget > 0;
+
+  useEffect(() => {
+    let alive = true;
+    // Browse mode (registration phase): show a LIVE view of who's registered,
+    // with their scouting stats — built in memory, never written to the board,
+    // so the real draft board stays untouched until the host opens the draft.
+    if (browse && HAS_SUPABASE && window.__VOLT.weekendId) {
+      const loadLive = async () => {
+        try {
+          const { captains, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
+          if (!alive) return;
+          // A saved board wins. Regenerating over it is what made every edit
+          // (teams, names, budgets, groups) revert a few seconds later — and
+          // what erased hand-added players. The test is whether a board exists
+          // at all, NOT whether it has teams: a league with fewer than two
+          // captains legitimately has none, and gating on teams.length threw
+          // that whole board away every poll.
+          const saved = await readState();
+          if (!alive) return;
+          if (saved && Array.isArray(saved.players)) {
+            // Keep the host's board; fold in anyone who registered since. Match
+            // on userId — registration rows have no `id`, so comparing p.id
+            // matched nothing and re-appended the entire roster every poll.
+            const known = new Set([...(saved.players || []).map(p => p.id), ...(saved.removed || [])]);
+            const added = [
+              ...(captains || []).filter(c => !known.has(c.userId)).map(c => regToPlayer(c, true)),
+              ...(pool || []).filter(p => !known.has(p.userId)).map(p => regToPlayer(p, false)),
+            ];
+            const merged = added.length
+              ? { ...saved, players: [...(saved.players || []), ...added] }
+              : saved;
+            // Don't stomp an edit that hasn't finished writing yet.
+            const local = stateRef.current;
+            if (local && local.stamp && merged.stamp && local.stamp > merged.stamp) return;
+            setState(merged);
+            return;
+          }
+          // No board yet — show a live preview of registrations (never written).
+          // freshState is truthful on its own now: no seeds, so an empty league
+          // yields an empty board, and captains still show even with no pool.
+          setState(freshState(captains, pool));
+        } catch (e) { console.error("browse roster", e); if (alive && !stateRef.current) setState(freshState(null)); }
+      };
+      loadLive();
+      const stop = visInterval(loadLive, 8000); // pick up new registrations live
+      return () => { alive = false; stop(); };
+    }
+    const load = async () => {
+      let s = await readState();
+      if (!s) {
+        // readState also returns null when the read FAILED. Ask again strictly:
+        // only a clean "no such row" may create a board. Anything else waits
+        // for the poll to deliver the real one.
+        let missing = false;
+        try { missing = (await window.storage.getIfChanged(boardKey(), true, null)) === null; }
+        catch (e) { console.error("board read failed — not creating a board", e); }
+        if (!missing) return;
+        // No board yet: build it from THIS tournament's registrations — the
+        // same source the host's "open draft" uses. This used to pull anyone
+        // in the league who'd ever ticked wants_captain, so the teams didn't
+        // match who had actually signed up.
+        let captains = null, pool = null;
+        if (HAS_SUPABASE && window.__VOLT.weekendId) {
+          try { ({ captains, pool } = await fetchRosterForEvent(window.__VOLT.weekendId)); }
+          catch (e) { console.error("load roster", e); }
+        }
+        s = await writeState(freshState(captains, pool));
+      }
+      if (DEMO) {
+        const m = await loadDemo();
+        window.__VOLT.communityName = m.DEMO_LEAGUE_NAME;
+        if (!window.__demoBoard) window.__demoBoard = m.demoBoard(DEMO, { freshState, buildSingleElim, resolveMatch, propagateElim, leagueMatches, roundRobinMatches, syncFinal });
+        s = await writeState(window.__demoBoard);
+      }
+
+      // Fold in anyone approved since the board was built, ONCE, on open.
+      //
+      // Browse mode shows a live merged view but deliberately never writes it,
+      // because a periodic rebuild during registration used to clobber the
+      // host's edits. The consequence was that a board built at 21:05 and a
+      // player approved at 21:07 left that player invisible to the auction —
+      // present on screen in browse, absent from the board that volt_sell
+      // actually reads.
+      //
+      // This runs at draft-open rather than on a timer, and is strictly
+      // additive: it appends missing pool players and touches nothing else —
+      // no teams, budgets, sold rows, block or tournament.
+      if (alive && s && HAS_SUPABASE && window.__VOLT.weekendId) {
+        try {
+          const { captains: cs, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
+          const known = new Set([...(s.players || []).map((p) => p.id), ...(s.removed || [])]);
+          const late = [
+            ...(cs || []).filter((c) => !known.has(c.userId)).map((c) => regToPlayer(c, true)),
+            ...(pool || []).filter((p) => !known.has(p.userId)).map((p) => regToPlayer(p, false)),
+          ];
+          if (late.length) {
+            s = await writeState({ ...s, players: [...(s.players || []), ...late],
+              log: [`${late.length} late registration${late.length === 1 ? "" : "s"} added to the pool`,
+                    ...(s.log || [])].slice(0, 8) });
+            console.info("[volt] merged late registrations:", late.map((x) => x.name).join(", "));
+          }
+        } catch (e) { console.error("late merge", e); }
+      }
+
+      if (alive) setState(s);
+    };
+    load();
+    // One place that decides whether an incoming board should replace ours.
+    // Both the poll and the Realtime subscription go through here, so the
+    // guards below can never drift apart between the two paths.
+    applyIncomingRef.current = (s) => {
+      if (!alive || !s) return;
+    // ignore remote state that isn't newer than what we have locally (prevents clobbering optimistic writes)
+    if (s.stamp <= localStampRef.current) return;
+    // Guard the draw: if WE have a live spin (or a block the remote lacks) that
+    // the incoming state would erase, keep ours until our write propagates.
+    const local = stateRef.current;
+    // A debounced write is still pending — our local state is ahead of the
+    // server, so anything the poll returns is stale by definition.
+    if (writeTimerRef.current) return;
+    if (local) {
+      const localSpinLive = local.spin && Date.now() < local.spin.startTs + local.spin.duration + 2000;
+      if (localSpinLive && (!s.spin || s.spin.startTs !== local.spin.startTs)) return;
+      if (local.block && !s.block && (!s.spin || (local.spin && s.spin?.startTs !== local.spin.startTs))) return;
+      // Never let a remote read delete a tournament we're mid-setup on, or
+      // roll back group/seed assignments we've already made locally.
+      if (local.tournament && !s.tournament) return;
+      if (local.tournament && s.tournament && !local.tournament.locked) {
+        const count = (t) => {
+          if (!t) return 0;
+          if (t.format === "group") return (t.groups || []).reduce((n, g) => n + (g.teamIds || []).length, 0);
+          if (t.format === "single") return (t.slots || []).filter(Boolean).length;
+          return (t.teamIds || []).length;
+        };
+        if (count(local.tournament) > count(s.tournament)) return;
+      }
+    }
+    if (!stateRef.current || s.stamp !== stateRef.current.stamp) { localStampRef.current = s.stamp; setState(s); }
+    };
+
+    const stop = visInterval(async () => {
+      const s = await readState();
+      applyIncomingRef.current(s);
+    }, () => {
+      // Bidding is the only moment where a stale price does real damage, so
+      // tighten the cadence while a player is on the block (or the wheel is
+      // spinning) and ease back off the rest of the time.
+      const s = stateRef.current;
+      // Realtime confirmed up → this poll is only a safety net, so back right
+      // off. The instant the socket reports anything other than SUBSCRIBED we
+      // return to full speed, so a silent disconnect degrades to today's
+      // behaviour rather than to a frozen board.
+      if (liveSyncRef.current) return POLL_MS_SAFETY;
+      if (!s) return POLL_MS;
+      if (s.block) return POLL_MS_HOT;
+      if (s.spin && Date.now() < s.spin.startTs + s.spin.duration + 2000) return POLL_MS_HOT;
+      return POLL_MS;
+    }, POLL_MS_HIDDEN);
+    // ── Realtime ────────────────────────────────────────────────────────────
+    // The board is ~29KB at 12 teams, so pushing the whole row on every bid would
+    // cost ~940MB of egress across a full 60-player auction. Instead the database
+    // broadcasts a ~210-byte delta and each client applies it locally. The 20s
+    // safety poll doubles as a reconciler: if an applied delta ever drifts from
+    // the truth, the next full read silently corrects it.
+    let ch = null;
+    const cid = window.__VOLT?.communityId;
+    if (HAS_SUPABASE && cid) {
+      const evId = window.__VOLT?.weekendId || null;
+      const applyDelta = (d) => {
+        const cur = stateRef.current;
+        if (!cur || !d || (d.event && evId && d.event !== evId)) return false;
+        // Older than what we have, or already applied — ignore.
+        if (d.stamp && cur.stamp && d.stamp <= cur.stamp) return true;
+        const s2 = structuredClone(cur);
+        if (d.t === "bid") {
+          if (!s2.block) return false;                 // we're behind; fall back to a fetch
+          s2.block.currentBid = d.currentBid;
+          s2.block.leaderId = d.leaderId;
+          s2.block.ts = d.stamp;
+          s2.bidHistory = [{ teamId: d.leaderId, amount: d.currentBid, ts: d.stamp }, ...(s2.bidHistory || [])].slice(0, 12);
+          s2.log = [`${d.teamName} bids ${fmt(d.currentBid)} on ${d.playerName}`, ...(s2.log || [])].slice(0, 8);
+        } else if (d.t === "sell") {
+          const pl = (s2.players || []).find((x) => x.id === d.playerId);
+          const tm = (s2.teams || []).find((x) => x.id === d.teamId);
+          if (!pl || !tm) return false;
+          if (pl.status !== "sold") {
+            pl.status = "sold"; pl.soldTo = d.teamId; pl.soldPrice = d.price; pl.bidCount = d.bidCount;
+            tm.budget -= d.price;
+            tm.roster = [...(tm.roster || []), d.playerId];
+          }
+          s2.recentSales = [{ playerId: d.playerId, name: d.playerName, teamId: d.teamId,
+            price: d.price, bidCount: d.bidCount, ts: d.stamp }, ...(s2.recentSales || [])].slice(0, 10);
+          s2.log = [`SOLD — ${d.playerName} → ${d.teamName} for ${fmt(d.price)}`, ...(s2.log || [])].slice(0, 8);
+          s2.block = null; s2.bidHistory = []; s2.soldFlash = d.stamp; s2.lastSoldTo = d.teamId;
+        } else {
+          return false;                                 // unknown kind → fetch
+        }
+        s2.stamp = d.stamp;
+        if (d.updatedAt) __boardCache.set(boardKey(), { updatedAt: d.updatedAt, parsed: s2 });
+        applyIncomingRef.current(s2);
+        return true;
+      };
+
+      // liveSync means "broadcasts are actually arriving", NOT "the socket
+      // connected". Those came apart badly: realtime.messages is partitioned by
+      // day, the partitions ran out, and every server-side broadcast failed
+      // silently — while the channel still reported SUBSCRIBED. The client
+      // trusted that, dropped its poll from 1.2s to 20s, and updates that never
+      // came were replaced by nothing. On draft night a bid would have taken up
+      // to twenty seconds to reach the other captains.
+      //
+      // So the fast poll is only surrendered once a broadcast has genuinely
+      // landed, and it is taken back the moment they stop.
+      const markLive = () => {
+        lastBcastRef.current = Date.now();
+        if (!liveSyncRef.current) setLiveSync(true);
+      };
+      // Two delivery paths for the same payload.
+      //
+      // `broadcast` is realtime.send, which is the intended route but currently
+      // dead: realtime.messages is partitioned by day and the partitions ran
+      // out, and that schema can't be repaired from our side. It's kept because
+      // it costs nothing and resumes working the moment Supabase fixes it.
+      //
+      // `postgres_changes` on volt_pulse is the live path — a small table we
+      // own, in the publication, carrying the same delta rows. Whichever
+      // arrives first wins; applyDelta is idempotent and the stamp guard drops
+      // anything we've already applied, so a duplicate is harmless.
+      const onPayload = (d) => {
+        markLive();
+        if (!d) return;
+        // Anything we can't apply exactly — a spin, a host edit, or a delta we
+        // arrived too late for — falls back to one full read.
+        if (!applyDelta(d)) readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
+      };
+      ch = __sb.channel(`volt:${cid}`, { config: { private: true } })
+        .on("broadcast", { event: "volt" }, (msg) => onPayload(msg?.payload))
+        .on("postgres_changes",
+            { event: "INSERT", schema: "public", table: "volt_pulse", filter: `community_id=eq.${cid}` },
+            (msg) => onPayload(msg?.new?.payload))
+        .subscribe((status) => {
+          // A dropped socket is still proof of nothing arriving.
+          if (status !== "SUBSCRIBED") { setLiveSync(false); return; }
+          readState().then((s) => applyIncomingRef.current(s)).catch(() => {});
+        });
+    }
+    return () => { alive = false; stop(); if (ch) __sb.removeChannel(ch); };
+  }, []);
+
+  useEffect(() => {
+    const bid = state?.block?.currentBid ?? null;
+    if (prevBid.current !== null && bid !== null && bid !== prevBid.current) { setFlash(true); if (soundOnRef.current) SndFX.play("bid"); const t = setTimeout(() => setFlash(false), 600); return () => clearTimeout(t); }
+    prevBid.current = bid;
+  }, [state?.block?.currentBid]);
+
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!state?.spin) return;
+    if (soundOnRef.current && Date.now() - state.spin.startTs < 600) SndFX.play("spin");
+    const end = state.spin.startTs + state.spin.duration + 2000;
+    if (Date.now() > end) return;
+    const t = setInterval(() => { setTick((x) => x + 1); if (Date.now() > end + 300) clearInterval(t); }, 150);
+    return () => clearInterval(t);
+  }, [state?.spin?.startTs]);
+
+  // Guaranteed transition: force a render exactly when the spin animation ends
+  // and again when the reveal window closes (spinLive → false), so the view
+  // flips from the reel to the bidding panel even if the tick loop missed it.
+  useEffect(() => {
+    const sp = state?.spin;
+    if (!sp) return;
+    const landAt = sp.startTs + sp.duration;          // reel stops
+    const liveEnd = landAt + REVEAL_MS;                // spinLive expires → bidding
+    const timers = [];
+    const bump = () => setTick((x) => x + 1);
+    [landAt + 60, liveEnd + 60].forEach((at) => {
+      const d = at - Date.now();
+      if (d > -2000) timers.push(setTimeout(bump, Math.max(d, 0)));
+    });
+    return () => timers.forEach(clearTimeout);
+  }, [state?.spin?.startTs]);
+
+  // red sale flash + sale sound
+  const [saleFlash, setSaleFlash] = useState(false);
+  useEffect(() => {
+    if (!state?.soldFlash) return;
+    if (Date.now() - state.soldFlash < 1600) { setSaleFlash(true); if (soundOnRef.current) SndFX.play("sold"); const t = setTimeout(() => setSaleFlash(false), 1300); return () => clearTimeout(t); }
+  }, [state?.soldFlash]);
+
+  // play a sparkle when the spin lands on its winner
+  const revealedRef = useRef(null);
+  useEffect(() => {
+    const sp = state?.spin;
+    if (!sp) { return; }
+    if (revealedRef.current === sp.startTs) return;
+    const landAt = sp.startTs + sp.duration;
+    const delay = landAt - Date.now();
+    if (delay < -1500) return; // already long past
+    const fire = () => { revealedRef.current = sp.startTs; if (soundOnRef.current) SndFX.play("reveal"); };
+    if (delay <= 0) fire();
+    else { const t = setTimeout(fire, delay); return () => clearTimeout(t); }
+  }, [state?.spin?.startTs]);
+
+  // if a captain's seat is removed by the host, send them back to the gate
+  useEffect(() => {
+    if (identity && identity !== "admin" && identity !== "spectator" && state && !state.teams.some((t) => t.id === identity)) setIdentity(null);
+  }, [identity, state?.teams?.length]);
+
+  const mutate = useCallback(async (fn, optimistic = false, debounce = false) => {
+    if (busy) return;
+    if (optimistic) {
+      // apply instantly against current in-memory state (no read round-trip), then persist
+      const base = stateRef.current || freshState();
+      const next = fn(structuredClone(base));
+      if (!next) return;
+      next.stamp = nextStamp(base);           // stamp now so the poll guard is exact
+      localStampRef.current = next.stamp;
+      setState(next);
+      const persist = async (st, attempt = 0) => {
+        try {
+          // Conditional on the version we last read. If someone wrote in the
+          // gap between our read and this write, the server rejects us and
+          // hands back the winner — we then re-run `fn` on THAT state instead
+          // of overwriting it. For a bid this means the second captain lands
+          // on top of the first ($2,200 over $2,100) rather than erasing them.
+          const r = await writeStateChecked(st, boardVersion());
+          if (r.ok) { localStampRef.current = Math.max(localStampRef.current, r.state.stamp); setSaveErr(null); return; }
+          if (!r.current || attempt >= 3) {
+            // Give up gracefully: adopt whatever is on the server rather than
+            // leaving the UI showing a value that never persisted.
+            if (r.current) { localStampRef.current = r.current.stamp; setState(r.current); }
+            setSaveErr("Someone else moved first — showing the latest board.");
+            return;
+          }
+          const merged = fn(structuredClone(r.current));
+          if (!merged) {
+            // Our change no longer applies to the new state (already outbid,
+            // player already sold, budget no longer covers it). Accept theirs.
+            localStampRef.current = r.current.stamp;
+            setState(r.current);
+            setSaveErr(null);
+            return;
+          }
+          merged.stamp = nextStamp(r.current);
+          localStampRef.current = merged.stamp;
+          setState(merged);
+          return persist(merged, attempt + 1);
+        } catch (e) {
+          // The write never reached the server. Say so — otherwise the next
+          // poll silently paints the old state back and it looks like a ghost.
+          console.error("board write failed:", e);
+          setSaveErr(e?.message || "Couldn't save — check your connection.");
+        }
+      };
+      if (debounce) {
+        // coalesce bursts of rapid edits into one network write shortly after the last one
+        if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
+        writeTimerRef.current = setTimeout(() => {
+          writeTimerRef.current = null;
+          const latest = stateRef.current;
+          if (latest) persist(latest);
+        }, 280);
+      } else {
+        persist(next);
+      }
+      return;
+    }
+    setBusy(true);
+    try {
+      // Same conditional write as the optimistic path: read, apply, and only
+      // commit if nobody wrote in between. On conflict we re-read and re-apply
+      // rather than clobbering, so a host edit can't erase a bid landing at
+      // the same moment (or the other way round).
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const latest = (await readState()) || freshState();
+        const expected = boardVersion();
+        const next = fn(structuredClone(latest));
+        if (!next) break;
+        next.stamp = nextStamp(latest);
+        const r = await writeStateChecked(next, expected);
+        if (r.ok) { localStampRef.current = next.stamp; setState(next); break; }
+        if (!r.current || attempt === 3) {
+          if (r.current) { localStampRef.current = r.current.stamp; setState(r.current); }
+          break;
+        }
+      }
+    }
+    finally { setBusy(false); }
+  }, [busy]);
+
+  // Sign-ups keep coming after the draft opens (as reserves). Fold anyone
+  // approved since into the board — additive only, re-checked inside the write.
+  const mergeLateRegs = useCallback(async () => {
+    if (!HAS_SUPABASE || browse || !window.__VOLT.weekendId || !stateRef.current) return;
+    try {
+      const { captains: cs, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
+      const fresh = (b) => {
+        const known = new Set([...(b.players || []).map((p) => p.id), ...(b.removed || [])]);
+        return [...(cs || []).map((r) => [r, true]), ...(pool || []).map((r) => [r, false])].filter(([r]) => !known.has(r.userId));
+      };
+      if (!fresh(stateRef.current).length) return;
+      await mutate((st) => {
+        const add = fresh(st);
+        if (!add.length) return null;
+        st.players = [...(st.players || []), ...add.map(([r, cap]) => regToPlayer(r, cap))];
+        st.log = [`${add.map(([r]) => r.name).join(", ")} joined the reserves`, ...(st.log || [])].slice(0, 8);
+        return st;
+      });
+    } catch (e) { console.error("late merge", e); }
+  }, [browse, mutate]);
+  const latePhase = chrome?.phase === "drafting" || chrome?.phase === "matches_live";
+  // Staff clients pick up approvals made elsewhere (another host, auto-approve).
+  // The hook has to sit up here, above the "board still loading" return: a hook
+  // below an early return crashes the whole view on the next render. Whether
+  // the viewer is staff is only known further down, hence the ref.
+  const lateMergeOk = useRef(false);
+  useEffect(() => {
+    if (!latePhase || browse || !HAS_SUPABASE) return;
+    const tick = () => { if (lateMergeOk.current) mergeLateRegs(); };
+    const t = setTimeout(tick, 4000);
+    const stop = visInterval(tick, 30000);
+    return () => { clearTimeout(t); stop(); };
+  }, [latePhase, browse, mergeLateRegs]);
+  const SPIN_MS = 7200, REVEAL_MS = 2000;
+  // `reserve` decides which hub a hand-added player belongs to. It reuses
+  // poolEligible rather than adding a second flag: false already means "not in
+  // the draft", which is exactly what a reserve is.
+  const addPlayer = (p, reserve = false) =>
+    mutate((s) => { s.players.push({ ...p, poolEligible: !reserve }); return s; });
+  const editPlayer = (p) => {
+    mutate((s) => { const i = s.players.findIndex((x) => x.id === p.id); if (i < 0) return null; s.players[i] = { ...s.players[i], ...p }; return s; });
+    // Real players (id = auth uuid) → persist to their profile so edits survive
+    // board rebuilds and follow the player across tournaments.
+    if (HAS_SUPABASE && typeof p.id === "string" && p.id.length > 30 && window.__VOLT.communityId) {
+      __sb.from("player_profiles").upsert({
+        user_id: p.id, community_id: window.__VOLT.communityId,
+        rank: p.rank ?? null, role: p.role ?? null, agent: p.agent ?? null,
+        kda: p.kda ?? null, acs: p.acs ?? null, hs: p.hs ?? null, win: p.win ?? null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,community_id" }).then(({ error }) => { if (error) console.error("profile write-through:", error.message); });
+    }
+  };
+  const removePlayer = (pid) => mutate((s) => {
+    if (s.block?.playerId === pid) return null; // not while on the block
+    const p = s.players.find((x) => x.id === pid);
+    if (p && p.status === "sold" && p.soldTo) {
+      const t = s.teams.find((x) => x.id === p.soldTo);
+      if (t) { t.roster = t.roster.filter((id) => id !== pid); t.budget += Math.max(0, Number(p.soldPrice) || 0); }
+    }
+    s.players = s.players.filter((x) => x.id !== pid);
+    // Their registration still exists, so remember the removal or the next
+    // merge of late sign-ups would put them straight back.
+    if (p && !isManualPlayer(p)) s.removed = [...new Set([...(s.removed || []), pid])];
+    return s;
+  }, true, true);
+  // Move a player between the draft roster and the reserve list. The board holds a
+  // copy for rendering, but registrations.pool_eligible is the durable truth — so
+  // the move survives a rebuild from registrations. Moving a SOLD player out
+  // refunds their team and frees the slot, per the host's call that this is an undo.
+  const setPoolEligible = async (pid, next) => {
+    // Not while they're the lot being bid on — the sale would go through anyway.
+    if (stateRef.current?.block?.playerId === pid) { setSaveErr("Finish or pass the current lot before moving this player."); return; }
+    mutate((s) => {
+      const p = s.players.find((x) => x.id === pid); if (!p) return null;
+      if (p.poolEligible === next || s.block?.playerId === pid) return null;
+      p.poolEligible = next;
+      if (!next && p.status === "sold") {
+        const t = s.teams.find((x) => x.id === p.soldTo);
+        const paid = Math.max(0, Number(p.soldPrice) || 0);
+        if (t) { t.roster = (t.roster || []).filter((id) => id !== pid); t.budget += paid; }
+        s.log.unshift(`${p.name} moved to reserves — ${fmt(paid)} refunded to ${t ? t.name : "their team"}`);
+        s.log = s.log.slice(0, 8);
+        p.status = "pool"; p.soldTo = null; p.soldPrice = null;
+      } else {
+        s.log.unshift(`${p.name} moved to the ${next ? "draft pool" : "reserves"}`);
+        s.log = s.log.slice(0, 8);
+      }
+      return s;
+    }, true);
+    // Registered players have a uuid id; hand-added ones have no registration row.
+    const registered = typeof pid === "string" && pid.length > 30;
+    if (HAS_SUPABASE && registered && window.__VOLT?.weekendId) {
+      try {
+        await __sb.from("registrations").update({ pool_eligible: next })
+          .eq("event_id", window.__VOLT.weekendId).eq("user_id", pid);
+      } catch (e) { console.error("pool_eligible write failed", e); }
+    }
+  };
+  // Whoever is allowed to run the auction right now — the host, or the
+  // moderator holding the gavel. Read through a ref because the handlers below
+  // are defined before canRunAuction is computed.
+  const canRunRef = useRef(true);
+  const spinNominate = () => { if (!canRunRef.current) return; return mutate((s) => {
+    if (s.block || (s.spin && Date.now() < s.spin.startTs + SPIN_MS + REVEAL_MS)) return null;
+    // Reserves are cover for the weekend, not auction lots. Every other view
+    // filters them out — the pool page, the War Room, the board-gap count — but
+    // the draw itself did not, so a reserve could be nominated and bid on.
+    const poolIds = s.players
+      .filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false)
+      .map((p) => p.id);
+    if (!poolIds.length) return null;
+    for (let i = poolIds.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [poolIds[i], poolIds[j]] = [poolIds[j], poolIds[i]]; }
+    const winnerId = poolIds[Math.floor(Math.random() * poolIds.length)];
+    const p = s.players.find((x) => x.id === winnerId);
+    p.status = "block";
+    s.block = { playerId: winnerId, startingBid: rankOf(p.rank).bid, currentBid: rankOf(p.rank).bid, leaderId: null, ts: Date.now() };
+    s.spin = { playerId: winnerId, pool: poolIds, startTs: Date.now(), duration: SPIN_MS };
+    s.bidHistory = [];
+    s.log.unshift(`Fate chose ${p.name} — opening at ${fmt(s.block.startingBid)}`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true); };  // optimistic — overlay appears instantly
+  // ── Bidding and selling are decided by the SERVER, not here ──────────────
+  // The client used to compute the new price from its own copy of the board and
+  // write the whole thing back. That is what produced every symptom of the last
+  // tournament: two captains computing the same price, a bid landing on a stale
+  // board, and the host selling to whoever they last saw leading. Now the client
+  // sends only the intent — "I bid", "sell" — and the database reads the live
+  // price under a row lock, validates, and returns the authoritative board.
+  const [bidPending, setBidPending] = useState(false);
+  // Shared by the poll and the Realtime subscription so their guards can't drift.
+  const applyIncomingRef = useRef(() => {});
+  // Realtime health. A websocket that dies quietly is worse than slow polling —
+  // the board would stop updating while still looking live. So the poll never
+  // goes away: it just relaxes to a safety net while the socket is proven up,
+  // and snaps back to full speed the moment it isn't.
+  const [liveSync, setLiveSync] = useState(false);
+  const liveSyncRef = useRef(false);
+  useEffect(() => { liveSyncRef.current = liveSync; }, [liveSync]);
+  // Timestamp of the last broadcast that actually arrived.
+  const lastBcastRef = useRef(0);
+  // If they dry up, fall back to fast polling rather than sitting on a 20s
+  // safety poll waiting for messages that aren't coming.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (liveSyncRef.current && Date.now() - lastBcastRef.current > 45000) {
+        console.warn("[volt] no broadcasts for 45s — falling back to polling");
+        setLiveSync(false);
+      }
+    }, 10000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Adopt a board handed back by an RPC. It is by definition newer than anything
+  // local, so drop the conditional-GET cache and let the next poll re-prime it.
+  // Adopt a board handed back by an RPC, keeping the version cache primed.
+  // Dropping the cache instead would leave boardVersion() null, and the next
+  // client-side write (spin, pass, a host edit) would then go through as an
+  // UNCONDITIONAL write — silently reinstating last-write-wins.
+  const adoptServerBoard = (res) => {
+    const board = res?.board || null;
+    if (!board) return;
+    localStampRef.current = board.stamp || Date.now();
+    if (res.updatedAt) __boardCache.set(boardKey(), { updatedAt: res.updatedAt, parsed: board });
+    else __boardCache.delete(boardKey());
+    setState(board);
+  };
+
+  const placeBid = async (teamId) => {
+    if (bidPending || !HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    setBidPending(true); setSaveErr(null);
+    try {
+      const { data, error } = await __sb.rpc("volt_place_bid", {
+        p_event: window.__VOLT.weekendId, p_team: teamId,
+      });
+      if (error) throw new Error(error.message || "Bid failed.");
+      adoptServerBoard(data);
+    } catch (e) {
+      // Real rejections are meaningful here (outbid, roster full, over your
+      // limit), so show them rather than failing silently.
+      setSaveErr(String(e.message || "Bid failed.").replace(/^.*?:\s*/, ""));
+    }
+    setBidPending(false);
+  };
+
+  const sell = async () => {
+    if (!canRunRef.current || !HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    setBidPending(true); setSaveErr(null);
+    try {
+      const { data, error } = await __sb.rpc("volt_sell", { p_event: window.__VOLT.weekendId });
+      if (error) throw new Error(error.message || "Could not sell.");
+      adoptServerBoard(data);
+    } catch (e) {
+      setSaveErr(String(e.message || "Could not sell.").replace(/^.*?:\s*/, ""));
+    }
+    setBidPending(false);
+  };
+
+  const passPlayer = () => { if (!canRunRef.current) return; return mutate((s) => {
+    const b = s.block; if (!b) return null;
+    const p = s.players.find((x) => x.id === b.playerId);
+    if (p) { p.status = "pool"; s.log.unshift(`${p.name} passed — back to the pool`); s.log = s.log.slice(0, 8); }
+    s.block = null; s.bidHistory = []; return s;
+  }, true) };
+  const resetAll = () => { if (!resetArmed) { setResetArmed(true); setTimeout(() => setResetArmed(false), 4000); return; } setResetArmed(false); mutate(() => freshState()); };
+  const renameTeam = (teamId, name, captain) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+    const nm = (name ?? "").trim(), cap = (captain ?? "").trim();
+    if (nm) t.name = nm.toUpperCase();
+    if (cap) t.captain = cap;
+    return s;
+  }, true, true);
+  const addTeam = () => mutate((s) => {
+    const used = new Set(s.teams.map((t) => t.hue));
+    const hue = TEAM_HUES.find((h) => !used.has(h)) || teamHue(s.teams.length);
+    const n = s.teams.length + 1;
+    s.teams.push({ id: "t" + uid(), name: "TEAM " + n, captain: "Captain " + n, hue, budget: 10000, roster: [] });
+    s.log.unshift(`New team added — ${s.teams.length} teams in the draft`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+  // No minimum: a board with fewer than two teams is a normal state (it's how
+  // every draft starts before captains sign up).
+  const removeTeam = (teamId) => {
+    const t0 = stateRef.current?.teams?.find((x) => x.id === teamId);
+    if (!t0 || stateRef.current?.block?.leaderId === teamId) return; // can't remove the team holding the live bid
+    mutate((s) => {
+      if (s.block?.leaderId === teamId) return null;
+      const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+      // return any drafted players to the pool
+      t.roster.forEach((pid) => { const p = s.players.find((x) => x.id === pid); if (p) { p.status = "pool"; p.soldTo = null; p.soldPrice = null; } });
+      // The captain goes back into the draw too. Left tagged, they'd sit outside
+      // the auction with no team, and the next rebuild would recreate this roster.
+      const cap = s.players.find((p) => p.isCaptain && ((t.captainUserId && p.id === t.captainUserId) || p.name === t.captain));
+      if (cap) cap.isCaptain = false;
+      s.teams = s.teams.filter((x) => x.id !== teamId);
+      if (s.teamCodes) delete s.teamCodes[teamId];
+      s.log.unshift(`${t.name} removed — ${t.roster.length ? "drafted players returned to pool" : "had no draftees"}`); s.log = s.log.slice(0, 8);
+      return s;
+    }, true, true);
+    // Keep the registration panel + future board rebuilds in agreement.
+    if (HAS_SUPABASE && t0.captainUserId && window.__VOLT.weekendId) {
+      __sb.from("registrations").update({ is_captain: false })
+        .eq("event_id", window.__VOLT.weekendId).eq("user_id", t0.captainUserId)
+        .then(({ error }) => { if (error) console.error("captain sync:", error.message); });
+    }
+  };
+
+  /* ── manual roster edits (Host only) — add deducts the price, remove refunds it, so budget stays correct ── */
+  const adminAddToRoster = (teamId, playerId, price) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t || emptySlots(t) === 0) return null;
+    const p = s.players.find((x) => x.id === playerId); if (!p || p.status === "sold") return null;
+    if (s.block?.playerId === playerId) return null; // not while on the block
+    const cost = Math.max(0, Number(price) || 0);
+    p.status = "sold"; p.soldTo = t.id; p.soldPrice = cost;
+    t.budget -= cost;            // deduct so add/remove stay symmetric with budget
+    t.roster.push(p.id);
+    s.log.unshift(`Commish added ${p.name} → ${t.name} (${fmt(cost)})`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+  const adminRemoveFromRoster = (teamId, playerId) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+    const p = s.players.find((x) => x.id === playerId); if (!p) return null;
+    const refund = Math.max(0, Number(p.soldPrice) || 0); // refund what was actually paid (auction sales carry a price)
+    t.roster = t.roster.filter((id) => id !== playerId);
+    if (refund > 0) t.budget += refund;
+    p.status = "pool"; p.soldTo = null; p.soldPrice = null;
+    s.log.unshift(`Commish removed ${p.name} from ${t.name}${refund > 0 ? ` — ${fmt(refund)} refunded` : ""}`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+
+  const setTeamBudget = (teamId, value) => mutate((s) => {
+    const t = s.teams.find((x) => x.id === teamId); if (!t) return null;
+    const v = Math.max(0, Number(value) || 0);
+    s.log.unshift(`Commish set ${t.name} budget → ${fmt(v)} (was ${fmt(t.budget)})`); s.log = s.log.slice(0, 8);
+    t.budget = v;
+    return s;
+  }, true, true);
+
+  // tournament stats — per-match entries that aggregate on the leaderboard (separate from scouting stats)
+  const addMatchStat = (pid, entry) => mutate((s) => {
+    const p = s.players.find((x) => x.id === pid); if (!p) return null;
+    if (!Array.isArray(p.tourneyStats)) p.tourneyStats = [];
+    p.tourneyStats.push({
+      k: Math.max(0, parseInt(entry.k) || 0),
+      d: Math.max(0, parseInt(entry.d) || 0),
+      a: Math.max(0, parseInt(entry.a) || 0),
+      acs: Math.max(0, parseInt(entry.acs) || 0),
+      ts: Date.now(),
+    });
+    return s;
+  }, true, true);
+  const removeMatchStat = (pid, idx) => mutate((s) => {
+    const p = s.players.find((x) => x.id === pid); if (!p || !Array.isArray(p.tourneyStats)) return null;
+    p.tourneyStats.splice(idx, 1);
+    return s;
+  }, true, true);
+
+  // tag a player as a captain → excluded from the auction draw (stays visible/scoutable)
+  const toggleCaptain = (pid) => {
+    const p0 = stateRef.current?.players?.find((x) => x.id === pid);
+    const promoting = p0 ? !p0.isCaptain : true;
+    // A drafted player (or the current lot) would end up on two teams at once.
+    if (promoting && p0 && p0.status !== "pool") {
+      setSaveErr(`${p0.name} is ${p0.status === "sold" ? "already on a team" : "up for auction"} — remove them from that first.`);
+      return;
+    }
+    mutate((s) => {
+      const p = s.players.find((x) => x.id === pid); if (!p) return null;
+      if (!p.isCaptain) {
+        if (p.status !== "pool") return null;
+        // Promote: exclude from the draw AND spin up their roster in the Locker Room.
+        p.isCaptain = true;
+        const nid = "t" + (Math.max(0, ...s.teams.map((t) => parseInt(String(t.id).slice(1)) || 0)) + 1);
+        s.teams.push({
+          id: nid, name: p.name.toUpperCase().slice(0, 22),
+          captain: p.name,
+          captainUserId: (typeof p.id === "string" && p.id.length > 30) ? p.id : null,
+          hue: teamHue(s.teams.length),
+          budget: 10000, roster: [],
+        });
+        s.log.unshift(`${p.name} tagged as captain — roster created in the Locker Room`);
+      } else {
+        // Demote: remove their (empty) roster and return them to the draw.
+        const t = s.teams.find((x) => (x.captainUserId && x.captainUserId === p.id) || x.captain === p.name);
+        if (t && t.roster && t.roster.length) {
+          s.log.unshift(`Can't untag ${p.name} — their roster already has players`);
+          s.log = s.log.slice(0, 8); return s;
+        }
+        if (t) s.teams = s.teams.filter((x) => x !== t);
+        p.isCaptain = false;
+        s.log.unshift(`${p.name} untagged — roster removed`);
+      }
+      s.log = s.log.slice(0, 8);
+      return s;
+    }, true, true);
+    // Keep the registration panel + future board rebuilds in agreement.
+    if (HAS_SUPABASE && typeof pid === "string" && pid.length > 30 && window.__VOLT.weekendId) {
+      __sb.from("registrations").update({ is_captain: promoting })
+        .eq("event_id", window.__VOLT.weekendId).eq("user_id", pid)
+        .then(({ error }) => { if (error) console.error("captain sync:", error.message); });
+    }
+  };
+
+  /* ── tournament mutators (Host only) ── */
+  const tCreate = (format, matchType, numGroups) => mutate((s) => {
+    const ids = s.teams.map((t) => t.id);
+    const boNum = matchType === "bo3" ? 3 : 1;       // numeric best-of for match logic
+    const t = { format, bo: boNum, overrides: {}, createdAt: Date.now() };
+    if (format === "group") {
+      const g = Math.max(2, Math.min(numGroups || 2, MAX_GROUPS, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
+      t.matches = {}; // per-group matches generated when groups are locked
+      t.locked = false;
+      // Two groups of three go straight to a final between the winners, which
+      // means two of the six teams play a knockout and the rest go home. Semis
+      // take the top two from each group instead, so second place still has
+      // something to play for on the last group match.
+      t.playoff = "semis";
+      t.semis = null; // [{id:'sf1'...},{id:'sf2'...}] once the groups finish
+      t.final = null; // { teamA, teamB, bo, maps, done, winner } once semis do
+    } else if (format === "roundrobin" || format === "league") {
+      t.teamIds = []; // host adds all participating teams
+      t.matches = [];
+      t.locked = false;
+    } else if (format === "single") {
+      // fixed-length bracket positions (power of 2 >= team count, min 2), filled by the host
+      const size = Math.max(nextPow2(ids.length || 2), 2);
+      t.slots = Array.from({ length: size }, () => null);
+      t.rounds = []; // built on lock
+      t.locked = false;
+    }
+    s.tournament = t;
+    s.log.unshift(`Tournament created — ${format === "group" ? "Group Stage" : format === "single" ? "Single Elimination" : "Round Robin"} (${matchType.toUpperCase()})`); s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
+  const tClear = () => mutate((s) => { s.tournament = null; if (!Array.isArray(s.log)) s.log = []; s.log.unshift("Tournament cleared"); s.log = s.log.slice(0, 8); return s; }, true);
+
+  // Every match currently in the tournament, flattened — used to carry results
+  // across a format switch.
+  const flattenMatches = (t) => {
+    if (!t) return [];
+    const out = [];
+    if (t.format === "group") {
+      Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach((m) => out.push(m)));
+      (t.ko || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
+      (t.semis || []).forEach((m) => out.push(m));
+      if (t.final) out.push(t.final);
+    } else if (t.format === "single") {
+      (t.rounds || []).forEach((r) => (r || []).forEach((m) => out.push(m)));
+    } else {
+      (t.matches || []).forEach((m) => out.push(m));
+    }
+    return out.filter(Boolean);
+  };
+  const pairKey = (x, y) => [x, y].filter(Boolean).sort().join("~");
+
+  // Switch the tournament's format, preserving played fixtures where the same two
+  // teams meet again. Results keep feeding the same leaderboards either way.
+  const tSwitchFormat = (format, matchType, numGroups) => mutate((s) => {
+    const prev = s.tournament;
+    const carry = {};
+    flattenMatches(prev).forEach((m) => {
+      if (!m.teamA || !m.teamB) return;
+      const played = m.done || (m.maps || []).some((x) => x && (x.a != null || x.b != null));
+      if (played || m.scheduledAt || (m.votes && Object.keys(m.votes).length)) carry[pairKey(m.teamA, m.teamB)] = m;
+    });
+    s.__carry = carry;              // consumed by tLock below
+    const ids = s.teams.map((t) => t.id);
+    const boNum = matchType === "bo3" ? 3 : 1;
+    const t = { format, bo: boNum, overrides: prev?.overrides || {}, createdAt: Date.now() };
+    if (format === "group") {
+      const g = Math.max(2, Math.min(numGroups || 2, MAX_GROUPS, Math.max(2, Math.floor(ids.length / 2) || 2)));
+      t.groups = Array.from({ length: g }, (_, i) => ({ id: "g" + i, name: "Group " + String.fromCharCode(65 + i), teamIds: [] }));
+      t.matches = {}; t.locked = false; t.final = null;
+    } else if (format === "roundrobin" || format === "league") {
+      t.teamIds = []; t.matches = []; t.locked = false;
+    } else if (format === "single") {
+      const size = Math.max(nextPow2(ids.length || 2), 2);
+      t.slots = Array.from({ length: size }, () => null);
+      t.rounds = []; t.locked = false;
+    }
+    s.tournament = t;
+    if (!Array.isArray(s.log)) s.log = [];
+    s.log.unshift(`Format switched — ${format === "group" ? "Group Stage" : format === "single" ? "Single Elimination" : "League"} (${matchType.toUpperCase()})`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+  const armTClear = () => { if (!tClearArmed) { setTClearArmed(true); setTimeout(() => setTClearArmed(false), 4000); return; } setTClearArmed(false); tClear(); };
+
+  // assign / remove a team to a group (group format) or the pool list (roundrobin) or a slot (single)
+  const tAssign = (target, teamId) => mutate((s) => {
+    const t = s.tournament; if (!t || t.locked) return null;
+    if (t.format === "group") {
+      // remove from all groups first, then add to target group
+      t.groups.forEach((g) => { g.teamIds = g.teamIds.filter((x) => x !== teamId); });
+      if (target) { const g = t.groups.find((x) => x.id === target); if (g && !g.teamIds.includes(teamId)) g.teamIds.push(teamId); }
+    } else if ((t.format === "roundrobin" || t.format === "league")) {
+      if (t.teamIds.includes(teamId)) t.teamIds = t.teamIds.filter((x) => x !== teamId);
+      else t.teamIds.push(teamId);
+    }
+    return s;
+  }, true, true);
+
+  // place a team into a specific bracket position (or clear it with teamId=null).
+  // a team can only occupy one slot, so remove it from any other slot first.
+  const tSetSlot = (index, teamId) => mutate((s) => {
+    const t = s.tournament; if (!t || t.locked || t.format !== "single") return null;
+    if (index < 0 || index >= t.slots.length) return null;
+    if (teamId) { for (let k = 0; k < t.slots.length; k++) if (t.slots[k] === teamId) t.slots[k] = null; }
+    t.slots[index] = teamId || null;
+    return s;
+  }, true, true);
+
+  // resize the bracket (number of positions). keeps existing picks that still fit.
+  const tSetSlotCount = (size) => mutate((s) => {
+    const t = s.tournament; if (!t || t.locked || t.format !== "single") return null;
+    size = Math.max(2, size);
+    const cur = t.slots.slice(0, size);
+    while (cur.length < size) cur.push(null);
+    t.slots = cur;
+    return s;
+  }, true);
+
+  const tLock = () => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (t.format === "group") {
+      t.matches = {};
+      t.groups.forEach((g) => { t.matches[g.id] = roundRobinMatches(g.teamIds, t.bo); });
+    } else if ((t.format === "roundrobin" || t.format === "league")) {
+      t.matches = t.format === "league" ? leagueMatches(t.teamIds, t.bo) : roundRobinMatches(t.teamIds, t.bo);
+    } else if (t.format === "single") {
+      t.rounds = buildSingleElim(t.slots, t.bo);
+      propagateElim(t); // byes advance straight away, not on the first reported score
+    }
+    // Restore anything already played/scheduled for the same team pairing so a
+    // format switch doesn't orphan reported stats (fxLabel depends on match id).
+    if (s.__carry && Object.keys(s.__carry).length) {
+      const key = (x, y) => [x, y].filter(Boolean).sort().join("~");
+      const restore = (m) => {
+        if (!m || !m.teamA || !m.teamB) return;
+        const old = s.__carry[key(m.teamA, m.teamB)];
+        if (!old) return;
+        m.id = old.id;                       // keeps fxLabel stable → stats stay linked
+        m.maps = old.maps || [];
+        m.bo = old.bo || m.bo;
+        m.done = !!old.done;
+        m.winner = old.winner ?? null;
+        if (old.scheduledAt) m.scheduledAt = old.scheduledAt;
+        if (old.forfeit) m.forfeit = old.forfeit;
+        if (old.votes) m.votes = old.votes;
+      };
+      if (t.format === "group") { Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach(restore)); }
+      // Later rounds only learn their teams from propagation, so restore and
+      // propagate once per round to carry results all the way up the bracket.
+      else if (t.format === "single") { (t.rounds || []).forEach(() => { t.rounds.forEach((r) => (r || []).forEach(restore)); propagateElim(t); }); }
+      else { (t.matches || []).forEach(restore); }
+      delete s.__carry;
+    }
+    t.locked = true;
+    s.log.unshift("Tournament bracket locked — matches generated"); s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
+  // set a single map score within a match, then re-resolve the match + propagate bracket winners
+  const tSetMap = (locator, mapIdx, aScore, bScore) => mutate((s) => {
+    const t = s.tournament; if (!t || !t.locked) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    if (m.forfeit) { delete m.forfeit; m.maps = []; }   // a typed score replaces a forfeit
+    if (!m.maps) m.maps = [];
+    while (m.maps.length <= mapIdx) m.maps.push({ a: null, b: null });
+    m.maps[mapIdx] = { a: aScore == null || aScore === "" ? null : Number(aScore), b: bScore == null || bScore === "" ? null : Number(bScore) };
+    resolveMatch(m);
+    if (t.format === "single") propagateElim(t);
+    if (t.format === "group") syncFinal(s, t);
+    syncLeagueFinal(s, t);
+    return s;
+  }, true, true);
+
+  // A no-show. side is the team that forfeited ("a" | "b"); null undoes it. The
+  // 13–0 goes in as real map scores so tables, result lines and the Discord
+  // bot all read it without a special case; the flag is what marks it.
+  const tSetForfeit = (locator, side) => mutate((s) => {
+    const t = s.tournament; if (!t || !t.locked) return null;
+    const m = findMatch(t, locator); if (!m || !m.teamA || !m.teamB) return null;
+    if (side === "a" || side === "b") {
+      m.forfeit = side;
+      m.maps = Array.from({ length: boNeed(m.bo) }, () => (side === "a" ? { a: 0, b: 13 } : { a: 13, b: 0 }));
+      const out = s.teams.find((x) => x.id === (side === "a" ? m.teamA : m.teamB));
+      s.log.unshift(`${out ? out.name : "A team"} forfeited`);
+    } else {
+      if (!m.forfeit) return null;
+      delete m.forfeit; m.maps = [];
+      s.log.unshift("Forfeit undone");
+    }
+    s.log = s.log.slice(0, 8);
+    resolveMatch(m);
+    if (t.format === "single") propagateElim(t);
+    if (t.format === "group") syncFinal(s, t);
+    syncLeagueFinal(s, t);
+    return s;
+  }, true, true);
+
+  // set best-of for a specific match (e.g. finals to Bo3)
+  const tSetBo = (locator, bo) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    m.bo = bo; resolveMatch(m);
+    if (t.format === "single") propagateElim(t);
+    return s;
+  }, true, true);
+
+  // Schedule a match (host). Stored as an ISO string on the match itself.
+  const tSetTime = (locator, iso) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    m.scheduledAt = iso || null;
+    return s;
+  }, true, true);
+
+  // Final prediction — one vote per user per match, publicly attributed.
+  // votes: { [userId]: { side: "a"|"b", name } }
+  const tVote = (locator, side) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    const m = findMatch(t, locator); if (!m) return null;
+    if (m.done) return null;                       // locked once played
+    // Locked at kick-off. Enforced here as well as in the UI: the button is
+    // hidden, but a stale tab could still fire this.
+    if (m.scheduledAt && voltNow() >= new Date(m.scheduledAt).getTime()) return null;
+    const uid = window.__VOLT?.userId; if (!uid) return null;
+    if (!m.votes || typeof m.votes !== "object") m.votes = {};
+    const name = window.__VOLT?.userName || "Player";
+    if (m.votes[uid] && m.votes[uid].side === side) delete m.votes[uid];  // tap again = undo
+    else m.votes[uid] = { side, name };
+    return s;
+  }, true, true);
+
+  // Host control over the Sunday final: set either side manually (locks
+  // auto-seeding), or clear the lock to let the table decide again.
+  // Switch a two-group stage between semis and a straight final. Refuses once
+  // a knockout match has been played, so the shape can't change underneath a
+  // result that already counted.
+  // Three or more groups: send the top one or the top two from each group into
+  // the knockout. Same rule as above — fixed once a knockout match is played.
+  const tSetAdvance = (n) => mutate((s) => {
+    const t = s.tournament;
+    if (!t || t.format !== "group" || (t.groups || []).length < 3) return s;
+    if (t.final?.done || (t.semis || []).some((m) => m.done) || (t.ko || []).some((r) => r.some((m) => m.done && !m.bye))) return s;
+    t.advance = n === 2 ? 2 : 1;
+    t.semis = null; t.final = null; t.ko = null; t.koSeed = null;
+    syncFinal(s, t);
+    s.log.unshift(`Playoff: top ${t.advance} from each group`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
+  const tSetPlayoff = (mode) => mutate((s) => {
+    const t = s.tournament;
+    if (!t || t.format !== "group") return s;
+    if (t.final?.done || (t.semis || []).some((m) => m.done) || (t.ko || []).some((r) => r.some((m) => m.done && !m.bye))) return s;
+    t.playoff = mode === "semis" ? "semis" : "final";
+    t.semis = null; t.final = null; t.ko = null; t.koSeed = null;
+    syncFinal(s, t);
+    s.log.unshift(`Playoff set to ${t.playoff === "semis" ? "semis + final" : "straight final"}`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true);
+
+  // Best-of for the final, before or after it exists. Fixed once it's played.
+  const tSetFinalBo = (n) => mutate((s) => {
+    const t = s.tournament; if (!t || t.final?.done) return null;
+    t.finalBo = [1, 3, 5].includes(n) ? n : 3;
+    if (t.final) { t.final.bo = t.finalBo; resolveMatch(t.final); }
+    s.log.unshift(`Final set to Bo${t.finalBo}`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+
+  const tSetFinalTeam = (side, teamId) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (!t.final) t.final = { id: "final", teamA: null, teamB: null, bo: finalBoOf(t), maps: [], done: false, winner: null };
+    if (t.final.done) return null;
+    t.final[side === "a" ? "teamA" : "teamB"] = teamId || null;
+    t.finalLock = true;
+    return s;
+  }, true);
+
+  const tResetFinal = () => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (t.final?.done) return null;
+    t.finalLock = false;
+    t.final = null;
+    syncLeagueFinal(s, t);
+    return s;
+  }, true);
+
+  const tOverride = (teamId, patch) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    if (!t.overrides) t.overrides = {};
+    if (patch == null) delete t.overrides[teamId];
+    else t.overrides[teamId] = { ...(t.overrides[teamId] || {}), ...patch };
+    return s;
+  }, true, true);
+
+  // build the group-stage final from current group winners (top of each group)
+  // League/round-robin decider — "the Sunday final". Auto-seeds the top two
+  // once every round-robin match is reported; leaves it alone if the host has
+  // manually set the teams (t.finalLock) or once it's been played.
+  function syncLeagueFinal(s, t) {
+    if (!t || (t.format !== "league" && t.format !== "roundrobin")) return;
+    if (t.final?.done) return;                 // played — never touch
+    if (t.finalLock) return;                   // host chose the teams
+    const ms = t.matches || [];
+    const allDone = ms.length > 0 && ms.every((m) => m.done);
+    if (!allDone) { if (t.final && !t.final.done) t.final = null; return; }
+    const rows = computeStandings(t.teamIds, ms, t.overrides);
+    if (rows.length < 2) return;
+    const [a, b] = [rows[0].teamId, rows[1].teamId];
+    if (!t.final) t.final = { id: "final", teamA: a, teamB: b, bo: finalBoOf(t), maps: [], done: false, winner: null };
+    else { t.final.teamA = a; t.final.teamB = b; }
+  }
+
+
+  // ── Hooks must stay above every early return ─────────────────────────
+  // The role picker below returns early. A hook declared after it runs on some
+  // renders and not others, React throws "rendered more hooks than during the
+  // previous render", and the whole view goes black. It only bites people who
+  // see the picker — staff are auto-identified, which is why it worked on the
+  // host's machine and nowhere else.
+  // Who's holding the gavel this tournament. Null means the host, which is what
+  // every existing tournament has. A host who hands it over stops seeing SOLD
+  // and PASS and gets the bid controls instead — that's the whole point: you
+  // can't call the auction and bid in it at the same time.
+  const [auct, setAuct] = useState(null);
+  const loadAuctioneer = useCallback(() => {
+    if (!HAS_SUPABASE || !window.__VOLT?.weekendId) return;
+    __sb.rpc("volt_auctioneer", { p_event: window.__VOLT.weekendId })
+      .then(({ data }) => data && setAuct(data))
+      .catch((e) => console.error("auctioneer", e));
+  }, []);
+  useEffect(() => {
+    loadAuctioneer();
+    // The moderator receiving the gavel needs to find out without a refresh.
+    // A tiny RPC every 30s costs far less than putting it on the board poll,
+    // and only people already inside the draft room pay for it.
+    const iv = setInterval(loadAuctioneer, 30000);
+    const onFocus = () => loadAuctioneer();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(iv); window.removeEventListener("focus", onFocus); };
+  }, [loadAuctioneer]);
+
+  // The match report calls this after saving, so a reported score lands on the
+  // bracket without being typed twice. Found by the fixture's stats label (a
+  // pair can meet more than once); Bo1 only, since a Bo3's total rounds don't
+  // say how the maps went. Re-runs the same resolve/seed steps as tSetMap.
+  useEffect(() => {
+    window.__VOLT.setFixtureScore = (label, aId, bId, a, b) => mutate((s) => {
+      const t = s.tournament; if (!t || !t.locked) return null;
+      const team = (id) => s.teams.find((x) => x.id === id);
+      const m = tournamentMatches(t).find((x) => x.teamA && x.teamB && fxLabel(team(x.teamA), team(x.teamB), x) === label);
+      if (!m || (m.bo || 1) !== 1) return null;
+      const [sa, sb] = m.teamA === aId ? [a, b] : [b, a];
+      if (m.maps?.[0]?.a === sa && m.maps?.[0]?.b === sb) return null;
+      m.maps = [{ a: sa, b: sb }];
+      resolveMatch(m);
+      if (t.format === "single") propagateElim(t);
+      if (t.format === "group") syncFinal(s, t);
+      syncLeagueFinal(s, t);
+      return s;
+    }, true);
+    return () => { if (window.__VOLT) delete window.__VOLT.setFixtureScore; };
+  });
+
+  /* ── loading ── */
+  if (!state) return (
+    <div className="min-h-screen grid place-items-center" style={{ background: "#0a0d18", color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif" }}>
+      <span className="uppercase tracking-widest animate-pulse">Initializing auction grid…</span>
+    </div>
+  );
+
+  const fonts = (
+    <style>{`
+      /* Fonts load once from index.html. */
+      /* Global UI scale — bumps the whole app up a notch, like a light browser zoom. */
+      html { zoom: 1.1; }
+      /* Keyboard focus — visible ring for keyboard users only (not mouse clicks). */
+      *:focus { outline: none; }
+      *:focus-visible { outline: 2px solid #6fa0ff; outline-offset: 2px; border-radius: 2px; }
+      button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+        outline: 2px solid #6fa0ff; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(61,123,255,0.25);
+      }
+      .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+      /* Tungsten webfont stripped for artifact rendering; falls back to condensed system fonts via the font stacks below */
+      .holo-sweep { background: linear-gradient(115deg, transparent 30%, rgba(0,229,255,0.10) 45%, rgba(255,255,255,0.16) 50%, rgba(157,107,255,0.10) 55%, transparent 70%); background-size: 250% 250%; animation: sweep 4.5s ease-in-out infinite; }
+      @keyframes sweep { 0% { background-position: 120% 0; } 60%,100% { background-position: -120% 0; } }
+      /* diagonal shine flowing through the hero headline letters */
+      @keyframes textshine { 0% { background-position: 220% 0; } 100% { background-position: -120% 0; } }
+      .shine-text { background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; animation: textshine 4s linear infinite; }
+      .shine-white { background-image: linear-gradient(100deg, #ffffff 0%, #ffffff 44%, #ffffff 48%, #ffffff 50%, #ffffff 52%, #f2f6ff 58%, #ffffff 100%); }
+      .shine-blue { background-image: linear-gradient(100deg, #2f6dff 0%, #2f6dff 42%, #bcd6ff 48%, #ffffff 50%, #bcd6ff 52%, #2f6dff 58%, #2f6dff 100%); }
+      @media (prefers-reduced-motion: reduce) { .shine-text { animation: none; } }
+      @keyframes bidpop { 0% { transform: scale(1); } 35% { transform: scale(1.12); } 100% { transform: scale(1); } }
+      .bid-pop { animation: bidpop 0.55s cubic-bezier(.2,.9,.3,1.4); }
+      /* hide native number-input spinner arrows */
+      input[type=number]::-webkit-outer-spin-button,
+      input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+      .idle-rotor { animation: rotor 14s linear infinite; }
+      .ea-btn { transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease; }
+      .ea-btn .ea-arrow { transition: transform .18s ease; display: inline-block; }
+      .ea-btn:hover { transform: translateY(-2px); border-color: rgba(111,160,255,0.95); background: linear-gradient(180deg, rgba(22,41,77,0.7), rgba(12,23,48,0.55)); color: #ffffff; box-shadow: 0 0 38px rgba(61,123,255,0.45), inset 0 0 22px rgba(61,123,255,0.12); }
+      .ea-btn:hover .ea-arrow { transform: translateX(6px); }
+      .ea-btn:active { transform: translateY(0) scale(0.98); }
+      .ea-btn.ea-disabled { pointer-events: none; }
+      .ea-btn.ea-disabled:hover { transform: none; box-shadow: none; }
+      .seat-card { transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background .16s ease; }
+      .seat-card:hover { transform: translateY(-4px); border-color: var(--hue) !important; box-shadow: 0 0 0 1px var(--hue), 0 0 32px -4px var(--hue), 0 18px 40px rgba(0,0,0,0.5); background: linear-gradient(160deg, color-mix(in srgb, var(--hue) 14%, transparent), rgba(8,12,24,0.6)) !important; }
+      .seat-card:active { transform: translateY(-1px); }
+      .seat-card .seat-go { opacity: 0; transform: translateX(-4px); transition: opacity .16s ease, transform .16s ease; }
+      .seat-card:hover .seat-go { opacity: 1; transform: translateX(0); }
+      .gate-cta { transition: transform .18s ease, box-shadow .18s ease, background .18s ease; }
+      .gate-cta:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 0 40px rgba(61,123,255,0.5); background: rgba(61,123,255,0.16) !important; }
+      @keyframes rotor { to { transform: rotate(360deg); } }
+      .reel-drift { animation: reeldrift 60s linear infinite; }
+      @keyframes reeldrift { from { transform: translate(0, -50%); } to { transform: translate(-50%, -50%); } }
+      .burst { animation: burst 1.1s ease-out infinite; }
+      @keyframes burst { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(1.18); opacity: 0; } }
+      .float-soft { animation: floaty 7s ease-in-out infinite; }
+      @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+      .marquee { display: inline-flex; white-space: nowrap; animation: marq 28s linear infinite; }
+      @keyframes marq { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+      .cd-pulse { animation: cdpulse 1.6s ease-in-out infinite; }
+      @keyframes cdpulse { 0%,100% { opacity: 1; box-shadow: 0 0 6px currentColor; } 50% { opacity: 0.35; box-shadow: 0 0 2px currentColor; } }
+      /* one shared horizontal inset for all aligned sections (nav, hero text, cards, ticker) */
+      .page-wrap { max-width: 1760px; margin-left: auto; margin-right: auto; padding-left: 5vw; padding-right: 5vw; }
+      @media (min-width: 1400px) { .page-wrap { padding-left: 88px; padding-right: 88px; } }
+      /* Hero bleeds to the edges of the CONTENT area (inside the rail), not the
+         viewport — a 100vw escape would slide it under the fixed rail. */
+      .volt-hero-bleed { width: auto; margin-left: -5vw; margin-right: -5vw; }
+      @media (min-width: 1400px) { .volt-hero-bleed { margin-left: -88px; margin-right: -88px; } }
+      @media (max-width: 900px) { .volt-hero-bleed { margin-left: -18px; margin-right: -18px; } }
+      /* Tighter gutters on small screens so content isn't squeezed by 5vw padding. */
+      @media (max-width: 900px) { .page-wrap { padding-left: 18px; padding-right: 18px; } }
+      /* The hero lives right of the rail, so its copy column needs more of the
+         remaining width as the screen shrinks — and the title must come down
+         with it or it overflows. */
+      @media (max-width: 1680px) {
+        .volt-hero-copy { width: min(760px, 78%) !important; }
+        .volt-hero-title { font-size: clamp(2.2rem, 5.6vw, 5.6rem) !important; }
+      }
+      @media (max-width: 1280px) {
+        .volt-hero-copy { width: min(700px, 80%) !important; }
+        .volt-hero-title { font-size: clamp(2.2rem, 5.2vw, 4.4rem) !important; }
+      }
+      /* Hero copy keeps real breathing room on every screen, and can never
+         exceed its own column no matter how the rail is set. */
+      .volt-hero-copy { padding-right: clamp(16px, 4%, 56px); box-sizing: border-box; }
+      .volt-hero-title { overflow-wrap: break-word; hyphens: none; max-width: 100%; }
+      /* Container queries: the hero measures the space LEFT OF the rail, so
+         expanding the rail shrinks the headline instead of pushing it off. */
+      @supports (container-type: inline-size) {
+        .volt-hero-title { font-size: clamp(2rem, 7cqw, 8rem) !important; }
+        .volt-hero-copy  { width: min(820px, 62cqw) !important; }
+        @container (max-width: 1500px) {
+          .volt-hero-title { font-size: clamp(2rem, 6.2cqw, 5.2rem) !important; }
+          .volt-hero-copy  { width: min(700px, 72cqw) !important; }
+        }
+        @container (max-width: 1150px) {
+          .volt-hero-title { font-size: clamp(1.9rem, 6cqw, 4rem) !important; }
+          .volt-hero-copy  { width: 82cqw !important; }
+        }
+        @container (max-width: 860px) {
+          .volt-hero-title { font-size: clamp(1.8rem, 7.5cqw, 3.2rem) !important; }
+          .volt-hero-copy  { width: 92cqw !important; }
+        }
+      }
+      @media (max-width: 1024px) {
+        .volt-hero-copy { width: 88% !important; }
+        .volt-hero-title { font-size: clamp(2rem, 6vw, 3.8rem) !important; }
+      }
+      @media (max-width: 768px) {
+        .volt-hero-copy { width: 100% !important; top: 14% !important; bottom: 12% !important; }
+        .volt-hero-title { font-size: clamp(1.9rem, 9vw, 3rem) !important; }
+      }
+      /* The 10% global scale-up is generous on laptops — ease it off so layouts
+         that fit at 100% don't overflow. */
+      @media (max-width: 1440px) { html { zoom: 1.04; } }
+      @media (max-width: 1180px) { html { zoom: 1; } }
+      .grid-bg { background-image: linear-gradient(rgba(157,107,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(157,107,255,0.06) 1px, transparent 1px); background-size: 44px 44px; }
+      .sale-flash { animation: saleflash 1.3s ease-out; }
+      @keyframes saleflash { 0% { background: rgba(255,70,85,0.55); } 100% { background: rgba(255,70,85,0); } }
+      .view-in { animation: viewin 0.4s ease; }
+      @keyframes viewin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+      @media (prefers-reduced-motion: reduce) { .holo-sweep,.bid-pop,.animate-pulse,.idle-rotor,.reel-drift,.burst,.float-soft,.marquee,.sale-flash,.view-in { animation: none !important; } }
+      /* Branded dropdowns — arrow + dark on-brand option list (all selects) */
+      select { -webkit-appearance: none; -moz-appearance: none; appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%235b8dff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px !important;
+        accent-color: #3d7bff; color-scheme: dark; cursor: pointer; }
+      select:hover { border-color: rgba(111,160,255,0.6) !important; }
+      select option { background: #0b0f1a !important; color: #ecf3ff !important; font-weight: 600;
+        padding: 8px 10px; }
+      select option:checked, select option:hover { background: #16233f !important; color: #7da6ff !important; }
+      .nav-desktop { display: flex; }
+      .nav-mobile-btn { display: none; }
+      @media (max-width: 860px) {
+        .nav-desktop { display: none !important; }
+        .nav-mobile-btn { display: flex !important; }
+      }
+      @media (max-width: 640px) {
+        .hero-cta { padding: 13px 26px !important; gap: 12px !important; letter-spacing: 0.22em !important; font-size: 0.82rem !important; }
+      }
+      .wr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      @media (min-width: 680px) { .wr-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+      .wr-slider { -webkit-appearance: none; appearance: none; height: 8px; border-radius: 999px; outline: none; cursor: pointer;
+        background: linear-gradient(90deg, var(--wr-hue) 0%, var(--wr-hue) var(--wr-pct), rgba(255,255,255,0.10) var(--wr-pct), rgba(255,255,255,0.10) 100%); }
+      .wr-slider:disabled { cursor: default; }
+      .wr-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%;
+        background: #ecf3ff; border: 3px solid var(--wr-hue); box-shadow: 0 0 10px var(--wr-hue), 0 2px 6px rgba(0,0,0,0.5); transition: transform 120ms; }
+      .wr-slider::-webkit-slider-thumb:hover { transform: scale(1.18); }
+      .wr-slider::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: #ecf3ff; border: 3px solid var(--wr-hue); box-shadow: 0 0 10px var(--wr-hue); }
+      .wr-slider::-moz-range-track { height: 8px; border-radius: 999px; background: transparent; }
+      ::-webkit-scrollbar { width: 8px; height: 8px; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+    `}</style>
+  );
+
+  const shell = (children) => (
+    <div className="min-h-screen volt-shell-box" style={{ color: "#ecf3ff", fontFamily: "'Space Grotesk',sans-serif", background: "#0a0d18", overflowX: "hidden", paddingLeft: isDesk ? (railWide ? 224 : 60) : 0, transition: "padding-left .18s cubic-bezier(.2,.8,.3,1)", containerType: "inline-size" }}>
+      {/* Shell CSS lives here, not in the desktop rail: the rail is not drawn on phones, and the home grid's phone layout was going missing with it. */}
+      <style>{SHELL_CSS + MOBILE_CSS}</style>
+      {fonts}
+      <div className="fixed inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 60% 40% at 50% -5%, rgba(61,123,255,0.10), transparent 60%), radial-gradient(ellipse 45% 35% at 100% 100%, rgba(61,123,255,0.08), transparent 60%), radial-gradient(ellipse 45% 35% at 0% 100%, rgba(0,229,255,0.06), transparent 60%)" }} />
+      <div className="relative min-h-screen" style={isDesk ? undefined : { paddingBottom: "calc(76px + env(safe-area-inset-bottom))" }}>
+        {children}
+      </div>
+    </div>
+  );
+
+  if (!identity) return shell(<>
+    {chrome && (
+      <div className="vg-shell flex items-center justify-between px-5 py-3" style={{ borderBottom: "1px solid rgba(61,123,255,0.18)", fontFamily: "'Rajdhani',sans-serif" }}>
+        <button onClick={chrome.onBack} style={shellBtn("ghost", { padding: "8px 14px" })}>‹ {chrome.backLabel}</button>
+        {chrome.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} />}
+      </div>
+    )}
+    <RoleGate teams={state.teams} onPick={setIdentity} auth={auth} />
+  </>);
+
+  // Staff keep their admin powers even while holding a captain's seat — the two
+  // are independent. Only an explicit choice to spectate stands them down.
+  const isStaffRole = auth?.role === "host" || auth?.role === "moderator";
+  const isAdmin = isStaffRole ? identity !== "spectator" : identity === "admin";
+  lateMergeOk.current = isAdmin;
+  // Moderators share the admin identity but not the live auction. window.__VOLT
+  // .isHost is strictly the league owner; it is undefined in the no-Supabase
+  // preview, so treat undefined as allowed there.
+  const isOwner = window.__VOLT?.isHost !== false;
+
+  // Until the lookup lands, fall back to the old rule so the host isn't briefly
+  // locked out of their own auction on a slow connection.
+  const canRunAuction = isAdmin && (auct ? !!auct.canRun : isOwner);
+  canRunRef.current = canRunAuction;
+  const isSpectator = identity === "spectator";
+  const myTeam = state.teams.find((t) => t.id === identity) || null;  // "admin"/"spectator" match nothing
+  const block = state.block;
+  const blockPlayer = block ? state.players.find((p) => p.id === block.playerId) : null;
+  const leaderTeam = block?.leaderId ? state.teams.find((t) => t.id === block.leaderId) : null;
+  // Draftable pool only — captains sit in state.players so they stay scoutable,
+  // but they can never be nominated or bought, so they must not count toward
+  // the draw, the wheel, or the bid-ceiling reserve. Mirrors spinNominate.
+  // The auction wheel: draft-eligible, unsold, not a captain. A late sign-up is
+  // in the league and subbable but was never in the draft, so it must not appear
+  // on the wheel or in the bid-ceiling reserve maths.
+  const pool = state.players.filter((p) => p.status === "pool" && !p.isCaptain && p.poolEligible !== false);
+  const sold = state.players.filter((p) => p.status === "sold").sort((a, b) => b.soldPrice - a.soldPrice);
+  const spinLive = state.spin && Date.now() < state.spin.startTs + state.spin.duration + REVEAL_MS;
+  const teamOf = (id) => state.teams.find((t) => t.id === id);
+
+  // ── Lobby data: what's next, and where everyone stands ──────────────────
+  // Both derive from the board that's already loaded, so the Lobby costs no
+  // extra network. Byes (teamB null) are skipped — they aren't matches anyone
+  // turns up for.
+  const allMatches = flattenMatches(state.tournament);
+  const upcoming = allMatches
+    .filter((m) => !m.done && m.teamA != null && m.teamB != null)
+    .sort((a, b) => {
+      const ta = a.scheduledAt ? new Date(a.scheduledAt).getTime() : Infinity;
+      const tb = b.scheduledAt ? new Date(b.scheduledAt).getTime() : Infinity;
+      return ta - tb; // unscheduled fixtures sink below scheduled ones
+    })
+    .slice(0, 3);
+  const standings = state.tournament
+    ? computeStandings(state.tournament.teamIds || state.teams.map((t) => t.id), allMatches, state.tournament.overrides).slice(0, 4)
+    : [];
+  const fmtKickoff = (iso) => {
+    if (!iso) return "TBD";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "TBD";
+    return d.toLocaleDateString(undefined, { weekday: "short" }) + " " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  };
+
+  // Applications waiting on the host. Players are always sent 0, so the same
+  // Registration button serves both roles — it just grows a badge for the host.
+  const pendingReview = chrome?.pendingCount || 0;
+
+  // Current view name for the bar (rail may be collapsed to glyphs).
+  const viewLabel = view === "account" ? "My Account" : view === "profile" ? "Player File" : view === "report" ? "Report Match" : ([...NAV, ...TOURNEY_NAV].find(n => n.id === view)?.label || "");
+  const draftMs = chrome?.draftAt ? new Date(chrome.draftAt).getTime() - nowTick : -1;
+  const draftIn = draftMs > 0 ? (() => {
+    const m = Math.floor(draftMs / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+    return d > 0 ? `${d}D ${h}H` : h > 0 ? `${h}H ${String(mm).padStart(2, "0")}M` : `${mm}M`;
+  })() : null;
+
+  // Seat identity folded into the account chip — no separate pill.
+  // Your seat wins the chip: a host who captains a team wants their budget and
+  // open slots at a glance during the auction, not a badge telling them they're
+  // the host — the Manage controls already make that obvious.
+  const chipSeat = myTeam
+    ? { label: myTeam.name, color: myTeam.hue, sub: `${fmt(myTeam.budget)} · ${emptySlots(myTeam)} slots open${isAdmin ? " · host" : ""}` }
+    : isAdmin ? { label: "Host", color: "#3d7bff" }
+    : isSpectator ? { label: "Spectator", color: "#7da6ff", sub: "View only · bidding disabled" }
+    : null;
+
+  /* ── desktop rail — persistent primary nav, collapsible ↔ wide ── */
+  const railSections = [
+    { title: "Tournament", items: NAV },
+    { title: "Matches", items: TOURNEY_NAV },
+  ].map(s => ({ ...s, items: s.items.filter(n => !n.adminOnly || isAdmin) })).filter(s => s.items.length);
+  const RAIL_W = railWide ? 224 : 60;
+  const railItem = (key, glyph, label, { active = false, liveDot = false, onClick, color } = {}) => (
+    <button key={key} onClick={onClick} className="volt-rail-item flex items-center" aria-label={label}
+      onMouseEnter={e => { if (!railWide) setRailTip({ label, y: e.currentTarget.getBoundingClientRect().top + e.currentTarget.getBoundingClientRect().height / 2 }); }}
+      onMouseLeave={() => setRailTip(null)}
+      style={{ width: railWide ? RAIL_W - 16 : 44, height: 42, justifyContent: railWide ? "flex-start" : "center", gap: 10, paddingLeft: railWide ? 12 : 0, paddingRight: railWide ? 10 : 0,
+        background: active ? "linear-gradient(90deg, rgba(61,123,255,0.2), rgba(61,123,255,0.04))" : "transparent",
+        clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+        borderLeft: active ? "2px solid #3d7bff" : "2px solid transparent" }}>
+      <span className="volt-rail-glyph" style={{ fontSize: 17, color: active ? "#3d7bff" : color || "rgba(200,215,255,0.5)", textShadow: active ? "0 0 10px rgba(61,123,255,0.7)" : "none", transition: "color .12s", position: "relative" }}>
+        {glyphNode(glyph, 19)}
+        {liveDot && !railWide && <span className="animate-pulse" style={{ position: "absolute", top: -3, right: -6, width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
+      </span>
+      {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: active ? "#eaf1ff" : "rgba(200,215,255,0.72)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>}
+      {liveDot && railWide && <span className="ml-auto animate-pulse" style={{ width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px rgba(255,70,85,0.8)" }} />}
+    </button>
+  );
+  const Rail = isDesk && createPortal(<>
+    <nav aria-label="Primary" style={{ position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 40, width: RAIL_W, display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", padding: railWide ? "12px 8px 14px" : "12px 0 14px", background: "linear-gradient(180deg, rgba(12,17,30,0.98), rgba(7,10,18,0.98))", borderRight: "1px solid rgba(61,123,255,0.22)", fontFamily: "'Rajdhani',sans-serif", transition: "width .18s cubic-bezier(.2,.8,.3,1)", overflowY: "auto", overflowX: "hidden" }}>
+      {/* league mark + collapse toggle */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: railWide ? "space-between" : "center", gap: 8, marginBottom: 4, paddingLeft: railWide ? 4 : 0 }}>
+        {/* The league mark doubles as the way home, as logos usually do. */}
+        <button onClick={chrome?.onHub || undefined} disabled={!chrome?.onHub} aria-label="Back to the league page" title="League home"
+          className="flex items-center gap-2" style={{ minWidth: 0, background: "none", border: "none", padding: 0, cursor: chrome?.onHub ? "pointer" : "default" }}>
+          <LeagueLockup name={window.__VOLT.communityName || "VOLT"} wide={railWide} />
+        </button>
+        {railWide && <LeagueSwitch style={{ marginRight: "auto" }} />}
+        {railWide && (
+          <button onClick={() => setRailWide(false)} aria-label="Collapse navigation" title="Collapse"
+            style={{ width: 26, height: 26, display: "grid", placeItems: "center", color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.25)", background: "rgba(255,255,255,0.03)", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))", fontSize: 12 }}><Icon name="collapse" size={14} /></button>
+        )}
+      </div>
+      {!railWide && (
+        <button onClick={() => setRailWide(true)} aria-label="Expand navigation" title="Expand menu"
+          className="volt-expand-btn grid place-items-center"
+          onMouseEnter={e => setRailTip({ label: "Expand menu", y: e.currentTarget.getBoundingClientRect().top + 15 })}
+          onMouseLeave={() => setRailTip(null)}
+          style={{ width: 34, height: 30, margin: "2px auto 0", cursor: "pointer",
+            color: "#9dc0ff", background: "rgba(61,123,255,0.14)", border: "1px solid rgba(61,123,255,0.5)",
+            clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
+          <Icon name="expand" size={15} />
+        </button>
+      )}
+      <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px 10px" : "8px auto 10px", background: "rgba(61,123,255,0.35)" }} />
+      {/* Back to the league page, first in the list so it's never hunted for. */}
+      {chrome?.onHub && <>
+        {/* Named after the league, like a back link, so it can't be mistaken for this tournament's dashboard. */}
+        {railItem("__hub", "back", window.__VOLT.communityName || "League page", { onClick: chrome.onHub, color: "#7da6ff" })}
+        <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "6px 6px 8px" : "6px auto 8px", background: "rgba(120,150,220,0.2)" }} />
+      </>}
+      {railSections.map((sec, si) => (
+        <div key={sec.title} style={{ display: "flex", flexDirection: "column", alignItems: railWide ? "stretch" : "center", gap: 2 }}>
+          {si > 0 && <div style={{ width: railWide ? "auto" : 26, height: 1, margin: railWide ? "8px 6px" : "8px auto", background: "rgba(120,150,220,0.2)" }} />}
+          {railWide && <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "rgba(120,150,220,0.55)", fontWeight: 700, padding: "2px 12px 6px" }}>// {sec.title}</div>}
+          {sec.items.map(nav => railItem(nav.id, nav.glyph, nav.label, { active: view === nav.id, liveDot: nav.id === "block" && (block || spinLive), onClick: () => setView(nav.id) }))}
+        </div>
+      ))}
+      <div style={{ marginTop: "auto" }} />
+      {chrome?.account && railItem("__account", "account", "My Account", { active: view === "account", onClick: () => setView("account") })}
+      <button data-snd="off" data-nohover="1" onClick={() => setSoundOn(v => !v)} className="volt-rail-item flex items-center" aria-label={soundOn ? "Mute sound" : "Unmute sound"}
+        onMouseEnter={e => { if (!railWide) setRailTip({ label: soundOn ? "Sound on" : "Sound off", y: e.currentTarget.getBoundingClientRect().top + 20 }); }}
+        onMouseLeave={() => setRailTip(null)}
+        style={{ width: railWide ? RAIL_W - 16 : 42, height: 40, justifyContent: railWide ? "flex-start" : "center", gap: 10, paddingLeft: railWide ? 12 : 0, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.4)", margin: railWide ? 0 : "0 auto" }}>
+        <span style={{ fontSize: 15 }}><Icon name={soundOn ? "soundOn" : "soundOff"} size={18} /></span>
+        {railWide && <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" }}>{soundOn ? "Sound on" : "Sound off"}</span>}
+      </button>
+    </nav>
+    {!railWide && railTip && (
+      <div style={{ position: "fixed", left: RAIL_W + 12, top: railTip.y, transform: "translateY(-50%)", zIndex: 46, pointerEvents: "none",
+        padding: "6px 13px", whiteSpace: "nowrap", fontFamily: "'Rajdhani',sans-serif", fontSize: 11.5, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "#eaf1ff",
+        background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.45)",
+        clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+        boxShadow: "0 0 24px rgba(61,123,255,0.18), 8px 8px 30px rgba(0,0,0,0.5)",
+        animation: "voltTipIn .16s cubic-bezier(.2,.8,.3,1)" }}>
+        <span style={{ position: "absolute", left: 0, top: 0, width: 7, height: 7, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        <span style={{ color: "#3d7bff", marginRight: 6 }}>//</span>{railTip.label}
+      </div>
+    )}
+  </>, document.body);
+
+  // Phones: a bottom tab bar with the four views this phase is about.
+  const navById = Object.fromEntries([...NAV, ...TOURNEY_NAV].map((n) => [n.id, n]));
+  const TAB_LABEL = { lobby: "Home", scout: "Pool", block: "Auction", locker: "Rosters", bracket: "Fixtures", leaderboard: "Ranks", reserve: "Reserves", warroom: "Mock", veto: "Veto" };
+  const tabPhase = chrome?.phase || (state.tournament?.locked ? "matches_live" : "drafting");
+  const mobileTabs = ({
+    registration_open: ["lobby", "scout", "locker", "leaderboard"],
+    registration_closed: ["lobby", "scout", "locker", "leaderboard"],
+    drafting: ["lobby", "block", "scout", "locker"],
+    matches_live: ["lobby", "bracket", "locker", "leaderboard"],
+    settled: ["lobby", "bracket", "locker", "leaderboard"],
+  })[tabPhase] || ["lobby", "block", "scout", "locker"];
+
+  /* ── top nav (transparent, hero-themed) ── */
+  const TopNav = (
+    <header className="sticky top-0 z-30" style={TOPBAR}>
+      <span aria-hidden style={TOPBAR_LINE} />
+      <div className="page-wrap flex items-center gap-2.5 sm:gap-4 py-3.5 flex-wrap" style={{ fontFamily: "'Rajdhani',sans-serif" }}>
+        {/* phones: the bottom tab bar (below) replaces the rail */}
+        {/* context — tournament · phase · view, one consistent breadcrumb line */}
+        <div className="flex items-center gap-3 min-w-0 shrink">
+          {/* tournament date — the anchor, in its own notched HUD frame */}
+          <div className="flex items-center gap-2.5 shrink-0"
+            style={{ height: 36, padding: "0 14px", clipPath: SHELL_NOTCH(9), background: "linear-gradient(180deg, rgba(61,123,255,0.12), rgba(61,123,255,0.04))", border: "1px solid rgba(61,123,255,0.4)" }}>
+            {chrome?.phaseTag && <span title={chrome.phaseTag} style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: chrome.phaseColor || "#5b8dff", boxShadow: `0 0 9px ${chrome.phaseColor || "#5b8dff"}` }} />}
+            <span style={{ fontSize: 14.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#eaf1ff", whiteSpace: "nowrap", textShadow: "0 0 12px rgba(61,123,255,0.35)" }}>{window.__VOLT.weekendLabel || "Draft"}</span>
+            {chrome?.phaseTag && <span className="hidden sm:inline" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: chrome.phaseColor || "#5b8dff", whiteSpace: "nowrap", paddingLeft: 9, marginLeft: 2, borderLeft: "1px solid rgba(120,150,220,0.25)" }}>{chrome.phaseTag}</span>}
+          </div>
+          {/* current view — quiet trail, clearly secondary */}
+          {viewLabel && (
+            <span className="hidden sm:inline" style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(160,185,235,0.5)", whiteSpace: "nowrap" }}>{viewLabel}</span>
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0" />
+
+        {/* right cluster — one flat row, unified pill sizing, no corner brackets */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {draftIn && (
+            <div className="hidden sm:flex items-center gap-2" title={new Date(chrome.draftAt).toLocaleString()}
+              style={{ height: 36, padding: "0 14px", clipPath: SHELL_NOTCH(9), background: "rgba(245,196,83,0.09)", border: "1px solid rgba(245,196,83,0.42)" }}>
+              <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(245,196,83,0.8)" }}>Draft</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, fontWeight: 700, color: "#ffe4a0" }}>{draftIn}</span>
+            </div>
+          )}
+          {isDesk && chrome?.onReport && (
+            <button onClick={() => {
+                // With fixtures built, land on the fixture list rather than a blank
+                // form: reporting from a fixture pre-fills both teams, the label and
+                // the winner, and shows which matches still need stats. The blank
+                // form is only the right answer when there's no bracket to pick from.
+                if (state.tournament && flattenMatches(state.tournament).length) setView("bracket");
+                else chrome.onReport();
+              }}
+              title={state.tournament && flattenMatches(state.tournament).length ? "Pick the match to report" : "Report a match"}
+              style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,220,132,0.1)", border: "1px solid rgba(61,220,132,0.45)", color: "#9af5c2", textShadow: "0 0 10px rgba(61,220,132,0.4)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>▦ Report</button>
+          )}
+          {/* portal — back out to Registration (or the league hub). One button for
+              both roles: for a host with applications waiting it carries the count,
+              which is why there's no separate Approvals control. */}
+          {isDesk && chrome?.onBack && (
+            <button onClick={chrome.onBack}
+              title={pendingReview > 0 ? `${pendingReview} application${pendingReview === 1 ? "" : "s"} awaiting review` : (chrome.portalLabel || "League hub")}
+              style={{ height: 36, padding: "0 13px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 8, flex: "0 0 auto", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif",
+                background: pendingReview > 0 ? "rgba(245,196,83,0.12)" : "rgba(61,123,255,0.09)",
+                border: `1px solid ${pendingReview > 0 ? "rgba(245,196,83,0.5)" : "rgba(61,123,255,0.35)"}`,
+                color: pendingReview > 0 ? "#ffe4a0" : "#9dc0ff" }}>
+              {pendingReview > 0
+                ? <span className="animate-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5c453", boxShadow: "0 0 8px rgba(245,196,83,0.8)" }} />
+                : <Icon name={chrome.portalLabel === "Registration" ? "clipboard" : "overview"} size={16} />}
+              <span className="hidden sm:inline" style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{chrome.portalLabel || "League hub"}</span>
+              {pendingReview > 0 && (
+                <span style={{ minWidth: 18, height: 18, padding: "0 5px", display: "grid", placeItems: "center", background: "#f5c453", color: "#0a0d18", fontSize: 10.5, fontWeight: 700, borderRadius: 9, fontFamily: "'IBM Plex Mono',monospace" }}>{pendingReview}</span>
+              )}
+            </button>
+          )}
+          {chrome && HAS_SUPABASE && <NotifBell />}
+          {isDesk && chrome?.hostControls && <HostMenu>{chrome.hostControls}</HostMenu>}
+          {chrome?.account && <AccountChip account={chrome.account} onSignOut={chrome.onSignOut} onProfile={() => setView("account")} seat={chipSeat} />}
+          {!chrome && (
+            <button data-snd="off" data-nohover="1" onClick={() => setSoundOn((v) => !v)} aria-label={soundOn ? "Mute sound" : "Unmute sound"}
+              className="grid place-items-center transition-all hover:scale-110" style={{ width: 36, height: 36, clipPath: SHELL_NOTCH(9), background: soundOn ? "rgba(61,123,255,0.12)" : "rgba(120,140,180,0.06)", border: `1px solid ${soundOn ? "rgba(61,123,255,0.5)" : "rgba(120,140,180,0.3)"}`, color: soundOn ? "#7da6ff" : "rgba(180,195,225,0.5)", fontSize: 15 }}>
+              <Icon name={soundOn ? "soundOn" : "soundOff"} size={18} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── side drawer — floating HUD panel, portaled to <body> because the
+             sticky header's backdrop-filter traps fixed descendants ── */}
+      {!isDesk && createPortal(<>
+        <style>{`
+          @keyframes voltSheetIn { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+          @keyframes voltFadeIn { from { opacity: 0; } to { opacity: 1; } }
+          .volt-tab { -webkit-tap-highlight-color: transparent; }
+          .volt-tab:active .volt-tab-ico { transform: scale(0.9); }
+          .volt-tile:active { transform: scale(0.97); }
+        `}</style>
+        {/* The four places this phase is about, one tap each; the rest live in More. */}
+        <nav aria-label="Tournament" className="volt-tabbar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 90,
+          display: "grid", gridTemplateColumns: `repeat(${mobileTabs.length + 1}, minmax(0, 1fr))`,
+          padding: "6px 6px calc(6px + env(safe-area-inset-bottom))",
+          ...TABBAR, fontFamily: "'Rajdhani',sans-serif" }}>
+          {[...mobileTabs.map((id) => ({ id, glyph: navById[id]?.glyph, label: TAB_LABEL[id] || navById[id]?.label })), { id: "__more", glyph: null, label: "More" }].map((t) => {
+            const on = t.id === "__more" ? drawerOpen || (!mobileTabs.includes(view)) : view === t.id && !drawerOpen;
+            const live = t.id === "block" && (block || spinLive);
+            return (
+              <button key={t.id} className="volt-tab" aria-current={on ? "page" : undefined}
+                onClick={() => { if (t.id === "__more") setDrawerOpen((o) => !o); else { setView(t.id); setDrawerOpen(false); window.scrollTo({ top: 0 }); } }}
+                style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, minHeight: 52, padding: "4px 0",
+                  background: "none", border: "none", cursor: "pointer", color: on ? "#eaf1ff" : "rgba(170,190,230,0.55)" }}>
+                {on && <span aria-hidden style={{ position: "absolute", top: -6, left: "22%", right: "22%", height: 2, background: "#3d7bff", boxShadow: "0 0 10px #3d7bff" }} />}
+                <span className="volt-tab-ico" style={{ position: "relative", display: "inline-flex", transition: "transform .12s", color: on ? "#7da6ff" : "inherit", filter: on ? "drop-shadow(0 0 6px rgba(61,123,255,0.7))" : "none" }}>
+                  {t.glyph ? glyphNode(t.glyph, 21) : (
+                    <span style={{ display: "grid", gridTemplateColumns: "repeat(2, 6px)", gap: 3, padding: 2 }}>
+                      {[0, 1, 2, 3].map((i) => <i key={i} style={{ width: 6, height: 6, border: "1.6px solid currentColor", display: "block" }} />)}
+                    </span>)}
+                  {live && <span style={{ position: "absolute", top: -2, right: -5, width: 7, height: 7, borderRadius: "50%", background: "#ff4655", boxShadow: "0 0 8px #ff4655" }} />}
+                </span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{t.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {drawerOpen && <>
+          <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 88, background: "rgba(3,5,10,0.6)", backdropFilter: "blur(3px)", animation: "voltFadeIn .18s ease" }} />
+          <div role="dialog" aria-label="More" style={{ position: "fixed", left: 8, right: 8, bottom: "calc(70px + env(safe-area-inset-bottom))", zIndex: 89, maxHeight: "72vh", overflowY: "auto",
+            background: "linear-gradient(165deg, rgba(16,23,42,0.98), rgba(8,11,20,0.98))", border: "1px solid rgba(61,123,255,0.4)",
+            clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))",
+            boxShadow: "0 -20px 60px rgba(0,0,0,0.55)", padding: "16px 14px 14px", fontFamily: "'Rajdhani',sans-serif", animation: "voltSheetIn .22s cubic-bezier(.2,.8,.3,1)" }}>
+            <div className="flex items-center gap-2.5" style={{ padding: "0 4px 12px" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: chrome?.phaseColor || "#5b8dff", boxShadow: `0 0 8px ${chrome?.phaseColor || "#5b8dff"}` }} />
+              <span style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#eaf1ff" }}>{window.__VOLT.weekendLabel || window.__VOLT.communityName || "Tournament"}</span>
+              {chrome?.phaseTag && <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.16em", color: chrome.phaseColor || "#5b8dff" }}>{chrome.phaseTag}</span>}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+              {[...NAV, ...TOURNEY_NAV].filter((n) => (!n.adminOnly || isAdmin) && !mobileTabs.includes(n.id)).map((n) => {
+                const on = view === n.id;
+                return (
+                  <button key={n.id} className="volt-tile" onClick={() => { setView(n.id); setDrawerOpen(false); window.scrollTo({ top: 0 }); }}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 7, minHeight: 78, padding: "10px 4px", cursor: "pointer", transition: "transform .12s",
+                      background: on ? "rgba(61,123,255,0.16)" : "rgba(255,255,255,0.03)", border: `1px solid ${on ? "rgba(61,123,255,0.6)" : "rgba(120,150,220,0.16)"}`,
+                      clipPath: SHELL_NOTCH(9), color: on ? "#eaf1ff" : "rgba(210,222,250,0.8)" }}>
+                    <span style={{ color: on ? "#7da6ff" : "rgba(160,185,235,0.7)", display: "inline-flex" }}>{glyphNode(n.glyph, 22)}</span>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", textAlign: "center", lineHeight: 1.1 }}>{n.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {chrome?.hostControls && (
+              <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#f5c453", fontWeight: 700, padding: "0 4px 8px" }}>// Host</div>
+                <div onClick={() => setDrawerOpen(false)}>{chrome.hostControls}</div>
+              </div>
+            )}
+            <div style={{ display: "grid", gap: 4, marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(120,150,220,0.15)" }}>
+              {[
+                chrome?.account && { key: "acc", icon: <Icon name="account" />, label: "My account", on: view === "account", go: () => setView("account") },
+                chrome?.onReport && { key: "rep", icon: <Icon name="clipboard" />, label: "Report a match", go: () => chrome.onReport() },
+                !auth?.userId && { key: "seat", icon: <Icon name="swap" />, label: "Switch seat", go: () => setIdentity(null) },
+                { key: "snd", icon: <Icon name={soundOn ? "soundOn" : "soundOff"} />, label: soundOn ? "Sound on" : "Sound off", go: () => setSoundOn((v) => !v), keep: true, snd: true },
+                chrome && { key: "hub", icon: <span style={{ fontSize: 17 }}>⊞</span>, label: (chrome.portalLabel || "League hub") + (pendingReview > 0 ? ` · ${pendingReview} waiting` : ""), go: () => chrome.onBack(), accent: true },
+              ].filter(Boolean).map((r) => (
+                <button key={r.key} data-snd={r.snd ? "off" : undefined} onClick={() => { if (!r.keep) setDrawerOpen(false); r.go(); }}
+                  className="flex items-center gap-3 text-left"
+                  style={{ minHeight: 46, padding: "0 12px", background: r.on ? "rgba(61,123,255,0.14)" : "transparent", border: "none", cursor: "pointer",
+                    color: r.accent ? "#aec6ff" : "rgba(210,222,250,0.85)" }}>
+                  <span style={{ color: r.accent ? "#7da6ff" : "rgba(160,185,235,0.7)", display: "inline-flex", width: 22, justifyContent: "center" }}>{r.icon}</span>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>{r.label}</span>
+                  {r.accent && <span style={{ marginLeft: "auto", color: "#7da6ff" }}>→</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>}
+      </>, document.body)}
+    </header>
+  );
+
+  /* global ticker tape (lobby + reused) */
+  // League headlines: results + match MVPs outrank auction chatter once matches exist.
+  const leagueHeadlines = (() => {
+    const out = [];
+    const tt = state.tournament || {};
+    // matches: array (league/rr) | object keyed by group | rounds[] (single elim)
+    const allMs = [];
+    if (Array.isArray(tt.matches)) allMs.push(...tt.matches);
+    else if (tt.matches && typeof tt.matches === "object") Object.values(tt.matches).forEach(arr => Array.isArray(arr) && allMs.push(...arr));
+    if (Array.isArray(tt.rounds)) tt.rounds.forEach(r => Array.isArray(r) && allMs.push(...r));
+    if (tt.final) allMs.push(tt.final);
+    allMs.filter(Boolean).forEach(m => {
+      if (!m.done || m.teamB == null) return;
+      const w = state.teams.find(x => x.id === m.winner), l = state.teams.find(x => x.id === (m.winner === m.teamA ? m.teamB : m.teamA));
+      if (!w || !l) return;
+      const maps = (m.maps || []).filter(x => x && x.a != null && x.b != null);
+      const sc = maps.length ? ((m.bo || 1) === 1 ? `${maps[0].a}-${maps[0].b}` : `${maps.filter(x => Number(x.a) > Number(x.b)).length}-${maps.filter(x => Number(x.b) > Number(x.a)).length}`) : "";
+      out.push(`${w.name} DEF. ${l.name}${sc ? " " + sc : ""}`.toUpperCase());
+      const mvp = window.__VOLT?.reportedStats?.[fxLabel(state.teams.find(x => x.id === m.teamA), state.teams.find(x => x.id === m.teamB), m)];
+      if (mvp) out.push(`⭐ ${mvp.name} DROPS ${mvp.pts} PTS`.toUpperCase());
+    });
+    return out.slice(-10);
+  })();
+  const tickerItems = leagueHeadlines.length
+    ? leagueHeadlines
+    : sold.length
+      ? sold.map((p) => `${teamOf(p.soldTo)?.name ?? "?"} secured ${p.name} (${p.rank}) for ${fmt(p.soldPrice)}`)
+      : ["No players sold yet — the board is wide open", "Spin the wheel to nominate the first name", `${state.teams.length} captains · $10,000 each · 4 slots to fill`];
+  const TickerTape = (
+    <div className="overflow-hidden py-2" style={{ borderTop: "1px solid rgba(61,123,255,0.18)", borderBottom: "1px solid rgba(61,123,255,0.18)", background: "linear-gradient(180deg, rgba(8,14,28,0.6), rgba(5,9,18,0.6))" }}>
+      <div className="marquee">
+        {[...tickerItems, ...tickerItems].map((t, i) => (
+          <span key={i} className="mx-6 text-sm uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: "rgba(200,215,255,0.6)" }}>
+            <span style={{ color: "#3d7bff" }}>◆</span> {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* ════════ VIEW: LOBBY ════════ */
+  // ── Tournament dashboard ──────────────────────────────────────────────
+  // Replaces a full-bleed hero image that said nothing about the tournament.
+  //
+  // Two rules shape it:
+  //   1. The dominant cell is the viewer's own card. It's the one thing Discord
+  //      can't do better, and the only reason a player opens the app twice.
+  //   2. The rest of the grid is chosen by PHASE. "Your team" is meaningless
+  //      before the draft, fixtures don't exist during registration, and a
+  //      champion only exists at the end — showing those as empty states is
+  //      worse than not showing them.
+  //
+  // Every cell summarises and links into its rail page. None of them
+  // reimplement one: that way there's a single copy of each screen to fix.
+  const ph = chrome?.phase || "registration_open";
+  const goto = (id) => () => setView(id);
+  // Any player name on the dashboard opens their player file.
+  const openPlayer = (uid) => { if (!uid) return; setProfileFrom(view); setProfileUser(uid); setView("profile"); };
+  // The viewer's team for the dashboard: the seat they captain, or the team
+  // that bought them. \`myTeam\` alone is captains only, so a drafted player
+  // never saw their own squad here.
+  const dashTeam = myTeam || (state.teams || []).find((t) =>
+    t.captainUserId === chrome?.viewerId || (t.roster || []).includes(chrome?.viewerId)) || null;
+
+  const LobbyView = (
+    <div className="view-in page-wrap py-6" style={{ position: "relative" }}>
+      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }}>
+        {/* Mirrored and heavily blurred: the hero card already shows this art
+            sharp, so the page gets it as colour and light, not a second copy of
+            the same figure. */}
+        <img src={IMG_HERO} alt="" style={{ width: "100%", height: "100%", objectFit: "cover",
+          objectPosition: "left 30%", opacity: 0.34, filter: "blur(16px) saturate(1.35)",
+          transform: "scaleX(-1) scale(1.1)" }} />
+        {/* Two washes: a vertical fade so the top keeps the art and the bottom
+            returns to the app's ground, and a blue flood to pull the photo into
+            the palette instead of sitting beside it. */}
+        <div style={{ position: "absolute", inset: 0,
+          background: "linear-gradient(180deg, rgba(10,13,24,0.35) 0%, rgba(10,13,24,0.74) 42%, rgba(10,13,24,0.95) 68%, #0a0d18 88%)" }} />
+        <div style={{ position: "absolute", inset: 0,
+          background: "radial-gradient(ellipse 120% 80% at 70% 0%, rgba(61,123,255,0.18), transparent 60%)" }} />
+      </div>
+      <style>{DASH_CSS}</style>
+      <div style={{ position: "relative", zIndex: 1 }}>
+      <PhaseBanner phase={ph} ev={chrome?.ev} regToggle={null}
+        onGo={goto} myTeam={myTeam} isAdmin={isAdmin} state={state} />
+
+      <div className="volt-bento volt-3col" style={{ display: "grid", gap: 12, marginTop: 14 }}>
+
+        {/* The viewer's own card, always first and always present. Built from
+            their scouting profile, so it's populated from signup rather than
+            waiting on a played match. */}
+        <YourCard profile={chrome?.myProfile} viewerId={chrome?.viewerId} myTeam={dashTeam} onGo={goto} />
+
+        {/* ── Registration ─────────────────────────────────────────────── */}
+        {ph === "registration_open" && <>
+          {chrome?.isHost
+            ? <Cell title="Applications" action="Review" onGo={chrome?.onBack}>
+                <HostQueueGlance pending={chrome?.pendingCount} players={state.players} />
+              </Cell>
+            : <Cell title="Your entry">
+                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto}
+                  toggle={chrome?.regToggle} />
+              </Cell>}
+          <Cell title="Tournament"><DraftClock ev={chrome?.ev} phase={ph} players={state.players} teams={state.teams} /></Cell>
+          <Cell title="Last champions"><LastChampGlance currentId={chrome?.ev?.id} /></Cell>
+          <Cell title="The pool" action="Scout" span={2} onGo={goto("scout")}>
+            <PoolBreakdown players={state.players} me={chrome?.myProfile} viewerId={chrome?.viewerId} />
+          </Cell>
+          <Cell title="Captains" action="Scout" onGo={goto("scout")}>
+            <CaptainsGlance players={state.players} teams={state.teams} onOpen={openPlayer} />
+          </Cell>
+        </>}
+        {ph === "registration_closed" && <>
+          <Cell title="Tournament" tone="rgba(61,123,255,0.5)"><DraftClock ev={chrome?.ev} phase={ph} players={state.players} teams={state.teams} /></Cell>
+          {chrome?.isHost
+            ? <Cell title="Applications" action="Review" onGo={chrome?.onBack}>
+                <HostQueueGlance pending={chrome?.pendingCount} players={state.players} />
+              </Cell>
+            : <Cell title="Your entry">
+                <EntryGlance reg={chrome?.myReg} profile={chrome?.myProfile} phase={ph} ev={chrome?.ev} onGo={goto}
+                  toggle={chrome?.regToggle} />
+              </Cell>}
+          <Cell title="Captains" action="Scout" onGo={goto("scout")}>
+            <CaptainsGlance players={state.players} teams={state.teams} onOpen={openPlayer} />
+          </Cell>
+          <Cell title="Scout list" action="Scout hub" span={2} onGo={goto("scout")}>
+            <ScoutGlance players={state.players} onOpen={openPlayer} />
+          </Cell>
+          <Cell title="Last champions"><LastChampGlance currentId={chrome?.ev?.id} /></Cell>
+        </>}
+
+        {/* ── Draft ────────────────────────────────────────────────────── */}
+        {ph === "drafting" && <>
+          <Cell title="On the block" action="Enter" onGo={goto("block")} tone="rgba(61,220,132,0.5)">
+            <BlockGlance state={state} onOpen={openPlayer} />
+          </Cell>
+          {dashTeam && (
+            <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
+              <TeamGlance team={dashTeam} players={state.players} onOpen={openPlayer} slots={4} />
+            </Cell>
+          )}
+          <Cell title="Latest sales" action="Auction" onGo={goto("block")}>
+            <SalesGlance state={state} onOpen={openPlayer} />
+          </Cell>
+          <Cell title="Captains' purses" action="Rosters" onGo={goto("locker")}>
+            <PursesGlance state={state} mineId={dashTeam?.id} onAll={goto("locker")} />
+          </Cell>
+          <Cell title="Biggest buys" action="Rosters" span={2} onGo={goto("locker")}>
+            <BuysGlance state={state} onOpen={openPlayer} />
+          </Cell>
+          {!dashTeam && (
+            <Cell title="Draft progress" action="Scout" onGo={goto("scout")}>
+              <PoolGlance players={state.players} live />
+            </Cell>
+          )}
+        </>}
+
+        {/* ── Match days ───────────────────────────────────────────────── */}
+        {ph === "matches_live" && <>
+          <Cell title={dashTeam ? "Your next match" : "Next match"} action="Fixtures" onGo={goto("bracket")}
+            tone="rgba(175,154,236,0.5)">
+            <NextMatchGlance state={state} team={dashTeam} />
+          </Cell>
+          {dashTeam && (
+            <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
+              <TeamGlance team={dashTeam} players={state.players} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Team standings" action="All" onGo={goto("leaderboard")}>
+            <StandingsGlance state={state} />
+          </Cell>
+          {/* Rows under the card always add up to three columns: with a team,
+              Fixtures sits beside the Crystal Ball; without one it moves up into
+              the column the team cell would have taken. */}
+          {!dashTeam && (
+            <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
+              <FixtureGlance state={state} />
+            </Cell>
+          )}
+          <Cell title="Crystal ball" action="Predictions" span={2} onGo={goto("bracket")}>
+            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+              <PredictLock state={state} />
+              <div style={{ flex: 1, minHeight: 0 }}><PredictGlance viewerId={chrome?.viewerId} onOpen={openPlayer} /></div>
+            </div>
+          </Cell>
+          {dashTeam
+            ? <Cell title="Fixtures" action="All fixtures" onGo={goto("bracket")}>
+                <FixtureGlance state={state} />
+              </Cell>
+            : <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+                <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+              </Cell>}
+          <Cell title="Biggest buys" action="Rosters" span={dashTeam ? 2 : "full"} onGo={goto("locker")}>
+            <BuysGlance state={state} onOpen={openPlayer} />
+          </Cell>
+          {dashTeam && (
+            <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+              <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+            </Cell>
+          )}
+        </>}
+
+        {/* ── Settled ──────────────────────────────────────────────────── */}
+        {ph === "settled" && <>
+          {dashTeam && (
+            <Cell title="Your team" action="Rosters" onGo={goto("locker")}>
+              <TeamGlance team={dashTeam} players={state.players} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Results" action="All fixtures" onGo={goto("bracket")}>
+            <ResultsGlance state={state} />
+          </Cell>
+          <Cell title="Team standings" action="All" onGo={goto("leaderboard")}>
+            <StandingsGlance state={state} />
+          </Cell>
+          {!dashTeam && (
+            <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+              <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Crystal ball" action="Predictions" span={dashTeam ? 2 : "full"} onGo={goto("bracket")}>
+            <PredictGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+          </Cell>
+          {dashTeam && (
+            <Cell title="Top players" action="Leaderboard" onGo={goto("leaderboard")}>
+              <LeaderGlance viewerId={chrome?.viewerId} onOpen={openPlayer} />
+            </Cell>
+          )}
+          <Cell title="Biggest buys" action="Rosters" span="full" onGo={goto("locker")}>
+            <BuysGlance state={state} onOpen={openPlayer} />
+          </Cell>
+        </>}
+      </div>
+      </div>
+    </div>
+  );
+
+  /* ════════ VIEW: SCOUT HUB ════════ */
+  // Scout Hub is the draft roster — sold and unsold both, but not late sign-ups.
+  // Those live in the Reserve Hub, which is a different question.
+  const filtered = state.players.filter((p) => p.poolEligible !== false).filter((p) =>
+    (filterRank === "All" || p.rank === filterRank) &&
+    (filterRole === "All" || p.role === filterRole) &&
+    (!query || p.name.toLowerCase().includes(query.toLowerCase()) || p.agent.toLowerCase().includes(query.toLowerCase()))
+  );
+  const chip = (active, hue = "#3d7bff") => ({
+    background: active ? hue + "22" : "rgba(10,13,22,0.55)", border: `1px solid ${active ? hue : "rgba(120,150,220,0.18)"}`,
+    color: active ? hue : "rgba(200,215,255,0.6)", clipPath: SHELL_NOTCH(6), borderRadius: 0,
+    fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, boxShadow: active ? `0 0 12px ${hue}33` : "none",
+  });
+  /* ── RESERVE HUB ── undrafted registrants, available as substitutes.
+        Same shape and filters as the Scout Hub, but the job is different: a
+        captain whose player has gone dark comes here to find a stand-in. The
+        rank rule keeps that fair — a sub may be one rank below the player they
+        replace, never above, so losing someone can't become an upgrade. ── */
+  const rankIdx = (r) => RANK_LIST.indexOf(r);
+  // "Undrafted" only means something once an auction has actually happened.
+  // Before that every unsold player is a draft candidate, not a reserve — which
+  // is why this can't key off status alone: during registration that would list
+  // the entire league as reserves who "went undrafted".
+  const draftHasRun = chrome?.phase === "matches_live" || chrome?.phase === "settled"
+    || state.players.some((p) => p.status === "sold");
+  // A reserve is someone deliberately outside the draft pool (late sign-up, added
+  // as a reserve, or moved out by staff) — plus, once the draft is done, anyone
+  // who registered on time and nobody bought. Hand-added Scout Hub players never
+  // qualify: they were typed in for the draft, so they stay there.
+  const reserves = state.players.filter((p) =>
+    !p.isCaptain && p.status !== "sold" && (
+      p.poolEligible === false || (draftHasRun && !isManualPlayer(p))
+    ));
+  const myRoster = myTeam ? (myTeam.roster || []).map((id) => state.players.find((x) => x.id === id)).filter(Boolean) : [];
+  const missing = replacing ? myRoster.find((p) => p.id === replacing) : null;
+  // At or below one rank down. Null when nobody is selected → no restriction shown.
+  const capIdx = missing ? rankIdx(missing.rank) - 1 : null;
+  const eligible = (p) => capIdx === null || rankIdx(p.rank) <= capIdx;
+
+  // The sub desk needs a real tournament with a finished or running draft.
+  const subDeskOn = latePhase && HAS_SUPABASE && !!chrome?.ev?.id && draftHasRun;
+  const rFiltered = reserves.filter((p) =>
+    (rRank === "All" || p.rank === rRank) &&
+    (rRole === "All" || p.role === rRole) &&
+    (!rQuery || p.name.toLowerCase().includes(rQuery.toLowerCase()) || (p.agent || "").toLowerCase().includes(rQuery.toLowerCase()))
+  );
+  const ReserveView = (
+    <div className="view-in page-wrap py-6">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: "#3ddc84" }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: "#3ddc84", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Substitutes</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Reserve <span style={{ color: "#3ddc84" }}>Hub</span></h2>
+        </div>
+        <span className="text-sm" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{rFiltered.length} / {reserves.length}</span>
+      </div>
+      <p className="text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>
+        {draftHasRun
+          ? "Players without a roster spot — available to sub in. Every match they play banks season points."
+          : "Anyone outside this tournament's draft pool. Once the auction runs, undrafted players join them here."}
+      </p>
+
+      {latePhase && <LateReserveDesk ev={chrome?.ev} isAdmin={isAdmin} myReg={chrome?.myReg} myProfile={chrome?.myProfile}
+        viewerId={chrome?.viewerId} onRegChanged={chrome?.onRegChanged} onMerge={mergeLateRegs} />}
+
+      {myRoster.length > 0 && (
+        <div className="mb-5 p-3" style={{ background: "rgba(61,220,132,0.05)", border: "1px solid rgba(61,220,132,0.25)", clipPath: SHELL_NOTCH(9) }}>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.55)" }}>Who can't make it?</span>
+            <select value={replacing || ""} onChange={(e) => setReplacing(e.target.value || null)}
+              style={{ padding: "7px 10px", background: "rgba(10,16,30,0.8)", border: "1px solid rgba(61,220,132,0.35)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 13, fontWeight: 600 }}>
+              <option value="">— nobody selected —</option>
+              {myRoster.map((p) => <option key={p.id} value={p.id}>{p.name} · {rankLabel(p.rank, p.rankDiv)}</option>)}
+            </select>
+            {missing && (
+              <span className="text-xs" style={{ color: "#9af5c2", fontFamily: "'Rajdhani',sans-serif" }}>
+                Eligible subs: {capIdx >= 0 ? `${RANK_LIST[capIdx]} or below` : "none — they're already the lowest rank"}
+              </span>
+            )}
+            {missing && subDeskOn && !isAdmin && chrome?.isCaptainElect && !isManualPlayer(missing) && capIdx >= 0 && (
+              <button disabled={!!subAsk} onClick={() => setSubAsk(missing.id)} title="Messages every eligible reserve. You pick from whoever offers."
+                style={shellBtn("primary", { padding: "8px 14px", fontSize: 11 })}>Ask eligible reserves →</button>
+            )}
+          </div>
+        </div>
+      )}
+      {/* Staff run the desk for any team; a captain's shows their own requests and offers. */}
+      {subDeskOn && (isAdmin
+        ? <div className="mb-5"><SubDesk eventId={chrome.ev.id} /></div>
+        : myTeam && chrome?.isCaptainElect
+          ? <div className="mb-5"><SubDesk eventId={chrome.ev.id} team={myTeam.name} viewerId={chrome?.viewerId} askFor={subAsk} onAsked={() => setSubAsk(null)} startOpen /></div>
+          : null)}
+      {subDeskOn && chrome?.viewerId && reserves.some((p) => p.id === chrome.viewerId) && (
+        <SubCalls eventId={chrome.ev.id} viewerId={chrome.viewerId}
+          canCover={(outRank) => rankIdx((reserves.find((p) => p.id === chrome.viewerId) || {}).rank) < rankIdx(rankKey(outRank))} />
+      )}
+
+      <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,220,132,0.04)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(8) }}>
+        <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
+        <input value={rQuery} onChange={(e) => setRQuery(e.target.value)} placeholder="Search reserves or agents…" className="flex-1 bg-transparent outline-none" style={{ color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15 }} />
+      </div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        <button onClick={() => setRRank("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === "All", "#3ddc84")}>All ranks</button>
+        {RANK_LIST.map((r) => <button key={r} onClick={() => setRRank(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === r, RANKS[r].c)}>{r}</button>)}
+      </div>
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button onClick={() => setRRole("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === "All", "#3ddc84")}>All roles</button>
+        {ROLES.map((r) => <button key={r} onClick={() => setRRole(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRole === r, "#3ddc84")}>{ROLE_GLYPH[r]} {r}</button>)}
+      </div>
+
+      {reserves.length === 0 ? (
+        <div style={{ ...PANEL("rgba(61,220,132,0.25)", "30px 20px"), clipPath: SHELL_NOTCH(12) }}>
+          <Empty title={draftHasRun ? "Everyone has a team" : "No reserves yet"}
+            hint={draftHasRun
+              ? "Everyone who registered is on a roster. Late sign-ups will land here."
+              : "Late sign-ups land here, and so does anyone moved out of the draft pool."} />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+          {rFiltered.map((p) => {
+            const r = rankOf(p.rank) || RANKS.Silver;
+            const ok = eligible(p);
+            return (
+              <div key={p.id} role="button" tabIndex={0}
+                title={p.available === false ? "This player has said they can't make it" : "Open scouting file"}
+                onClick={() => setScouted(p.id)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setScouted(p.id); } }}
+                className="vg-row-x relative text-left p-4 overflow-hidden" style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${ok ? r.c + "44" : "rgba(120,150,220,0.18)"}`, opacity: ok ? 1 : 0.45, clipPath: SHELL_NOTCH(10), cursor: "pointer" }}>
+                <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xl font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
+                    <p className="text-xs uppercase tracking-widest mt-1.5 truncate" style={{ color: r.c }}>{ROLE_GLYPH[p.role]} {p.role} · {p.agent}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+                    <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span>
+                  </div>
+                </div>
+                <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                  <span style={{ color: "#00e5ff" }}>KDA {p.kda == null ? "—" : Number(p.kda).toFixed(2)}</span>
+                  <span style={{ color: "#ff4655" }}>ACS {p.acs == null ? "—" : p.acs}</span>
+                  <span style={{ color: "#9d6bff" }}>HS {p.hs == null ? "—" : p.hs + "%"}</span>
+                </div>
+                {missing && (
+                  <p className="mt-2 text-xs uppercase tracking-widest font-bold" style={{ color: ok ? "#3ddc84" : "rgba(255,138,148,0.8)" }}>
+                    {ok ? "✓ Eligible sub" : "✕ Outranks your player"}
+                  </p>
+                )}
+                <p className="mt-2 text-xs uppercase tracking-widest" style={{ color: p.available === false ? "rgba(255,138,148,0.9)" : "rgba(200,215,255,0.4)" }}>
+                  {p.available === false ? "✕ Said they can't make it"
+                    : p.poolEligible === false ? "Not in this tournament's draft"
+                    : "Went undrafted"}
+                </p>
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  {isAdmin && p.poolEligible === false && (
+                    <button onClick={(e) => { e.stopPropagation(); setPoolEligible(p.id, true); }}
+                      className="text-xs uppercase tracking-widest px-2.5 py-1" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, color: "#9af5c2", border: "1px solid rgba(61,220,132,0.45)", background: "rgba(61,220,132,0.08)", clipPath: SHELL_NOTCH(5) }}>⊞ To draft pool</button>
+                  )}
+                  {p.discord
+                    ? <span className="text-xs truncate" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.6)" }} title={"Discord: " + p.discord}>◈ {p.discord}</span>
+                    : <span className="text-xs" style={{ color: "rgba(200,215,255,0.3)" }}>no discord on file</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {isAdmin && !hostFormOpen && (
+        <button onClick={() => setHostFormOpen(true)} className="mt-8" style={shellBtn("ghost", { padding: "12px 20px", fontSize: 12 })}>
+          ＋ Add a reserve
+        </button>
+      )}
+      {isAdmin && hostFormOpen && (
+        <div className="mt-8 p-5" style={{ background: "linear-gradient(160deg, rgba(61,220,132,0.06), rgba(10,15,28,0.5))", border: "1px solid rgba(61,220,132,0.3)", clipPath: SHELL_NOTCH(12) }}>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs uppercase tracking-widest" style={{ color: "#9af5c2" }}>Host · add a reserve</p>
+            <button onClick={() => setHostFormOpen(false)} title="Close" className="text-xs px-2.5 py-1.5" style={{ border: "1px solid rgba(120,150,220,0.25)", color: "rgba(200,215,255,0.6)" }}>✕</button>
+          </div>
+          <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)" }}>
+            For someone who can stand in but isn't in this tournament's draft. They stay out of the Scout Hub and off the auction wheel.
+          </p>
+          <AddPlayerForm onAdd={(p) => addPlayer(p, true)} />
+        </div>
+      )}
+    </div>
+  );
+
+  const ScoutView = (
+    <div className="view-in page-wrap py-6">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Operator Database</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Scout <span style={{ color: "#3d7bff" }}>Hub</span></h2>
+        </div>
+        <span className="text-sm" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'IBM Plex Mono',monospace" }}>{filtered.length} / {state.players.length} players</span>
+      </div>
+      <p className="hidden sm:block text-sm mb-5" style={{ color: "rgba(200,215,255,0.5)" }}>Tap any operator to open their full scouting file with a performance radar.</p>
+      <style>{DASH_CSS}</style>
+      <PoolStrip players={state.players.filter((p) => p.poolEligible !== false)} />
+
+      <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
+        <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search players or agents…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
+      </div>
+      <div className="volt-hscroll flex flex-nowrap sm:flex-wrap overflow-x-auto gap-2 mb-2.5 sm:mb-3 -mx-[18px] px-[18px] sm:mx-0 sm:px-0">
+        <button onClick={() => setFilterRank("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === "All")}>All ranks</button>
+        {RANK_LIST.map((r) => <button key={r} onClick={() => setFilterRank(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === r, RANKS[r].c)}>{r}</button>)}
+      </div>
+      <div className="volt-hscroll flex flex-nowrap sm:flex-wrap overflow-x-auto gap-2 mb-4 sm:mb-6 -mx-[18px] px-[18px] sm:mx-0 sm:px-0">
+        <button onClick={() => setFilterRole("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === "All")}>All roles</button>
+        {ROLES.map((r) => <button key={r} onClick={() => setFilterRole(r)} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRole === r)}>{ROLE_GLYPH[r]} {r}</button>)}
+      </div>
+
+      <div className={"grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 " + (isDesk ? "gap-3" : "gap-2")}>
+        {filtered.map((p) => { const r = rankOf(p.rank); const tm = p.soldTo ? teamOf(p.soldTo) : null;
+          // Phones: one scannable row per player; the card is a tap away.
+          if (!isDesk) return (
+            <button key={p.id} onClick={() => setScouted(p.id)} className="relative w-full text-left flex items-center gap-3 px-3 py-2.5 active:scale-[0.99] transition-transform"
+              style={{ background: `linear-gradient(90deg, ${r.c}17, rgba(10,15,28,0.6) 55%)`, border: `1px solid ${r.c}30`, boxShadow: `inset 3px 0 0 ${r.c}`,
+                clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%)" }}>
+              <div className="shrink-0"><RankBadge rank={p.rank} div={p.rankDiv} size="sm" /></div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 17, color: "#ecf3ff" }}>{p.name}</p>
+                <p className="uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", marginTop: 4, color: "rgba(200,215,255,0.55)" }}>
+                  <span style={{ color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span> · {p.role}{p.agent && p.agent !== "—" ? ` · ${p.agent}` : ""}</p>
+                <p className="uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.1em", marginTop: 3,
+                  color: p.isCaptain ? "#f5c453" : tm ? tm.hue : "#3ddc84" }}>
+                  {p.isCaptain ? "★ Captain" : tm ? `${tm.name} · ${fmt(p.soldPrice)}` : `Available · opens ${fmt(r.bid)}`}</p>
+              </div>
+              {p.acs != null && (
+                <div className="shrink-0 text-right" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#ff4655", lineHeight: 1 }}>{p.acs}</div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.16em", color: "rgba(200,215,255,0.4)", marginTop: 4 }}>ACS</div>
+                </div>
+              )}
+            </button>
+          );
+          return (
+          <button key={p.id} onClick={() => setScouted(p.id)} className="relative text-left p-4 transition-all hover:scale-[1.03] overflow-hidden"
+            style={{ background: `linear-gradient(150deg, ${r.c}1c, rgba(10,15,28,0.5) 60%)`, border: `1px solid ${r.c}44`, boxShadow: "0 12px 28px rgba(0,0,0,0.35)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
+            <div className="absolute top-0 left-0 right-0" style={{ height: 2, background: `linear-gradient(90deg, ${r.c}, transparent)` }} />
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xl font-bold uppercase leading-none truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{p.name}</p>
+                <p className="text-xs font-bold uppercase tracking-widest mt-1.5 truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</p>
+              </div>
+              <div className="shrink-0"><RankBadge rank={p.rank} div={p.rankDiv} size="md" /></div>
+            </div>
+            {/* Full card width, under the badge: role and agent were being cut short beside it. */}
+            <p className="uppercase truncate" style={{ fontSize: 11, letterSpacing: "0.06em", marginTop: 7, color: "rgba(200,215,255,0.6)" }}>
+              <span style={{ color: r.c }}>{ROLE_GLYPH[p.role]}</span> {p.role}{p.agent && p.agent !== "—" ? ` · ${p.agent}` : ""}</p>
+            {/* Only the stats we actually have — no row of dashes. */}
+            {(() => { const st = [
+                p.acs != null && { v: p.acs, k: "ACS", c: "#ff4655" },
+                p.kda != null && { v: Number(p.kda).toFixed(2), k: "KDA", c: "#00e5ff" },
+                p.hs != null && { v: p.hs + "%", k: "HS", c: "#af9aec" },
+              ].filter(Boolean);
+              return st.length
+                ? <div className="flex gap-4 mt-3.5" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                    {st.map((x) => <span key={x.k} style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}
+                      <span style={{ fontSize: 9, color: "rgba(200,215,255,0.4)", marginLeft: 4, fontWeight: 400 }}>{x.k}</span></span>)}
+                  </div>
+                : <p className="mt-3.5 text-xs" style={{ color: "rgba(200,215,255,0.32)" }}>No tracker stats yet</p>; })()}
+            <div className="mt-3">
+              {p.isCaptain
+                ? <span title="Captains pick their team; they aren't in the draw." style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap", padding: "4px 9px", color: "#f5c453", background: "rgba(245,196,83,0.12)", border: "1px solid rgba(245,196,83,0.35)" }}>★ Captain</span>
+                : tm
+                  ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", padding: "4px 9px", color: tm.hue, background: `${tm.hue}18`, border: `1px solid ${tm.hue}55` }}>
+                      <TeamMono name={tm.name} hue={tm.hue} size={11} />{tm.name} · {fmt(p.soldPrice)}</span>
+                  : <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", padding: "4px 9px", color: "#3ddc84", background: "rgba(61,220,132,0.08)", border: "1px solid rgba(61,220,132,0.3)" }}>
+                      Available · opens {fmt(r.bid)}</span>}
+            </div>
+          </button>
+        ); })}
+        {filtered.length === 0 && <div className="col-span-full" style={{ ...PANEL(null, "26px 20px") }}>
+          <Empty rows={0} title="Nobody matches" hint="Try a different rank or role, or clear the search." /></div>}
+      </div>
+
+      {isAdmin && !(hostFormOpen || editingPlayer) && (
+        <button onClick={() => setHostFormOpen(true)} className="mt-8" style={shellBtn("ghost", { padding: "12px 20px", fontSize: 12 })}>
+          ＋ Add a player
+        </button>
+      )}
+      {isAdmin && (hostFormOpen || editingPlayer) && (
+        <div id="wr-admin-form" className="mt-8 p-5" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.5))", border: `1px solid ${editingPlayer ? "#3ddc8455" : "rgba(61,123,255,0.22)"}`, clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs uppercase tracking-widest" style={{ color: editingPlayer ? "#3ddc84" : "#7da6ff" }}>
+              {editingPlayer ? `Host · editing ${editingPlayer.name}` : "Host · add player"}
+            </p>
+            <div className="flex items-center gap-2">
+              {isOwner && <button onClick={resetAll} className="text-xs uppercase tracking-widest px-3 py-1.5" style={{ border: `1px solid ${resetArmed ? "#ff4655" : "rgba(255,70,85,0.5)"}`, background: resetArmed ? "rgba(255,70,85,0.2)" : "transparent", color: resetArmed ? "#ffd2d7" : "#ff8a94" }}>{resetArmed ? "Click again to confirm" : "Reset auction"}</button>}
+              {!editingPlayer && <button onClick={() => setHostFormOpen(false)} title="Close" className="text-xs px-2.5 py-1.5" style={{ border: "1px solid rgba(120,150,220,0.25)", color: "rgba(200,215,255,0.6)" }}>✕</button>}
+            </div>
+          </div>
+          <AddPlayerForm onAdd={addPlayer} editing={editingPlayer} onSave={(p) => { editPlayer(p); setEditingPlayer(null); }} onCancel={() => setEditingPlayer(null)} />
+        </div>
+      )}
+    </div>
+  );
+
+  /* ════════ VIEW: AUCTION BLOCK ════════ */
+  const myReq = block ? requiredBid(block) : 0;
+  const myMax = myTeam ? maxAllowedBid(myTeam, pool) : 0;
+  const iLead = block && myTeam && block.leaderId === myTeam.id;
+  const myFull = myTeam && emptySlots(myTeam) === 0;
+  const canBid = block && myTeam && !iLead && !myFull && myMax >= myReq;
+  // The reel is the auction's centrepiece and sizes itself to the full stage
+  // width, so the side rails only exist while a player is up for bidding. They
+  // slide in after the reveal and step aside for the next spin.
+  const railsOn = !!(blockPlayer && !spinLive);
+
+  // auction storylines — derived from sold players (spectator feed)
+  const soldPlayers = state.players.filter((p) => p.status === "sold");
+  const recordSale = soldPlayers.reduce((best, p) => (!best || (p.soldPrice || 0) > (best.soldPrice || 0) ? p : best), null);
+  const mostContested = soldPlayers.reduce((best, p) => (!best || (p.bidCount || 0) > (best.bidCount || 0) ? p : best), null);
+  const totalSpent = soldPlayers.reduce((s, p) => s + (p.soldPrice || 0), 0);
+  const spendByTeam = {};
+  soldPlayers.forEach((p) => { if (p.soldTo) spendByTeam[p.soldTo] = (spendByTeam[p.soldTo] || 0) + (p.soldPrice || 0); });
+  const biggestSpenderId = Object.keys(spendByTeam).reduce((best, id) => (!best || spendByTeam[id] > spendByTeam[best] ? id : best), null);
+  const completedTeams = state.teams.filter((t) => t.roster.length >= 4);
+
+  const BlockView = (
+    <div className={"view-in relative mx-auto " + (saleFlash ? "sale-flash" : "")} style={{ minHeight: 560, maxWidth: 1760 }}>
+      {/* Who calls SOLD. Sits above the budget bar because handing the gavel
+          over is what frees a host to captain and bid, and that decision belongs
+          where the auction is — not buried in the player-pool admin form. */}
+      {auct?.isHost && (auct.staff || []).length > 1 && (
+        <div className="flex items-center justify-center gap-3 px-5 pt-4 flex-wrap">
+          <span className="text-[10px] uppercase tracking-[0.24em]"
+            style={{ color: "rgba(200,215,255,0.4)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+            Auctioneer
+          </span>
+          <select value={auct.auctioneer || ""} onChange={async (e) => {
+            const v = e.target.value || null;
+            try {
+              const { error } = await __sb.rpc("volt_set_auctioneer",
+                { p_event: window.__VOLT.weekendId, p_user: v });
+              if (error) throw new Error(error.message);
+              loadAuctioneer();
+            } catch (err) { voltAlert(err.message || "Couldn't hand over the auction.", { title: "Auctioneer" }); }
+          }} className="text-xs uppercase tracking-widest px-3 py-2"
+            title="Whoever holds this calls SOLD. Hand it over to free yourself up to bid."
+            style={{ background: "rgba(10,16,30,0.8)",
+              border: `1px solid ${auct.auctioneer ? "rgba(245,196,83,0.55)" : "rgba(120,150,220,0.3)"}`,
+              color: auct.auctioneer ? "#f5c453" : "rgba(200,215,255,0.75)",
+              fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, clipPath: SHELL_NOTCH(6) }}>
+            <option value="">Me (host) — I call SOLD</option>
+            {(auct.staff || []).filter((x) => x.id !== auct.myId).map((x) => (
+              <option key={x.id} value={x.id}>{x.name} runs the auction</option>
+            ))}
+          </select>
+          {auct.auctioneer && (
+            <span className="text-[11px]" style={{ color: "rgba(154,245,194,0.9)" }}>
+              ✓ {auct.auctioneerName} is running it — you can bid
+            </span>
+          )}
+        </div>
+      )}
+
+      <style>{`
+        .volt-auc-grid { display: block; }
+        .volt-auc-rail { display: none !important; }
+        @media (min-width: 1280px) {
+          .volt-auc-grid { display: grid; grid-template-columns: 230px minmax(0, 1fr) 230px; gap: 18px; padding: 0 20px; align-items: start; }
+          .volt-auc-rail { display: flex !important; }
+          .volt-auc-rail[data-compact] { position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; scrollbar-width: thin; padding-right: 4px; }
+          .volt-auc-rail[data-side="left"] { animation: voltRailL .45s cubic-bezier(.2,.8,.3,1) backwards; }
+          .volt-auc-rail[data-side="right"] { animation: voltRailR .45s cubic-bezier(.2,.8,.3,1) backwards; }
+          @keyframes voltRailL { from { opacity: 0; transform: translateX(-24px); } }
+          @keyframes voltRailR { from { opacity: 0; transform: translateX(24px); } }
+          @media (prefers-reduced-motion: reduce) { .volt-auc-rail { animation: none !important; } }
+          .volt-auc-bar { display: none !important; }
+        }
+      `}</style>
+      {/* slim budget bar — narrow screens only; wide screens get the side rails */}
+      <div className={(railsOn ? "volt-auc-bar " : "") + "volt-hscroll flex flex-nowrap " + (state.teams.length > 12 ? "" : "sm:flex-wrap sm:justify-center ") + "overflow-x-auto gap-2 px-4 sm:px-5 md:px-8 pt-4 sm:pt-5 pb-3"}>
+        {state.teams.map((t) => { const lead = block?.leaderId === t.id; return (
+          <div key={t.id} className="shrink-0 flex items-center gap-2.5 px-3.5 py-2 rounded-lg" style={{ background: lead ? "rgba(255,70,85,0.16)" : "rgba(255,255,255,0.04)", border: `1px solid ${lead ? "#ff4655" : t.hue + "44"}` }}>
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.hue, boxShadow: `0 0 8px ${t.hue}` }} />
+            <span className="text-sm font-bold uppercase tracking-wide" style={{ fontFamily: "'Rajdhani',sans-serif", color: t.hue }}>{t.name.split(" ")[0]}</span>
+            <span className="text-base" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(t.budget)}</span>
+          </div>
+        ); })}
+      </div>
+
+      <div className={railsOn ? "volt-auc-grid" : undefined}>
+      {railsOn && <AuctionRail side="left" teams={state.teams.slice(0, Math.ceil(state.teams.length / 2))} players={state.players}
+        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} compact={state.teams.length > 12} />}
+      <div className="px-5 md:px-8 py-4 flex flex-col items-center gap-6">
+        {/* center stage */}
+        <div className="flex flex-col items-center gap-5 w-full">
+          {blockPlayer && !spinLive ? (
+            <>
+              <button onClick={() => setScouted(blockPlayer.id)} className="group relative w-full max-w-[420px] transition-transform hover:scale-[1.015] active:scale-[0.99]" style={{ cursor: "pointer" }} title="View full scouting file">
+                {isDesk ? <PlayerCard player={blockPlayer} /> : <PlayerCardCompact player={blockPlayer} />}
+                <span className="absolute left-1/2 -translate-x-1/2 -bottom-3 px-3 py-1 text-[10px] uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ fontFamily: "'Rajdhani',sans-serif", background: "rgba(7,12,22,0.9)", border: "1px solid rgba(61,123,255,0.4)", color: "#7da6ff", clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>Tap for performance radar</span>
+              </button>
+              <div className={"flex items-center gap-6 px-8 py-3 " + (flash ? "bid-pop" : "")} style={{ clipPath: "polygon(18px 0,100% 0,calc(100% - 18px) 100%,0 100%)", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.45)", backdropFilter: "blur(10px)", boxShadow: "0 0 26px rgba(61,123,255,0.2)" }}>
+                <div className="text-center">
+                  <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>Current bid</p>
+                  <p className="text-4xl font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#5b8dff", textShadow: "0 0 18px rgba(61,123,255,0.6)" }}>{fmt(block.currentBid)}</p>
+                </div>
+                <div className="w-px self-stretch" style={{ background: "rgba(120,150,220,0.18)" }} />
+                <div className="text-center">
+                  <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>Held by</p>
+                  <p className="text-xl font-bold uppercase leading-tight" style={{ fontFamily: "'Rajdhani',sans-serif", color: leaderTeam ? leaderTeam.hue : "rgba(200,215,255,0.4)" }}>{leaderTeam ? leaderTeam.name : "No bids yet"}</p>
+                </div>
+                {myTeam && (
+                  <>
+                    <div className="w-px self-stretch" style={{ background: "rgba(120,150,220,0.18)" }} />
+                    <div className="text-center">
+                      <p className="text-xs uppercase tracking-widest" style={{ color: "rgba(200,215,255,0.45)" }}>Your budget</p>
+                      <p className="text-2xl font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: myTeam.hue, textShadow: `0 0 14px ${myTeam.hue}66` }}>{fmt(myTeam.budget)}</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {myTeam && (
+                <div className="w-full max-w-md flex flex-col items-center gap-2">
+                  {/* live max-bid ceiling + the reserve note that explains it — kept together
+                      so the shifting number reads as intentional, not random */}
+                  {!myFull && (() => { const slotsLeft = Math.max(4 - myTeam.roster.length - 1, 0); const lowFunds = myMax < myReq; return (
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="flex items-center gap-2 px-4 py-1.5" style={{ background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.35)", clipPath: "polygon(10px 0,100% 0,calc(100% - 10px) 100%,0 100%)" }}>
+                        <span className="uppercase text-xs tracking-widest" style={{ color: "rgba(200,215,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>Max Bid</span>
+                        <span className="text-lg font-bold leading-none" style={{ fontFamily: "'IBM Plex Mono',monospace", color: lowFunds ? "#ff6b7d" : "#5b8dff", textShadow: lowFunds ? "none" : "0 0 14px rgba(61,123,255,0.5)" }}>{fmt(Math.max(myMax, 0))}</span>
+                      </div>
+                      {slotsLeft > 0 && (
+                        <span className="text-[10px] uppercase tracking-widest" style={{ color: lowFunds ? "#ff8a94" : "rgba(200,215,255,0.4)" }}>
+                          {lowFunds ? "Insufficient — " : ""}reserve held for your {slotsLeft} remaining slot{slotsLeft === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </div>
+                  ); })()}
+                  <button onClick={() => placeBid(myTeam.id)} disabled={!canBid || bidPending} className="w-full py-6 text-3xl font-bold uppercase tracking-widest transition-all active:scale-95"
+                    style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(24px 0,100% 0,calc(100% - 24px) 100%,0 100%)", background: canBid ? "linear-gradient(90deg,#ff4655,#ff2d55)" : "rgba(255,255,255,0.05)", color: canBid ? "#fff" : "rgba(236,243,255,0.25)", border: canBid ? "1px solid #ff8a94" : "1px solid rgba(255,255,255,0.1)", boxShadow: canBid ? "0 0 36px rgba(255,70,85,0.5), 0 0 80px rgba(255,70,85,0.2)" : "none", cursor: canBid ? "pointer" : "not-allowed" }}>
+                    {bidPending ? "Bidding…" : iLead ? "You hold the bid" : `BID ${fmt(myReq)}`}
+                  </button>
+                  {myFull ? (
+                    <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(236,243,255,0.4)" }}>Roster full — spectating</p>
+                  ) : iLead ? (
+                    <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(236,243,255,0.4)" }}>Waiting on challengers…</p>
+                  ) : (
+                    <span className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ color: "rgba(200,215,255,0.7)", background: "rgba(120,150,220,0.12)", border: "1px solid rgba(120,150,220,0.25)" }}>
+                      +$100 min. raise
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {isSpectator && (
+                <div className="w-full max-w-md flex flex-col items-center gap-1 py-4 px-6" style={{ background: "rgba(120,160,255,0.06)", border: "1px solid rgba(120,160,255,0.25)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
+                  <p className="text-sm font-bold uppercase tracking-widest flex items-center gap-2" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#aec6ff" }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="square"><path d="M12 3v3M12 18v3M3 12h3M18 12h3" opacity="0.7" /><circle cx="12" cy="12" r="6.5" /><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /></svg>
+                    Spectating
+                  </p>
+                  <p className="text-xs uppercase tracking-widest text-center" style={{ color: "rgba(200,215,255,0.4)" }}>You're watching live · only captains can place bids</p>
+                </div>
+              )}
+
+              {/* Handing the gavel away is what unlocks bidding for a
+                  host who's also captaining. */}
+              {canRunAuction && (
+                <div className="flex gap-3 w-full max-w-md">
+                  <button onClick={sell} disabled={!block.leaderId || bidPending} className="flex-1 py-4 text-2xl font-bold uppercase tracking-widest active:scale-95 transition-all"
+                    style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(20px 0,100% 0,calc(100% - 20px) 100%,0 100%)", background: block.leaderId ? "linear-gradient(90deg,#1fbf75,#3ddc84)" : "rgba(255,255,255,0.05)", color: block.leaderId ? "#062b18" : "rgba(236,243,255,0.25)", boxShadow: block.leaderId ? "0 0 30px rgba(61,220,132,0.4)" : "none", cursor: block.leaderId ? "pointer" : "not-allowed" }}>SOLD</button>
+                  <button onClick={passPlayer} className="px-6 py-4 font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(14px 0,100% 0,calc(100% - 14px) 100%,0 100%)", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", color: "rgba(236,243,255,0.6)" }}>Pass</button>
+                </div>
+              )}
+            </>
+          ) : (
+            <ReelStage spin={spinLive ? state.spin : null} players={state.players} pool={pool} isAdmin={canRunAuction} onDraw={spinNominate} canDraw={!!pool.length} />
+          )}
+        </div>
+
+        {/* bidding war + auction feed, side by side */}
+        <div className="w-full flex flex-col md:flex-row gap-4 justify-center items-stretch">
+        {/* bidding war tracker */}
+        <div className="w-full max-w-md p-4" style={{ ...PANEL(null, "16px 18px"), position: "relative", clipPath: SHELL_NOTCH(14), backdropFilter: "blur(10px)" }}>
+          <div className="mb-3"><SectionHead title="Bidding war" /></div>
+          {state.bidHistory.length === 0 ? (
+            <p className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>{block ? "No bids yet. First captain to act sets the pace." : "Tracker activates when a player hits the block."}</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {state.bidHistory.map((h, i) => { const tm = teamOf(h.teamId); return (
+                <div key={h.ts} className="flex items-center gap-2.5 px-3 py-2" style={{ background: i === 0 ? tm.hue + "1f" : "rgba(255,255,255,0.03)", border: `1px solid ${i === 0 ? tm.hue + "66" : "transparent"}` }}>
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: tm.hue, boxShadow: i === 0 ? `0 0 8px ${tm.hue}` : "none" }} />
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm.hue }}>{tm.captain || tm.name.split(" ")[0]}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "rgba(236,243,255,0.45)" }}>{tm.name}</span>
+                  </span>
+                  <span className="ml-auto text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: i === 0 ? "#ecf3ff" : "rgba(236,243,255,0.6)" }}>{fmt(h.amount)}</span>
+                </div>
+              ); })}
+            </div>
+          )}
+        </div>
+
+        {/* auction feed — running storylines */}
+        <div className="w-full max-w-md p-4" style={{ ...PANEL(null, "16px 18px"), position: "relative", clipPath: SHELL_NOTCH(14), backdropFilter: "blur(10px)" }}>
+          <div className="mb-3"><SectionHead title="Auction feed" /></div>
+          {soldPlayers.length === 0 ? (
+            <p className="text-sm" style={{ color: "rgba(236,243,255,0.4)" }}>Storylines appear as players get sold.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {recordSale && (() => { const tm = teamOf(recordSale.soldTo); return (
+                <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.3)" }}>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#7da6ff" }}><Icon name="auction" size={20} /></span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "#f5c453", fontFamily: "'Rajdhani',sans-serif" }}>Record sale</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{recordSale.name}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ color: tm ? tm.hue : "rgba(236,243,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{tm ? (tm.captain || tm.name) : "—"}</span>
+                  </span>
+                  <span className="ml-auto text-base font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#f5c453" }}>{fmt(recordSale.soldPrice)}</span>
+                </div>
+              ); })()}
+
+              {mostContested && (mostContested.bidCount || 0) > 1 && (() => { const tm = teamOf(mostContested.soldTo); return (
+                <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(255,70,85,0.08)", border: "1px solid rgba(255,70,85,0.3)" }}>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#ff8a5c" }}><Icon name="flame" size={20} /></span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "#ff8a94", fontFamily: "'Rajdhani',sans-serif" }}>Most contested</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{mostContested.name}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ color: tm ? tm.hue : "rgba(236,243,255,0.5)", fontFamily: "'Rajdhani',sans-serif" }}>{tm ? (tm.captain || tm.name) : "—"}</span>
+                  </span>
+                  <span className="ml-auto text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ff8a94" }}>{mostContested.bidCount} bids</span>
+                </div>
+              ); })()}
+
+              {biggestSpenderId && (() => { const tm = teamOf(biggestSpenderId); return (
+                <div className="flex items-center gap-3 px-3 py-2" style={{ background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.25)" }}>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#f5c453" }}><Icon name="coins" size={20} /></span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>Biggest spender</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm ? tm.hue : "#ecf3ff" }}>{tm ? (tm.captain || tm.name) : "—"}</span>
+                  </span>
+                  <span className="ml-auto text-sm font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#7da6ff" }}>{fmt(spendByTeam[biggestSpenderId])}</span>
+                </div>
+              ); })()}
+
+              {/* roster complete — milestone callout for any team that's drafted all 4 */}
+              {completedTeams.map((t) => (
+                <div key={t.id} className="flex items-center gap-3 px-3 py-2" style={{ background: `${t.hue}14`, border: `1px solid ${t.hue}55` }}>
+                  <span className="shrink-0" style={{ display: "inline-flex", color: "#3ddc84" }}><Icon name="check" size={20} /></span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: t.hue, fontFamily: "'Rajdhani',sans-serif" }}>Draft complete</span>
+                    <span className="text-sm font-bold uppercase leading-tight truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{t.captain || t.name}</span>
+                    <span className="text-[10px] uppercase tracking-wider leading-tight truncate" style={{ color: t.hue, fontFamily: "'Rajdhani',sans-serif" }}>{t.name} · roster locked</span>
+                  </span>
+                  <span className="ml-auto text-xs font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: t.hue }}>4/4</span>
+                </div>
+              ))}
+
+              <div className="flex gap-2 mt-1">
+                <div className="flex-1 px-3 py-2 rounded-lg text-center" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>Players sold</p>
+                  <p className="text-base font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{soldPlayers.length}</p>
+                </div>
+                <div className="flex-1 px-3 py-2 rounded-lg text-center" style={{ background: "rgba(255,255,255,0.03)" }}>
+                  <p className="text-[10px] uppercase tracking-widest" style={{ color: "rgba(236,243,255,0.45)", fontFamily: "'Rajdhani',sans-serif" }}>Total spent</p>
+                  <p className="text-base font-bold" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ecf3ff" }}>{fmt(totalSpent)}</p>
+                </div>
+              </div>
+
+              {/* recent sales ticker — last few hammers, newest first */}
+              {Array.isArray(state.recentSales) && state.recentSales.length > 0 && (
+                <div className="mt-1 pt-2" style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                  <p className="text-[10px] uppercase tracking-widest mb-1.5" style={{ color: "rgba(236,243,255,0.4)", fontFamily: "'Rajdhani',sans-serif" }}>Recent sales</p>
+                  <div className="flex flex-col gap-1">
+                    {state.recentSales.slice(0, 5).map((sale) => { const tm = teamOf(sale.teamId); return (
+                      <div key={sale.ts} className="flex items-center gap-2 px-2.5 py-1.5 rounded" style={{ background: "rgba(255,255,255,0.025)" }}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: tm ? tm.hue : "#888" }} />
+                        <span className="text-xs font-semibold uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: "#ecf3ff" }}>{sale.name}</span>
+                        <span className="text-[10px] uppercase truncate" style={{ fontFamily: "'Rajdhani',sans-serif", color: tm ? tm.hue : "rgba(236,243,255,0.5)" }}>→ {tm ? (tm.captain || tm.name.split(" ")[0]) : "—"}</span>
+                        <span className="ml-auto text-xs font-bold shrink-0" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.85)" }}>{fmt(sale.price)}</span>
+                      </div>
+                    ); })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        </div>
+      </div>
+      {railsOn && <AuctionRail side="right" teams={state.teams.slice(Math.ceil(state.teams.length / 2))} players={state.players}
+        leaderId={block?.leaderId} myTeamId={myTeam?.id} pool={pool} compact={state.teams.length > 12} />}
+      </div>
+    </div>
+  );
+
+  /* ════════ VIEW: LOCKER ROOM ════════ */
+  const LockerView = (
+    <div className="view-in page-wrap py-6">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-1">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+            <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Rosters & Budgets</p>
+          </div>
+          <h2 className="font-bold uppercase" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Locker <span style={{ color: "#3d7bff" }}>Room</span></h2>
+        </div>
+        <span className="text-sm px-3 py-1" style={{ background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.3)", color: "#7da6ff", clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))", fontFamily: "'IBM Plex Mono',monospace" }}>{state.teams.length} teams</span>
+      </div>
+      <p className="volt-desc text-sm mb-4 sm:mb-6" style={{ color: "rgba(200,215,255,0.5)" }}>
+        Every roster, budget and the roles still missing — scout your rivals.{isAdmin && " Tap ✎ on a card to rename or remove a team."}
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {state.teams.map((t) => (
+          <TeamCard key={t.id} team={t} players={state.players} lead={block?.leaderId === t.id} isAdmin={isAdmin}
+            collapsible={!isDesk} defaultOpen={dashTeam?.id === t.id} onRename={renameTeam} onScout={setScouted} onRemove={removeTeam} canRemove={block?.leaderId !== t.id} onAddToRoster={adminAddToRoster} onRemoveFromRoster={adminRemoveFromRoster} onSetBudget={setTeamBudget} />
+        ))}
+        {isAdmin && (
+          <button onClick={addTeam} className="flex flex-col items-center justify-center gap-2 py-10 transition-all hover:scale-[1.02] min-h-[220px]"
+            style={{ border: "2px dashed rgba(61,123,255,0.4)", background: "rgba(61,123,255,0.05)", color: "#aec6ff", clipPath: "polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px))" }}>
+            <span className="text-4xl leading-none">＋</span>
+            <span className="font-bold uppercase tracking-widest text-sm" style={{ fontFamily: "'Rajdhani',sans-serif" }}>Add team</span>
+            <span className="text-xs" style={{ color: "rgba(200,215,255,0.4)" }}>$10,000 budget · 4 slots</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Holding a seat is what grants the War Room — a host who captains a team gets
+  // their own sandbox like anyone else. The "you can't see this" panel is only for
+  // staff with no team of their own.
+  //
+  // `myTeam` only exists once the auction board has been built, so before the
+  // draft nobody has one. A player flagged as captain still gets in via
+  // isCaptainElect; a host flagged as captain was being caught by this branch
+  // first and told they had no team, which is the one case where they do.
+  const hasSeat = !!myTeam || !!chrome?.isCaptainElect;
+  const WarRoomView = (isAdmin && !hasSeat) ? (
+    <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Captain Sandbox</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+      </div>
+      <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: "#3d7bff" }}>Room</span></h2>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As host you can't view captains' saved lineups — they're visible only to the captain who made them.</p>
+    </div>
+  ) : (isSpectator && !hasSeat) ? (
+    <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
+      <div className="flex items-center gap-2 mb-2">
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+        <p className="uppercase text-xs font-semibold" style={{ color: "#5b8dff", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.34em" }}>Captain Sandbox</p>
+        <span style={{ width: 18, height: 2, background: "#3d7bff" }} />
+      </div>
+      <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>War <span style={{ color: "#3d7bff" }}>Room</span></h2>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The War Room is each captain's private mock-draft sandbox. As a spectating Player you don't have a roster to plan — take a captain's seat to use it.</p>
+    </div>
+  ) : (
+    <WarRoom teamId={myTeam?.id || ("pre:" + (auth?.userId || "me"))} teamHue={myTeam?.hue || "#3d7bff"} players={state.players} />
+  );
+
+  const BracketView = (
+    <TournamentView
+      state={state}
+      isAdmin={isAdmin}
+      teamOf={teamOf}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance, tSetFinalBo, tSetForfeit }}
+    />
+  );
+
+  const VetoView = isAdmin ? (
+    <MapVeto teams={state.teams} />
+  ) : (
+    <div className="view-in page-wrap py-10 flex flex-col items-center text-center">
+      <h2 className="font-bold uppercase mb-2" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.6rem,5vw,3.8rem)", lineHeight: 0.9, letterSpacing: "0.04em", color: "#f4f8ff" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
+      <p className="max-w-md" style={{ color: "rgba(200,215,255,0.55)" }}>The map veto is run by the host.</p>
+    </div>
+  );
+
+  const LeaderboardView = (
+    <Leaderboard isAdmin={isAdmin} />
+  );
+
+  const views = { lobby: LobbyView, scout: ScoutView, reserve: ReserveView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView,
+    account: <AccountView auth={auth} chrome={chrome} />,
+    profile: <PlayerProfile userId={profileUser} onBack={() => { setProfileUser(null); setView(profileFrom || "scout"); }} />,
+    report: chrome?.reportNode || null };
+  const scoutedPlayer = scouted ? state.players.find((p) => p.id === scouted) : null;
+
+  return shell(
+    <>
+      {scoutedPlayer && <ScoutModal player={scoutedPlayer} onClose={() => setScouted(null)} isAdmin={isAdmin} onEdit={(p) => { setEditingPlayer(p); setScouted(null); setView("scout"); }} onDelete={removePlayer} onToggleCaptain={toggleCaptain} onMoveReserve={setPoolEligible} onViewProfile={(uid) => { setScouted(null); setProfileFrom(view); setProfileUser(uid); setView("profile"); }} />}
+      {saveErr && (
+        <div style={{ position: "fixed", left: "50%", bottom: isDesk ? 22 : "calc(86px + env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 210, maxWidth: "92vw",
+          display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", fontFamily: "'Rajdhani',sans-serif",
+          background: "rgba(40,10,16,0.97)", border: "1px solid rgba(255,70,85,0.6)", clipPath: SHELL_NOTCH(10), boxShadow: "0 14px 40px rgba(0,0,0,0.5)" }}>
+          <span style={{ color: "#ff8f9a", fontSize: 13, fontWeight: 700 }}>⚠ Not saved</span>
+          <span style={{ color: "rgba(230,220,225,0.8)", fontSize: 12.5 }}>{saveErr}</span>
+          <button onClick={() => window.location.reload()} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>Reload</button>
+          <button onClick={() => setSaveErr(null)} style={{ background: "none", border: "none", color: "rgba(200,215,255,0.5)", cursor: "pointer", fontSize: 14 }}>✕</button>
+        </div>
+      )}
+      {Rail}
+      {TopNav}
+      {views[view]}
+    </>
+  );
+}
+
+// Collapsed host controls for narrow screens — same overlay pattern as the chip.
+function HostMenu({ children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative", fontFamily: "'Rajdhani',sans-serif" }}>
+      <button onClick={() => setOpen(o => !o)} aria-label="Host controls"
+        style={{ height: 36, padding: "0 15px", clipPath: SHELL_NOTCH(9), display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", background: "rgba(61,123,255,0.1)", border: "1px solid rgba(61,123,255,0.5)", color: "#aec6ff", textShadow: "0 0 10px rgba(61,123,255,0.45)", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}><Icon name="settings" size={16} /> Manage<span style={{ color: "rgba(174,198,255,0.65)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s ease", display: "inline-flex" }}><Icon name="chevronDown" size={13} /></span></button>
+      {open && <>
+        <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90 }} />
+        <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 91, minWidth: 230, background: "linear-gradient(160deg, rgba(16,23,40,0.98), rgba(9,13,23,0.98))", border: "1px solid rgba(61,123,255,0.35)", clipPath: SHELL_NOTCH(12), padding: 14, boxShadow: "0 18px 50px rgba(0,0,0,0.6)" }}>
+          {children}
+        </div>
+      </>}
+    </div>
+  );
+}
+
+// A geometric chevron rather than the ▶ glyph. Filled-triangle characters have
+// ink that isn't centred in their em box and it varies by font, so centring the
+// box still looks off. An SVG path is centred in its viewBox by construction, and
+// it rotates cleanly for the open state.
+function TrophyIcon({ size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"
+      style={{ display: "block", flex: "0 0 auto" }}>
+      <path d="M7 4h10v6a5 5 0 0 1-10 0V4z" />
+      <path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3" />
+      <path d="M10 15h4M9 20h6M12 15v5" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ size = 9 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"
+      style={{ display: "block", overflow: "visible" }}>
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+// First-time onboarding — shown when a profile-less player flips "I'm playing".
+// Explains the one-time setup, embeds the scouting editor, and auto-continues
+// (applies them) on save so they never have to hunt for the toggle again.
+// startPhase: "intro" for a first-timer, "edit" when they're back from Discord
+// mid-setup, "terms" when the profile is already complete.
+// After the draft opens, sign-ups carry on as reserves: volt_apply files them
+// outside the draft pool. Players get their way in here, and staff get the
+// review queue, since the registration desk closes with the draft.
+function LateReserveDesk({ ev, isAdmin, myReg, myProfile, viewerId, onRegChanged, onMerge }) {
+  const [pending, setPending] = useState([]);
+  const [flow, setFlow] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const evId = ev?.id;
+  const loadQ = useCallback(async () => {
+    if (!isAdmin || !evId || !HAS_SUPABASE) return;
+    try { setPending((await fetchRosterForEvent(evId)).pending); } catch (e) { console.error(e); }
+  }, [isAdmin, evId]);
+  useEffect(() => { loadQ(); const stop = visInterval(loadQ, 20000); return () => stop(); }, [loadQ]);
+  if (!ev || !HAS_SUPABASE) return null;
+
+  async function decide(entry, status) {
+    setBusy(true); setErr("");
+    try {
+      const { error } = await __sb.from("registrations").update({ status, pool_eligible: false }).eq("id", entry.regId);
+      if (error) throw error;
+      await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: status === "approved" ? "approved" : "rejected",
+        title: status === "approved" ? "You're a reserve — " + weekendName(ev) : "Reserve sign-up not approved",
+        body: status === "approved" ? "You're on the reserve list. Captains can call you in as a sub." : "The host didn't approve this one. Reach out if that's a mistake." }]);
+      await loadQ();
+      if (status === "approved") await onMerge?.();
+    } catch (e) { console.error(e); setErr(e.message || "Couldn't save that — try again."); }
+    setBusy(false);
+  }
+
+  const box = { ...PANEL("rgba(61,220,132,0.3)", "16px 18px"), clipPath: SHELL_NOTCH(10), marginBottom: 18, fontFamily: READ_FONT };
+  const canJoin = viewerId && !myReg && !isAdmin;
+  return <>
+    {canJoin && (
+      <div style={box} className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <p style={{ margin: 0, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 17, textTransform: "uppercase", letterSpacing: "0.04em", color: "#ecf3ff" }}>Want in? Join as a reserve</p>
+          <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "rgba(214,226,255,0.72)", lineHeight: 1.45 }}>The draft pool is closed, but captains pick subs from this list. Every match you play banks season points.</p>
+        </div>
+        <button onClick={() => setFlow(profileIsComplete(myProfile) ? "terms" : "intro")} style={shellBtn("primary", { padding: "11px 18px", fontSize: 12 })}>Sign up as a reserve →</button>
+      </div>
+    )}
+    {viewerId && myReg?.status === "pending" && (
+      <div style={{ ...box, borderColor: "rgba(245,196,83,0.45)" }}>
+        <p style={{ margin: 0, fontSize: 14, color: "#f5c453", fontWeight: 600 }}>Your reserve sign-up is with the host. You'll show up here once it's approved.</p>
+      </div>
+    )}
+    {isAdmin && pending.length > 0 && (
+      <div style={{ ...box, borderColor: "rgba(245,196,83,0.45)" }}>
+        <p style={{ margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.06em", color: "#f5c453" }}>
+          {pending.length} reserve sign-up{pending.length === 1 ? "" : "s"} to review</p>
+        <div className="flex flex-col gap-2">
+          {pending.map((r) => (
+            <div key={r.regId} className="flex items-center justify-between gap-3 flex-wrap" style={{ padding: "8px 10px", background: "rgba(10,16,30,0.55)", border: "1px solid rgba(120,150,220,0.18)" }}>
+              <span style={{ fontSize: 14, color: "#ecf3ff" }}>
+                <b>{r.name}</b>
+                <span style={{ color: "rgba(214,226,255,0.6)" }}> · {r.rank ? rankLabel(rankKey(r.rank), r.rankDiv) : "no rank"} · {r.role || "Flex"}</span>
+                {r.noShows > 0 && <span style={{ color: "#ff8f9a" }}> · {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+              </span>
+              <span className="flex gap-2">
+                <button disabled={busy} onClick={() => decide(r, "approved")} style={shellBtn("primary", { padding: "7px 14px", fontSize: 11 })}>Approve</button>
+                <button disabled={busy} onClick={() => decide(r, "rejected")} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 11 })}>Reject</button>
+              </span>
+            </div>
+          ))}
+        </div>
+        {err && <p style={{ margin: "8px 0 0", fontSize: 13, color: "#ff8f9a" }}>{err}</p>}
+      </div>
+    )}
+    {flow && <FirstTimeOnboard ev={ev} wantCap={false} startPhase={flow} onClose={() => setFlow(null)}
+      onApplied={async () => { await onRegChanged?.(); await onMerge?.(); }} />}
+  </>;
+}
+
+const voltAlert = (message, opts = {}) => __openDialog({ kind: "alert", message, ...opts });
+
+// Delete finished tournaments' team roles and rooms in Discord. Runs by itself
+// when a tournament is settled; best-effort, so a league without Discord (or a
+// missing bot permission) never gets in the way of settling. Resolves to the
+// server's result, or null when there was nothing it could do.
+async function discordWrapUp(eventId) {
+  try {
+    const { data: sess } = await __sb.auth.getSession();
+    const jwt = sess?.session?.access_token;
+    if (!jwt) return null;
+    const r = await fetch(apiUrl("/api/discord-arena"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ eventId, mode: "wrapup" }),
+    });
+    return r.ok ? await r.json().catch(() => null) : null;
+  } catch { return null; }
+}
+
+// Open sub requests, shown to the reserves who could answer them. Offering here
+// is the same as tapping "I can sub" on the Discord DM; the rank rule is
+// checked in the database either way.
+function SubCalls({ eventId, viewerId, canCover }) {
+  const [reqs, setReqs] = useState([]);
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState({});
+  const load = useCallback(async () => {
+    try {
+      const { data } = await __sb.rpc("volt_sub_open", { p_event: eventId });
+      setReqs(Array.isArray(data) ? data : []);
+    } catch (e) { console.error("sub calls", e); }
+  }, [eventId]);
+  useEffect(() => { load(); const stop = visInterval(load, 15000); return () => stop(); }, [load]);
+  const mineIn = (r) => (r.offers || []).some((o) => o.userId === viewerId);
+  const open = reqs.filter((r) => r.outUserId !== viewerId && (mineIn(r) || !canCover || canCover(r.outRank)));
+  if (!open.length) return null;
+  async function offer(id) {
+    setBusy(id);
+    try {
+      const { data, error } = await __sb.rpc("volt_sub_offer_me", { p_request: id });
+      if (error) throw new Error(error.message);
+      setNote((n) => ({ ...n, [id]: data?.ok ? ""
+        : data?.error === "ineligible" ? "Subs have to be a lower rank than the player they cover, so this one isn't open to you."
+        : "That request has just been filled or cancelled." }));
+      await load();
+    } catch (e) { setNote((n) => ({ ...n, [id]: e.message || "Couldn't record that. Try again." })); }
+    setBusy("");
+  }
+  return (
+    <div style={{ ...PANEL("rgba(245,196,83,0.4)", "14px 16px"), clipPath: SHELL_NOTCH(10), marginBottom: 18, fontFamily: READ_FONT }}>
+      <p style={{ margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.06em", color: "#f5c453" }}>
+        {open.length === 1 ? "A team needs a sub" : `${open.length} teams need a sub`}</p>
+      <div className="flex flex-col gap-2">
+        {open.map((r) => (
+          <div key={r.id} style={{ padding: "8px 10px", background: "rgba(10,16,30,0.55)", border: "1px solid rgba(120,150,220,0.18)" }}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span style={{ fontSize: 14, color: "#ecf3ff" }}><b>{r.team}</b> need cover for {r.outName || "a player"}
+                {r.outRank && <span style={{ color: "rgba(214,226,255,0.6)" }}> · {r.outRank}</span>}</span>
+              {mineIn(r)
+                ? <span style={{ fontSize: 13, color: "#9af5c2", fontWeight: 600 }}>✓ You've offered. The captain picks.</span>
+                : <button disabled={!!busy} onClick={() => offer(r.id)} style={shellBtn("primary", { padding: "7px 14px", fontSize: 11, opacity: busy ? 0.5 : 1 })}>{busy === r.id ? "…" : "I can sub"}</button>}
+            </div>
+            {note[r.id] && <p style={{ margin: "6px 0 0", fontSize: 13, color: "#ff8f9a" }}>{note[r.id]}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Pool strip: the Scout/Reserve hubs' one-line summary ─────────────────
+function PoolStrip({ players }) {
+  // Deliberately quiet: three numbers and one progress line. Role counts live
+  // on the role filter buttons below, where they're actually used.
+  const pool = (players || []).filter((p) => !p.isCaptain);
+  const caps = (players || []).filter((p) => p.isCaptain).length;
+  const avail = pool.filter((p) => p.status === "pool" || p.status === "block").length;
+  const sold = pool.filter((p) => p.status === "sold").length;
+  const stat = (v, k, c) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 22, lineHeight: 1, color: c }}>{v}</span>
+      <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>{k}</span>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "18px 28px", flexWrap: "wrap", padding: "14px 18px 12px", marginBottom: 16,
+      background: "rgba(10,13,22,0.55)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(10) }}>
+      {stat(avail, "Available", "#3ddc84")}
+      {stat(sold, "Drafted", "#ecf3ff")}
+      {stat(caps, "Captains", "#f5c453")}
+      {/* Per role: who's still on the board while the draft runs, the whole
+          pool before and after it. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap", paddingLeft: 22,
+        borderLeft: "1px solid rgba(120,150,220,0.16)" }}>
+        {ROLES.map((r) => {
+          const inRole = pool.filter((p) => (p.role || "Flex") === r);
+          const n = avail ? inRole.filter((p) => p.status === "pool" || p.status === "block").length : inRole.length;
+          return (
+            <div key={r} title={avail ? `${n} ${r} still available of ${inRole.length}` : `${n} ${r}`}
+              style={{ display: "flex", alignItems: "baseline", gap: 6, opacity: n ? 1 : 0.4 }}>
+              <span style={{ fontSize: 10, color: "#7da6ff" }}>{ROLE_GLYPH[r]}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 17, lineHeight: 1, color: "#ecf3ff" }}>{n}</span>
+              <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(200,215,255,0.45)", fontWeight: 700 }}>{r}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ flex: "1 1 100%", display: "flex", alignItems: "center", gap: 10, marginTop: -8 }}>
+        <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.07)" }}>
+          <div style={{ height: "100%", width: `${pool.length ? (sold / pool.length) * 100 : 0}%`, background: "#3d7bff", transition: "width 600ms" }} />
+        </div>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "rgba(200,215,255,0.45)", whiteSpace: "nowrap" }}>
+          {sold}/{pool.length} drafted</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Auction side rails ───────────────────────────────────────────────────
+// Every captain's squad and purse beside the block, so nobody leaves the
+// auction to check who still needs what. Half the teams each side.
+function AuctionTeamCell({ t, players, lead, mine, pool, compact }) {
+  const roster = (t.roster || []).map((id) => (players || []).find((p) => p.id === id)).filter(Boolean);
+  const full = roster.length >= 4;
+  const max = Math.max(0, maxAllowedBid(t, pool));
+  const edge = lead ? "#3ddc84" : mine ? t.hue : `${t.hue}44`;
+  if (compact) return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", clipPath: SHELL_NOTCH(7),
+      background: lead ? "linear-gradient(160deg, rgba(61,220,132,0.18), rgba(10,13,22,0.85) 65%)" : `linear-gradient(160deg, ${t.hue}18, rgba(10,13,22,0.82) 60%)`,
+      border: `1px solid ${edge}`, opacity: full && !lead ? 0.55 : 1, transition: "all 200ms" }}>
+      <TeamMono name={t.name} hue={t.hue} size={16} />
+      <span style={{ flex: 1, minWidth: 0, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 13, textTransform: "uppercase",
+        color: t.hue, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}{mine ? " · you" : ""}</span>
+      <span style={{ display: "flex", gap: 2 }}>
+        {[0, 1, 2, 3].map((k) => <span key={k} style={{ width: 6, height: 6, transform: "rotate(45deg)",
+          background: k < roster.length ? t.hue : "transparent", border: `1px solid ${k < roster.length ? t.hue : "rgba(200,215,255,0.25)"}` }} />)}
+      </span>
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 12, color: lead ? "#3ddc84" : "#ecf3ff", minWidth: 56, textAlign: "right" }}>{fmt(t.budget)}</span>
+    </div>
+  );
+  return (
+    <div style={{ position: "relative", padding: "11px 12px 10px", clipPath: SHELL_NOTCH(10),
+      background: lead ? `linear-gradient(160deg, rgba(61,220,132,0.16), rgba(10,13,22,0.85) 65%)`
+                       : `linear-gradient(160deg, ${t.hue}1a, rgba(10,13,22,0.82) 60%)`,
+      border: `1px solid ${edge}`, opacity: full && !lead ? 0.62 : 1,
+      boxShadow: lead ? "0 0 22px rgba(61,220,132,0.25)" : "none", transition: "all 200ms" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <TeamMono name={t.name} hue={t.hue} size={20} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14, textTransform: "uppercase",
+            color: t.hue, lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
+          <div style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginTop: 3, overflow: "hidden",
+            textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.captain}{mine ? " · you" : ""}</div>
+        </div>
+        {lead && <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", color: "#3ddc84",
+          border: "1px solid rgba(61,220,132,0.5)", padding: "2px 5px" }}>LEADING</span>}
+        {full && !lead && <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.16em", color: "rgba(200,215,255,0.5)",
+          border: "1px solid rgba(200,215,255,0.25)", padding: "2px 5px" }}>FULL</span>}
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 9 }}>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 18, color: "#ecf3ff" }}>{fmt(t.budget)}</span>
+        {!full && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "rgba(200,215,255,0.45)" }}>
+          max <span style={{ color: "#7da6ff" }}>{fmt(max)}</span></span>}
+      </div>
+      <div style={{ height: 3, background: "rgba(255,255,255,0.06)", marginTop: 5 }}>
+        <div style={{ height: "100%", width: `${Math.max(0, Math.min(100, (t.budget / 10000) * 100))}%`, background: t.hue,
+          transition: "width 500ms cubic-bezier(.2,.8,.2,1)" }} />
+      </div>
+      <div style={{ display: "grid", gap: 3, marginTop: 9 }}>
+        {[0, 1, 2, 3].map((k) => {
+          const p = roster[k];
+          return p ? (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
+              <span style={{ width: 24, fontFamily: "'IBM Plex Mono',monospace", fontSize: 8, color: "rgba(200,215,255,0.45)" }}>
+                {ROLE_ABBR[p.role] || "FLX"}</span>
+              <span style={{ flex: 1, minWidth: 0, color: "rgba(236,243,255,0.85)", overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#3ddc84" }}>{fmt(p.soldPrice)}</span>
+            </div>
+          ) : (
+            <div key={k} style={{ height: 17, border: "1px dashed rgba(120,150,220,0.2)" }} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Big leagues (more than 12 teams) get one-line cells, and a rail taller than
+// the screen scrolls inside itself instead of stretching the auction page.
+function AuctionRail({ teams, players, leaderId, myTeamId, pool, side, compact }) {
+  return (
+    <div className="volt-auc-rail" data-side={side} data-compact={compact ? "" : undefined}
+      style={{ display: "flex", flexDirection: "column", gap: compact ? 6 : 10, paddingTop: 16 }}>
+      {teams.map((t) => <AuctionTeamCell key={t.id} t={t} players={players} pool={pool} compact={compact}
+        lead={leaderId === t.id} mine={myTeamId === t.id} />)}
+    </div>
+  );
+}
+
+// A player's name that opens their player file. Only real accounts are
+// clickable — Discord guests and hand-added players have no file to open.
+function PName({ uid, onOpen, children, style }) {
+  const can = !!(uid && onOpen && /^[0-9a-f-]{36}$/i.test(String(uid)));
+  const go = (e) => { e.stopPropagation(); onOpen(uid); };
+  return (
+    <span className={can ? "volt-pname" : undefined}
+      role={can ? "button" : undefined} tabIndex={can ? 0 : undefined}
+      title={can ? "Open player file" : undefined}
+      onClick={can ? go : undefined}
+      onKeyDown={can ? (e) => { if (e.key === "Enter") go(e); } : undefined}
+      style={{ cursor: can ? "pointer" : "inherit", ...style }}>{children}</span>
+  );
+}
+
+// Shimmering placeholder rows while a cell fetches, instead of "Loading…".
+function Skeleton({ rows = 4 }) {
+  return (
+    <div style={{ display: "grid", gap: 10, paddingTop: 2 }}>
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="volt-skel" style={{ height: 13, width: `${90 - i * 9}%` }} />
+      ))}
+    </div>
+  );
+}
+
+// The left-hand feature of a wide cell. Shared so the two wide cells are
+// visibly the same component rather than two takes on the same idea.
+function FeatureTile({ label, value, name, sub, tag, hue = "#f5c453" }) {
+  return (
+    <div style={{ flex: "0 1 220px", minWidth: 190, alignSelf: "center",
+      display: "flex", flexDirection: "column",
+      justifyContent: "center", padding: "16px 18px", position: "relative", overflow: "hidden",
+      background: `linear-gradient(135deg, ${hue}26, transparent 72%)`,
+      border: `1px solid ${hue}44`, clipPath: SHELL_NOTCH(9) }}>
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9,
+        borderLeft: `2px solid ${hue}`, borderTop: `2px solid ${hue}` }} />
+      <div style={{ fontSize: 8.5, letterSpacing: "0.24em", textTransform: "uppercase",
+        color: "rgba(200,215,255,0.42)" }}>{label}</div>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+        fontSize: "clamp(26px, 2.8vw, 36px)", lineHeight: 1, color: hue, marginTop: 7 }}>{value}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase", marginTop: 8,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+      {tag && <div style={{ marginTop: 7 }}><TeamTag name={tag.name} hue={tag.hue} /></div>}
+      {sub && <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+        color: "rgba(200,215,255,0.4)", marginTop: 7 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// A team tag that carries the team's own colour, so colour does the work a
+// second line of text would otherwise have to.
+function TeamTag({ name, hue }) {
+  if (!name) return null;
+  return (
+    <span style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase",
+      fontWeight: 700, padding: "2px 6px", whiteSpace: "nowrap",
+      maxWidth: 74, overflow: "hidden", textOverflow: "ellipsis",
+      color: hue, background: `${hue}1f`, border: `1px solid ${hue}44`,
+      clipPath: "polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px))" }}>
+      {name}
+    </span>
+  );
+}
+
+// The phase banner. This is the "what's happening and what do I do" line, and
+// it is the only part of the page that changes wholesale between phases.
+function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
+  const draftAt = ev?.draft_at ? new Date(ev.draft_at) : null;
+  const soon = draftAt && draftAt > new Date();
+  // A finished tournament has a winner, and "this tournament is done" throws
+  // that away. The champion IS the headline.
+  const champ = ev?.recap?.team || null;
+  const copy = {
+    registration_open:   { head: "Sign-ups are open",      sub: "Put your name in and captains can bid for you." },
+    registration_closed: { head: "Roster locked",          sub: "The draft is next. Nothing to do until then." },
+    drafting:            { head: "The auction is live",    sub: "Captains are bidding now." },
+    matches_live:        { head: "Matches are running",    sub: "Check your fixture and be in voice ten minutes before." },
+    settled: champ
+      ? { head: `${champ} win it`, sub: "Champions of " + (ev?.weekend_label || "the tournament") + "." }
+      : { head: "This tournament is done", sub: "Final standings below." },
+  }[phase] || { head: "Tournament", sub: "" };
+  const gold = phase === "settled" && champ;
+
+  return (
+    <div style={{
+      ...PANEL(gold ? "rgba(245,196,83,0.5)"
+              : phase === "drafting" ? "rgba(61,123,255,0.55)" : "rgba(120,150,220,0.2)", "22px 24px"),
+      position: "relative", clipPath: SHELL_NOTCH(16), overflow: "hidden",
+      boxShadow: gold ? "0 0 60px rgba(245,196,83,0.14)"
+               : phase === "drafting" ? "0 0 46px rgba(61,123,255,0.16)" : "none" }}>
+      {phase === "drafting" && <span aria-hidden className="volt-live-glow" />}
+      {gold && <span aria-hidden className="volt-shimmer" />}
+      <KeyArt src={gold ? ART.sageGold : phase === "drafting" ? ART.reyna : phase === "matches_live" ? ART.jett : ART.omen} width="62%" />
+      {/* Both brackets, matching the auction block — one alone reads as a
+          rendering glitch rather than a deliberate frame. */}
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 11, height: 11,
+        borderLeft: `2px solid ${gold ? "#f5c453" : "#3d7bff"}`,
+        borderTop: `2px solid ${gold ? "#f5c453" : "#3d7bff"}` }} />
+      <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 11, height: 11,
+        borderRight: `2px solid ${gold ? "#f5c453" : "#3d7bff"}`,
+        borderBottom: `2px solid ${gold ? "#f5c453" : "#3d7bff"}` }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ minWidth: "min(100%, 260px)", flex: 1 }}>
+          <div style={{ ...SEC_LABEL, fontSize: 10 }}>// {PHASE_LABEL[phase] || phase}</div>
+          <div style={{ fontSize: "clamp(22px, 3.2vw, 34px)", fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.02em", lineHeight: 1.05, marginTop: 4,
+            color: gold ? "#f5c453" : "#ecf3ff",
+            textShadow: gold ? "0 0 34px rgba(245,196,83,0.45)" : "0 0 40px rgba(61,123,255,0.25)" }}>
+            {copy.head}
+          </div>
+          <div style={{ fontSize: 13, color: "rgba(200,215,255,0.5)", marginTop: 5 }}>{copy.sub}</div>
+          {draftAt && soon && (
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5,
+              color: "#7da6ff", marginTop: 8 }}>
+              Draft {draftAt.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          )}
+          {/* A champion banner with nothing but a name is mostly air. The MVP
+              and the decider are the two facts people actually repeat. */}
+          {gold && (ev?.recap?.mvp || ev?.recap?.decidedBy) && (
+            <div style={{ display: "flex", gap: 20, marginTop: 14, flexWrap: "wrap" }}>
+              {ev.recap.mvp && (
+                <div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase",
+                    color: "rgba(200,215,255,0.35)" }}>Most valuable</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase",
+                    color: "#ecf3ff", marginTop: 2 }}>
+                    {ev.recap.mvp}
+                    {ev.recap.mvpPts && (
+                      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                        color: "rgba(200,215,255,0.4)", marginLeft: 8 }}>{ev.recap.mvpPts}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {ev.recap.decidedBy && (
+                <div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase",
+                    color: "rgba(200,215,255,0.35)" }}>Decided by</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase",
+                    color: "#ecf3ff", marginTop: 2 }}>the {ev.recap.decidedBy}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {/* The winning five, beside the headline that names them. */}
+        {gold && (() => {
+          const t = (state?.teams || []).find((x) => x.name === champ);
+          if (!t) return null;
+          const names = [
+            ...(t.captainUserId ? [(state.players || []).find((p) => p.id === t.captainUserId)] : []),
+            ...(t.roster || []).map((id) => (state.players || []).find((p) => p.id === id)),
+          ].filter(Boolean);
+          if (!names.length) return null;
+          return (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <span aria-hidden style={{ fontSize: 30, lineHeight: 1, marginRight: 4,
+                filter: "drop-shadow(0 0 10px rgba(245,196,83,0.45))", color: "#f5c453", display: "inline-flex" }}><Icon name="trophy" size={30} strokeWidth={1.5} /></span>
+              {names.slice(0, 5).map((p, i) => (
+                <span key={p.id} style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase",
+                  padding: "6px 11px", whiteSpace: "nowrap",
+                  color: i === 0 ? "#f5c453" : "rgba(236,243,255,0.82)",
+                  background: i === 0 ? "rgba(245,196,83,0.14)" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${i === 0 ? "rgba(245,196,83,0.45)" : "rgba(120,150,220,0.22)"}` }}>
+                  {i === 0 ? "★ " : ""}{p.name}
+                </span>
+              ))}
+            </div>
+          );
+        })()}
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
+          {regToggle}
+          {phase === "drafting" && (
+            <button onClick={onGo("block")} style={shellBtn("primary", { padding: "12px 20px", fontSize: 12 })}>
+              ⟁ Enter the auction →
+            </button>
+          )}
+          {phase === "matches_live" && (
+            <button onClick={onGo("bracket")} style={shellBtn("primary", { padding: "12px 20px", fontSize: 12 })}>
+              ◈ Fixtures →
+            </button>
+          )}
+          {phase === "settled" && (
+            <button onClick={onGo("leaderboard")} style={shellBtn("ghost", { padding: "12px 20px", fontSize: 12 })}>
+              ≣ Final standings →
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Neutral art for the player card. It used to be a Neon splash, which every
+// player saw whatever they main. This is built from the player's rank colour
+// alone — light, a grid, and the crest's hexagon as a watermark — so it fits
+// anyone and still changes from card to card.
+// Grid, glow and light beams behind a hero card. (`bare` used to drop a
+// hexagon ring; the ring is gone, so every card gets the same backdrop.)
+function CardArt({ hue, agent }) {
+  return (
+    <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0,
+        background: `radial-gradient(ellipse 55% 75% at 84% 22%, ${hue}33, transparent 70%),
+                     radial-gradient(ellipse 45% 55% at 100% 100%, rgba(61,123,255,0.16), transparent 70%)` }} />
+      {/* Two light beams on the diagonal the notches use. */}
+      <div style={{ position: "absolute", inset: 0,
+        background: `linear-gradient(115deg, transparent 50%, ${hue}16 56%, transparent 62%),
+                     linear-gradient(115deg, transparent 64%, ${hue}0e 68%, transparent 72%)` }} />
+      <div style={{ position: "absolute", inset: 0,
+        backgroundImage: "linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px)",
+        backgroundSize: "26px 26px",
+        maskImage: "linear-gradient(100deg, transparent 38%, #000 88%)",
+        WebkitMaskImage: "linear-gradient(100deg, transparent 38%, #000 88%)" }} />
+      {agent !== undefined && (
+        <>
+          {/* Cut to the upper body: the card is wider than it is tall, and a
+              full-length figure would shrink her to a sliver. Anchored right,
+              faded into the panel on the left and at the bottom so it sits in
+              the card rather than on it. */}
+          <img src={agentArt(agent)} alt="" style={{ position: "absolute", right: "1%", top: "-6%",
+            height: "158%", width: "auto", maxWidth: "44%", objectFit: "contain", objectPosition: "right top", opacity: 0.92,
+            filter: `drop-shadow(0 0 28px ${hue}55) saturate(1.05)`,
+            maskImage: "linear-gradient(180deg, #000 33%, transparent 50%)",
+            WebkitMaskImage: "linear-gradient(180deg, #000 33%, transparent 50%)" }} />
+          {/* Darken toward the text side so the name and chips stay legible
+              wherever the figure's arm or weapon falls behind them. */}
+          <div style={{ position: "absolute", inset: 0,
+            background: "linear-gradient(90deg, rgba(10,13,22,0.94) 34%, rgba(10,13,22,0.62) 55%, rgba(10,13,22,0.08) 78%, transparent)" }} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// Your form, oldest to newest: a line of performance score per match (ACS for
+// matches from before Valorant's switch), each point coloured by result. The
+// chips underneath say W/L without needing the key.
+function FormStrip({ games, part = "both", w = 150 }) {
+  if (!games.length) return null;
+  const h = 34, pad = 4;
+  const vals = games.map((g) => g.perf);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const x = (i) => games.length === 1 ? w / 2 : pad + (i * (w - pad * 2)) / (games.length - 1);
+  const y = (v) => hi === lo ? h / 2 : h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
+  const line = games.map((g, i) => `${x(i)},${y(g.perf)}`).join(" ");
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      {part !== "chips" && <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
+        <polyline points={line} fill="none" stroke="rgba(125,166,255,0.6)" strokeWidth="1.5"
+          strokeLinejoin="round" className="volt-radar-shape" pathLength="1" />
+        {games.map((g, i) => (
+          <circle key={i} cx={x(i)} cy={y(g.perf)} r={i === games.length - 1 ? 3.6 : 2.6}
+            fill={g.won ? "#3ddc84" : "#ff4655"}>
+            <title>{`${g.perf} ${g.unit === "ACS" ? "ACS" : "performance"} · ${g.won ? "won" : "lost"}`}</title>
+          </circle>
+        ))}
+      </svg>}
+      {part !== "line" && <div style={{ display: "flex", gap: 4 }}>
+        {games.slice(-5).map((g, i) => (
+          <span key={i} style={{ width: 20, height: 20, display: "grid", placeItems: "center",
+            fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, fontWeight: 700,
+            color: g.won ? "#3ddc84" : "#ff6b78",
+            background: g.won ? "rgba(61,220,132,0.12)" : "rgba(255,70,85,0.12)",
+            border: `1px solid ${g.won ? "rgba(61,220,132,0.35)" : "rgba(255,70,85,0.35)"}` }}>
+            {g.won ? "W" : "L"}
+          </span>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
+// The viewer's own card — the dominant cell, and the reason to open the app
+// rather than read a DM.
+//
+// Two sources, kept visibly apart: the scouting profile (tracker numbers,
+// there from signup) and this league's own match results (what the leaderboard
+// actually ranks on). The radar compares you with the league average, so it no
+// longer repeats the tiles underneath it.
+function YourCard({ profile, viewerId, myTeam, onGo }) {
+  const [lg, setLg] = useState(null);
+  useEffect(() => {
+    if (!viewerId || !HAS_SUPABASE) return;
+    let ok = true;
+    (async () => {
+      try {
+        const cid = window.__VOLT.communityId;
+        const [{ data: mrs }, { data: pp }] = await Promise.all([
+          __sb.from("match_results").select("user_id, stat_payload, team_won, created_at, points_computed").eq("community_id", cid),
+          __sb.from("player_profiles").select("kda, acs, hs, win, rank").eq("community_id", cid),
+        ]);
+        // Same "didn't actually play" rule as the leaderboard.
+        const played = (sp) => perfOf(sp) > 0 || Number(sp?.k || 0) > 0
+                             || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
+        const agg = {};
+        for (const r of mrs || []) {
+          if (!played(r.stat_payload)) continue;
+          const a = (agg[r.user_id] ||= { sum: 0, n: 0 });
+          a.sum += perfOf(r.stat_payload); a.n++;
+        }
+        const table = Object.entries(agg).map(([id, a]) => ({ id, perf: a.sum / a.n, n: a.n }))
+          .sort((x, y) => y.perf - x.perf || y.n - x.n);
+        const pos = table.findIndex((r) => r.id === viewerId);
+        const mine = (mrs || []).filter((r) => r.user_id === viewerId && played(r.stat_payload))
+          .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+          .map((r) => ({ perf: Math.round(perfOf(r.stat_payload)), unit: perfUnit(r.stat_payload), won: !!r.team_won }));
+        // League average of the same tracker stats the radar plots, so the two
+        // shapes are like for like.
+        const mean = (k) => {
+          const v = (pp || []).map((p) => Number(p[k])).filter((n) => Number.isFinite(n) && n > 0);
+          return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+        };
+        const ranks = (pp || []).map((p) => RANK_LIST.indexOf(p.rank)).filter((i) => i >= 0);
+        const avgRank = ranks.length ? RANK_LIST[Math.round(ranks.reduce((a, b) => a + b, 0) / ranks.length)] : null;
+        if (ok) setLg({
+          pos: pos >= 0 ? pos + 1 : null, of: table.length,
+          avg: pos >= 0 ? Math.round(table[pos].perf) : null,
+          played: mine.length, wins: mine.filter((g) => g.won).length,
+          best: mine.reduce((m, g) => Math.max(m, g.perf), 0),
+          points: Math.round((mrs || []).filter((r) => r.user_id === viewerId)
+            .reduce((n, r) => n + Number(r.points_computed || 0), 0)),
+          recent: mine.slice(-8),
+          compare: (pp || []).length > 2
+            ? { kda: mean("kda"), acs: mean("acs"), hs: mean("hs"), win: mean("win"), rank: avgRank } : null,
+        });
+      } catch (e) { console.error("card league stats", e); if (ok) setLg({ failed: true }); }
+    })();
+    return () => { ok = false; };
+  }, [viewerId]);
+
+  const shell = (hue, children) => (
+    <div className="volt-cell" style={{
+      ...PANEL(`${hue}55`, "18px 20px"),
+      position: "relative", overflow: "hidden",
+      display: "flex", flexDirection: "column", minHeight: 330,
+      clipPath: SHELL_NOTCH(14) }}>
+      {children}
+    </div>
+  );
+  const head = (
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+      <span style={{ ...SEC_LABEL, fontSize: 9.5 }}>// Your card</span>
+      <span style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(120,150,220,0.2), rgba(120,150,220,0))" }} />
+      <button onClick={onGo("scout")} style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
+        fontSize: 10, letterSpacing: "0.16em", textTransform: "uppercase", color: "#7da6ff",
+        background: "none", border: "none", cursor: "pointer", padding: 0 }}>Scout hub →</button>
+    </div>
+  );
+  const sub = (text) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 8px",
+      fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)",
+      fontWeight: 700 }}>
+      {text}<span style={{ flex: 1, height: 1, background: "rgba(120,150,220,0.12)" }} />
+    </div>
+  );
+
+  if (!profile) return shell("#5b8dff", <>{head}<div style={{ flex: 1, display: "flex", alignItems: "center" }}><Skeleton rows={5} /></div></>);
+
+  // A first-timer: the card they're about to get, shown as a ghost, with one
+  // clear job — set it up. Same frame, grid and rays as the real card, so the
+  // preview reads as "this, but yours".
+  if (!profile.rank) {
+    const H = "#5b8dff";
+    const ghost = "rgba(200,215,255,0.2)";
+    const GHOST_NUM = { fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 30, lineHeight: 1,
+      color: "rgba(200,215,255,0.22)" };
+    const GLBL = { fontSize: 9.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.3)", marginTop: 7 };
+    const pent = (r) => [0, 1, 2, 3, 4].map((i) => {
+      const t = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+      return `${100 + r * Math.cos(t)},${100 + r * Math.sin(t)}`;
+    }).join(" ");
+    return <div className="volt-yc" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
+      <div className="volt-cell" style={{ ...PANEL(`${H}55`, "34px 36px 30px"), position: "relative", overflow: "hidden",
+        display: "flex", flexDirection: "column", flex: 1, minHeight: 460, clipPath: SHELL_NOTCH(18) }}>
+        <CardArt hue={H} bare />
+        <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%",
+          pointerEvents: "none",
+          background: `repeating-linear-gradient(105deg, transparent 0 46px, ${H}14 46px 52px, transparent 52px 110px, ${H}0c 110px 140px)`,
+          maskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)",
+          WebkitMaskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)" }} />
+        {/* The agent, unlit: whoever they main takes this spot. */}
+        <img className="volt-yc-fig" src={agentArt(null)} alt="" aria-hidden style={{ position: "absolute", left: "79%",
+          transform: "translateX(-50%)", top: 10, height: "calc(100% + 20px)", width: "auto", maxWidth: "none",
+          pointerEvents: "none", opacity: 0.5, filter: `grayscale(1) brightness(0.32) drop-shadow(0 0 1px ${H}88)`,
+          maskImage: "linear-gradient(180deg, #000 45%, transparent 78%)",
+          WebkitMaskImage: "linear-gradient(180deg, #000 45%, transparent 78%)" }} />
+        <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12,
+          borderLeft: `2px solid ${H}`, borderTop: `2px solid ${H}` }} />
+        <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12,
+          borderRight: `2px solid ${H}`, borderBottom: `2px solid ${H}` }} />
+
+        <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
+          {/* The ask */}
+          <div style={{ fontSize: 10, letterSpacing: "0.3em", textTransform: "uppercase", color: "#7da6ff", fontWeight: 700 }}>
+            // New player</div>
+          <div style={{ fontSize: "clamp(30px, 3.3vw, 46px)", fontWeight: 700, textTransform: "uppercase", lineHeight: 0.98,
+            marginTop: 10, textShadow: `0 0 34px ${H}55` }}>
+            Build your card<br /><span style={{ color: "#7da6ff" }}>to get drafted</span></div>
+          <div style={{ fontSize: 14, lineHeight: 1.55, color: "rgba(200,215,255,0.62)", marginTop: 12, maxWidth: 440 }}>
+            Captains scout every player before they bid. No card, no bids. It takes two minutes and you only do it once.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 20 }}>
+            <button onClick={onGo("account")} className="volt-cta-pulse"
+              style={shellBtn("primary", { padding: "16px 30px", fontSize: 14, letterSpacing: "0.16em" })}>
+              Set up my card →
+            </button>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "rgba(200,215,255,0.45)" }}>
+              ~2 min · one time</span>
+          </div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 16 }}>
+            {["Rank", "Role", "Discord", "WhatsApp"].map((k) => (
+              <span key={k} style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+                padding: "5px 10px", color: "rgba(200,215,255,0.7)", border: "1px dashed rgba(125,166,255,0.35)" }}>{k}</span>
+            ))}
+            <span style={{ fontSize: 10.5, padding: "5px 4px", color: "rgba(200,215,255,0.38)" }}>+ tracker stats, optional</span>
+          </div>
+
+          {/* The preview: where each part of the card will go. */}
+          <div style={{ marginTop: "auto", paddingTop: 22, display: "flex", alignItems: "center", gap: 26, flexWrap: "wrap" }}>
+            <svg viewBox="-24 -8 248 220" width="210" height="186" aria-hidden>
+              {[80, 56, 32].map((r) => <polygon key={r} points={pent(r)} fill="none" stroke={ghost} strokeWidth="1" />)}
+              <polygon points={pent(80)} fill="none" stroke="rgba(125,166,255,0.4)" strokeWidth="1.4" strokeDasharray="5 5" />
+              {["KDA", "ACS", "HS%", "WIN%", "RANK"].map((k, i) => {
+                const t = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+                return <text key={k} x={100 + 96 * Math.cos(t)} y={104 + 96 * Math.sin(t)} textAnchor="middle"
+                  fontSize="9" fontWeight="700" fill="rgba(200,215,255,0.3)" letterSpacing="1">{k}</text>;
+              })}
+              <text x="100" y="110" textAnchor="middle" fontSize="28" fontWeight="700" fill="rgba(125,166,255,0.4)">?</text>
+            </svg>
+            <div style={{ alignSelf: "stretch", width: 1, margin: "12px 0",
+              background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.2), transparent)" }} />
+            <div style={{ display: "grid", gap: 18 }}>
+              <div><div style={GHOST_NUM}>#—</div><div style={GLBL}>League rank</div></div>
+              <div><div style={GHOST_NUM}>—</div><div style={GLBL}>Season points</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>;
+  }
+
+  const hue = RANKS[profile.rank]?.c || "#5b8dff";
+  const num = (v) => (v == null || v === "" ? null : Number(v));
+  const tiles = [
+    { v: num(profile.kda), f: (x) => String(+x.toFixed(2)), label: "KDA", col: "#00e5ff" },
+    { v: num(profile.acs), f: (x) => String(Math.round(x)), label: "ACS", col: "#ff4655" },
+    { v: num(profile.hs),  f: (x) => Math.round(x) + "%",   label: "HS",  col: "#af9aec" },
+    { v: num(profile.win), f: (x) => Math.round(x) + "%",   label: "WIN", col: "#3ddc84" },
+  ].filter((t) => t.v != null);
+  const chip = (children, col, key) => (
+    <span key={key} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px",
+      fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
+      color: col, background: `${col}14`, border: `1px solid ${col}40`, clipPath: SHELL_NOTCH(6),
+      whiteSpace: "nowrap" }}>{children}</span>
+  );
+  const peakCol = RANKS[profile.peak_rank]?.c || "#9af5c2";
+
+  // Layout from the Figma pass: identity top-left, radar beside league rank
+  // and season points, a baseline row of ACS / record, and the agent standing
+  // in the right half with the head breaking out above the card. The figure
+  // is drawn OUTSIDE the clipped panel so it can do that.
+  const art = agentArt(profile.agent);
+  // Sized by HEIGHT, so wide poses (Neon's lightning) don't shrink the body.
+  const FIG_RISE = 46;
+  const figStyle = { position: "absolute", left: "79%", transform: "translateX(-50%)", top: -FIG_RISE,
+    height: "calc(100% + 40px)", width: "auto", maxWidth: "none", pointerEvents: "none", zIndex: 2,
+    filter: `drop-shadow(0 10px 26px rgba(0,0,0,0.5)) drop-shadow(0 0 22px ${hue}40)`,
+    maskImage: "linear-gradient(180deg, #000 70%, transparent 92%)",
+    WebkitMaskImage: "linear-gradient(180deg, #000 70%, transparent 92%)" };
+  const LBL = { fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 8 };
+  const BIG = (c) => ({ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 38, lineHeight: 1, color: c });
+  return <div className="volt-yc" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
+    <div className="volt-cell" style={{ ...PANEL(`${hue}55`, "30px 34px 26px"), position: "relative", overflow: "hidden",
+      display: "flex", flexDirection: "column", flex: 1, minHeight: 460, clipPath: SHELL_NOTCH(18) }}>
+      <CardArt hue={hue} bare />
+      {/* Slow light rays sweeping behind the figure. */}
+      <span aria-hidden className="volt-rays" style={{ position: "absolute", top: "-20%", bottom: "-20%", right: "2%", width: "52%",
+        pointerEvents: "none",
+        background: `repeating-linear-gradient(105deg, transparent 0 46px, ${hue}14 46px 52px, transparent 52px 110px, ${hue}0c 110px 140px)`,
+        maskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)",
+        WebkitMaskImage: "radial-gradient(ellipse 60% 55% at 55% 45%, #000, transparent 75%)" }} />
+      <span aria-hidden className="holo-sweep" style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.3 }} />
+      <img className="volt-yc-fig" src={art} alt="" aria-hidden style={{ ...figStyle, zIndex: 0 }} />
+      {/* Notch accents: the chamfered corners get a bright edge, the square ones a bracket. */}
+      <span aria-hidden style={{ position: "absolute", left: 0, top: 0, width: 12, height: 12,
+        borderLeft: `2px solid ${hue}`, borderTop: `2px solid ${hue}` }} />
+      <span aria-hidden style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12,
+        borderRight: `2px solid ${hue}`, borderBottom: `2px solid ${hue}` }} />
+      <span aria-hidden style={{ position: "absolute", right: -1, top: 0, width: 26, height: 2, background: hue,
+        transform: "rotate(45deg)", transformOrigin: "right top", opacity: 0.8 }} />
+
+      <div className="volt-yc-body" style={{ position: "relative", display: "flex", flexDirection: "column", flex: 1 }}>
+        {/* Identity */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: "0 0 auto", width: 88, height: 88, position: "relative" }}>
+            {/* The crest is drawn at 104px; scale it about its own centre so its
+                visual middle is the box's middle. */}
+            <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%) scale(0.85)" }}>
+              <RankCrest rank={profile.rank} div={profile.rank_div} /></div>
+          </div>
+          {/* Name + role as one block, centred on the crest. The name's line
+              box is trimmed to its capitals so the block's centre is where the
+              eye sees it, not dragged up by empty ascender space. */}
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontSize: "clamp(32px, 3.4vw, 48px)", fontWeight: 700, textTransform: "uppercase",
+              lineHeight: 0.78, paddingTop: "0.06em", textShadow: `0 0 30px ${hue}44`,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.ign || profile.display_name || "You"}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: hue, marginTop: 10, lineHeight: 1 }}>
+              {profile.role || "Player"}
+              {profile.agent && <span style={{ color: "rgba(236,243,255,0.5)", fontWeight: 400 }}>{" · "}{profile.agent}</span>}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 18 }}>
+          {profile.peak_rank && chip(<>Peak {rankLabel(profile.peak_rank, profile.peak_rank_div)}</>, peakCol, "peak")}
+          {profile.weekends_won > 0 && chip(<>
+            <span style={{ filter: "drop-shadow(0 0 5px rgba(245,196,83,0.6))", color: "#f5c453", display: "inline-flex" }}><Icon name="trophy" size={15} /></span>
+            {profile.weekends_won} {profile.weekends_won === 1 ? "title" : "titles"}
+            {profile.trophy_streak > 1 ? ` · ${profile.trophy_streak} in a row` : ""}
+          </>, "#f5c453", "trophy")}
+          {myTeam && chip(<><TeamMono name={myTeam.name} hue={myTeam.hue} size={12} />{myTeam.name}</>, myTeam.hue, "team")}
+        </div>
+
+        {/* Radar | league rank + season points */}
+        <div className="volt-yc-mid" style={{ flex: 1, display: "flex", alignItems: "center", gap: 26, flexWrap: "wrap", margin: "18px 0 10px" }}>
+          <div className="volt-yc-radar" style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
+              win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
+              compare={lg?.compare || null} size={300} hue={hue} />
+            {lg?.compare && (
+              <div style={{ display: "flex", gap: 14, fontSize: 9.5, letterSpacing: "0.2em",
+                textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginTop: 2 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 14, height: 2, background: hue }} />You</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 14, height: 0, borderTop: "1.5px dashed rgba(236,243,255,0.5)" }} />League avg</span>
+              </div>
+            )}
+          </div>
+          <div className="volt-yc-div" style={{ alignSelf: "stretch", width: 1, margin: "18px 0",
+            background: "linear-gradient(180deg, transparent, rgba(120,150,220,0.28), transparent)" }} />
+          <div className="volt-yc-stats" style={{ display: "grid", gap: 28 }}>
+            {!lg && <Skeleton rows={3} />}
+            {/* Before a first league match there's no league rank or points to
+                show, so the card leads with the tracker numbers instead. */}
+            {lg && !lg.played && tiles.slice(0, 2).map((t) => (
+              <div key={t.label}>
+                <div style={BIG(t.col)}><CountUp to={t.v} format={t.f} /></div>
+                <div style={LBL}>Tracker {t.label}</div>
+              </div>
+            ))}
+            {lg && lg.played > 0 && (
+              <div>
+                <div style={BIG(lg.pos === 1 ? "#f5c453" : "#ecf3ff")}>
+                  {lg.pos ? <>#<CountUp to={lg.pos} /></> : "—"}
+                  {lg.pos && <span style={{ fontSize: 14, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> / {lg.of}</span>}
+                </div>
+                <div style={LBL}>League rank</div>
+              </div>
+            )}
+            {lg && lg.played > 0 && (
+              <div>
+                <div style={BIG("#ecf3ff")}><CountUp to={lg.points || 0} dur={1100} /></div>
+                <div style={LBL}>Season points</div>
+              </div>
+            )}
+            {lg?.best > 0 && (
+              <div>
+                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> perf</span></div>
+                <div style={LBL}>Best game</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Baseline: this league's performance score and record, form under the
+            figure. No arrow against the tracker any more: that's ACS, this isn't. */}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 40, flexWrap: "wrap" }}>
+          {lg && lg.played > 0 ? <>
+            <div>
+              <div style={BIG("#00e5ff")}>
+                <CountUp to={lg.avg} />
+              </div>
+              <div style={LBL}>Avg performance here</div>
+            </div>
+            <div>
+              <div style={BIG("#3ddc84")}>{lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}</div>
+              <div style={LBL}>Won–lost</div>
+            </div>
+            <div className="volt-yc-form" style={{ marginLeft: "auto" }}>
+              <FormStrip games={lg.recent} part="line" w={160} />
+              <div style={LBL}>Form · performance per match</div>
+            </div>
+          </> : lg && !lg.failed ? <>
+            {tiles.slice(2).map((t) => (
+              <div key={t.label}>
+                <div style={BIG(t.col)}><CountUp to={t.v} format={t.f} /></div>
+                <div style={LBL}>Tracker {t.label}</div>
+              </div>
+            ))}
+            <div style={{ marginLeft: "auto", alignSelf: "flex-end", maxWidth: 260, fontSize: 11.5, lineHeight: 1.5,
+              color: "rgba(200,215,255,0.45)", paddingBottom: 4 }}>
+              League rank, points and form appear after your first reported match.
+            </div>
+          </> : null}
+        </div>
+      </div>
+    </div>
+    {/* The head: the slice that rises above the card. It overlaps the panel
+        by 3px so the top border and the seam between the two copies never
+        show as a line through the figure. The body is drawn inside the
+        panel, behind the text. */}
+    {/* Cropped at the card's right edge, like the body inside the panel. */}
+    <div aria-hidden className="volt-yc-fig" style={{ position: "absolute", top: -FIG_RISE, left: 0, right: 0, bottom: 0,
+      overflow: "hidden", pointerEvents: "none", zIndex: 2 }}>
+      {/* No filter here: the glow belongs to the card, only the figure itself
+          breaks out above the edge. */}
+      <img src={art} alt="" style={{ ...figStyle, top: 0, height: `calc(100% - ${FIG_RISE - 40}px)`, filter: "none",
+        clipPath: `inset(0 0 calc(100% - ${FIG_RISE + 3}px) 0)` }} />
+    </div>
+  </div>;
+}
+
+function PoolGlance({ players, live }) {
+  const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
+  const left = pool.filter((p) => p.status === "pool").length;
+  const sold = pool.length - left;
+  if (!pool.length) return <Empty title="Nobody in the pool yet"
+    hint="Players appear here as their applications are approved." />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", justifyContent: "center" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 38, fontWeight: 700, lineHeight: 1,
+          color: live ? "#3ddc84" : "#7da6ff" }}><CountUp to={left} /></span>
+        <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>
+          still {live ? "on the board" : "in the pool"}
+        </span>
+      </div>
+      <Bar pct={pool.length ? (sold / pool.length) * 100 : 0} h={5}
+        color="linear-gradient(90deg,#3d7bff,#00e5ff)" style={{ marginTop: 12 }} />
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7,
+        fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5, color: "rgba(200,215,255,0.4)" }}>
+        <span>{sold} drafted</span><span>{pool.length} total</span>
+      </div>
+    </div>
+  );
+}
+
+function TeamGlance({ team, players, onOpen, slots = 0 }) {
+  const roster = (team.roster || [])
+    .map((id) => (players || []).find((p) => p.id === (typeof id === "string" ? id : id?.id)))
+    .filter(Boolean);
+  const spent = roster.reduce((n, p) => n + Number(p.soldPrice || 0), 0);
+  // The captain isn't in `roster` — they're the one who bought it — so the cell
+  // was showing four fifths of the team.
+  const cap = (players || []).find((p) => p.id === team.captainUserId)
+           || (team.captain ? { id: team.captainUserId || "cap", name: team.captain, role: null } : null);
+  const line = [...(cap ? [{ ...cap, isCap: true }] : []), ...roster];
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <TeamMono name={team.name} hue={team.hue} size={30} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, textTransform: "uppercase", color: team.hue, lineHeight: 1.05,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{team.name}</div>
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5, color: "rgba(200,215,255,0.38)" }}>
+            {fmt(spent)} spent · {fmt(team.budget || 0)} left
+          </div>
+        </div>
+      </div>
+      {/* How much of the budget went on this squad — the number alone doesn't
+          say whether that was a lot. */}
+      <Bar pct={(spent / 10000) * 100} color={`linear-gradient(90deg, ${team.hue}, ${team.hue}77)`}
+        style={{ marginTop: 10 }} />
+      <div style={{ display: "grid", gap: 5, marginTop: 10 }}>
+        {line.slice(0, 5).map((p) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <span style={{ flex: "0 0 auto", width: 30, textAlign: "center",
+              fontFamily: "'IBM Plex Mono',monospace", fontSize: 8.5, letterSpacing: "0.06em",
+              padding: "2px 0", color: p.isCap ? "#f5c453" : "rgba(200,215,255,0.5)",
+              background: p.isCap ? "rgba(245,196,83,0.14)" : "rgba(255,255,255,0.045)",
+              border: `1px solid ${p.isCap ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.16)"}` }}>
+              {p.isCap ? "CAP" : (ROLE_ABBR[p.role] || "—")}
+            </span>
+            <PName uid={p.id} onOpen={onOpen} style={{ flex: 1, minWidth: 0, overflow: "hidden",
+              textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: p.isCap ? 700 : 400,
+              color: p.isCap ? "#ecf3ff" : "rgba(236,243,255,0.82)" }}>{p.name}</PName>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
+              color: "rgba(200,215,255,0.45)" }}>
+              {p.isCap ? "captain" : (p.soldPrice ? fmt(p.soldPrice) : "")}
+            </span>
+          </div>
+        ))}
+        {/* While the draft runs, the empty seats are the point: show them. */}
+        {Array.from({ length: Math.max(0, slots - roster.length) }, (_, k) => (
+          <div key={"open" + k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <span style={{ flex: "0 0 auto", width: 30, height: 17, border: "1px dashed rgba(120,150,220,0.28)" }} />
+            <span style={{ color: "rgba(200,215,255,0.32)", fontStyle: "italic" }}>Open slot</span>
+          </div>
+        ))}
+        {!roster.length && !slots && (
+          <div style={{ fontSize: 12, color: "rgba(200,215,255,0.35)" }}>Nobody drafted yet.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const allMatches = (t) => !t ? [] : t.format === "group"
+  ? Object.values(t.matches || {}).flat().concat((t.ko || []).flat().filter((m) => !m.bye), t.semis || [], t.final ? [t.final] : [])
+  : t.format === "single" ? (t.rounds || []).flat() : (t.matches || []);
+
+function FixtureGlance({ state }) {
+  const teamOf = (id) => state.teams.find((x) => x.id === id);
+  const now = useNow(30000);
+  const every = allMatches(state?.tournament).filter((m) => m && m.teamA && m.teamB);
+  const played = every.filter((m) => m.done).length;
+  const next = every.filter((m) => !m.done)
+    .sort((a, b) => (a.scheduledAt || "~").localeCompare(b.scheduledAt || "~")).slice(0, 4);
+  if (!next.length) return <Empty title="Nothing left to play" hint="Every fixture has a result." />;
+  const isLive = (m) => m.scheduledAt && new Date(m.scheduledAt).getTime() <= now;
+  const when = (iso) => {
+    if (!iso) return "time TBA";
+    const ms = new Date(iso) - Date.now();
+    if (ms > 0 && ms < 36e5) return `in ${Math.max(1, Math.round(ms / 6e4))} min`;
+    if (ms > 0 && ms < 864e5) return `in ${Math.round(ms / 36e5)}h`;
+    return new Date(iso).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  };
+  return (
+    <div style={{ display: "grid", gap: 9 }}>
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'IBM Plex Mono',monospace",
+          fontSize: 10.5, color: "rgba(200,215,255,0.45)", marginBottom: 5 }}>
+          <span>{played} of {every.length} played</span><span>{every.length - played} to go</span>
+        </div>
+        <Bar pct={every.length ? (played / every.length) * 100 : 0} h={3} color="linear-gradient(90deg,#af9aec,#7da6ff)" />
+      </div>
+      {next.map((m, i) => {
+        const a = teamOf(m.teamA), b = teamOf(m.teamB);
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5,
+            padding: i === 0 ? "7px 9px" : "0 9px",
+            background: i === 0 ? "linear-gradient(90deg, rgba(61,123,255,0.12), transparent 80%)" : "none",
+            borderLeft: `2px solid ${i === 0 ? "#3d7bff" : "transparent"}` }}>
+            <TeamMono name={a?.name} hue={a?.hue} size={18} />
+            <span style={{ fontWeight: 700, textTransform: "uppercase", color: a?.hue }}>{a?.name || "TBD"}</span>
+            <span style={{ fontSize: 9, color: "rgba(200,215,255,0.3)", letterSpacing: "0.14em" }}>VS</span>
+            <span style={{ fontWeight: 700, textTransform: "uppercase", color: b?.hue }}>{b?.name || "TBD"}</span>
+            <TeamMono name={b?.name} hue={b?.hue} size={18} />
+            {isLive(m)
+              ? <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 9.5,
+                  fontWeight: 700, letterSpacing: "0.16em", color: "#ff6b78" }}><span className="volt-live-dot" style={{ color: "#ff4655" }} />LIVE</span>
+              : <span style={{ marginLeft: "auto", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5,
+                  color: i === 0 ? "#7da6ff" : "rgba(200,215,255,0.4)", whiteSpace: "nowrap" }}>{when(m.scheduledAt)}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// What happened, newest first, with the scoreline. Map names aren't recorded
+// against a match yet, so a map thumbnail only appears if one is — never a
+// guessed one.
+function ResultsGlance({ state }) {
+  const t = state?.tournament;
+  const teamOf = (id) => state.teams.find((x) => x.id === id);
+  const done = allMatches(t).filter((m) => m?.done && m.winner).slice(-4).reverse();
+  if (!done.length) return <Empty title="No results yet" hint="Scores land here as matches are reported." />;
+  // Scoreline from the winner's side: rounds for a single map, maps for a series.
+  const score = (m) => {
+    const ms = (m.maps || []).filter((x) => x && x.a != null && x.b != null);
+    if (!ms.length) return null;
+    const wA = m.winner === m.teamA;
+    if (ms.length === 1) return wA ? [ms[0].a, ms[0].b] : [ms[0].b, ms[0].a];
+    let a = 0, b = 0;
+    ms.forEach((x) => { if (x.a > x.b) a++; else if (x.b > x.a) b++; });
+    return wA ? [a, b] : [b, a];
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 8, height: "100%" }}>
+      {done.map((m, i) => {
+        const w = teamOf(m.winner), l = teamOf(m.winner === m.teamA ? m.teamB : m.teamA);
+        const isFinal = t?.final && t.final.id === m.id;
+        const sc = score(m);
+        const lead = i === 0;
+        return (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 10,
+            padding: lead ? "11px 12px" : "7px 12px", position: "relative",
+            background: lead ? `linear-gradient(90deg, ${w?.hue}22, rgba(10,13,22,0.4) 70%)` : "rgba(10,13,22,0.35)",
+            border: `1px solid ${lead ? (w?.hue || "#7da6ff") + "44" : "rgba(120,150,220,0.1)"}`,
+            animation: `voltRise .4s ${i * 60}ms backwards` }}>
+            <span aria-hidden style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: w?.hue }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <TeamMono name={w?.name} hue={w?.hue} size={lead ? 22 : 17} />
+              <span style={{ color: w?.hue, fontWeight: 700, textTransform: "uppercase", fontSize: lead ? 14 : 12.5,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w?.name}</span>
+            </div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: lead ? 18 : 14,
+              whiteSpace: "nowrap", textAlign: "center" }}>
+              {sc ? <><span style={{ color: "#ecf3ff" }}>{sc[0]}</span>
+                <span style={{ color: "rgba(200,215,255,0.3)", margin: "0 5px" }}>–</span>
+                <span style={{ color: "rgba(200,215,255,0.45)" }}>{sc[1]}</span></>
+                : <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", letterSpacing: "0.14em" }}>WON</span>}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, minWidth: 0 }}>
+              {isFinal && <span style={{ fontSize: 8.5, letterSpacing: "0.16em", fontWeight: 700,
+                color: "#f5c453", border: "1px solid rgba(245,196,83,0.4)", padding: "1px 5px" }}>FINAL</span>}
+              <span style={{ color: "rgba(200,215,255,0.4)", fontSize: lead ? 13 : 12, textTransform: "uppercase",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l?.name}</span>
+              <span style={{ opacity: 0.45 }}><TeamMono name={l?.name} hue={l?.hue} size={lead ? 18 : 15} /></span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Top players by average combat score, matching the Leaderboard page's default
+// ranking so the summary and the full table can never disagree. If you're not
+// in the top six, your own row is pinned underneath — otherwise the cell only
+// means something to six people.
+function LeaderGlance({ viewerId, onOpen }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let ok = true;
+    (async () => {
+      try {
+        const cid = window.__VOLT.communityId;
+        const { data: mrs } = await __sb.from("match_results")
+          .select("user_id, stat_payload").eq("community_id", cid);
+        const ids = [...new Set((mrs || []).map((r) => r.user_id))];
+        if (!ids.length) { if (ok) setRows([]); return; }
+        const [{ data: us }, { data: pp }] = await Promise.all([
+          __sb.from("users").select("id, display_name").in("id", ids),
+          __sb.from("player_profiles").select("user_id, rank, rank_div").eq("community_id", cid),
+        ]);
+        const name = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
+        const prof = Object.fromEntries((pp || []).map((p) => [p.user_id, p]));
+        // A row of all zeros is someone rostered who didn't play; averaging it
+        // in halves their score.
+        const agg = {};
+        for (const r of mrs || []) {
+          const sp = r.stat_payload || {};
+          const played = perfOf(sp) > 0 || Number(sp.k || 0) > 0
+                      || Number(sp.a || 0) > 0 || Number(sp.d || 0) > 0;
+          if (!played) continue;
+          const a = (agg[r.user_id] ||= { sum: 0, n: 0 });
+          a.sum += perfOf(sp); a.n++;
+        }
+        const out = Object.entries(agg)
+          .map(([id, a]) => ({ id, name: name[id] || "Player", perf: Math.round(a.sum / a.n), n: a.n,
+            rank: prof[id]?.rank, div: prof[id]?.rank_div }))
+          .sort((x, y) => y.perf - x.perf || y.n - x.n);
+        if (ok) setRows(out);
+      } catch (e) { console.error("leader glance", e); if (ok) setRows([]); }
+    })();
+    return () => { ok = false; };
+  }, []);
+
+  if (!rows) return <Skeleton rows={6} />;
+  if (!rows.length) return <Empty title="No matches yet" hint="Once a result is reported, the best performers rank here." />;
+  const top = rows[0].perf || 1;
+  const pos = rows.findIndex((r) => r.id === viewerId);
+  const shown = rows.slice(0, 5).map((r, i) => ({ ...r, i }));
+  if (pos >= 5) shown.push({ ...rows[pos], i: pos, pinned: true });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, height: "100%", paddingTop: 6 }}>
+      {shown.map((r) => {
+        const me = r.id === viewerId;
+        const lead = r.i === 0;
+        return (
+          <div key={r.id} style={{
+            display: "flex", alignItems: "center", gap: 9,
+            padding: lead || r.pinned ? "7px 9px" : "1px 9px",
+            marginTop: r.pinned ? 2 : 0,
+            borderTop: r.pinned ? "1px dashed rgba(125,166,255,0.25)" : "none",
+            paddingTop: r.pinned ? 8 : undefined,
+            background: lead ? "linear-gradient(90deg, rgba(245,196,83,0.13), transparent 70%)"
+                      : me ? "linear-gradient(90deg, rgba(61,123,255,0.14), transparent 70%)" : "none",
+            borderLeft: lead ? "2px solid #f5c453" : me ? "2px solid #7da6ff" : "2px solid transparent" }}>
+            {r.pinned
+              ? <span style={{ flex: "0 0 auto", minWidth: 19, textAlign: "center", fontFamily: "'IBM Plex Mono',monospace",
+                  fontSize: 10, fontWeight: 700, color: "#7da6ff" }}>{r.i + 1}</span>
+              : <Pip i={r.i} />}
+            {r.rank && <RankBadge rank={r.rank} div={r.div} size="sm" />}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <PName uid={r.id} onOpen={onOpen} style={{ display: "block", fontWeight: 700, textTransform: "uppercase",
+                fontSize: lead ? 15 : 12.5, lineHeight: 1.15,
+                color: lead ? "#f5c453" : me ? "#7da6ff" : "rgba(236,243,255,0.8)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.name}{r.pinned ? "  · you" : ""}
+              </PName>
+              <Bar pct={(r.perf / top) * 100} h={lead ? 4 : 2.5} i={r.pinned ? 5 : r.i}
+                color={lead ? "linear-gradient(90deg,#f5c453,#ffdf9a)" : me ? "#7da6ff" : "#00e5ff"}
+                opacity={lead || me ? 1 : 0.45} style={{ marginTop: 4 }} />
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
+                fontSize: lead ? 19 : 13, lineHeight: 1,
+                color: lead ? "#f5c453" : "#00e5ff" }}>
+                {lead ? <CountUp to={r.perf} /> : r.perf}
+              </span>
+              <span style={{ fontSize: 8, letterSpacing: "0.16em", color: "rgba(200,215,255,0.28)" }}>PERF</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Who calls matches best: one feature, then the field.
+function PredictGlance({ viewerId, onOpen }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let ok = true;
+    __sb.rpc("volt_pred_standings", { p_community: window.__VOLT.communityId })
+      .then(({ data }) => ok && setRows(Array.isArray(data) ? data.slice(0, 6) : []))
+      .catch(() => ok && setRows([]));
+    return () => { ok = false; };
+  }, []);
+  if (!rows) return <Skeleton rows={5} />;
+  if (!rows.length) return <Empty title="No calls scored yet"
+    hint="Anyone in the server can predict a match before kick-off. Correct calls rank here." />;
+  const [first, ...rest] = rows;
+  const meFirst = first.userId === viewerId;
+  return (
+    <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
+      <FeatureTile
+        label="Sharpest caller"
+        value={<CountUp to={first.pct} format={(v) => Math.round(v) + "%"} />}
+        name={<PName uid={first.userId} onOpen={onOpen}>{first.name}</PName>}
+        sub={`${first.hit} of ${first.total} called`}
+        hue={meFirst ? "#7da6ff" : "#f5c453"} />
+      <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column",
+        justifyContent: "center", gap: 10, minWidth: 0 }}>
+        {rest.map((r, i) => {
+          const me = r.userId === viewerId;
+          return (
+            <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+              <Pip i={i + 1} />
+              <PName uid={r.userId} onOpen={onOpen} style={{ flex: 1, minWidth: 0, textTransform: "uppercase", fontWeight: 600,
+                color: me ? "#7da6ff" : "rgba(236,243,255,0.78)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</PName>
+              <Bar pct={r.pct} i={i} color={me ? "#7da6ff" : "#00e5ff"} opacity={0.75} style={{ flex: "0 0 68px" }} />
+              <span style={{ flex: "0 0 52px", textAlign: "right",
+                fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
+                color: "rgba(200,215,255,0.5)" }}>{r.hit}/{r.total}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const MONO = "'IBM Plex Mono',monospace";
+
+const DIM = "rgba(200,215,255,0.42)";
+
+const TINY = { fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: DIM };
+
+// A clock that re-renders the cell it's in. One interval per mounted cell —
+// only countdown cells use it.
+function useNow(ms = 1000) {
+  const [n, setN] = useState(() => voltNow());
+  useEffect(() => { const t = setInterval(() => setN(voltNow()), ms); return () => clearInterval(t); }, [ms]);
+  return n;
+}
+
+const relAgo = (ts, now) => {
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+};
+
+const relIn = (ms) => {
+  if (ms <= 0) return "now";
+  const m = Math.round(ms / 6e4);
+  if (m < 60) return `in ${Math.max(1, m)} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `in ${h}h ${m % 60 ? `${m % 60}m` : ""}`.trim();
+  return `in ${Math.round(h / 24)}d`;
+};
+
+const whenLabel = (iso) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+const dayLabel = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "short" }) : null;
+
+// Big segmented countdown: DD HH MM SS, with the leading zero segments dropped.
+function Segments({ ms, hue = "#7da6ff" }) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const parts = [
+    { v: Math.floor(t / 86400), k: "days" },
+    { v: Math.floor((t % 86400) / 3600), k: "hrs" },
+    { v: Math.floor((t % 3600) / 60), k: "min" },
+    { v: t % 60, k: "sec" },
+  ];
+  const shown = parts[0].v ? parts : parts.slice(1);
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {shown.map((p, i) => (
+        <div key={p.k} style={{ flex: 1, minWidth: 0, padding: "9px 4px 7px", textAlign: "center",
+          background: i === shown.length - 1 ? `${hue}10` : "rgba(10,13,22,0.6)",
+          border: `1px solid ${i === 0 ? hue + "55" : "rgba(120,150,220,0.16)"}`, clipPath: SHELL_NOTCH(7) }}>
+          <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 24, lineHeight: 1,
+            color: i === 0 ? hue : "#ecf3ff", fontVariantNumeric: "tabular-nums" }}>
+            {String(p.v).padStart(2, "0")}
+          </div>
+          <div style={{ ...TINY, fontSize: 8, marginTop: 5 }}>{p.k}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Countdown to whatever happens next before the draft ──────────────────
+function DraftClock({ ev, phase, players, teams }) {
+  const now = useNow(1000);
+  const closes = ev?.reg_closes ? new Date(ev.reg_closes).getTime() : null;
+  const draft = ev?.draft_at ? new Date(ev.draft_at).getTime() : null;
+  const useClose = phase === "registration_open" && closes && closes > now;
+  const target = useClose ? closes : draft;
+  const label = useClose ? "Sign-ups close in" : "Draft starts in";
+  const dates = [
+    draft && `Draft ${whenLabel(ev.draft_at)}`,
+    ev?.starts_on && `Matches ${dayLabel(ev.starts_on)}${ev?.ends_on && ev.ends_on !== ev.starts_on ? `–${dayLabel(ev.ends_on)}` : ""}`,
+  ].filter(Boolean);
+  const nTeams = (teams || []).length || (players || []).filter((p) => p.isCaptain).length;
+  const facts = [
+    { k: "Teams", v: nTeams || "—" },
+    { k: "Per team", v: 5 },
+    { k: "Budget", v: "$10k" },
+  ];
+  const factRow = (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+      {facts.map((f) => (
+        <div key={f.k} style={{ padding: "8px 10px", background: "rgba(10,13,22,0.5)", border: "1px solid rgba(120,150,220,0.14)" }}>
+          <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 17, lineHeight: 1, color: "#ecf3ff" }}>{f.v}</div>
+          <div style={{ ...TINY, fontSize: 8, marginTop: 5 }}>{f.k}</div>
+        </div>
+      ))}
+    </div>
+  );
+  if (!target) return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10 }}>
+      <div style={{ fontSize: 13, color: DIM }}>Draft time not set yet. It shows here the moment the host picks one.</div>
+      {factRow}
+    </div>
+  );
+  const left = target - now;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ ...TINY, color: "#7da6ff" }}>{left > 0 ? label : "Draft is due"}</span>
+        {left <= 0 && <span className="volt-live-dot" style={{ color: "#3ddc84" }} />}
+      </div>
+      {left > 0
+        ? <Segments ms={left} hue={left < 36e5 ? "#3ddc84" : "#7da6ff"} />
+        : <div style={{ fontSize: 22, fontWeight: 700, textTransform: "uppercase", color: "#3ddc84" }}>Any minute now</div>}
+      {factRow}
+      {!!dates.length && (
+        <div style={{ fontFamily: MONO, fontSize: 10.5, color: "rgba(200,215,255,0.45)", lineHeight: 1.6 }}>
+          {dates.map((d) => <div key={d}>{d}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Your entry: the steps that decide whether you're in the draft ────────
+function EntryGlance({ reg, profile, phase, ev, onGo, toggle }) {
+  const now = useNow(60000);
+  const approved = reg && (reg.status || "approved") === "approved";
+  const declined = reg && (reg.status === "rejected" || reg.status === "declined");
+  const asked = ev?.availability_check_at && new Date(ev.availability_check_at).getTime() <= now;
+  const steps = [
+    { k: "Signed up", ok: !!reg,
+      note: reg ? (reg.is_captain ? "as a captain" : null)
+        : phase === "registration_open" ? (toggle ? "Flip the switch above" : "Sign-ups are open") : "Sign-ups have closed" },
+    { k: "Approved by the host", ok: approved, bad: declined,
+      note: !reg ? null : declined ? "Not this time" : approved ? null : "Waiting on the host" },
+    { k: "Card complete", ok: !!(profile?.rank && profile?.role),
+      note: profile?.rank && profile?.role ? null : "Add your rank and role", go: "account" },
+    { k: "Discord linked", ok: !!(profile?.linked || profile?.discord),
+      note: profile?.linked || profile?.discord ? null : "So captains can reach you", go: "account" },
+    { k: "Available on the day", ok: !!reg?.availability_confirmed,
+      note: reg?.availability_confirmed ? null : asked ? "Confirm in Discord" : "We'll ask before the draft",
+      soft: !asked },
+  ];
+  const done = steps.filter((s) => s.ok).length;
+  const allIn = done === steps.length;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 9, height: "100%" }}>
+      {/* The sign-up switch lives here, where the steps it starts are. */}
+      {toggle && (
+        <div onClick={(e) => e.stopPropagation()} style={{ padding: "11px 13px", marginBottom: 4,
+          background: reg ? "rgba(10,13,22,0.55)" : "linear-gradient(90deg, rgba(61,220,132,0.12), rgba(10,13,22,0.55) 80%)",
+          border: `1px solid ${reg ? "rgba(120,150,220,0.16)" : "rgba(61,220,132,0.4)"}`, clipPath: SHELL_NOTCH(8) }}>
+          {toggle}
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 26, lineHeight: 1,
+          color: allIn ? "#3ddc84" : "#ecf3ff" }}>{done}<span style={{ color: "rgba(200,215,255,0.35)", fontSize: 15 }}>/{steps.length}</span></span>
+        <span style={{ fontSize: 12, color: allIn ? "#3ddc84" : "rgba(200,215,255,0.5)" }}>
+          {allIn ? "You're in. See you at the draft." : `${steps.length - done} ${steps.length - done === 1 ? "step" : "steps"} left`}
+        </span>
+      </div>
+      <Bar pct={(done / steps.length) * 100} h={4}
+        color={allIn ? "linear-gradient(90deg,#3ddc84,#9af5c2)" : "linear-gradient(90deg,#3d7bff,#00e5ff)"} />
+      <div style={{ display: "grid", gap: 6, marginTop: 2 }}>
+        {steps.map((s, i) => {
+          const col = s.ok ? "#3ddc84" : s.bad ? "#ff6b78" : s.soft ? "rgba(200,215,255,0.35)" : "#f5c453";
+          return (
+            <div key={s.k} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5,
+              animation: `voltRise .4s ${i * 60}ms backwards` }}>
+              <span style={{ flex: "0 0 auto", width: 17, height: 17, position: "relative", display: "grid", placeItems: "center" }}>
+                <svg viewBox="0 0 20 20" width="17" height="17" style={{ position: "absolute", inset: 0 }}>
+                  <polygon points="10,1 18,5.5 18,14.5 10,19 2,14.5 2,5.5" fill={s.ok ? "#3ddc84" : "none"}
+                    stroke={col} strokeWidth="1.4" strokeDasharray={s.soft ? "2.5 2" : undefined} />
+                </svg>
+                <span style={{ position: "relative", fontSize: 10, fontWeight: 700, color: s.ok ? "#0a0d18" : col }}>
+                  {s.ok ? "✓" : s.bad ? "✕" : ""}</span>
+              </span>
+              <span style={{ flex: 1, minWidth: 0, color: s.ok ? "rgba(236,243,255,0.62)" : "#ecf3ff" }}>{s.k}</span>
+              {s.note && (s.go && !s.ok
+                ? <button onClick={(e) => { e.stopPropagation(); onGo(s.go)(); }} style={{ fontSize: 10.5,
+                    fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7da6ff",
+                    background: "none", border: "none", padding: 0, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    {s.note} →</button>
+                : <span style={{ fontSize: 10.5, color: col === "#3ddc84" ? DIM : col, whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis", maxWidth: "52%" }}>{s.note}</span>)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Hosts don't sign up, so their version of "Your entry" is the queue.
+function HostQueueGlance({ pending, players }) {
+  const pool = (players || []).filter((p) => !p.isCaptain);
+  const caps = (players || []).filter((p) => p.isCaptain);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 38, lineHeight: 1,
+          color: pending ? "#f5c453" : "#3ddc84" }}><CountUp to={pending || 0} /></span>
+        <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>
+          {pending ? (pending === 1 ? "application to review" : "applications to review") : "nothing waiting on you"}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 18, fontFamily: MONO, fontSize: 12 }}>
+        <span><b style={{ color: "#ecf3ff" }}>{pool.length}</b> <span style={{ color: DIM }}>players</span></span>
+        <span><b style={{ color: "#f5c453" }}>{caps.length}</b> <span style={{ color: DIM }}>captains</span></span>
+      </div>
+    </div>
+  );
+}
+
+// ── Last champions ────────────────────────────────────────────────────────
+function LastChampGlance({ currentId }) {
+  const [row, setRow] = useState(undefined);
+  useEffect(() => {
+    if (!HAS_SUPABASE) { setRow(null); return; }
+    let ok = true;
+    __sb.from("events").select("id, weekend_label, recap, created_at")
+      .eq("community_id", window.__VOLT.communityId).not("recap", "is", null)
+      .order("created_at", { ascending: false }).limit(3)
+      .then(({ data, error }) => {
+        if (!ok) return;
+        if (error) { console.error("last champs", error); setRow(null); return; }
+        setRow((data || []).find((e) => e.id !== currentId && e.recap?.team) || null);
+      });
+    return () => { ok = false; };
+  }, [currentId]);
+  if (row === undefined) return <Skeleton rows={3} />;
+  if (!row) return <Empty rows={1} shape="block" title="No champion yet" hint="The winner of each tournament is listed here." />;
+  const r = row.recap;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 10,
+      position: "relative" }}>
+      <span aria-hidden className="volt-shimmer" />
+      <div style={{ ...TINY, color: "rgba(245,196,83,0.7)" }}>{row.weekend_label || "Last tournament"}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+        <TeamMono name={r.team} hue="#f5c453" size={34} />
+        <div style={{ fontSize: 26, fontWeight: 700, textTransform: "uppercase", lineHeight: 1,
+          color: "#f5c453", textShadow: "0 0 26px rgba(245,196,83,0.35)",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.team}</div>
+      </div>
+      {r.mvp && (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ ...TINY, fontSize: 8.5 }}>MVP</div>
+            <div style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", marginTop: 3 }}>
+              {r.mvp} <span style={{ fontFamily: MONO, fontSize: 11, color: DIM, fontWeight: 400 }}>{r.mvpPts}</span></div>
+          </div>
+          {r.decidedBy && (
+            <div>
+              <div style={{ ...TINY, fontSize: 8.5 }}>Decided by</div>
+              <div style={{ fontSize: 14, fontWeight: 700, textTransform: "uppercase", marginTop: 3 }}>
+                {r.decidedBy === "final" ? "The final" : r.decidedBy}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── The pool, broken down: how many, what roles, what ranks ──────────────
+function PoolBreakdown({ players, me, viewerId }) {
+  const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false);
+  const caps = (players || []).filter((p) => p.isCaptain).length;
+  if (!pool.length) return <Empty title="Nobody in the pool yet"
+    hint="Approved sign-ups are listed here." />;
+  const roles = ROLES.map((r) => ({ r, n: pool.filter((p) => (p.role || "Flex") === r).length }));
+  const maxRole = Math.max(1, ...roles.map((x) => x.n));
+  const ranks = RANK_LIST.map((r) => ({ r, n: pool.filter((p) => p.rank === r).length }));
+  const maxRank = Math.max(1, ...ranks.map((x) => x.n));
+  const top = [...ranks].reverse().find((x) => x.n);
+  // Your role's competition: the question a player actually has here.
+  const myRole = me?.role;
+  const score = (p) => RANK_LIST.indexOf(p.rank) * 10 + Number(p.rankDiv ?? p.rank_div ?? 0);
+  const rivals = myRole ? pool.filter((p) => (p.role || "Flex") === myRole) : [];
+  const meIn = rivals.find((p) => p.id === viewerId);
+  const meScore = meIn ? score(meIn) : me?.rank ? score({ rank: me.rank, rankDiv: me.rank_div }) : null;
+  const place = meScore != null ? rivals.filter((p) => p.id !== viewerId && score(p) > meScore).length + 1 : null;
+  const others = rivals.filter((p) => p.id !== viewerId).length;
+  const ord = (n) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
+    {myRole && (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "9px 12px", fontSize: 13,
+        background: "linear-gradient(90deg, rgba(61,123,255,0.14), transparent 85%)", borderLeft: "2px solid #7da6ff" }}>
+        <span style={{ color: "#7da6ff", fontSize: 11 }}>{ROLE_GLYPH[myRole] || "◆"}</span>
+        <span><b style={{ fontFamily: MONO, color: "#ecf3ff" }}>{others}</b>{" "}
+          <span style={{ color: "rgba(236,243,255,0.75)" }}>other {myRole}{others === 1 ? "" : "s"} signed up</span></span>
+        {place && <span style={{ color: DIM }}>·</span>}
+        {place && <span style={{ color: "rgba(236,243,255,0.75)" }}>
+          {meIn ? "you're" : "you'd be"} the <b style={{ color: place === 1 ? "#f5c453" : "#7da6ff" }}>
+            {place === 1 ? "highest" : `${ord(place)} highest`}</b> ranked</span>}
+      </div>
+    )}
+    <div style={{ display: "flex", gap: 20, flex: 1, flexWrap: "wrap", alignItems: "stretch" }}>
+      <FeatureTile label="Signed up"
+        value={<CountUp to={pool.length} />}
+        name={`${caps} ${caps === 1 ? "captain" : "captains"}`}
+        sub={top ? `Highest: ${top.n} ${top.r}` : null}
+        hue="#7da6ff" />
+      <div style={{ flex: "1 1 170px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 7 }}>
+        <div style={{ ...TINY, marginBottom: 2 }}>By role</div>
+        {roles.map((x, i) => (
+          <div key={x.r} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+            <span style={{ flex: "0 0 72px", color: "rgba(236,243,255,0.75)" }}>
+              <span style={{ color: "#7da6ff", marginRight: 5, fontSize: 9 }}>{ROLE_GLYPH[x.r]}</span>{x.r}</span>
+            <div style={{ flex: 1 }}><Bar pct={(x.n / maxRole) * 100} h={6} i={i}
+              color="linear-gradient(90deg,#3d7bff,#00e5ff)" opacity={x.n ? 1 : 0.2} /></div>
+            <span style={{ flex: "0 0 18px", textAlign: "right", fontFamily: MONO, fontSize: 11, color: "#ecf3ff" }}>{x.n}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ flex: "1 1 200px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <div style={{ ...TINY, marginBottom: 8 }}>By rank</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 78 }}>
+          {ranks.map((x, i) => (
+            <div key={x.r} title={`${x.r}: ${x.n}`} style={{ flex: 1, display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "flex-end", height: "100%", gap: 3 }}>
+              {x.n > 0 && <span style={{ fontFamily: MONO, fontSize: 9.5, color: RANKS[x.r].c }}>{x.n}</span>}
+              <div className="volt-col" style={{ width: "100%", height: `${Math.max(x.n ? 10 : 3, (x.n / maxRank) * 100)}%`,
+                background: x.n ? `linear-gradient(180deg, ${RANKS[x.r].c}, ${RANKS[x.r].c}55)` : "rgba(255,255,255,0.06)",
+                "--d": `${160 + i * 50}ms` }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
+          {ranks.map((x) => (
+            <span key={x.r} style={{ flex: 1, textAlign: "center", fontSize: 9, fontWeight: 700,
+              color: x.n ? RANKS[x.r].c : "rgba(200,215,255,0.25)" }}>{x.r === "Radiant" ? "R" : x.r[0]}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+    </div>
+  );
+}
+
+// ── Captains: who's buying ────────────────────────────────────────────────
+function CaptainsGlance({ players, teams, onOpen }) {
+  const caps = (players || []).filter((p) => p.isCaptain);
+  if (!caps.length) return <Empty rows={4} title="No captains yet"
+    hint="The host picks captains from sign-ups before the draft." />;
+  const teamOf = (id) => (teams || []).find((t) => t.captainUserId === id);
+  return (
+    <div style={{ display: "grid", gap: 7 }}>
+      {caps.slice(0, 8).map((p, i) => {
+        const t = teamOf(p.id);
+        return (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5,
+            animation: `voltRise .4s ${i * 50}ms backwards` }}>
+            <TeamMono name={t?.name || p.name} hue={t?.hue || RANKS[p.rank]?.c} size={18} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <PName uid={p.id} onOpen={onOpen} style={{ display: "block", fontWeight: 700, overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</PName>
+              {t && <div style={{ fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase",
+                color: t.hue, marginTop: 1 }}>{t.name}</div>}
+            </div>
+            <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+          </div>
+        );
+      })}
+      <div style={{ fontFamily: MONO, fontSize: 10.5, color: "rgba(200,215,255,0.38)", marginTop: 2 }}>
+        {caps.length} × $10,000 to spend
+      </div>
+    </div>
+  );
+}
+
+// ── Scout list: the top of the pool, once sign-ups are locked ─────────────
+function ScoutGlance({ players, onOpen }) {
+  const score = (p) => RANK_LIST.indexOf(p.rank) * 10 + Number(p.rankDiv || 0);
+  const pool = (players || []).filter((p) => !p.isCaptain && p.poolEligible !== false)
+    .sort((a, b) => score(b) - score(a) || Number(b.acs || 0) - Number(a.acs || 0)).slice(0, 6);
+  if (!pool.length) return <Empty title="Nobody in the pool" hint="Approved players appear here." />;
+  const [first, ...rest] = pool;
+  return (
+    <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
+      <FeatureTile label="Top of the pool"
+        value={<span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          <RankBadge rank={first.rank} div={first.rankDiv} size="md" />
+          <span style={{ fontSize: "0.62em" }}>{rankLabel(first.rank, first.rankDiv)}</span></span>}
+        name={<PName uid={first.id} onOpen={onOpen}>{first.name}</PName>}
+        sub={[first.role, first.agent !== "—" && first.agent, first.acs && `${first.acs} ACS`].filter(Boolean).join(" · ")}
+        hue={RANKS[first.rank]?.c || "#7da6ff"} />
+      <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 13, minWidth: 0 }}>
+        {rest.map((p, i) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+            <Pip i={i + 1} />
+            <RankBadge rank={p.rank} div={p.rankDiv} size="sm" />
+            <PName uid={p.id} onOpen={onOpen} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+              whiteSpace: "nowrap", color: "rgba(236,243,255,0.85)" }}>{p.name}</PName>
+            <span style={{ flex: "0 0 34px", fontFamily: MONO, fontSize: 9, color: DIM, letterSpacing: "0.06em" }}>
+              {ROLE_ABBR[p.role] || "FLX"}</span>
+            <span style={{ flex: "0 0 52px", textAlign: "right", fontFamily: MONO, fontSize: 12, color: "#ff8f9a" }}>
+              {p.acs ? `${p.acs}` : "—"}<span style={{ fontSize: 8.5, color: DIM }}> ACS</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── On the block: the lot being bid on right now ─────────────────────────
+function BlockGlance({ state, onOpen }) {
+  const block = state?.block;
+  const p = block ? (state.players || []).find((x) => x.id === block.playerId) : null;
+  const leader = block?.leaderId ? (state.teams || []).find((t) => t.id === block.leaderId) : null;
+  const pool = (state?.players || []).filter((x) => !x.isCaptain && x.poolEligible !== false);
+  const sold = pool.filter((x) => x.status === "sold").length;
+  const bids = (state?.bidHistory || []).length;
+  const hue = p ? (RANKS[p.rank]?.c || "#7da6ff") : "#7da6ff";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 10 }}>
+      {p ? (
+        <div key={p.id} style={{ animation: "voltRise .45s backwards", display: "grid", gap: 9 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <RankBadge rank={p.rank} div={p.rankDiv} size="md" />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <PName uid={p.id} onOpen={onOpen} style={{ display: "block", fontSize: 20, fontWeight: 700,
+                textTransform: "uppercase", lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis",
+                whiteSpace: "nowrap" }}>{p.name}</PName>
+              <div style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: hue, marginTop: 4 }}>
+                {p.role}{p.agent && p.agent !== "—" ? <span style={{ color: DIM }}> · {p.agent}</span> : null}</div>
+            </div>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 9.5, fontWeight: 700,
+              letterSpacing: "0.18em", color: "#ff6b78" }}><span className="volt-live-dot" style={{ color: "#ff4655" }} />LIVE</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 12, padding: "10px 12px",
+            background: "linear-gradient(90deg, rgba(61,220,132,0.1), transparent 80%)", borderLeft: "2px solid #3ddc84" }}>
+            <div>
+              <div style={{ ...TINY, fontSize: 8.5 }}>{leader ? "Top bid" : "Opening at"}</div>
+              <div key={block.currentBid} style={{ fontFamily: MONO, fontWeight: 700, fontSize: 28, lineHeight: 1,
+                color: "#3ddc84", marginTop: 4, animation: "bidpop .4s" }}>{fmt(block.currentBid)}</div>
+            </div>
+            <div style={{ marginLeft: "auto", textAlign: "right", minWidth: 0 }}>
+              {leader
+                ? <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700,
+                    textTransform: "uppercase", color: leader.hue }}><TeamMono name={leader.name} hue={leader.hue} size={16} />{leader.name}</div>
+                : <div style={{ fontSize: 12, color: DIM }}>No bids yet</div>}
+              <div style={{ fontFamily: MONO, fontSize: 10, color: DIM, marginTop: 4 }}>{bids} {bids === 1 ? "bid" : "bids"}</div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12 }}>
+          <span className="volt-spin" style={{ width: 34, height: 34, flex: "0 0 auto", border: "2px solid rgba(125,166,255,0.2)",
+            borderTopColor: "#7da6ff", borderRadius: "50%" }} />
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, textTransform: "uppercase" }}>
+              {sold >= pool.length && pool.length ? "Board cleared" : "Next spin coming up"}</div>
+            <div style={{ fontSize: 11.5, color: DIM, marginTop: 3 }}>
+              {sold >= pool.length && pool.length ? "Every player has a team." : "The wheel picks who goes up next."}</div>
+          </div>
+        </div>
+      )}
+      <div style={{ marginTop: "auto" }}>
+        <Bar pct={pool.length ? (sold / pool.length) * 100 : 0} h={4} color="linear-gradient(90deg,#3d7bff,#00e5ff)" />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: MONO,
+          fontSize: 10.5, color: "rgba(200,215,255,0.4)" }}>
+          <span>{sold} drafted</span><span>{pool.length - sold} left</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Sales feed: the last few hammers ──────────────────────────────────────
+function SalesGlance({ state, onOpen }) {
+  const now = useNow(30000);
+  const sales = (state?.recentSales || []).slice(0, 5);
+  if (!sales.length) return <Empty title="No sales yet" hint="Sales show up here as players are sold." />;
+  const teamOf = (id) => (state.teams || []).find((t) => t.id === id);
+  return (
+    <div style={{ display: "grid", gap: 7 }}>
+      {sales.map((s, i) => {
+        const t = teamOf(s.teamId);
+        return (
+          <div key={`${s.playerId}-${s.ts}`} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5,
+            padding: i === 0 ? "7px 9px" : "0 9px",
+            background: i === 0 ? `linear-gradient(90deg, ${t?.hue || "#3d7bff"}22, transparent 80%)` : "none",
+            borderLeft: `2px solid ${i === 0 ? (t?.hue || "#3d7bff") : "transparent"}`,
+            animation: i === 0 ? "voltRise .45s backwards" : undefined }}>
+            <TeamMono name={t?.name} hue={t?.hue} size={17} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <PName uid={s.playerId} onOpen={onOpen} style={{ display: "block", fontWeight: i === 0 ? 700 : 400,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</PName>
+              {i === 0 && <div style={{ fontSize: 10, color: DIM, marginTop: 1 }}>
+                to <span style={{ color: t?.hue }}>{t?.name || "?"}</span>{s.bidCount ? ` · ${s.bidCount} bids` : ""}</div>}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: MONO, fontSize: 12.5, color: "#3ddc84" }}>{fmt(s.price)}</div>
+              <div style={{ fontFamily: MONO, fontSize: 9, color: "rgba(200,215,255,0.32)" }}>{s.ts ? relAgo(s.ts, now) : ""}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Captains' purses: who can still afford what ──────────────────────────
+// A glance, so it stops at a handful of teams (a 40-team league used to list
+// all 40 and stretch the whole dashboard row). Richest first, and the viewer's
+// own team is always in the list.
+const PURSE_ROWS = 6;
+
+function PursesGlance({ state, slots = 4, mineId, onAll }) {
+  const all = [...(state?.teams || [])].sort((a, b) => (b.budget || 0) - (a.budget || 0));
+  if (!all.length) return <Empty title="No teams yet" hint="Teams appear when the host builds them from the captains." />;
+  let teams = all.slice(0, PURSE_ROWS);
+  const mine = mineId && all.find((t) => t.id === mineId);
+  if (mine && !teams.includes(mine)) teams = [...teams.slice(0, PURSE_ROWS - 1), mine];
+  const more = all.length - teams.length;
+  return (
+    <div style={{ display: "grid", gap: 9 }}>
+      {teams.map((t, i) => {
+        const n = (t.roster || []).length;
+        return (
+          <div key={t.id}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <TeamMono name={t.name} hue={t.hue} size={16} />
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase", color: t.hue,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+              <span style={{ display: "flex", gap: 3 }}>
+                {Array.from({ length: slots }, (_, k) => (
+                  <span key={k} style={{ width: 7, height: 7, transform: "rotate(45deg)",
+                    background: k < n ? t.hue : "transparent", border: `1px solid ${k < n ? t.hue : "rgba(200,215,255,0.25)"}` }} />
+                ))}
+              </span>
+              <span style={{ flex: "0 0 62px", textAlign: "right", fontFamily: MONO, fontSize: 12,
+                color: n >= slots ? DIM : "#ecf3ff" }}>{fmt(t.budget || 0)}</span>
+            </div>
+            <Bar pct={((t.budget || 0) / 10000) * 100} h={3} i={i} color={t.hue} opacity={0.8} style={{ marginTop: 5 }} />
+          </div>
+        );
+      })}
+      {more > 0 && (
+        <button onClick={onAll} style={{ justifySelf: "start", marginTop: 2, padding: 0, background: "none", border: 0, cursor: onAll ? "pointer" : "default",
+          fontFamily: MONO, fontSize: 11, letterSpacing: "0.06em", color: "#7da6ff" }}>
+          +{more} more team{more === 1 ? "" : "s"}{onAll ? " · all purses →" : ""}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Your next match (or the next match, for spectators) ──────────────────
+function NextMatchGlance({ state, team }) {
+  const now = useNow(1000);
+  const teamOf = (id) => (state.teams || []).find((x) => x.id === id);
+  const open = allMatches(state?.tournament).filter((m) => m && !m.done && m.teamA && m.teamB)
+    .sort((a, b) => (a.scheduledAt || "~").localeCompare(b.scheduledAt || "~"));
+  const m = team ? open.find((x) => x.teamA === team.id || x.teamB === team.id) : open[0];
+  if (!m) {
+    const played = team ? allMatches(state?.tournament).filter((x) => x?.done && (x.teamA === team.id || x.teamB === team.id)) : [];
+    const won = played.filter((x) => x.winner === team?.id).length;
+    return <Empty title={team ? "You're done for now" : "Nothing scheduled"}
+      hint={team ? `${won}–${played.length - won} so far. The next round's fixture shows up here once it's set.` : "Fixtures appear here as the host schedules them."} />;
+  }
+  const a = teamOf(m.teamA), b = teamOf(m.teamB);
+  const t = m.scheduledAt ? new Date(m.scheduledAt).getTime() : null;
+  const live = t && t <= now;
+  const mine = (x) => team && x?.id === team.id;
+  const side = (x, align) => (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: align, gap: 7 }}>
+      <TeamMono name={x?.name} hue={x?.hue} size={40} />
+      <div style={{ maxWidth: "100%", fontSize: 15, fontWeight: 700, textTransform: "uppercase", color: x?.hue,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x?.name || "TBD"}</div>
+      {mine(x) && <span style={{ fontSize: 8.5, letterSpacing: "0.2em", color: "#7da6ff" }}>YOU</span>}
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {side(a, "center")}
+        <div style={{ textAlign: "center", flex: "0 0 auto" }}>
+          <div style={{ fontSize: 11, color: "rgba(200,215,255,0.35)", letterSpacing: "0.2em" }}>VS</div>
+          {m.bo && <div style={{ fontFamily: MONO, fontSize: 9.5, color: DIM, marginTop: 4 }}>BO{m.bo}</div>}
+        </div>
+        {side(b, "center")}
+      </div>
+      <div style={{ marginTop: "auto", padding: "9px 11px", display: "flex", alignItems: "center", gap: 10,
+        background: live ? "linear-gradient(90deg, rgba(255,70,85,0.14), transparent 85%)" : "linear-gradient(90deg, rgba(61,123,255,0.12), transparent 85%)",
+        borderLeft: `2px solid ${live ? "#ff4655" : "#3d7bff"}` }}>
+        {live
+          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontWeight: 700, fontSize: 13,
+              letterSpacing: "0.14em", color: "#ff6b78" }}><span className="volt-live-dot" style={{ color: "#ff4655" }} />LIVE NOW</span>
+          : <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 15, color: "#ecf3ff" }}>
+              {t ? relIn(t - now) : "Time TBA"}</span>}
+        <span style={{ marginLeft: "auto", fontSize: 10.5, color: DIM, textAlign: "right" }}>
+          {m.map ? <b style={{ color: "rgba(236,243,255,0.7)" }}>{m.map} · </b> : null}
+          {t && !live ? whenLabel(m.scheduledAt) : team ? "Be in voice 10 min early" : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Predictions lock at kick-off: the strip over the Crystal Ball says which
+// pick closes next, so "predict" has a deadline attached to it.
+function PredictLock({ state }) {
+  const now = useNow(30000);
+  const teamOf = (id) => (state.teams || []).find((x) => x.id === id);
+  const next = allMatches(state?.tournament)
+    .filter((m) => m && !m.done && m.teamA && m.teamB && m.scheduledAt && new Date(m.scheduledAt).getTime() > now)
+    .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))[0];
+  if (!next) return null;
+  const a = teamOf(next.teamA), b = teamOf(next.teamB);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", padding: "7px 10px", marginBottom: 12,
+      fontSize: 12, background: "linear-gradient(90deg, rgba(175,154,236,0.14), transparent 85%)", borderLeft: "2px solid #af9aec" }}>
+      <span style={{ fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#af9aec", fontSize: 10.5 }}>
+        Picks lock {relIn(new Date(next.scheduledAt).getTime() - now)}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700, textTransform: "uppercase" }}>
+        <span style={{ color: a?.hue }}>{a?.name}</span><span style={{ fontSize: 9, color: DIM }}>vs</span><span style={{ color: b?.hue }}>{b?.name}</span></span>
+      <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10.5, color: DIM }}>Vote in #predictions</span>
+    </div>
+  );
+}
+
+function BuysGlance({ state, onOpen }) {
+  const sold = (state?.players || [])
+    .filter((p) => p.status === "sold" && p.soldPrice)
+    .sort((a, b) => b.soldPrice - a.soldPrice).slice(0, 6);
+  if (!sold.length) return <Empty title="Nobody sold yet" hint="The most expensive players are listed here during the draft." />;
+  const teamOf = (p) => (state.teams || []).find((t) => (t.roster || []).includes(p.id));
+  const [first, ...rest] = sold;
+  const ft = teamOf(first);
+  return (
+    <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
+      <FeatureTile
+        label="Record sale"
+        value={<CountUp to={first.soldPrice} format={(v) => fmt(Math.round(v))} dur={1100} />}
+        name={<PName uid={first.id} onOpen={onOpen}>{first.name}</PName>}
+        tag={ft}
+        hue={ft?.hue || "#f5c453"} />
+      <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column",
+        justifyContent: "center", gap: 13, minWidth: 0 }}>
+        {rest.map((p, i) => {
+          const t = teamOf(p);
+          return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+              <Pip i={i + 1} />
+              <PName uid={p.id} onOpen={onOpen} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+                whiteSpace: "nowrap", color: "rgba(236,243,255,0.8)" }}>{p.name}</PName>
+              <span style={{ flex: "0 0 74px", display: "flex", justifyContent: "flex-end" }}>
+                <TeamTag name={t?.name} hue={t?.hue} />
+              </span>
+              <span style={{ flex: "0 0 58px", textAlign: "right",
+                fontFamily: "'IBM Plex Mono',monospace", fontSize: 12.5, color: "#3ddc84" }}>
+                {fmt(p.soldPrice)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StandingsGlance({ state }) {
+  const t = state?.tournament;
+  const all = !t ? [] : t.format === "group"
+    ? Object.values(t.matches || {}).flat() : (t.matches || []);
+  const tally = {};
+  for (const m of all) {
+    if (!m?.done || !m.winner) continue;
+    tally[m.winner] = (tally[m.winner] || 0) + 1;
+  }
+  const rows = (state?.teams || [])
+    .map((x) => ({ name: x.name, hue: x.hue, w: tally[x.id] || 0 }))
+    .sort((a, b) => b.w - a.w).slice(0, 4);
+  if (!rows.length) return <Empty title="No teams yet" />;
+  const top = Math.max(1, ...rows.map((r) => r.w));
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {rows.map((r, i) => (
+        <div key={r.name}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9,
+            fontSize: i === 0 ? 14 : 12.5, padding: i === 0 ? "5px 8px" : "0 8px",
+            background: i === 0 ? `linear-gradient(90deg, ${r.hue}22, transparent 75%)` : "none",
+            borderLeft: `2px solid ${i === 0 ? r.hue : "transparent"}` }}>
+            <span style={{ width: 12, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5,
+              color: i === 0 ? "#f5c453" : "rgba(200,215,255,0.35)" }}>{i + 1}</span>
+            <TeamMono name={r.name} hue={r.hue} size={i === 0 ? 20 : 17} />
+            <span style={{ flex: 1, color: r.hue, fontWeight: 700, textTransform: "uppercase",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace",
+              fontSize: i === 0 ? 15 : 12, fontWeight: 700,
+              color: i === 0 ? r.hue : "rgba(200,215,255,0.5)" }}>{r.w}W</span>
+          </div>
+          <Bar pct={(r.w / top) * 100} h={i === 0 ? 4 : 2.5} i={i} color={r.hue}
+            opacity={i === 0 ? 1 : 0.45} style={{ marginTop: 4, marginLeft: 50, marginRight: 8 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Tournament roster fetch (module-level: used by the phase shell AND the
+// draft app's live browse mode) ──────────────────────────────────────────
+async function fetchRosterForEvent(eventId) {
+  const { data: regs, error } = await __sb.from("registrations")
+    .select("id, user_id, is_captain, status, availability_confirmed, no_show, wants_captain, pool_eligible")
+    .eq("event_id", eventId);
+  // A failed read must not look like an empty roster: the draft is built from this.
+  if (error) throw error;
+  const rows = regs || [];
+  const ids = rows.map(r => r.user_id);
+  let profs = {}, people = {}, noShowCounts = {};
+  if (ids.length) {
+    const { data: pp } = await __sb.from("player_profiles").select("*").in("user_id", ids);
+    (pp || []).forEach(p => { profs[p.user_id] = p; });
+    // Fetched separately: a player has one users row per league, so the database
+    // has no single row for a registration to embed.
+    const { data: us, error: usersErr } = await __sb.from("users").select("id, display_name, wants_captain, trophy_streak")
+      .eq("community_id", window.__VOLT.communityId).in("id", ids);
+    if (usersErr) throw usersErr;
+    (us || []).forEach(u => { people[u.id] = u; });
+    // season no-show history — the reliability signal hosts review against
+    const { data: ns } = await __sb.from("registrations").select("user_id")
+      .eq("community_id", window.__VOLT.communityId).eq("no_show", true).in("user_id", ids);
+    (ns || []).forEach(r => { noShowCounts[r.user_id] = (noShowCounts[r.user_id] || 0) + 1; });
+  }
+  const withProfile = (r) => {
+    const p = profs[r.user_id] || {};
+    const u = people[r.user_id] || {};
+    return { userId: r.user_id, regId: r.id, isCaptain: !!r.is_captain,
+      // Was this person in the draft? Late sign-ups are false. Missing = legacy
+      // row from before the column existed, which was always draft-eligible.
+      poolEligible: r.pool_eligible !== false,
+      volunteered: !!(r.wants_captain || u.wants_captain), // per-tournament hand; legacy users flag as fallback
+      trophies: u.trophy_streak || 0,
+      status: r.status || "approved", available: !!r.availability_confirmed,
+      noShow: !!r.no_show, noShows: noShowCounts[r.user_id] || 0,
+      name: u.display_name || "Player",
+      ign: p.ign ?? null,
+      rank: p.rank, rankDiv: p.rank_div ?? null,
+      peakRank: p.peak_rank ?? null, peakRankDiv: p.peak_rank_div ?? null,
+      role: p.role, agent: p.agent, kda: p.kda, acs: p.acs, hs: p.hs, win: p.win, badges: p.badges,
+      discord: p.discord,   // captains reach reserves here; community-readable, not sensitive
+      tracker: p.tracker_url || null };
+  };
+  const mapped = rows.map(withProfile);
+  // Only host-approved players exist to the league — pools, boards, subs.
+  const approved = mapped.filter(r => r.status === "approved");
+  return {
+    captains: approved.filter(r => r.isCaptain),
+    pool: approved.filter(r => !r.isCaptain),
+    all: approved,
+    pending: mapped.filter(r => r.status === "pending"),
+    rejected: mapped.filter(r => r.status === "rejected"),
+  };
+}
+
+const perfUnit = (sp) => (sp?.ps == null && sp?.acs != null ? "ACS" : "PERF");
+
+function matchPoints({ won, perf: score, kills, assists }) {
+  const win = won ? 50 : 0;
+  const perf = Math.round((Number(score) || 0) / 4);
+  const frags = Math.round((Number(kills) || 0) + (Number(assists) || 0) / 3);
+  return win + perf + frags;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   WEEKEND APP — phase router. Registration → Draft → Matches, per tournament.
+   ════════════════════════════════════════════════════════════════════ */
+function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBack, initialView }) {
+  // isHost here means "staff" — host or moderator, both run the tournament. The
+  // owner-only powers (settling, deleting, resetting) check isTrueHost instead,
+  // so a moderator can do the work without being able to undo the league.
+  const [ev, setEv] = useState(event);
+  const [busy, setBusy] = useState(false);
+  const phase = ev?.phase || "drafting";
+  // During registration a player lands on the Lobby (app) — the "I'm playing"
+  // toggle is there. Hosts still default to the gate to review applications.
+  const [regView, setRegView] = useState(initialView ? "app" : (isHost ? "gate" : "app"));
+  const [matchView, setMatchView] = useState(false); // host match-report form
+  const [reportPrefill, setReportPrefill] = useState(null); // fixture → report handoff
+  // My registration status for this tournament — powers the Lobby's "I'm playing"
+  // toggle while registration is open.
+  const [myReg, setMyReg] = useState(null);
+  const [myProfile, setMyProfile] = useState(null);
+  const [mySusp2, setMySusp2] = useState(0);
+  const [myStrikes2, setMyStrikes2] = useState(0);
+  async function loadMyReg() {
+    if (!HAS_SUPABASE || !auth?.userId || !ev?.id) return;
+    try {
+      const { data: r } = await __sb.from("registrations").select("id, status, wants_captain, is_captain, pool_eligible").eq("event_id", ev.id).eq("user_id", auth.userId).maybeSingle();
+      setMyReg(r || null);
+      setMyProfile(await loadProfileGate(auth.userId));
+      const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", auth.userId).maybeSingle();
+      setMySusp2(u?.suspension_remaining || 0);
+      setMyStrikes2(await activeStrikeCount(auth.userId));
+    } catch (e) { console.error(e); }
+  }
+  useEffect(() => { loadMyReg(); }, [phase, ev?.id]);
+  useEffect(() => { if (DEMO) loadDemo().then((m) => setMyProfile(m.demoProfile)); }, []);
+  // Host-only: how many applications are waiting for review this tournament.
+  // Powers the header Approvals pill + its live count. Cheap: probes ids only,
+  // and pauses on hidden tabs via visInterval (egress-friendly).
+  const [pendingCount, setPendingCount] = useState(0);
+  async function loadPending() {
+    if (!HAS_SUPABASE || !isHost || !ev?.id) return 0;
+    try {
+      const { data } = await __sb.from("registrations").select("id").eq("event_id", ev.id).eq("status", "pending");
+      const n = (data || []).length;
+      setPendingCount(n);
+      return n;
+    } catch (e) { console.error(e); return pendingCount; }
+  }
+  useEffect(() => {
+    if (!isHost || !(phase === "registration_open" || phase === "registration_closed")) { setPendingCount(0); return; }
+    loadPending();
+    const stop = visInterval(loadPending, 15000);
+    return () => stop();
+  }, [isHost, phase, ev?.id]);
+  // Which fixtures already have player stats banked (by match_label) — lets
+  // the fixtures screen show "✓ recorded" and keeps the two systems in sync.
+  async function refreshReported() {
+    if (!HAS_SUPABASE || !ev?.id) return;
+    try {
+      const { data } = await __sb.from("match_results").select("match_label, points_computed, stat_payload").eq("event_id", ev.id);
+      const labels = new Set(); const stats = {};
+      (data || []).forEach(r => {
+        labels.add(r.match_label);
+        const cur = stats[r.match_label];
+        if (!cur || Number(r.points_computed || 0) > cur.pts)
+          stats[r.match_label] = { name: r.stat_payload?.name || "Player", pts: Number(r.points_computed || 0) };
+      });
+      window.__VOLT.reportedLabels = labels;
+      window.__VOLT.reportedStats = stats;
+    } catch (e) { console.error(e); }
+  }
+  useEffect(() => { if (phase === "matches_live" || phase === "settled") refreshReported(); }, [phase, ev?.id]);
+  // Bridge: fixture cards deep in DraftApp open the report form pre-filled.
+  useEffect(() => {
+    if (isHost && phase === "matches_live" && HAS_SUPABASE) {
+      window.__VOLT.openReport = (pf) => { setReportPrefill(pf || null); setMatchView(true); };
+      return () => { delete window.__VOLT.openReport; };
+    }
+  }, [isHost, phase]);
+  const [narrow, setNarrow] = useState(typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 640px)").matches : false);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const on = (e) => setNarrow(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on); };
+  }, []);
+  useEffect(() => { setRegView(initialView ? "app" : (isHost ? "gate" : "app")); setMatchView(false); }, [phase]);
+
+  // Poll the tournament's phase so players follow the host's transitions live.
+  useEffect(() => {
+    if (!HAS_SUPABASE || !ev) return;
+    const stop = visInterval(async () => {
+      const { data } = await __sb.from("events").select("*").eq("id", ev.id).maybeSingle();
+      if (data && data.phase !== ev.phase) setEv(data);
+    }, 6000);
+    return () => stop();
+  }, [ev?.id, ev?.phase]);
+
+  // One press moves the tournament on: closing sign-ups opens the draft. Nothing
+  // sends a tournament to registration_closed any more; one already sitting there
+  // (sign-ups open, late joiners are reserves) still moves on to the draft.
+  const NEXT = { registration_open: "drafting", registration_closed: "drafting", drafting: "matches_live", matches_live: "settled", settled: "settled" };
+  const NEXT_LABEL = { registration_open: "Next: close sign-ups & open draft", registration_closed: "Next: open draft", drafting: "Next: start matches", matches_live: "Next: settle tournament", settled: "Settled" };
+  // settled → matches_live is a real reversal, not a plain phase step: it has to
+  // restore the trophy counters that settling overwrote. stepBack routes it to
+  // volt_unsettle rather than a straight phase update.
+  const PREV = { registration_closed: "registration_open", drafting: "registration_open", matches_live: "drafting", settled: "matches_live" };
+  const [arm, setArm] = useState(false); // two-tap confirm, settling only: every other step can be moved back
+  useEffect(() => { if (!arm) return; const t = setTimeout(() => setArm(false), 4000); return () => clearTimeout(t); }, [arm]);
+  useEffect(() => { setArm(false); }, [phase]);
+  const tapNext = () => {
+    if (NEXT[phase] === "settled" && !arm) { setArm(true); return; }
+    setArm(false); advance();
+  };
+
+  // Step the tournament one phase backward (settled stays terminal — season
+  // snapshots are written at settle and must not be re-rolled casually).
+  async function stepBack() {
+    if (!isHost || !HAS_SUPABASE || !PREV[phase]) return;
+    // Reopening a settled tournament is not a phase change — it has to put back the
+    // trophy streaks, wins and bracket counts that settling overwrote. Only the
+    // host can do it, and only if that settle recorded an undo snapshot.
+    if (phase === "settled") {
+      if (!isTrueHost) { voltAlert("Only the host can reopen a settled tournament."); return; }
+      if (!(await voltConfirm(
+        `Trophy streaks, tournaments won and bracket wins go back to what they were before it was settled, ` +
+        `and the recap is cleared. Match results and season points are kept, so you can fix a report and settle again.`,
+        { title: `Reopen ${weekendName(ev)}?`, confirmLabel: "Reopen" }))) return;
+      setBusy(true);
+      try {
+        const { error } = await __sb.rpc("volt_unsettle", { p_event: ev.id });
+        if (error) throw error;
+        const { data } = await __sb.from("events").select("*").eq("id", ev.id).maybeSingle();
+        if (data) setEv(data);
+      } catch (e) {
+        console.error(e);
+        voltAlert(e.message || "Could not reopen that tournament.", { title: "Couldn't reopen" });
+      }
+      setBusy(false);
+      return;
+    }
+    if (!(await voltConfirm("The draft board is kept.",
+      { title: `Move back to "${PREV[phase].replace(/_/g, " ")}"?`, confirmLabel: "Move back" }))) return;
+    setBusy(true);
+    try {
+      const { data, error } = await __sb.from("events").update({ phase: PREV[phase] }).eq("id", ev.id).select().maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("The tournament wasn't changed — you may not have permission.");
+      setEv(data);
+    } catch (e) { console.error(e); voltAlert(e.message || "Couldn't move the tournament back.", { title: "Nothing changed" }); }
+    setBusy(false);
+  }
+
+  // Fetch this tournament's full roster: registered captains, the non-captain
+  // player pool, and everyone's scouting profiles (rank/KDA/ACS/HS/win).
+  async function fetchWeekendRoster() { return fetchRosterForEvent(ev.id); }
+
+  // Build this tournament's draft board from its registered captains.
+  // Called when the host opens the draft. Won't clobber an existing board
+  // that already has picks (roster/sales) — safe to re-run.
+  async function buildBoardFromRegistrations() {
+    try {
+      const existing = await readState();
+      const hasProgress = existing && (
+        (existing.recentSales && existing.recentSales.length) ||
+        (existing.teams && existing.teams.some(t => t.roster && t.roster.length)) ||
+        existing.block || existing.spin
+      );
+      if (hasProgress) return; // a real draft is underway — leave it alone
+
+      const { captains, pool } = await fetchWeekendRoster();
+      const stamp = (st) => { if (ev?.draft_at) st.draftAt = new Date(ev.draft_at).getTime(); return st; };
+      // Carry over any team names the captains already set, so rebuilding the
+      // board from registrations doesn't reset them to the default seeds.
+      const priorName = {};
+      (existing?.teams || []).forEach(t => { if (t.captainUserId && t.name) priorName[t.captainUserId] = t.name; });
+      const withNames = captains.map(c => (priorName[c.userId] ? { ...c, teamName: priorName[c.userId] } : c));
+      // freshState decides for itself whether there are enough captains to form
+      // teams, so one call covers both cases — and either way every registered
+      // player lands on the board instead of being dropped.
+      if (captains.length >= MIN_TEAMS || !existing) {
+        const built = keepTeamIds(stamp(freshState(withNames, pool)), existing);
+        // Players the host typed in by hand have no registration to
+        // rebuild from, so a plain rebuild would silently erase them. Carry
+        // them over (minus any that a real registration now supersedes).
+        const rebuiltIds = new Set(built.players.map(p => p.id));
+        const manual = (existing?.players || []).filter(p => isManualPlayer(p) && !rebuiltIds.has(p.id));
+        if (manual.length) built.players = [...built.players, ...manual];
+        await writeState(built);
+      }
+    } catch (e) { console.error("buildBoard", e); }
+  }
+
+  async function advance() {
+    if (!isHost || !HAS_SUPABASE) return;
+    // Settling crowns champions and writes season points, and there's no undo.
+    // The DB enforces this too (events_staff_update forbids phase='settled'
+    // unless auth_is_host()), so this is the friendly message, not the lock.
+    if (NEXT[phase] === "settled" && !isTrueHost) {
+      // Belt and braces — events_staff_update also refuses phase='settled'
+      // unless auth_is_host(), so this is the explanation, not the lock.
+      // Checked first, so a moderator isn't walked through the stats check only
+      // to be told they can't settle.
+      voltAlert("Only the host can settle a tournament. Ask them to close it out.");
+      return;
+    }
+    if (NEXT[phase] === "settled") {
+      // Settling freezes season points. The commonest way to get burned is
+      // settling with matches still unreported, so surface that first.
+      // WeekendApp has no board in scope, so read it. A minimal flatten is
+      // enough here — we only need played fixtures, whatever the format.
+      const board = await readState();
+      const all = tournamentMatches(board?.tournament);
+      // Refresh first: the cached labels can be minutes old by the time the
+      // host settles.
+      await refreshReported();
+      const reported = window.__VOLT?.reportedLabels || new Set();
+      const missing = all.filter(m => {
+        if (!m.done || m.teamA == null || m.teamB == null) return false;
+        const A = (board.teams || []).find(x => x.id === m.teamA);
+        const B = (board.teams || []).find(x => x.id === m.teamB);
+        // Same label the report writes (it carries a match-id suffix). Matching
+        // on "A vs B" alone flagged every match as unreported.
+        return A && B && !reported.has(fxLabel(A, B, m));
+      });
+      if (missing.length && !(await voltConfirm(
+        `${missing.length} match${missing.length === 1 ? " has" : "es have"} a score but no player stats recorded.\n\n` +
+        `Settling banks season points from what's been reported — those players get nothing for ${missing.length === 1 ? "that match" : "those matches"}.`,
+        { title: "Settle anyway?", confirmLabel: "Settle anyway", cancelLabel: "Go back", danger: true }))) return;
+    }
+    // Closing registration and opening the draft are one step now, so this is
+    // the last moment pending applications can be approved. Don't let them be
+    // stranded silently — they'd never reach the pool.
+    if (NEXT[phase] === "drafting") {
+      // Once the draft is open players can't sign up or withdraw, and the
+      // day-before availability check only goes out during registration.
+      const hoursOut = ev?.draft_at ? (new Date(ev.draft_at).getTime() - Date.now()) / 36e5 : 0;
+      if (hoursOut > 24 && !(await voltConfirm(
+        `The draft is set for ${whenLabel(ev.draft_at)}.\n\n` +
+        `Opening it now closes sign-ups straight away, players can no longer withdraw, and the day-before availability check won't go out.`,
+        { title: "Open the draft early?", confirmLabel: "Open it now", cancelLabel: "Not yet" }))) return;
+      const n = await loadPending();
+      if (n > 0) {
+        const ok = await voltConfirm(
+          `${n} application${n === 1 ? " is" : "s are"} still awaiting review.\n\n` +
+          `Opening the draft closes registration — ${n === 1 ? "that player" : "those players"} won't be in the pool.`,
+          { title: "Open the draft anyway?", confirmLabel: "Open the draft", cancelLabel: "Review applications" }
+        );
+        if (!ok) { setRegView("gate"); return; }
+      }
+    }
+    setBusy(true);
+    try {
+      const next = NEXT[phase];
+      // Opening the draft: (re)build the board from this tournament's captains first.
+      if (next === "drafting") await buildBoardFromRegistrations();
+      // Settling the tournament: snapshot standings, crown champions (trophy streak),
+      // build the recap card, and notify players.
+      // Settling runs FIRST and is allowed to abort the phase change. A
+      // tournament marked settled without trophies looks finished but isn't,
+      // and nothing on screen says so.
+      if (next === "settled") { await snapshotStandings(); await settleTrophiesAndRecap(); }
+      const { data, error } = await __sb.from("events").update({ phase: next }).eq("id", ev.id).select().maybeSingle();
+      // A refused update comes back as no row rather than an error.
+      if (error) throw error;
+      if (!data) throw new Error("The tournament wasn't changed — you may not have permission.");
+      setEv(data);
+      // The tournament is over, so its team roles and rooms go. In the
+      // background: settling is already done and mustn't wait on Discord.
+      if (next === "settled") discordWrapUp(ev.id).then((b) => {
+        if (b?.deleted) voltToast(`Discord tidied up: ${b.deleted} team role${b.deleted === 1 ? "" : "s"} and room${b.deleted === 1 ? "" : "s"} deleted.`);
+        else if (b?.errors?.length) voltToast(`Couldn't clear the team rooms in Discord: ${b.errors[0]}`, "warn");
+      });
+    } catch (e) {
+      console.error(e);
+      voltAlert(e.message || "Couldn't move the tournament on. Nothing was changed.", { title: "Nothing changed" });
+    }
+    setBusy(false);
+  }
+
+  // Store the tournament's final standings under a season-scoped shared key so a
+  // season leaderboard can aggregate across tournaments. Uses the tournament's own
+  // draft state (teams + tournament results already computed there).
+  async function snapshotStandings() {
+    try {
+      const s = await readState();
+      if (!s || !s.teams) return;
+      // Prefer computed tournament standings; fall back to roster/budget summary.
+      const rows = s.teams.map(t => ({
+        teamId: t.id, name: t.name, captain: t.captain, captainUserId: t.captainUserId || null,
+        rosterCount: (t.roster || []).length, budgetLeft: t.budget,
+      }));
+      // If the tournament produced win/loss, fold it in.
+      if (s.tournament) {
+        try {
+          const st = computeSeasonPoints(s);
+          st.forEach(sp => { const r = rows.find(x => x.teamId === sp.teamId); if (r) { r.won = sp.won; r.lost = sp.lost; r.pts = sp.pts; } });
+        } catch (e) { /* standings optional */ }
+      }
+      const payload = { weekendId: ev.id, label: ev.weekend_label, at: Date.now(), rows };
+      // Season key is community-wide; one row per tournament. storage.set is
+      // keyed by its own name, so there's no need to blank weekendId — doing so
+      // pointed every board poll at the wrong board for the length of the write.
+      await window.storage.set("season-standings::" + ev.id, JSON.stringify(payload), true);
+    } catch (e) { console.error("snapshotStandings", e); }
+  }
+
+  // Crown the tournament champion team, extend/reset trophy streaks league-wide,
+  // build the recap card, and notify every approved player. Champion = top of
+  // the tournament standings (wins → round diff via computeStandings ordering);
+  // champion players = that team's drafted roster + any subs who played for it.
+  async function settleTrophiesAndRecap() {
+    try {
+      const s = await readState();
+      let team = null, championIds = [], recap = {}, kind = "tournament", decidedByFinal = false;
+      if (s && s.tournament && s.teams) {
+        const t = s.tournament;
+        // A single-elim bracket crowns a bracket champion; league-play crowns
+        // the tournament (top of the table). Both count as champions for trophies.
+        kind = t.format === "single" ? "bracket" : "tournament";
+        // Who actually won the tournament:
+        //  1. the Sunday final / grand final, if it was played  → the real decider
+        //  2. the last bracket match, for single elim
+        //  3. otherwise top of the table (tournament never reached a final)
+        let champTeamId = null;
+        if (t.final?.done && t.final.winner) { champTeamId = t.final.winner; decidedByFinal = true; }
+        else if (t.format === "single" && t.rounds?.length) {
+          const fm = t.rounds[t.rounds.length - 1]?.[0];
+          if (fm?.done && fm.winner) { champTeamId = fm.winner; decidedByFinal = true; }
+        }
+        if (champTeamId) kind = t.format === "single" ? "bracket" : "tournament";
+        // Group matches live in an object keyed by group, so hand computeStandings
+        // a flat list — iterating the object threw, and settle died here.
+        const teamIds = t.teamIds || (t.groups ? t.groups.flatMap(g => g.teamIds || []) : s.teams.map(x => x.id));
+        const standings = computeStandings(teamIds, tournamentMatches(t), t.overrides);
+        const champ = champTeamId
+          ? { teamId: champTeamId }
+          : (standings.find(r => r.played > 0) ? standings[0] : null);
+        if (champ) {
+          const ct = s.teams.find(x => x.id === champ.teamId);
+          team = ct?.name || null;
+          // The board stores roster as an array of id STRINGS, not objects, so
+          // `.map(p => p.id)` produced undefined for every drafted player and
+          // only the captain survived. Accept either shape.
+          const rosterIds = new Set((ct?.roster || [])
+            .map(p => (typeof p === "string" ? p : p?.id))
+            .filter(Boolean));
+          if (ct?.captainUserId) rosterIds.add(ct.captainUserId);
+          championIds = [...rosterIds];
+        }
+      }
+      // Subs who actually played on the champion team this tournament (match_results).
+      // Plus MVP + top fragger for the recap, all from banked stats.
+      try {
+        const { data: mrs } = await __sb.from("match_results").select("user_id, points_computed, team_won, stat_payload").eq("event_id", ev.id);
+        const rows = mrs || [];
+        // MVP: single highest-scoring match line.
+        let mvp = null; rows.forEach(r => { if (!mvp || Number(r.points_computed || 0) > mvp.pts) mvp = { name: r.stat_payload?.name || "Player", pts: Math.round(Number(r.points_computed || 0)) }; });
+        // Top fragger: most kills summed across the tournament.
+        const kills = {};
+        rows.forEach(r => { const nm = r.stat_payload?.name || "Player"; kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0); });
+        const topFrag = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
+        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.pts + " pts" : null, topFrag: topFrag ? topFrag[0] : null, decidedBy: decidedByFinal ? "final" : "table" };
+      } catch (e) { console.error("recap stats", e); }
+      // Fire the security-definer RPC: streak +1 for champions, reset for the rest.
+      //
+      // The error MUST be checked. supabase-js returns failures as a value
+      // rather than throwing, so this call failing silently let the tournament
+      // flip to 'settled' with no trophies awarded and no recap written — the
+      // caller had no idea anything had gone wrong.
+      if (!championIds.length) {
+        throw new Error("Couldn't work out who won — no champion team on the board.");
+      }
+      const { error: settleErr } = await __sb.rpc("volt_settle_trophies",
+        { p_event: ev.id, p_team: team, p_champions: championIds, p_recap: recap, p_kind: kind });
+      if (settleErr) throw new Error(settleErr.message || "Couldn't award trophies.");
+      // Notify every approved player the tournament settled (+ champions get the crown).
+      try {
+        const r = await fetchRosterForEvent(ev.id);
+        const champSet = new Set(championIds);
+        const notes = r.all.map(p => ({
+          community_id: window.__VOLT.communityId, user_id: p.userId, event_id: ev.id,
+          kind: "settled",
+          title: champSet.has(p.userId) ? "🏆 You won the tournament!" : weekendName(ev) + " settled",
+          body: champSet.has(p.userId)
+            ? (team ? team + " took the crown — your trophy streak grew." : "Your trophy streak grew.")
+            : (team ? team + " won it. See where you land on the Season Race." : "See where you land on the Season Race."),
+        }));
+        await voltNotify(notes);
+      } catch (e) { console.error("settle notify", e); }
+    } catch (e) {
+      // Rethrow so advance() aborts the phase change. Swallowing this let a
+      // tournament flip to "settled" with no champion, trophies or recap.
+      console.error("settleTrophies", e);
+      throw e;
+    }
+  }
+
+  // Force a rebuild from current registered captains (wipes the tournament board).
+  async function rebuildNow() {
+    if (!isHost || !HAS_SUPABASE) return;
+    if (!(await voltConfirm("This clears the current draft board for this tournament and rebuilds it from the registered captains.",
+      { title: "Rebuild the teams?", confirmLabel: "Rebuild", danger: true }))) return;
+    setBusy(true);
+    try {
+      const { captains, pool } = await fetchWeekendRoster();
+      // Keep custom team names through an explicit rebuild too.
+      const prior = await readState();
+      const priorName = {};
+      (prior?.teams || []).forEach(t => { if (t.captainUserId && t.name) priorName[t.captainUserId] = t.name; });
+      const withNames = captains.map(c => (priorName[c.userId] ? { ...c, teamName: priorName[c.userId] } : c));
+      await writeState(keepTeamIds(freshState(withNames, pool), prior));
+      window.location.reload();
+    } catch (e) { console.error(e); setBusy(false); }
+  }
+
+  // Phones: row one says where you are (back, the tournament and its phase, bell,
+  // you); row two is what you can do (open the tournament; host tools).
+  const inRegPhase = phase === "registration_open" || phase === "registration_closed";
+  const barPhone = (
+    <div className="vg-shell" style={{ position: "sticky", top: 0, zIndex: 60, padding: "10px 14px 12px", ...TOPBAR, fontFamily: "'Rajdhani',sans-serif" }}>
+      <span aria-hidden style={TOPBAR_LINE} />
+      <ShellStyles />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={onBack} aria-label="Back to the league" title="League hub" style={shellBtn("ghost", { width: 38, height: 38, padding: 0, display: "grid", placeItems: "center", fontSize: 20, flexShrink: 0 })}>‹</button>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#ecf3ff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.1 }}>{ev ? weekendName(ev) : "Tournament"}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: PHASE_COLOR[phase] }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: PHASE_COLOR[phase], boxShadow: `0 0 8px ${PHASE_COLOR[phase]}` }} />{PHASE_LABEL[phase]}</div>
+        </div>
+        {HAS_SUPABASE && <NotifBell />}
+        {account && <AccountChip account={account} onSignOut={onSignOut} />}
+      </div>
+      {(inRegPhase || isHost) && (
+        <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+          {inRegPhase && regView === "gate" && <button onClick={() => setRegView("app")} style={shellBtn("primary", { flex: 1, padding: "11px 12px", fontSize: 12 })}>⊞ Open the tournament →</button>}
+          {inRegPhase && regView === "app" && <button onClick={() => setRegView("gate")} style={shellBtn("accent", { flex: 1, padding: "11px 12px", fontSize: 12 })}>‹ Registration</button>}
+          {isHost && <HostMenu>
+              {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
+              {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: 8 })}>⟳ Rebuild teams</button>}
+              {phase === "matches_live" && <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { width: "100%", padding: "9px", marginTop: 8 })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
+              {phase !== "settled" && <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+            </HostMenu>}
+        </div>
+      )}
+    </div>
+  );
+  const barWide = (
+    <div className="vg-shell" style={{ position: "sticky", top: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 18px", ...TOPBAR, fontFamily: "'Rajdhani',sans-serif" }}>
+      <span aria-hidden style={TOPBAR_LINE} />
+      <ShellStyles />
+      <button onClick={onBack} style={shellBtn("ghost", { padding: "8px 14px" })}>‹ Schedule</button>
+      {/* Absolutely centred so uneven left/right clusters can't push it off-axis.
+          Hidden on narrow screens where the side controls would overlap it. */}
+      <div className="hidden lg:block" style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", whiteSpace: "nowrap", pointerEvents: "none", fontSize: 13, letterSpacing: "0.3em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, textShadow: "0 0 14px rgba(61,123,255,0.65)" }}>// {weekendName(ev)} · {({registration_open:"Registration",registration_closed:"Reg closed",drafting:"Draft",matches_live:"Matches",settled:"Settled"})[phase]}</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {(phase === "registration_open" || phase === "registration_closed") && regView === "app" &&
+          <button onClick={() => setRegView("gate")} style={shellBtn("accent", { padding: "8px 12px" })}>‹ Registration</button>}
+        {(phase === "registration_open" || phase === "registration_closed") && regView === "gate" &&
+          <button onClick={() => setRegView("app")} style={shellBtn("primary", { padding: "8px 14px" })}>⊞<span className="hidden sm:inline"> Explore the league</span> →</button>}
+        {isHost && (narrow
+          ? <HostMenu>
+              {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
+              {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: 8 })}>⟳ Rebuild teams</button>}
+              {phase === "matches_live" && <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { width: "100%", padding: "9px", marginTop: 8 })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
+              {phase !== "settled" && <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+            </HostMenu>
+          : <>
+              {PREV[phase] && <button disabled={busy} onClick={stepBack} title="Move this tournament back one phase" style={shellBtn("ghost", { padding: "8px 11px" })}>↶</button>}
+              {phase === "drafting" &&
+                <button disabled={busy} onClick={rebuildNow} title="Rebuild teams from registered captains" style={shellBtn("warn", { padding: "8px 12px" })}>⟳ Rebuild teams</button>}
+              {phase === "matches_live" &&
+                <button onClick={() => setMatchView(v => !v)} style={shellBtn(matchView ? "ghost" : "accent", { padding: "8px 12px" })}>{matchView ? "‹ Back to app" : "▦ Report match"}</button>}
+              {phase !== "settled" &&
+                <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "ghost", { padding: "8px 16px" })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+            </>)}
+        {account && <AccountChip account={account} onSignOut={onSignOut} />}
+      </div>
+    </div>
+  );
+  const bar = narrow ? barPhone : barWide;
+
+  // Registration phases land on the sign-up card, but the league stays
+  // browsable — "Explore the league" opens the full app (Scout Hub, rosters)
+  // while registration is still open. Draft/matches/settled → full app.
+  const inReg = (phase === "registration_open" || phase === "registration_closed");
+  const showGate = inReg && regView === "gate";
+  const showReport = matchView && isHost;
+
+  // Merged mode: DraftApp owns the one nav bar; league chrome rides inside it.
+  if (!showGate) {
+    const PHASE_TAG = { registration_open: "Registration", registration_closed: "Reg closed", drafting: "Draft", matches_live: "Matches", settled: "Settled" };
+    const PHASE_TAG_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#5b8dff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.5)" };
+    const hostControls = isHost ? <>
+      {PREV[phase] && <button disabled={busy} onClick={stepBack} style={shellBtn("ghost", { width: "100%", padding: "9px" })}>↶ Back a phase</button>}
+      {phase === "drafting" && <button disabled={busy} onClick={rebuildNow} style={shellBtn("warn", { width: "100%", padding: "9px", marginTop: PREV[phase] ? 8 : 0 })}>⟳ Rebuild teams</button>}
+      {phase === "matches_live" && <button onClick={() => setMatchView(true)} style={shellBtn("accent", { width: "100%", padding: "9px", marginTop: 8 })}>▦ Report match</button>}
+      {phase !== "settled" && <button disabled={busy} onClick={tapNext} style={shellBtn(arm ? "danger" : "primary", { width: "100%", padding: "9px", marginTop: 8 })}>{busy ? "…" : arm ? "Confirm: " + NEXT_LABEL[phase] + "?" : NEXT_LABEL[phase] + " →"}</button>}
+    </> : null;
+    const chrome = {
+      backLabel: inReg ? "Registration" : "Schedule",
+      // For the dashboard: it chooses its cells by phase, and shows the viewer
+      // their own card, so it needs both rather than deriving them from the board.
+      // Raw phase — DraftApp branches on it, not just labels it.
+      phase,
+      ev,
+      myProfile,
+      myReg,
+      viewerId: auth?.userId || null,
+      isHost,
+      portalLabel: inReg ? "Registration" : "League hub",
+      onBack: inReg ? () => setRegView("gate") : onBack,
+      // Always the league page, whatever the phase — the rail's way home.
+      onHub: onBack,
+      phaseTag: PHASE_TAG[phase], phaseColor: PHASE_TAG_COLOR[phase],
+      draftAt: ev?.draft_at || null,
+      // Confirmed captain for this tournament, from the registration record. The
+      // auction board doesn't exist until the draft starts, so during
+      // registration this is the only source of captaincy.
+      isCaptainElect: !!(myReg?.is_captain && (myReg?.status || "approved") === "approved"),
+      onReport: (isHost && phase === "matches_live") ? () => { setReportPrefill(null); setMatchView(true); } : null,
+      // The top-bar Registration button already routes here via onBack during
+      // registration, so it carries the count instead of a separate control.
+      pendingCount: (isHost && (phase === "registration_open" || phase === "registration_closed")) ? pendingCount : 0,
+      // Rendered as a normal view inside the tournament shell (rail + nav intact).
+      reportNode: (isHost && matchView)
+        ? <MatchReport ev={ev} prefill={reportPrefill} onDone={() => { setMatchView(false); setReportPrefill(null); refreshReported(); }} />
+        : null,
+      account, onSignOut, hostControls,
+      onRegChanged: loadMyReg,
+      // The Lobby shows this when registration is open — flipping it IS applying.
+      regToggle: ((phase === "registration_open" || phase === "registration_closed") && HAS_SUPABASE && auth?.userId && !isHost)
+        ? <PlayToggle ev={ev} mine={myReg} profileComplete={profileIsComplete(myProfile)} susp={mySusp2} strikes={myStrikes2}
+            onEditProfile={() => setRegView("gate")} onChanged={loadMyReg} />
+        : null,
+    };
+    return <DraftApp key={inReg ? "browse" : "live"} auth={auth} browse={inReg} chrome={chrome} initialView={initialView} />;
+  }
+
+  return <div>{bar}<WeekendRegistration ev={ev} auth={auth} phase={phase} /></div>;
+}
+
+const profileMissing = (p) => {
+  if (!p) return ["rank", "role", "a connected Discord", "WhatsApp number"];
+  const m = [];
+  if (!p.rank) m.push("rank");
+  if (!p.role) m.push("role");
+  if (!p.linked && !p.discord) m.push("a connected Discord");
+  if (!p.whatsapp) m.push("WhatsApp number");
+  return m;
+};
+
+// Match a name read off a screenshot to a player on the board. Riot IDs won't
+// always equal VOLT display names, so this widens gradually: exact, then prefix,
+// then substring, then a loose character-overlap score. Anything below the
+// threshold returns null and the host picks manually — a wrong auto-match writes
+// someone else's stats, which is worse than asking.
+function matchScoreboardName(raw, players) {
+  const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const q = norm(raw);
+  if (!q) return null;
+  // A player gets two keys: their in-game name and their league display name.
+  // Those are different identities — display_name is what captains call you,
+  // ign is what Valorant prints on the scoreboard — and matching on only one of
+  // them silently hands someone else's stats to the wrong player.
+  const cand = [];
+  for (const p of players) {
+    for (const k of [p.ign, p.name]) {
+      const n = norm(k);
+      // Skip names that normalise away entirely — non-Latin scripts leave
+      // nothing to compare, and an empty key would match everything.
+      if (n && !cand.some((c) => c.p === p && c.n === n)) cand.push({ p, n });
+    }
+  }
+  if (!cand.length) return null;
+  const exact = cand.find((c) => c.n === q);
+  if (exact) return exact.p;
+  const pre = cand.find((c) => c.n.startsWith(q) || q.startsWith(c.n));
+  if (pre) return pre.p;
+  const sub = cand.find((c) => c.n.includes(q) || q.includes(c.n));
+  if (sub) return sub.p;
+  // Loose fallback: share of the shorter string's characters in order.
+  let best = null, bestScore = 0;
+  for (const c of cand) {
+    const [a, b] = c.n.length < q.length ? [c.n, q] : [q, c.n];
+    let i = 0;
+    for (const ch of b) if (i < a.length && a[i] === ch) i++;
+    const score = i / a.length;
+    if (score > bestScore) { bestScore = score; best = c.p; }
+  }
+  return bestScore >= 0.75 ? best : null;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   MATCH REPORT — host records a match; every player earns season points.
+   +50 win · performance÷4 · K+⅓A  → one match_results row per player.
+   ════════════════════════════════════════════════════════════════════ */
+// Fire-and-forget: the match is already banked by the time this runs, so every
+// failure is logged and swallowed rather than surfaced. Standings are refreshed
+// in the same breath, since a result that doesn't move the table looks broken.
+async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
+  try {
+    const { data: sess } = await __sb.auth.getSession();
+    const jwt = sess?.session?.access_token;
+    if (!jwt) return;
+    const players = rows.map((r) => ({
+      name: r.stat_payload?.name, perf: perfOf(r.stat_payload), unit: perfUnit(r.stat_payload),
+      kills: r.stat_payload?.k, assists: r.stat_payload?.a, deaths: r.stat_payload?.d ?? 0,
+    })).sort((x, y) => (y.perf || 0) - (x.perf || 0));
+    const send = (mode, payload) => fetch(apiUrl("/api/discord-arena"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ eventId: ev.id, mode, payload }),
+    }).catch(() => {});
+    await send("results", {
+      teamA: A.name, teamB: B.name,
+      // The label ends in the fixture's id; with the winner, the bot finds the
+      // match's picks and adds who called it.
+      label: rows[0]?.match_label || null,
+      winnerName: winner === "A" ? A.name : winner === "B" ? B.name : null,
+      scoreA: scoreA !== "" ? scoreA : (winner === "A" ? "W" : "L"),
+      scoreB: scoreB !== "" ? scoreB : (winner === "B" ? "W" : "L"),
+      players,
+    });
+    await send("standings", null);
+    // Fixtures carry a done/winner state, so a banked result makes the posted
+    // schedule wrong until it's refreshed. Same message, edited in place.
+    await send("fixtures", null);
+  } catch (e) { console.error("discord result post", e); }
+}
+
+function MatchReport({ ev, onDone, prefill }) {
+  const [teams, setTeams] = useState(null);   // [{id,name,captain,captainUserId,roster:[{id,name}]}]
+  const [tA, setTA] = useState(""); const [tB, setTB] = useState("");
+  const [winner, setWinner] = useState("A");
+  // Round score. Optional, but entering it derives the winner — which is the
+  // first thing you read off the scoreboard anyway. Stored on each player row's
+  // stat_payload so the result isn't lost once the match is saved.
+  const [scoreA, setScoreA] = useState("");
+  const [scoreB, setScoreB] = useState("");
+  const syncWinner = (a, b) => {
+    const x = parseInt(a, 10), y = parseInt(b, 10);
+    if (Number.isFinite(x) && Number.isFinite(y) && x !== y) setWinner(x > y ? "A" : "B");
+  };
+  const [label, setLabel] = useState("");
+  // userId → {k, a, ps, unit}. `ps` holds the scoreboard's performance score;
+  // unit "acs" marks a line that came from an ACS scoreboard (a match from
+  // before Valorant's switch, being corrected), so it's saved back as ACS.
+  const [lines, setLines] = useState({});
+  const [extras, setExtras] = useState({ A: [], B: [] }); // subs pulled into this match
+  const [allRegs, setAllRegs] = useState([]); // every registrant this tournament (sub pool)
+  const [saved, setSaved] = useState([]);     // reported matches for this tournament
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [editing, setEditing] = useState(null); // match_label being edited (null = new match)
+  // Screenshot reader. `shot` holds the parsed rows awaiting review — nothing is
+  // written to the stat grid until the host confirms, because a misread score
+  // becomes wrong season points that look plausible.
+  const [shotBusy, setShotBusy] = useState(false);
+  const [shotErr, setShotErr] = useState("");
+  const [shot, setShot] = useState(null);   // [{ srcName, playerId|null, perf, kills, assists }]
+  const [shotUnit, setShotUnit] = useState("ps");   // what the last screenshot showed: "ps" or "acs"
+  const fileRef = useRef(null);
+
+  const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
+  const fieldS = { padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px solid rgba(61,123,255,0.22)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, boxSizing: "border-box", width: 64 };
+  const secLabel = (t) => <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 12 }}>// {t}</div>;
+
+  async function load() {
+    const s = await readState();
+    const board = (s?.teams || []).map(t => {
+      // A team made by hand (Locker Room → add team) has a captain NAME but no
+      // linked account, so there's no id to hang stats on and the captain simply
+      // vanished from this form. If that captain also exists as a board player,
+      // reuse THAT id — which recovers the case where a real registered player is
+      // captaining a hand-made team. Otherwise keep them visible with their board
+      // id so the host can see them and the screenshot reader can match them; the
+      // save step filters out anyone who can't actually be stored.
+      const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const capOnBoard = t.captainUserId ? null
+        : (s.players || []).find(p => norm(p.name) === norm(t.captain));
+      const capId = t.captainUserId || capOnBoard?.id || null;
+      return {
+      id: t.id, name: t.name, captainUserId: capId, captain: t.captain,
+      players: [
+        ...(capId ? [{ id: capId, name: t.captain, isCaptain: true }] : []),
+        ...(t.roster || []).map(pid => { const p = (s.players || []).find(x => x.id === pid); return p ? { id: p.id, name: p.name } : null; }).filter(Boolean),
+      ],
+    };
+    });
+    setTeams(board);
+    // Opened from a fixture card → teams, label, and winner arrive pre-filled.
+    const pA = prefill && board.find(t => t.name === prefill.teamAName);
+    const pB = prefill && board.find(t => t.name === prefill.teamBName);
+    if (pA) setTA(pA.id); else if (board[0]) setTA(board[0].id);
+    if (pB) setTB(pB.id); else if (board[1]) setTB(board[1].id);
+    if (prefill?.winner) setWinner(prefill.winner);
+    if (prefill?.label) setLabel(l => l || prefill.label);
+    // Score already entered on the bracket → don't make the host type it again.
+    if (prefill?.scoreA != null && prefill?.scoreB != null) { setScoreA(String(prefill.scoreA)); setScoreB(String(prefill.scoreB)); }
+    try { const r = await fetchRosterForEvent(ev.id); setAllRegs(r.all); } catch (e) { console.error(e); }
+    const { data } = await __sb.from("match_results").select("match_label, team_won, points_computed, user_id, stat_payload").eq("event_id", ev.id).order("created_at", { ascending: false });
+    const byLabel = {};
+    (data || []).forEach(r => { const k = r.match_label || "match"; (byLabel[k] = byLabel[k] || []).push(r); });
+    setSaved(Object.entries(byLabel));
+  }
+  useEffect(() => { load(); }, [ev?.id]);
+
+  const teamOf = (id) => (teams || []).find(t => t.id === id);
+
+  // Pull a reported match back into the form so its stats can be corrected.
+  function editMatch(ml, rows) {
+    const board = teams || [];
+    const nameOfRow = (r) => r.stat_payload?.team;
+    const idOfRow = (r) => r.stat_payload?.teamId;
+    // Winning side first, so team A/B and the winner toggle line up.
+    const sides = [...new Set(rows.map(r => idOfRow(r) || nameOfRow(r)))].filter(Boolean);
+    const findTeam = (key) => board.find(t => t.id === key) || board.find(t => t.name === key);
+    const t1 = findTeam(sides[0]), t2 = findTeam(sides[1]);
+    if (t1) setTA(t1.id);
+    if (t2) setTB(t2.id);
+    const wonKey = rows.find(r => r.team_won);
+    const wonId = wonKey ? (idOfRow(wonKey) || nameOfRow(wonKey)) : null;
+    setWinner(wonId && t2 && (t2.id === wonId || t2.name === wonId) ? "B" : "A");
+    setLabel(ml);
+    // Restore the round score if it was recorded (it's identical on every row).
+    const sp0 = rows.find(r => r.stat_payload && r.stat_payload.scoreA != null)?.stat_payload;
+    setScoreA(sp0 ? String(sp0.scoreA) : "");
+    setScoreB(sp0 ? String(sp0.scoreB) : "");
+    // Restore the stat lines.
+    const ls = {};
+    rows.forEach(r => {
+      const sp = r.stat_payload || {};
+      ls[r.user_id] = { k: String(sp.k ?? ""), a: String(sp.a ?? ""), ps: String(sp.ps ?? sp.acs ?? ""),
+        unit: sp.ps == null && sp.acs != null ? "acs" : "ps" };
+    });
+    setLines(ls);
+    // Anyone in the saved match who isn't on the current roster is a sub.
+    const onBoard = new Set([...(t1?.players || []), ...(t2?.players || [])].map(p => p.id));
+    const exA = [], exB = [];
+    rows.forEach(r => {
+      if (onBoard.has(r.user_id)) return;
+      const key = idOfRow(r) || nameOfRow(r);
+      const who = { id: r.user_id, name: r.stat_payload?.name || "Player" };
+      if (t2 && (t2.id === key || t2.name === key)) exB.push(who); else exA.push(who);
+    });
+    setExtras({ A: exA, B: exB });
+    setEditing(ml);
+    setErr("");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+  }
+
+  function cancelEdit() {
+    setEditing(null); setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setErr("");
+  }
+  const line = (uid) => lines[uid] || { k: "", a: "", ps: "", unit: "ps" };
+  const setLine = (uid, k, v) => setLines(ls => ({ ...ls, [uid]: { ...line(uid), [k]: v.replace(/[^0-9]/g, "") } }));
+  const ptsFor = (uid, won) => matchPoints({ won, perf: line(uid).ps, kills: line(uid).k, assists: line(uid).a });
+
+  async function readScreenshot(file) {
+    if (!file) return;
+    setShotBusy(true); setShotErr(""); setShot(null);
+    try {
+      const { base64, mimeType } = await downscaleImage(file);
+      // Signed-in members only: the reader spends the league's Gemini quota.
+      const { data: sess } = await __sb.auth.getSession();
+      const jwt = sess?.session?.access_token;
+      if (!jwt) throw new Error("Session expired — sign in again.");
+      const r = await fetch(apiUrl("/api/read-scoreboard"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ image: base64, mimeType }),
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.error || `Reader returned ${r.status}.`);
+      const pool = [
+        ...(teamOf(tA)?.players || []), ...extras.A,
+        ...(teamOf(tB)?.players || []), ...extras.B,
+      ];
+      if (!pool.length) throw new Error("Pick the two teams first, then read the screenshot.");
+      const used = new Set();
+      const mapped = (body.rows || []).map((row) => {
+        // One screenshot row per player — don't let a loose match claim a slot
+        // an earlier, better match already took.
+        const avail = pool.filter((p) => !used.has(p.id));
+        const m = matchScoreboardName(row.name, avail);
+        if (m) used.add(m.id);
+        // `perf` from the current reader; `acs` from a reader deployed before the switch.
+        return { srcName: row.name, playerId: m ? m.id : null, perf: row.perf ?? row.acs, kills: row.kills, assists: row.assists };
+      });
+      setShotUnit(body.kind === "acs" ? "acs" : "ps");
+      setShot(mapped);
+    } catch (e) {
+      setShotErr(e.message || "Couldn't read that screenshot.");
+    }
+    setShotBusy(false);
+    if (fileRef.current) fileRef.current.value = "";   // let the same file be re-picked
+  }
+
+  function applyShot() {
+    if (!shot) return;
+    setLines((ls) => {
+      const next = { ...ls };
+      for (const row of shot) {
+        if (!row.playerId) continue;
+        next[row.playerId] = { k: String(row.kills), a: String(row.assists), ps: String(row.perf), unit: shotUnit };
+      }
+      return next;
+    });
+    setShot(null); setShotErr("");
+  }
+
+
+  async function save() {
+    setErr(""); setBusy(true);
+    try {
+      const A = teamOf(tA), B = teamOf(tB);
+      if (!A || !B || A.id === B.id) throw new Error("Pick two different teams.");
+      // The winner drives the +50 bonus on every row, so a match saved without
+      // one silently under-scores both squads. The banner can clear the winner,
+      // so this has to be checked here rather than assumed.
+      if (winner !== "A" && winner !== "B") throw new Error("Mark which team won before saving.");
+      const ml = label.trim() || `${A.name} vs ${B.name}`;
+      const rows = [];
+      [[A, extras.A, winner === "A"], [B, extras.B, winner === "B"]].forEach(([team, subs, won]) => {
+        [...team.players, ...subs].forEach(p => {
+          if (!canBeScored(p)) return;   // no account → match_results.user_id can't be satisfied. The banner above names these players.
+          const l = line(p.id);
+          rows.push({
+            event_id: ev.id, community_id: window.__VOLT.communityId, user_id: p.id,
+            match_label: ml, team_won: won,
+            // teamId is the board's stable slot id — it survives a captain
+            // renaming the team. `team` is the name as it stood when reported,
+            // kept so historical results read correctly.
+            // Performance score saves as `ps`. Only a line that came from an ACS
+            // scoreboard saves as `acs`, so the two are never confused later.
+            stat_payload: { name: p.name, team: team.name, teamId: team.id || null, k: +l.k || 0, a: +l.a || 0,
+              ...(l.unit === "acs" ? { acs: +l.ps || 0 } : { ps: +l.ps || 0 }),
+              // Round score, same on every row of the match — the only place it
+              // can live, since match_results has no score column of its own.
+              ...(scoreA !== "" && scoreB !== "" ? { scoreA: +scoreA, scoreB: +scoreB } : {}) },
+            points_computed: ptsFor(p.id, won),
+          });
+        });
+      });
+      if (!rows.length) throw new Error(
+        "Nobody on these rosters has an account, so there's nothing that can be saved. " +
+        "Hand-added players can't be scored — they need to sign up for the tournament first.");
+      // Always clear any existing rows for this label before inserting, not just
+      // when the edit button was used. Reporting the same fixture twice from the
+      // blank form used to stack a second set of rows and double every player's
+      // points — silently, because nothing in the UI showed the duplicate.
+      const clearKey = editing || ml;   // `ml` is the label these rows are saved under
+      // Keep a copy: delete-then-insert isn't atomic, and a failed insert used
+      // to leave the match with no stats at all.
+      const { data: before } = await __sb.from("match_results").select("*").eq("event_id", ev.id).eq("match_label", clearKey);
+      const { error: delErr } = await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", clearKey);
+      if (delErr) throw delErr;
+      const { error } = await __sb.from("match_results").insert(rows);
+      if (error) {
+        if (before?.length) {
+          const { error: restoreErr } = await __sb.from("match_results").insert(before);
+          if (restoreErr) console.error("restore after failed save", restoreErr);
+        }
+        // The DB also enforces one row per (event, player, match). If that trips,
+        // say what happened rather than surfacing a constraint name.
+        throw new Error(/match_results_uniq|duplicate key/i.test(error.message || "")
+          ? "That match name is already used by another recorded match. Change the label, or open that match to edit it."
+          : error.message);
+      }
+      // Push the result to Discord. Deliberately after the save and outside the
+      // failure path: a Discord outage must never make a recorded match look
+      // like it didn't save. Worst case the host presses "Post standings".
+      postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB);
+      // And the other direction: a reported score lands on the bracket too, so
+      // the fixture shows the result without a second entry. The draft room
+      // owns board edits (it re-seeds semis/finals), so it does the write.
+      if (scoreA !== "" && scoreB !== "" && window.__VOLT?.setFixtureScore) {
+        try { window.__VOLT.setFixtureScore(ml, A.id, B.id, +scoreA, +scoreB); }
+        catch (e) { console.error("fixture score", e); }
+      }
+      setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); setScoreA(""); setScoreB(""); await load();
+    } catch (e) { setErr(e.message || "Could not save the match."); }
+    setBusy(false);
+  }
+
+  async function removeMatch(labelKey) {
+    if (!(await voltConfirm("Every player's stats and season points for this match are removed.",
+      { title: `Delete "${labelKey}"?`, confirmLabel: "Delete match", danger: true }))) return;
+    await __sb.from("match_results").delete().eq("event_id", ev.id).eq("match_label", labelKey);
+    await load();
+  }
+
+  if (teams === null) return <div className="vg-shell" style={{ minHeight: "60vh", background: "#0a0d18", color: "rgba(200,215,255,0.6)", display: "grid", placeItems: "center", fontFamily: "'Rajdhani',sans-serif" }}>Loading rosters…</div>;
+
+  // Attendance is scoped to the match being recorded. Listing every registrant
+  // for the tournament meant scrolling past people who weren't playing to find the
+  // two who didn't turn up. Subs count — they're on a roster for this match.
+  // match_results.user_id is NOT NULL with a foreign key to users, so a player
+  // without an account cannot be stored — at all. Hand-added players and hand-made
+  // team captains fall in that bucket. They still show in the grid (so the host can
+  // see the full line-up and the screenshot reader can match names), but they're
+  // flagged, excluded from the save, and named in a warning. Silently dropping them
+  // is what made this look like three separate bugs.
+  const canBeScored = (p) => typeof p?.id === "string" && p.id.length > 30;
+
+  const matchUserIds = new Set([
+    ...(teamOf(tA)?.players || []).map((p) => p.id),
+    ...(teamOf(tB)?.players || []).map((p) => p.id),
+    ...extras.A.map((p) => p.id), ...extras.B.map((p) => p.id),
+  ]);
+  const matchRegs = allRegs.filter((r) => matchUserIds.has(r.userId));
+
+  const rosterBlock = (teamId, side) => {
+    const t = teamOf(teamId); if (!t) return null;
+    const won = winner === side;
+    const shown = new Set([...(teamOf(tA)?.players || []).map(p => p.id), ...(teamOf(tB)?.players || []).map(p => p.id), ...extras.A.map(p => p.id), ...extras.B.map(p => p.id)]);
+    const subPool = allRegs.filter(r => !shown.has(r.userId));
+    const linePlayers = [...t.players, ...extras[side]];
+    return (
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <select value={teamId} onChange={e => (side === "A" ? setTA : setTB)(e.target.value)} style={{ ...fieldS, width: "auto", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+            {teams.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <button onClick={() => setWinner(won ? null : side)}
+            title={won ? "Click to clear the winner" : "Mark this team as the winner"}
+            style={shellBtn(won ? "accent" : "ghost", { padding: "7px 12px", fontSize: 11, flex: "0 0 auto" })}>
+            {won ? "✓ Winner" : "Mark winner"}
+          </button>
+        </div>
+        {linePlayers.length === 0 && (
+          <p style={{ color: "rgba(245,196,83,0.8)", fontSize: 12, margin: "0 0 8px" }}>
+            Nobody on this roster — add a sub below, or pick a different team.
+          </p>
+        )}
+        <div style={{ display: "grid", gap: 6 }}>
+          {linePlayers.map(p => { const ok = canBeScored(p); return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
+              background: ok ? "rgba(255,255,255,0.03)" : "rgba(245,196,83,0.08)",
+              border: `1px solid ${ok ? "rgba(120,150,220,0.14)" : "rgba(245,196,83,0.4)"}`, clipPath: SHELL_NOTCH(6) }}>
+              <span style={{ flex: 1, minWidth: 90, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{p.name}
+                {p.isCaptain && <span style={{ fontSize: 9.5, letterSpacing: "0.1em", color: "#f5c453", marginLeft: 6 }}>CAPT</span>}
+                {!ok && <span title="No account — stats can't be saved for this player" style={{ display: "block", fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(245,196,83,0.85)", fontWeight: 700 }}>no account · won't save</span>}
+              </span>
+              {/* Score first, then K then A — the column order Valorant's scoreboard
+                  uses, so you read across the game screen and type across the row. */}
+              <input placeholder={line(p.id).unit === "acs" ? "ACS" : "PERF"} title={line(p.id).unit === "acs" ? "ACS (match from before the performance score)" : "Performance score"}
+                value={line(p.id).ps} onChange={e => setLine(p.id, "ps", e.target.value)} style={fieldS}
+                aria-label={`${p.name} ${line(p.id).unit === "acs" ? "ACS" : "performance score"}`} />
+              <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
+              <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} style={fieldS} aria-label={`${p.name} assists`} />
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: won ? "#3ddc84" : "#7da6ff", width: 58, textAlign: "right" }}>{ptsFor(p.id, won)} pts</span>
+              {extras[side].some(x => x.id === p.id) &&
+                <button onClick={() => setExtras(ex => ({ ...ex, [side]: ex[side].filter(x => x.id !== p.id) }))} aria-label={`Remove sub ${p.name}`} style={{ background: "none", border: "none", color: "#ff8a94", cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>}
+            </div>
+          ); })}
+        </div>
+        {subPool.length === 0 && (
+          <p style={{ fontSize: 11, color: "rgba(200,215,255,0.4)", margin: "6px 0 0" }}>
+            No subs available — only approved registrants can be subbed in.
+          </p>
+        )}
+        {subPool.length > 0 && (
+          <select value="" onChange={e => { const r = subPool.find(x => x.userId === e.target.value); if (r) setExtras(ex => ({ ...ex, [side]: [...ex[side], { id: r.userId, name: r.name }] })); }}
+            style={{ marginTop: 8, padding: "8px 9px", background: "rgba(10,16,30,0.65)", border: "1px dashed rgba(61,220,132,0.4)", color: "#9af5c2", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.08em", cursor: "pointer" }}>
+            <option value="">+ Add sub…</option>
+            {subPool.map(r => <option key={r.userId} value={r.userId}>{r.name}{r.rank ? ` · ${r.rank}` : ""}</option>)}
+          </select>
+        )}
+      </div>
+    );
+  };
+
+  return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "40px 20px 60px" }}>
+    <div style={{ maxWidth: 980, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)} · Match report</div>
+        <h1 style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Record a <span style={{ color: "#3d7bff" }}>Match</span></h1>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · performance score÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
+      </div>
+      <div style={panel}>
+        <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
+        {secLabel("Match")}
+        {editing && (
+          <div className="flex items-center justify-between gap-3 flex-wrap" style={{ padding: "10px 14px", marginBottom: 14, background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.45)", clipPath: SHELL_NOTCH(8) }}>
+            <span style={{ fontSize: 12.5, color: "#f5c453", fontWeight: 700 }}>
+              ✎ Editing <b style={{ color: "#ffe4a0" }}>{editing}</b> — saving replaces the existing stats and points.
+            </span>
+            <button onClick={cancelEdit} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>Cancel edit</button>
+          </div>
+        )}
+
+        {/* Matchup banner — one line. The winner is a trophy beside the name rather
+            than a second row of text, and the round score sits between them, which
+            is the order you read it off the scoreboard. Entering the score sets the
+            winner, so the buttons below become a fallback rather than a step. */}
+        {(() => {
+          const A = teamOf(tA), B = teamOf(tB);
+          const ready = A && B && A.id !== B.id;
+          const scoreBox = (val, set, other, side) => (
+            <input value={val} inputMode="numeric" placeholder="–" aria-label={`${side === "A" ? "Team A" : "Team B"} rounds won`}
+              onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 2); set(v); side === "A" ? syncWinner(v, other) : syncWinner(other, v); }}
+              style={{ width: 46, padding: "5px 4px", textAlign: "center", background: "rgba(10,16,30,0.85)",
+                border: `1px solid ${winner === side ? "rgba(61,220,132,0.5)" : "rgba(120,150,220,0.25)"}`,
+                color: winner === side ? "#9af5c2" : "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace",
+                fontSize: 17, fontWeight: 700 }} />
+          );
+          // Each side is one group: trophy (winner only) → name → score. Same
+          // order on both sides, so the eye reads straight across.
+          const sideGroup = (t, side, val, set, other) => {
+            const won = winner === side;
+            const hue = t?.hue || (side === "A" ? "#ff4655" : "#00e5ff");
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0,
+                justifyContent: side === "A" ? "flex-end" : "flex-start" }}>
+                {won && <span style={{ color: "#f5c453" }} title="Winner"><TrophyIcon /></span>}
+                <span style={{ minWidth: 0, overflowWrap: "anywhere", textAlign: side === "A" ? "right" : "left",
+                  fontFamily: "'Rajdhani',sans-serif", fontSize: 21, fontWeight: 800, textTransform: "uppercase",
+                  lineHeight: 1.1, color: t ? (won ? "#ffffff" : "rgba(220,231,255,0.6)") : "rgba(200,215,255,0.3)",
+                  textShadow: won ? `0 0 20px ${hue}77` : "none" }}>{t?.name || "Not set"}</span>
+                {scoreBox(val, set, other, side)}
+              </div>
+            );
+          };
+          return (
+            <div style={{ padding: "14px 18px", marginBottom: 14,
+              background: "linear-gradient(160deg, rgba(10,16,30,0.7), rgba(8,11,19,0.6))",
+              border: `1px solid ${ready ? "rgba(61,123,255,0.3)" : "rgba(245,196,83,0.4)"}`, clipPath: SHELL_NOTCH(10) }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", columnGap: 14 }}>
+                {sideGroup(A, "A", scoreA, setScoreA, scoreB)}
+                <span style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 11, fontWeight: 800, letterSpacing: "0.18em", color: "rgba(200,215,255,0.35)" }}>VS</span>
+                {sideGroup(B, "B", scoreB, setScoreB, scoreA)}
+              </div>
+              {!ready && (
+                <div style={{ textAlign: "center", marginTop: 8, fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
+                  Pick two different teams to report a match.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {(() => {
+          const inMatch = [
+            ...(teamOf(tA)?.players || []), ...extras.A,
+            ...(teamOf(tB)?.players || []), ...extras.B,
+          ];
+          const unscoreable = inMatch.filter((p) => !canBeScored(p));
+          if (!unscoreable.length) return null;
+          return (
+            <div style={{ margin: "4px 0 14px", padding: "12px 14px", background: "rgba(245,196,83,0.09)", border: "1px solid rgba(245,196,83,0.45)", clipPath: SHELL_NOTCH(9) }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#f5c453" }}>
+                {unscoreable.length} player{unscoreable.length === 1 ? "" : "s"} can't be scored
+              </div>
+              <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.6)", marginTop: 4, lineHeight: 1.5 }}>
+                {unscoreable.map((p) => p.name).join(", ")} {unscoreable.length === 1 ? "was" : "were"} added by hand and {unscoreable.length === 1 ? "has" : "have"} no account,
+                so season points can't be stored for {unscoreable.length === 1 ? "them" : "them"}. Everyone else saves normally.
+                To score {unscoreable.length === 1 ? "them" : "them"}, they need to sign up for the tournament and be approved.
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Screenshot reader. Optional shortcut — the grid below still works by
+            hand, and stays the way you correct anything the reader gets wrong. */}
+        <div style={{ margin: "4px 0 16px", padding: "12px 14px", background: "rgba(61,220,132,0.05)", border: "1px solid rgba(61,220,132,0.28)", clipPath: SHELL_NOTCH(9) }}>
+          <div className="flex items-center gap-10 flex-wrap" style={{ gap: 10 }}>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }}
+              onChange={(e) => readScreenshot(e.target.files && e.target.files[0])} />
+            <button disabled={shotBusy} onClick={() => fileRef.current && fileRef.current.click()}
+              style={shellBtn("accent", { padding: "9px 15px", fontSize: 12, opacity: shotBusy ? 0.5 : 1 })}>
+              {shotBusy ? "Reading…" : "⊞ Read from screenshot"}
+            </button>
+            <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)" }}>
+              Upload the end-of-match scoreboard. You'll review everything before it fills in.
+            </span>
+          </div>
+          {shotErr && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {shotErr}</div>}
+
+          {shot && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, color: "#9af5c2", marginBottom: 6 }}>
+                Check this against the screenshot
+              </div>
+              <div style={{ display: "grid", gap: 5 }}>
+                {shot.map((row, i) => {
+                  const pool = [
+                    ...(teamOf(tA)?.players || []), ...extras.A,
+                    ...(teamOf(tB)?.players || []), ...extras.B,
+                  ];
+                  const taken = new Set(shot.filter((r, k) => k !== i && r.playerId).map((r) => r.playerId));
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "7px 10px",
+                      background: row.playerId ? "rgba(255,255,255,0.03)" : "rgba(245,196,83,0.1)",
+                      border: `1px solid ${row.playerId ? "rgba(120,150,220,0.16)" : "rgba(245,196,83,0.45)"}`, clipPath: SHELL_NOTCH(5) }}>
+                      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.7)", minWidth: 110 }}>{row.srcName}</span>
+                      <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 11 }}>→</span>
+                      <select value={row.playerId || ""}
+                        onChange={(e) => setShot((rs) => rs.map((r, k) => k === i ? { ...r, playerId: e.target.value || null } : r))}
+                        style={{ padding: "5px 8px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 12.5, fontWeight: 600 }}>
+                        <option value="">— skip this row —</option>
+                        {pool.map((p) => (
+                          <option key={p.id} value={p.id} disabled={taken.has(p.id)}>{p.name}{taken.has(p.id) ? " (taken)" : ""}</option>
+                        ))}
+                      </select>
+                      <span style={{ flex: 1 }} />
+                      {["perf", "kills", "assists"].map((f) => (
+                        <label key={f} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>{f === "perf" ? (shotUnit === "acs" ? "ACS" : "PERF") : f === "kills" ? "K" : "A"}</span>
+                          <input value={row[f]} inputMode="numeric"
+                            onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setShot((rs) => rs.map((r, k) => k === i ? { ...r, [f]: v === "" ? 0 : Number(v) } : r)); }}
+                            style={{ width: 52, padding: "4px 6px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(120,150,220,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, textAlign: "center" }} />
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-3 flex-wrap" style={{ marginTop: 10, gap: 10 }}>
+                <button onClick={applyShot} style={shellBtn("primary", { padding: "9px 16px", fontSize: 12 })}>
+                  Fill in {shot.filter((r) => r.playerId).length} player{shot.filter((r) => r.playerId).length === 1 ? "" : "s"} →
+                </button>
+                <button onClick={() => { setShot(null); setShotErr(""); }} style={shellBtn("ghost", { padding: "9px 14px", fontSize: 12 })}>Discard</button>
+                {shot.some((r) => !r.playerId) && (
+                  <span style={{ fontSize: 11.5, color: "rgba(245,196,83,0.85)" }}>
+                    {shot.filter((r) => !r.playerId).length} row{shot.filter((r) => !r.playerId).length === 1 ? "" : "s"} unmatched — assign or skip.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 20, alignItems: "start" }}>
+          {rosterBlock(tA, "A")}
+          {rosterBlock(tB, "B")}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 18, alignItems: "center" }}>
+          <button disabled={busy} onClick={save} style={shellBtn(editing ? "accent" : "primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : editing ? "✎ Update match →" : "Save match →"}</button>
+          <button onClick={onDone} style={shellBtn("ghost", { padding: "11px 18px", fontSize: 13 })}>Done</button>
+          {err && <span style={{ color: "#ff8a94", fontSize: 13 }}>{err}</span>}
+        </div>
+      </div>
+
+      {saved.length > 0 && <div style={{ ...panel, marginTop: 16 }}>
+        {secLabel(`Reported this tournament · ${saved.length}`)}
+        <div style={{ display: "grid", gap: 6 }}>
+          {saved.map(([ml, rows]) => (
+            <div key={ml} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.14)", clipPath: SHELL_NOTCH(7) }}>
+              <span style={{ flex: 1, fontWeight: 700, textTransform: "uppercase", fontSize: 13 }}>{ml}</span>
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.5)" }}>{rows.length} players · {rows.reduce((s, r) => s + Number(r.points_computed || 0), 0)} pts</span>
+              <button onClick={() => editMatch(ml, rows)} style={shellBtn(editing === ml ? "accent" : "ghost", { padding: "5px 10px", fontSize: 10 })}>{editing === ml ? "Editing…" : "✎ Edit stats"}</button>
+              <button onClick={() => removeMatch(ml)} style={shellBtn("danger", { padding: "5px 10px", fontSize: 10 })}>Delete</button>
+            </div>
+          ))}
+        </div>
+      </div>}
+
+      {/* ── Attendance — flag players who confirmed availability but ghosted.
+             2nd strike auto-suspends them for the next 2 tournaments (DB trigger).
+             Unmarking a mistake lifts an active suspension. ── */}
+      {matchRegs.length === 0 && (teamOf(tA) || teamOf(tB)) && (
+        <div style={{ ...panel, marginTop: 16, borderColor: "rgba(120,150,220,0.2)" }}>
+          {secLabel("Attendance")}
+          <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: 0 }}>
+            No-shows are tracked against a player's registration, so there's nothing to mark here —
+            nobody in this match signed up for the tournament through the app.
+          </p>
+        </div>
+      )}
+      {matchRegs.length > 0 && <div style={{ ...panel, marginTop: 16, borderColor: "rgba(255,70,85,0.3)" }}>
+        {secLabel(`Attendance · ${matchRegs.filter(r => r.noShow).length} no-show${matchRegs.filter(r => r.noShow).length === 1 ? "" : "s"} in this match`)}
+        <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", margin: "0 0 10px" }}>
+          Only the players in this match. Mark anyone who confirmed availability but didn't show — a strike counts for the whole tournament, and a 2nd auto-suspends them for the next 2 tournaments. Unmark to forgive (this also lifts an active suspension).
+        </p>
+        <div style={{ display: "grid", gap: 5 }}>
+          {matchRegs.map(r => {
+            const played = saved.some(([, rows]) => rows.some(x => x.user_id === r.userId));
+            return (
+              <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: r.noShow ? "rgba(255,70,85,0.06)" : "rgba(255,255,255,0.02)", border: `1px solid ${r.noShow ? "rgba(255,70,85,0.3)" : "rgba(120,150,220,0.12)"}`, clipPath: SHELL_NOTCH(6), flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: 13, flex: 1, minWidth: 110, color: r.noShow ? "#ff8f9a" : "#ecf3ff" }}>{r.name}</span>
+                {played && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2", fontWeight: 700 }}>played ✓</span>}
+                {!played && !r.noShow && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)" }}>no matches yet</span>}
+                {r.noShows > 0 && <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 2 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} strike{r.noShows === 1 ? "" : "s"}</span>}
+                <button disabled={busy} onClick={async () => { setBusy(true); try { await __sb.from("registrations").update({ no_show: !r.noShow }).eq("id", r.regId); await load(); } catch (e) { console.error(e); } setBusy(false); }}
+                  style={shellBtn(r.noShow ? "ghost" : "danger", { padding: "5px 11px", fontSize: 10 })}>
+                  {r.noShow ? "Unmark" : "No-show"}</button>
+              </div>
+            );
+          })}
+        </div>
+      </div>}
+    </div>
+  </div>;
+}
+
+// Registration — professional single-flow: status, profile, live registrant
+// roster. Captaincy is the host's call; players can only quietly
+// signal availability. The host assigns captains from the roster below.
+function WeekendRegistration({ ev, auth, phase }) {
+  // Sign-ups run through BOTH registration phases. What changes at the boundary
+  // is whether you land in the draft pool or the reserves, not whether you can join.
+  const regOpen = phase === "registration_open" || phase === "registration_closed";
+  const poolOpen = phase === "registration_open";
+  const isHost = auth?.role === "host" || auth?.role === "moderator"; // staff: moderators review applications too
+  const [reg, setReg] = useState(undefined);
+  const [roster, setRoster] = useState([]);       // approved
+  const [pendingQ, setPendingQ] = useState([]);   // host queue
+  const [rejectedQ, setRejectedQ] = useState([]);
+  const [myProf, setMyProf] = useState(undefined);
+  const [susp, setSusp] = useState(0);            // tournaments left on suspension
+  const [myStrikes, setMyStrikes] = useState(0);  // my season no-show count
+  const [avail, setAvail] = useState(false);      // availability confirmation
+  const [wantCap, setWantCap] = useState(false);  // captain volunteer (optional)
+  const [openApp, setOpenApp] = useState(null);   // expanded applicant in the host queue
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    if (!HAS_SUPABASE) { setReg(null); setRoster([]); setMyProf(null); return; }
+    const { data } = await __sb.from("registrations").select("*").eq("event_id", ev.id).eq("user_id", window.__VOLT.userId).maybeSingle();
+    setReg(data || null);
+    try {
+      const r = await fetchRosterForEvent(ev.id);
+      setRoster(r.all); setPendingQ(r.pending); setRejectedQ(r.rejected);
+    } catch (e) { console.error(e); }
+    try {
+      setMyProf(await loadProfileGate(window.__VOLT.userId));
+    } catch (e) { console.error(e); setMyProf(null); }
+    try {
+      const { data: u } = await __sb.from("users").select("suspension_remaining, wants_captain").eq("id", window.__VOLT.userId).maybeSingle();
+      setSusp(u?.suspension_remaining || 0);
+      setMyStrikes(await activeStrikeCount(window.__VOLT.userId));
+    } catch (e) { console.error(e); }
+  }
+  useEffect(() => { load(); const stop = visInterval(load, 10000); return () => stop(); }, [ev?.id]);
+
+  const profileComplete = profileIsComplete(myProf);
+
+  async function apply() {
+    if (!profileComplete || !avail) return;
+    setBusy(true);
+    try {
+      const { error } = await __sb.rpc("volt_apply", { p_event: ev.id, p_wants_captain: wantCap });
+      if (error) throw error;
+      await load();
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
+    setBusy(false);
+  }
+  async function withdraw() {
+    setBusy(true);
+    try { const { error } = await __sb.rpc("volt_withdraw", { p_event: ev.id }); if (error) throw error; await load(); }
+    catch (e) { console.error(e); setDecideErr(e.message || "Couldn't withdraw — try again."); }
+    setBusy(false);
+  }
+  const [decideErr, setDecideErr] = useState("");
+  // Host decision — the only way into the tournament pool.
+  async function hostDecide(entry, status) {
+    setBusy(true); setDecideErr("");
+    try {
+      const { error } = await __sb.from("registrations").update({ status }).eq("id", entry.regId);
+      if (error) throw new Error(error.message);
+      await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: status === "approved" ? "approved" : "rejected",
+        title: status === "approved" ? "You're in — " + weekendName(ev) : "Application not approved",
+        body: status === "approved" ? "Approved for the pool. Captains can draft you now." : "The host didn't approve this one. Reach out if that's a mistake." }]);
+      await load();
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
+    setBusy(false);
+  }
+  // Clear the whole queue in one go. Anyone with a no-show on record is named
+  // in the confirmation, so the shortcut can't wave them through unnoticed.
+  async function hostApproveAll(list) {
+    const flagged = list.filter((r) => r.noShows > 0);
+    const ok = await voltConfirm(
+      `Approve all ${list.length} applications for ${weekendName(ev)}?` +
+      (flagged.length ? `\n\n${flagged.length} of them ${flagged.length === 1 ? "has" : "have"} a no-show on record: ${flagged.map((r) => r.name).join(", ")}.` : ""),
+      { title: "Approve everyone?", confirmLabel: `Approve ${list.length}` });
+    if (!ok) return;
+    setBusy(true); setDecideErr("");
+    try {
+      const { error } = await __sb.from("registrations").update({ status: "approved" }).in("id", list.map((r) => r.regId));
+      if (error) throw new Error(error.message);
+      await voltNotify(list.map((r) => ({ community_id: window.__VOLT.communityId, user_id: r.userId, event_id: ev.id, kind: "approved",
+        title: "You're in — " + weekendName(ev), body: "Approved for the pool. Captains can draft you now." })));
+      voltToast(`Approved ${list.length} player${list.length === 1 ? "" : "s"}.`);
+      await load();
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't approve them — try again."); }
+    setBusy(false);
+  }
+  // Player side: a quiet availability signal only — not a captain claim.
+  async function volunteer(v) {
+    setBusy(true);
+    try { const { error } = await __sb.rpc("volt_wants_captain", { p_event: ev.id, p_v: v }); if (error) throw error; await load(); }
+    catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
+    setBusy(false);
+  }
+  // Host side: the actual captain decision.
+  async function hostSetCaptain(entry, v) {
+    setBusy(true); setDecideErr("");
+    try {
+      const { error } = await __sb.from("registrations").update({ is_captain: v }).eq("id", entry.regId);
+      if (error) throw new Error(error.message);
+      if (v) await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: "captain",
+        title: "★ You're a captain this tournament", body: "$10,000 budget in " + weekendName(ev) + ". Scout the pool and build your squad." }]);
+      await load();
+    } catch (e) { console.error(e); setDecideErr(e.message || "Couldn't save that — try again."); }
+    setBusy(false);
+  }
+
+  // Full submitted profile — one renderer for the queue and the roster.
+  const profileDetail = (r, borderColor) => {
+    const stat = (label, val) => val != null && val !== "" && (
+      <div key={label} style={{ padding: "7px 11px", background: "rgba(10,16,30,0.7)", border: "1px solid rgba(61,123,255,0.25)", clipPath: SHELL_NOTCH(6), minWidth: 62 }}>
+        <div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700 }}>{label}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace" }}>{val}</div>
+      </div>
+    );
+    return (
+      <div style={{ padding: "2px 14px 14px 34px", borderTop: `1px solid ${borderColor}` }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          {stat("Rank", r.rank ? rankLabel(r.rank, r.rankDiv) : null)}{stat("Peak", r.peakRank ? rankLabel(r.peakRank, r.peakRankDiv) : null)}{stat("Role", r.role)}{stat("Agent", r.agent)}{stat("KDA", r.kda)}{stat("ACS", r.acs)}{stat("HS%", r.hs != null && r.hs !== "" ? r.hs + "%" : null)}{stat("Win%", r.win != null && r.win !== "" ? r.win + "%" : null)}
+        </div>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 10, flexWrap: "wrap", fontSize: 12, color: "rgba(200,215,255,0.55)" }}>
+          {r.volunteered && <span style={{ color: "#7da6ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="flag" size={12} />wants to captain</span>}
+          <span>{r.noShows > 0 ? `${r.noShows} no-show${r.noShows === 1 ? "" : "s"} this season` : "Clean attendance record"}</span>
+          {r.tracker
+            ? <a href={r.tracker} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: "#7da6ff", textDecoration: "underline", fontWeight: 600 }}>Open tracker profile ↗</a>
+            : <span style={{ color: "rgba(200,215,255,0.35)" }}>No tracker link provided</span>}
+        </div>
+        {!r.rank && !r.role && <p style={{ margin: "10px 0 0", fontSize: 12, color: "#ff8f9a" }}>⚠ Empty scouting profile — likely not a serious application.</p>}
+      </div>
+    );
+  };
+
+  const myStatus = reg ? (reg.status || "approved") : null;
+  const isIn = myStatus === "approved";
+  const me = roster.find(r => r.userId === window.__VOLT.userId);
+  const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
+  const corner = <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />;
+  const secLabel = (t) => <div style={{ fontSize: 11, letterSpacing: "0.28em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 12 }}>// {t}</div>;
+
+  return <div className="vg-shell" style={{ minHeight: "70vh", background: "#0a0d18", color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", padding: "44px 20px 60px" }}>
+    <div style={{ maxWidth: 680, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 26 }}>
+        <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)}</div>
+        <h1 style={{ fontSize: 38, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Registration {regOpen ? <span style={{ color: "#3ddc84" }}>Open</span> : <span style={{ color: "#ff8a94" }}>Closed</span>}</h1>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 14 }}>{poolOpen ? "Claim your spot in this tournament's draft pool." : regOpen ? "The draft pool is closed — you can still sign up as a reserve." : "Registration is closed for this tournament."}</p>
+        <p style={{ color: "rgba(200,215,255,0.4)", margin: "8px auto 0", fontSize: 12.5, maxWidth: 520 }}>
+          {ev?.draft_at && <span style={{ color: "#7da6ff", fontFamily: "'IBM Plex Mono',monospace" }}>Draft: {new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · {new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} — </span>}
+          Teams form from whoever registers (roughly one per 5 players). Not drafted? You can still be subbed into matches — every match you play banks season points.</p>
+      </div>
+
+      {reg === undefined ? <p className="vg-loading">// Syncing…</p> : (
+        // Host sees the queue and roster first — reviewing people is the job;
+        // their own application is secondary. Players see theirs first.
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* ── HOST: application review queue ── */}
+        {isHost && (pendingQ.length > 0 || rejectedQ.length > 0) && (
+          <div style={{ ...panel, order: 1, borderColor: "rgba(245,196,83,0.4)" }}>
+            {corner}
+            {secLabel(`Applications · ${pendingQ.length} pending`)}
+            {/* Approve and reject failures used to be console-only, because
+                supabase-js returns errors rather than throwing and the catch
+                never fired. On draft night that reads as a dead button. */}
+            {decideErr && (
+              <p style={{ color: "#ff8f9a", fontSize: 12.5, margin: "0 0 10px" }}>⚠ {decideErr}</p>
+            )}
+            {pendingQ.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 10px" }}>
+                <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: 0, flex: 1, minWidth: 180 }}>
+                  Tap a row to see their full stats and history before you decide.
+                </p>
+                {pendingQ.length > 1 && (
+                  <button disabled={busy} onClick={() => hostApproveAll(pendingQ)}
+                    style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>✓ Approve all ({pendingQ.length})</button>
+                )}
+              </div>
+            )}
+            {pendingQ.length === 0 && <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>Queue clear.</p>}
+            <div style={{ display: "grid", gap: 6 }}>
+              {pendingQ.map(r => {
+                const openIt = openApp === r.userId;
+                return (
+                  <div key={r.userId} style={{ background: "rgba(245,196,83,0.05)", border: `1px solid rgba(245,196,83,${openIt ? "0.45" : "0.25"})`, clipPath: SHELL_NOTCH(7) }}>
+                    <div onClick={() => setOpenApp(openIt ? null : r.userId)} role="button" tabIndex={0}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenApp(openIt ? null : r.userId); } }}
+                      className="vg-row-x" title={openIt ? "Hide full stats" : "Show full stats before deciding"}
+                      aria-expanded={openIt}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", flexWrap: "wrap", cursor: "pointer" }}>
+                      <span aria-hidden="true" className="vg-chev" style={{ display: "grid", placeItems: "center",
+                        width: 22, height: 22, flex: "0 0 auto", color: "#f5c453",
+                        border: `1px solid rgba(245,196,83,${openIt ? "0.7" : "0.38"})`,
+                        background: `rgba(245,196,83,${openIt ? "0.22" : "0.09"})`,
+                        transform: openIt ? "rotate(90deg)" : "none" }}><ChevronIcon /></span>
+                      <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1, minWidth: 120 }}>{r.name}</span>
+                      {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
+                      {r.role && <span style={{ fontSize: 11, textTransform: "uppercase", color: "rgba(200,215,255,0.55)" }}>{r.role}</span>}
+                      <span title="Confirmed availability" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.available ? "#9af5c2" : "#ff8f9a", fontWeight: 700 }}>{r.available ? "✓ available" : "no confirm"}</span>
+                      {r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700, border: `1px solid ${r.noShows >= 2 ? "rgba(255,70,85,0.5)" : "rgba(245,196,83,0.4)"}`, padding: "2px 7px", clipPath: SHELL_NOTCH(4) }}>⚠ {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+                      <span className="vg-chev-label" style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700, color: "rgba(245,196,83,0.7)", whiteSpace: "nowrap" }}>{openIt ? "Hide stats" : "Full stats"}</span>
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "approved"); }} style={shellBtn("accent", { padding: "6px 14px", fontSize: 11 })}>Approve</button>
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostDecide(r, "rejected"); }} style={shellBtn("danger", { padding: "6px 12px", fontSize: 11 })}>Reject</button>
+                    </div>
+                    {openIt && profileDetail(r, "rgba(245,196,83,0.15)")}
+                  </div>
+                );
+              })}
+            </div>
+            {rejectedQ.length > 0 && <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 10, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.35)", fontWeight: 700, marginBottom: 6 }}>// Rejected · {rejectedQ.length}</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {rejectedQ.map(r => (
+                  <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", opacity: 0.6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(120,150,220,0.1)", clipPath: SHELL_NOTCH(6) }}>
+                    <span style={{ fontWeight: 700, textTransform: "uppercase", fontSize: 12.5, flex: 1 }}>{r.name}</span>
+                    <button disabled={busy} onClick={() => hostDecide(r, "approved")} style={shellBtn("ghost", { padding: "4px 10px", fontSize: 10 })}>Approve anyway</button>
+                  </div>
+                ))}
+              </div>
+            </div>}
+          </div>
+        )}
+
+        <div style={{ ...panel, order: isHost ? 3 : 1 }}>
+          {corner}
+          {secLabel(isHost && !reg ? "Your registration (staff)" : "Your application")}
+          {/* status line */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%",
+                background: isIn ? "#3ddc84" : myStatus === "pending" ? "#f5c453" : myStatus === "rejected" ? "#ff4655" : "rgba(200,215,255,0.25)",
+                boxShadow: isIn ? "0 0 10px rgba(61,220,132,0.8)" : myStatus === "pending" ? "0 0 10px rgba(245,196,83,0.7)" : "none" }} />
+              <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 15,
+                color: isIn ? "#9af5c2" : myStatus === "pending" ? "#f5c453" : myStatus === "rejected" ? "#ff8f9a" : "rgba(200,215,255,0.7)" }}>
+                {isIn ? "You're in this tournament" :
+                 myStatus === "pending" ? "Application pending — waiting for host approval" :
+                 myStatus === "rejected" ? "Not approved for this tournament" :
+                 regOpen ? "Not applied" : "You didn't apply this tournament"}</span>
+            </div>
+            {regOpen && myStatus === "pending" && <button disabled={busy} onClick={withdraw} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>{busy ? "…" : "Withdraw"}</button>}
+            {regOpen && isIn && <button disabled={busy} onClick={withdraw} style={shellBtn("ghost", { padding: "8px 16px", fontSize: 12 })}>{busy ? "…" : "Drop out"}</button>}
+          </div>
+
+          {/* suspended players sit out — the DB blocks the insert anyway */}
+          {regOpen && !reg && susp > 0 && (
+            <div style={{ marginTop: 14, padding: "14px 16px", background: "rgba(255,70,85,0.07)", border: "1px solid rgba(255,70,85,0.4)", clipPath: SHELL_NOTCH(8) }}>
+              <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#ff8f9a" }}>Suspended — {susp} tournament{susp === 1 ? "" : "s"} remaining</div>
+              <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", margin: "6px 0 0" }}>Repeated no-shows triggered an automatic suspension. It counts down as league tournaments settle. Talk to the host if you think this is a mistake.</p>
+            </div>
+          )}
+
+          {/* application form — profile completeness + availability gate the button */}
+          {regOpen && !reg && susp === 0 && <>
+            <div style={{ marginTop: 14, padding: "12px 14px", background: "rgba(61,123,255,0.05)", border: "1px solid rgba(61,123,255,0.2)", clipPath: SHELL_NOTCH(8) }}>
+              <div style={{ fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", fontWeight: 700, color: profileComplete ? "#9af5c2" : "#f5c453" }}>
+                {myProf === undefined ? "Checking your profile…" : profileComplete ? "✓ Scouting profile complete" : `① Complete your scouting profile — still needed: ${profileMissing(myProf).join(", ")}`}</div>
+              {HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} onSaved={load} />}
+              {HAS_SUPABASE && <DiscordLinkCard />}
+            </div>
+            {myStrikes > 0 && (
+              <div style={{ marginTop: 14, padding: "11px 14px", background: myStrikes % 3 === 2 ? "rgba(255,70,85,0.07)" : "rgba(245,196,83,0.06)", border: `1px solid ${myStrikes % 3 === 2 ? "rgba(255,70,85,0.45)" : "rgba(245,196,83,0.35)"}`, clipPath: SHELL_NOTCH(7) }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: myStrikes % 3 === 2 ? "#ff8f9a" : "#f5c453" }}>
+                  ⚠ {myStrikes} no-show{myStrikes === 1 ? "" : "s"} on record</span>
+                <span style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginLeft: 6 }}>
+                  {myStrikes % 3 === 2 ? "— one more triggers an automatic 3-tournament suspension. Only apply if you can really make it." : "— every 3rd triggers an automatic 3-tournament suspension."}</span>
+              </div>
+            )}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 14, cursor: "pointer", color: avail ? "#9af5c2" : "rgba(200,215,255,0.65)", fontSize: 13.5, lineHeight: 1.4 }}>
+              <input type="checkbox" checked={avail} onChange={e => setAvail(e.target.checked)} style={{ accentColor: "#3ddc84", marginTop: 2, width: 16, height: 16 }} />
+              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>② I confirm I'm available this tournament</b> — {ev?.draft_at ? `draft on ${new Date(ev.draft_at).toLocaleDateString(undefined, { weekday: "short" })} ${new Date(ev.draft_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} and` : "the draft and"} up to 4 matches. No-shows hurt your team.</span>
+            </label>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 12, cursor: "pointer", color: wantCap ? "#7da6ff" : "rgba(200,215,255,0.55)", fontSize: 13, lineHeight: 1.4 }}>
+              <input type="checkbox" checked={wantCap} onChange={e => setWantCap(e.target.checked)} style={{ accentColor: "#3d7bff", marginTop: 2, width: 16, height: 16 }} />
+              <span><b style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}>Available to captain</b> <span style={{ color: "rgba(200,215,255,0.4)" }}>(optional)</span> — you'd run the auction budget and draft your squad. The host makes the final call.</span>
+            </label>
+            {!poolOpen && (
+              <div style={{ marginTop: 12, padding: "11px 13px", background: "rgba(61,220,132,0.07)", border: "1px solid rgba(61,220,132,0.35)", clipPath: SHELL_NOTCH(8) }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9af5c2" }}>Signing up as a reserve</div>
+                <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.55)", marginTop: 3 }}>
+                  The draft pool has closed, so captains can't bid on you. You'll appear in the Reserve Hub and can be subbed into matches — every match you play still banks season points.
+                </div>
+              </div>
+            )}
+            <button disabled={busy || !profileComplete || !avail} onClick={apply}
+              style={shellBtn("primary", { width: "100%", marginTop: 14, padding: "13px", fontSize: 14, opacity: (busy || !profileComplete || !avail) ? 0.45 : 1 })}>
+              {busy ? "…" : "Submit application →"}</button>
+            <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "8px 0 0", textAlign: "center" }}>The host reviews every application before you enter the player pool.</p>
+          </>}
+
+          {myStatus === "pending" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>Your profile and availability were sent to the host. You'll appear in the Scout Hub once approved — check back here.</p>}
+          {myStatus === "rejected" && <p style={{ color: "rgba(200,215,255,0.5)", fontSize: 12.5, margin: "12px 0 0" }}>The host didn't approve this application. Reach out to them if you think that's a mistake.</p>}
+
+          {isIn && me?.isCaptain && (
+            <div style={{ marginTop: 14, padding: "12px 15px", background: "rgba(245,196,83,0.08)", border: "1px solid rgba(245,196,83,0.55)", clipPath: SHELL_NOTCH(8), boxShadow: "0 0 22px rgba(245,196,83,0.12)" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#f5c453", textShadow: "0 0 10px rgba(245,196,83,0.5)" }}>★ You're a captain this tournament</span>
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.6)", marginLeft: 8 }}>$10,000 budget — scout the pool, then run your auction at the draft.</span>
+            </div>
+          )}
+          {isIn && !me?.isCaptain && (regOpen || phase === "registration_closed") && (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer", color: me?.volunteered ? "#7da6ff" : "rgba(200,215,255,0.5)", fontSize: 12.5 }}>
+              <input type="checkbox" checked={!!me?.volunteered} disabled={busy} onChange={e => volunteer(e.target.checked)} style={{ accentColor: "#3d7bff" }} />
+              I'll captain if picked — the host makes the final call.
+            </label>
+          )}
+          {isIn && HAS_SUPABASE && <ScoutProfileCard userId={window.__VOLT.userId} />}
+          {isIn && HAS_SUPABASE && <DiscordLinkCard />}
+        </div>
+
+
+        <div style={{ ...panel, order: 2 }}>
+          {corner}
+          {secLabel(`Approved roster · ${roster.length}`)}
+          {roster.length === 0
+            ? <p style={{ color: "rgba(200,215,255,0.45)", fontSize: 13, margin: 0 }}>No approved players yet.</p>
+            : <div style={{ display: "grid", gap: 6 }}>
+                {roster.map(r => {
+                  const openIt = openApp === "roster:" + r.userId;
+                  return (
+                  <div key={r.userId} style={{ background: "rgba(255,255,255,0.03)", border: `1px solid rgba(120,150,220,${openIt ? "0.3" : "0.14"})`, clipPath: SHELL_NOTCH(7) }}>
+                  <div onClick={() => setOpenApp(openIt ? null : "roster:" + r.userId)} role="button" tabIndex={0}
+                    onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenApp(openIt ? null : "roster:" + r.userId); } }}
+                    className="vg-row-x" title={openIt ? "Hide full stats" : "Show full stats"} aria-expanded={openIt}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", cursor: "pointer", flexWrap: "wrap" }}>
+                    <span aria-hidden="true" className="vg-chev" style={{ display: "grid", placeItems: "center",
+                      width: 22, height: 22, flex: "0 0 auto", color: "#7da6ff",
+                      border: `1px solid rgba(61,123,255,${openIt ? "0.7" : "0.38"})`,
+                      background: `rgba(61,123,255,${openIt ? "0.22" : "0.09"})`,
+                      transform: openIt ? "rotate(90deg)" : "none" }}><ChevronIcon /></span>
+                    <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 14, flex: 1 }}>{r.name}
+                      {r.userId === window.__VOLT.userId && <span style={{ color: "rgba(200,215,255,0.4)", fontWeight: 500, marginLeft: 6, fontSize: 11 }}>(you)</span>}
+                    </span>
+                    {r.rank && <span style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: (RANKS[r.rank] || {}).c || "#8d97a8", fontWeight: 700 }}>{r.rank}</span>}
+                    {isHost && r.noShows > 0 && <span title="Season no-shows" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: r.noShows >= 2 ? "#ff4655" : "#f5c453", fontWeight: 700 }}>⚠ {r.noShows}</span>}
+                    {r.isCaptain && <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "#f5c453", border: "1px solid rgba(245,196,83,0.45)", padding: "3px 8px", clipPath: SHELL_NOTCH(5), fontWeight: 700 }}>Captain</span>}
+                    {!r.isCaptain && r.volunteered && <span title="Available to captain" style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>available</span>}
+                    {isHost && (
+                      <button disabled={busy} onClick={e => { e.stopPropagation(); hostSetCaptain(r, !r.isCaptain); }} style={shellBtn(r.isCaptain ? "ghost" : "warn", { padding: "5px 10px", fontSize: 10 })}>
+                        {r.isCaptain ? "Unmake captain" : "Make captain"}</button>
+                    )}
+                    {isHost && r.userId !== window.__VOLT.userId && (
+                      <button disabled={busy} title="Remove from this tournament's pool"
+                        onClick={async e => {
+                          e.stopPropagation();
+                          if (!(await voltConfirm("They'll move to the rejected list — you can re-approve them later.",
+                            { title: `Remove ${r.name} from the pool?`, confirmLabel: "Remove", danger: true }))) return;
+                          setBusy(true);
+                          try { await __sb.from("registrations").update({ status: "rejected", is_captain: false }).eq("id", r.regId); await load(); }
+                          catch (err) { console.error(err); }
+                          setBusy(false);
+                        }}
+                        style={shellBtn("danger", { padding: "5px 9px", fontSize: 10 })}>✕</button>
+                    )}
+                  </div>
+                  {openIt && profileDetail(r, "rgba(120,150,220,0.15)")}
+                  </div>
+                  );
+                })}
+              </div>}
+          {isHost && <p style={{ color: "rgba(200,215,255,0.4)", fontSize: 11.5, margin: "12px 0 0" }}>Captains you assign here become the teams when you open the draft. "Available" marks players who volunteered.</p>}
+        </div>
+
+        </div>
+      )}
+    </div>
+  </div>;
+}
+
+export { WeekendApp };

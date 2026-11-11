@@ -2,6 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     { "name": "volt-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 5173 },
-    { "name": "volt-offline", "runtimeExecutable": "node", "runtimeArgs": ["-e", "process.env.VITE_SUPABASE_URL='';process.env.VITE_SUPABASE_ANON_KEY='';require('child_process').spawn('npx',['vite','--port','5174','--strictPort'],{stdio:'inherit',shell:true,env:process.env})"], "port": 5174 }
+    { "name": "volt-offline", "runtimeExecutable": "node", "runtimeArgs": ["-e", "process.env.VITE_SUPABASE_URL='';process.env.VITE_SUPABASE_ANON_KEY='';require('child_process').spawn('npx',['vite','--port','5174','--strictPort'],{stdio:'inherit',shell:true,env:process.env})"], "port": 5174 },
+    { "name": "volt-offline-dist", "runtimeExecutable": "node", "runtimeArgs": ["-e", "process.env.VITE_SUPABASE_URL='';process.env.VITE_SUPABASE_ANON_KEY='';const cp=require('child_process');const o={stdio:'inherit',shell:true,env:process.env};cp.spawnSync('npx',['vite','build','--outDir','node_modules/.volt-preview'],o);cp.spawn('npx',['vite','preview','--outDir','node_modules/.volt-preview','--port','5175','--strictPort'],o)"], "port": 5175 }
   ]
 }
