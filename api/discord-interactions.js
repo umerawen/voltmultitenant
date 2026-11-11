@@ -394,6 +394,7 @@ function renderTable(rows, nameOf) {
 function resultLine(m, nameOf) {
   const A = nameOf(m.teamA), B = nameOf(m.teamB);
   if (!m.done) return `${A} vs ${B}`;
+  if (m.forfeit) return m.winner === m.teamB ? `**${B}** beat ${A} (forfeit)` : `**${A}** beat ${B} (forfeit)`;
   const maps = (m.maps || []).filter((mp) => mp.a != null && mp.b != null);
   let score = "";
   if ((m.bo || 1) === 1 && maps[0]) score = ` ${maps[0].a}–${maps[0].b} `;

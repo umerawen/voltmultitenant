@@ -260,18 +260,21 @@ async function playerOfNight(token, errors) {
     const stamp = async () => { for (const m of night) await rpc("volt_pred_mark", { p_event: eventId, p_match: m.matchId, p_field: "potnAt" }); };
     if (last < now - POTN_GIVE_UP_H * 3600) { await stamp(); continue; }   // too old to celebrate
 
-    const ids = new Map(night.map((m) => [labelFor(m.matchId), m.matchId]));
+    // A forfeited match was never played, so it has no stats to wait for.
+    const games = night.filter((m) => !m.forfeit);
+    if (!games.length) { await stamp(); continue; }
+    const ids = new Map(games.map((m) => [labelFor(m.matchId), m.matchId]));
     const rows = (await sb(`/rest/v1/match_results?event_id=eq.${eventId}&select=user_id,match_label,stat_payload`) || [])
       .filter((r) => ids.has(String(r.match_label || "").split(" · ").pop().toUpperCase()));
     const reported = new Set(rows.map((r) => String(r.match_label).split(" · ").pop().toUpperCase())).size;
     const waited = now > last + POTN_WAIT_H * 3600;
-    if (reported < night.length && !waited) continue;           // stats still coming in
+    if (reported < games.length && !waited) continue;           // stats still coming in
     if (!reported) continue;                                    // nothing yet; the give-up rule retires it
 
     const uids = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
     const us = uids.length ? await sb(`/rest/v1/users?id=in.(${uids.join(",")})&select=id,display_name`) : [];
     const names = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
-    const msg = playerOfNightMessage(night, rows, names, reported);
+    const msg = playerOfNightMessage(games, rows, names, reported);
     if (!msg) { await stamp(); continue; }
     const ch = await channelFor(night[0].guild, night[0].communityId, "results");
     if (!ch) { errors.push("player of the night: no channel"); continue; }

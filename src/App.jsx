@@ -24,6 +24,28 @@ let __sb = null;
 const __RECOVERY_AT_LOAD = typeof window !== "undefined" && /type=recovery/.test(window.location.hash || "");
 if (HAS_SUPABASE) __sb = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
 
+// A device clock can be wrong, sometimes by hours, and predictions lock at
+// kick-off. So "now" is the server's: measure how far this device is off and
+// correct for it. voltNow() is what every deadline and countdown reads.
+let __clockSkew = 0;
+const voltNow = () => Date.now() + __clockSkew;
+async function syncClock() {
+  if (!HAS_SUPABASE) return;
+  try {
+    const t0 = Date.now();
+    const { data, error } = await __sb.rpc("volt_now");
+    const t1 = Date.now();
+    if (error || !Number.isFinite(Number(data)) || t1 - t0 > 5000) return;   // too slow a round trip to trust
+    const skew = Number(data) - (t0 + t1) / 2;
+    __clockSkew = Math.abs(skew) < 2000 ? 0 : Math.round(skew);              // under 2s is network jitter
+  } catch (e) { console.error("clock sync", e); }
+}
+if (HAS_SUPABASE && typeof document !== "undefined") {
+  syncClock();
+  setInterval(() => { if (document.visibilityState === "visible") syncClock(); }, 10 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncClock(); });
+}
+
 
 // Set after login/community-select. Until then, storage is a no-op-ish memory map.
 window.__VOLT = window.__VOLT || { communityId: null, userId: null };
@@ -911,6 +933,9 @@ function buildSingleElim(slotIds, bo) {
   return rounds;
 }
 
+// Maps a side has to win: 1 for a Bo1, 2 for a Bo3, 3 for a Bo5.
+const boNeed = (bo) => (Number(bo) === 5 ? 3 : Number(bo) === 3 ? 2 : 1);
+
 // has this match been decided by its map scores? sets winner + returns it
 function resolveMatch(m) {
   // One side empty: only a genuine bye (marked when the bracket is built or
@@ -921,7 +946,9 @@ function resolveMatch(m) {
     const solo = m.teamA ?? m.teamB ?? null;
     m.done = !!(m.bye && solo); m.winner = m.done ? solo : null; return m;
   }
-  const need = m.bo === 3 ? 2 : 1;
+  // A forfeit (the side named gave it up) decides the match whatever the maps say.
+  if (m.forfeit === "a" || m.forfeit === "b") { m.done = true; m.winner = m.forfeit === "a" ? m.teamB : m.teamA; return m; }
+  const need = boNeed(m.bo);
   let aw = 0, bw = 0;
   for (const mp of (m.maps || [])) {
     if (mp.a == null || mp.b == null) continue;
@@ -1597,10 +1624,10 @@ function MatchPrediction({ match, locator, a, b, onVote }) {
   // Re-render on a timer so voting closes the moment kick-off passes, rather
   // than whenever something else happens to re-render the page.
   const [, tick] = useState(0);
-  const started = !!(match.scheduledAt && Date.now() >= new Date(match.scheduledAt).getTime());
+  const started = !!(match.scheduledAt && voltNow() >= new Date(match.scheduledAt).getTime());
   useEffect(() => {
     if (match.done || !match.scheduledAt || started) return;
-    const ms = new Date(match.scheduledAt).getTime() - Date.now();
+    const ms = new Date(match.scheduledAt).getTime() - voltNow();
     const t = setTimeout(() => tick((n) => n + 1), Math.min(Math.max(ms, 0) + 500, 2147483000));
     return () => clearTimeout(t);
   }, [match.scheduledAt, match.done, started]);
@@ -1632,6 +1659,7 @@ function MatchPrediction({ match, locator, a, b, onVote }) {
           {/* Say why the buttons are gone. A control that silently disappears
               reads as a bug rather than a deadline. */}
           {started && !match.done && <span style={{ color: "rgba(245,196,83,0.85)" }}> · closed at kick-off</span>}
+          {match.forfeit && <span style={{ color: "rgba(245,196,83,0.85)" }}> · forfeit, picks don't count</span>}
         </span>
         <button onClick={() => setOpen(o => !o)} disabled={!total}
           style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: total ? "rgba(200,215,255,0.55)" : "rgba(200,215,255,0.25)", background: "none", border: "none", cursor: total ? "pointer" : "default", fontFamily: "'Rajdhani',sans-serif" }}>
@@ -1788,7 +1816,7 @@ function matchFacts(match, teamOf) {
     return maps.filter((m) => (who === "a" ? m.a > m.b : m.b > m.a)).length;
   };
   const at = match.scheduledAt ? new Date(match.scheduledAt) : null;
-  const started = !!(at && !isNaN(at) && Date.now() >= at.getTime());
+  const started = !!(at && !isNaN(at) && voltNow() >= at.getTime());
   const statsLabel = fxLabel(a, b, match);
   return {
     a, b, bo, bye, at: at && !isNaN(at) ? at : null, started,
@@ -1797,7 +1825,9 @@ function matchFacts(match, teamOf) {
     sA: score("a"), sB: score("b"),
     scoreIn: !!(match.done || (match.maps || []).some((m) => m && (m.a != null || m.b != null))),
     statsLabel, statsRecorded: !!(statsLabel && window.__VOLT?.reportedLabels?.has(statsLabel)),
-    canReport: !!(a && b && window.__VOLT?.openReport),
+    // Nobody played a forfeited match, so there are no player stats to report.
+    forfeit: match.forfeit === "a" || match.forfeit === "b" ? match.forfeit : null,
+    canReport: !!(a && b && !match.forfeit && window.__VOLT?.openReport),
     votes: match.votes && typeof match.votes === "object" ? Object.values(match.votes) : [],
   };
 }
@@ -1823,7 +1853,9 @@ function FxStatus({ f, match }) {
   const left = f.at ? f.at.getTime() - now : null;
   const base = { fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap" };
   if (f.bye) return <span style={{ ...base, color: "rgba(200,215,255,0.35)" }}>Bye</span>;
-  if (match.done) return <span style={{ ...base, color: "#3ddc84" }}>Final</span>;
+  if (match.done) return match.forfeit
+    ? <span style={{ ...base, color: "#f5c453" }}>Forfeit</span>
+    : <span style={{ ...base, color: "#3ddc84" }}>Final</span>;
   if (f.started || (left != null && left <= 0)) return <span style={{ ...base, color: "#ff4655", display: "inline-flex", alignItems: "center", gap: 6 }}>
     <span className="volt-fx-dot" style={{ width: 6, height: 6 }} />Live</span>;
   if (f.at) {
@@ -1852,17 +1884,20 @@ function FxVoteBar({ f }) {
 // Host score entry, one box pair per map.
 function ScoreEntry({ match, locator, onSetMap, onSetBo }) {
   const bo = match.bo || 1;
+  const n = [3, 5].includes(Number(bo)) ? Number(bo) : 1, need = boNeed(bo);
   const box = { width: 56, height: 40, background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff",
     fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, fontWeight: 700, textAlign: "center", outline: "none" };
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
-      {Array.from({ length: bo === 3 ? 3 : 1 }).map((_, mi) => {
+      {Array.from({ length: n }).map((_, mi) => {
         const mp = match.maps?.[mi] || { a: null, b: null };
-        const decidedEarly = bo === 3 && mi === 2 && match.done && (match.maps || []).slice(0, 2).filter((x) => x && x.a != null && x.b != null && x.a !== x.b).length === 2 && ((match.maps[0].a > match.maps[0].b) === (match.maps[1].a > match.maps[1].b));
+        // A series stops once it's won: no box for a map that isn't played.
+        const before = (match.maps || []).slice(0, mi).filter((x) => x && x.a != null && x.b != null);
+        const decidedEarly = before.filter((x) => x.a > x.b).length >= need || before.filter((x) => x.b > x.a).length >= need;
         if (decidedEarly && mp.a == null) return null;
         return (
           <span key={mi} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {bo === 3 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace", marginRight: 2 }}>MAP {mi + 1}</span>}
+            {n > 1 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace", marginRight: 2 }}>MAP {mi + 1}</span>}
             <input type="number" inputMode="numeric" min="0" aria-label={`Map ${mi + 1}, first team's rounds`} value={mp.a == null ? "" : mp.a}
               onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–" style={box} />
             <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 18 }}>:</span>
@@ -1871,10 +1906,37 @@ function ScoreEntry({ match, locator, onSetMap, onSetBo }) {
           </span>
         );
       })}
-      {onSetBo && (
+      {onSetBo && locator?.kind !== "final" && (
         <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} title="Switch this match's length"
           style={shellBtn("ghost", { padding: "8px 12px", fontSize: 10.5 })}>Make it BO{bo === 1 ? 3 : 1}</button>
       )}
+    </div>
+  );
+}
+
+// A team that doesn't show. The other side takes a 13–0 win on each map it
+// needed, with no player stats and no prediction points. Host only.
+function ForfeitEntry({ locator, f, onForfeit }) {
+  if (!onForfeit) return null;
+  const small = { fontSize: 12.5, color: "rgba(214,226,255,0.7)", fontFamily: READ_FONT, lineHeight: 1.45 };
+  if (f.forfeit) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap", textAlign: "center" }}>
+      <span style={small}>Recorded as a forfeit: no player stats, and predictions on this match don't count.</span>
+      <button onClick={() => onForfeit(locator, null)} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 10.5 })}>Undo forfeit</button>
+    </div>
+  );
+  if (f.scoreIn) return null;
+  const go = async (side) => {
+    const out = side === "a" ? f.a : f.b, win = side === "a" ? f.b : f.a;
+    if (!(await voltConfirm(`${win.name} take a 13–0 win. No player stats are recorded and predictions on this match won't count. You can undo it afterwards.`,
+      { title: `${out.name} forfeit?`, confirmLabel: "Record forfeit" }))) return;
+    onForfeit(locator, side);
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+      <span style={{ ...small, fontSize: 12 }}>A team didn't show?</span>
+      <button onClick={() => go("a")} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 10.5 })}>{f.a.name} forfeit</button>
+      <button onClick={() => go("b")} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 10.5 })}>{f.b.name} forfeit</button>
     </div>
   );
 }
@@ -1934,9 +1996,13 @@ function MatchModal({ match, locator, teamOf, isAdmin, A, stage, onClose }) {
           </div>
           {side(f.b, f.winB, f.winA, f.sB, "flex-end")}
         </div>
+        {f.forfeit && <div style={{ textAlign: "center", marginTop: 12, fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#f5c453" }}>
+          {(f.forfeit === "a" ? f.a : f.b)?.name || "A team"} forfeited</div>}
         {!f.bye && (isAdmin || f.at) && <>{label("When")}<MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={A.onSetTime} /></>}
         {!f.bye && f.a && f.b && (f.votes.length > 0 || !match.done) && <>{label("Prediction")}<MatchPrediction match={match} locator={locator} a={f.a} b={f.b} onVote={A.onVote} /></>}
-        {isAdmin && !f.bye && f.a && f.b && <>{label("Result")}<ScoreEntry match={match} locator={locator} onSetMap={A.onSetMap} onSetBo={A.onSetBo} /></>}
+        {isAdmin && !f.bye && f.a && f.b && <>{label("Result")}
+          {!f.forfeit && <ScoreEntry match={match} locator={locator} onSetMap={A.onSetMap} onSetBo={A.onSetBo} />}
+          <ForfeitEntry locator={locator} f={f} onForfeit={A.onForfeit} /></>}
         {!f.bye && (f.canReport || f.statsRecorded) && <>{label("Player stats")}<StatsActions match={match} f={f} /></>}
       </div>
     </VoltOverlay>
@@ -1996,9 +2062,9 @@ function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false, s
 }
 
 // editable score row for a single match — now the shared fixture card.
-function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, stage, big, slotA, slotB }) {
+function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, onForfeit, stage, big, slotA, slotB }) {
   return <FixtureCard match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage} big={big} slotA={slotA} slotB={slotB}
-    A={{ onSetMap, onSetBo, onSetTime, onVote }} />;
+    A={{ onSetMap, onSetBo, onSetTime, onVote, onForfeit }} />;
 }
 
 // Host control on the final's panel: Bo1 / Bo3 / Bo5. Read-only once played.
@@ -2253,7 +2319,7 @@ function TStandings({ teamIds, matches, overrides, teamOf, advance = 1, hue = "#
 // off its centre. Everything else lives in the match panel it opens.
 const BK_CARD_H = 104;
 const BK_ROW_H = 124;          // card + breathing room between cards in round one
-function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, stage, tag }) {
+function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, onForfeit, stage, tag }) {
   const [open, setOpen] = useState(false);
   const f = matchFacts(match, teamOf);
   const row = (team, win, lose, s, who) => (
@@ -2286,7 +2352,7 @@ function TBracketMatch({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onS
         <FxVoteBar f={f} />
       </div>
       {open && <MatchModal match={match} locator={locator} teamOf={teamOf} isAdmin={isAdmin} stage={stage}
-        A={{ onSetMap, onSetBo, onSetTime, onVote }} onClose={() => setOpen(false)} />}
+        A={{ onSetMap, onSetBo, onSetTime, onVote, onForfeit }} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -2308,7 +2374,7 @@ function useNarrow(px = 640) {
   return on;
 }
 
-function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote }) {
+function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVote, onForfeit }) {
   const narrow = useNarrow(640);
   const firstOpen = Math.max(0, rounds.findIndex((r) => !r.every((m) => m.done)));
   const [phRound, setPhRound] = useState(null);
@@ -2349,7 +2415,7 @@ function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVot
         <div style={{ display: "grid", gap: 10 }}>
           {rounds[cur].map((m, idx) => (
             <TBracketMatch key={m.id} match={m} locator={{ kind: "elim", round: cur, idx }} teamOf={teamOf} isAdmin={isAdmin}
-              stage={roundName(cur)} tag={tagOf(cur, idx)} onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} />
+              stage={roundName(cur)} tag={tagOf(cur, idx)} onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} onForfeit={onForfeit} />
           ))}
         </div>
       </div>
@@ -2373,7 +2439,7 @@ function TBracket({ rounds, teamOf, isAdmin, onSetMap, onSetBo, onSetTime, onVot
               <div key={m.id} style={{ gridColumn: col, gridRow: `${2 + idx * span} / span ${span}`, alignSelf: "center" }}>
                 <TBracketMatch match={m} locator={{ kind: "elim", round: ri, idx }} teamOf={teamOf} isAdmin={isAdmin}
                   stage={roundName(ri)} tag={tagOf(ri, idx)}
-                  onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} />
+                  onSetMap={onSetMap} onSetBo={onSetBo} onSetTime={onSetTime} onVote={onVote} onForfeit={onForfeit} />
               </div>
             )),
             // Connectors into the next round: one elbow per pair of matches.
@@ -2634,7 +2700,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
   }
 
   // ── LIVE STATE: locked, scores being entered ──
-  const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo, onSetTime: actions.tSetTime, onVote: actions.tVote };
+  const A = { onSetMap: actions.tSetMap, onSetBo: actions.tSetBo, onSetTime: actions.tSetTime, onVote: actions.tVote, onForfeit: actions.tSetForfeit };
   // Knockout rounds before the semis exist only once the groups finish; until
   // then show where they will be, so the bracket shape is visible from day one.
   const G = t.groups?.length || 0;
@@ -5454,6 +5520,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const [rRank, setRRank] = useState("All");
   const [rRole, setRRole] = useState("All");
   const [replacing, setReplacing] = useState(null);   // which of my players is out
+  const [subAsk, setSubAsk] = useState(null);         // a captain's "ask the reserves" for that player
   const [resetArmed, setResetArmed] = useState(false);
   const [tClearArmed, setTClearArmed] = useState(false);
   const prevBid = useRef(null);
@@ -6413,6 +6480,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
         m.done = !!old.done;
         m.winner = old.winner ?? null;
         if (old.scheduledAt) m.scheduledAt = old.scheduledAt;
+        if (old.forfeit) m.forfeit = old.forfeit;
         if (old.votes) m.votes = old.votes;
       };
       if (t.format === "group") { Object.values(t.matches || {}).forEach((arr) => (arr || []).forEach(restore)); }
@@ -6431,9 +6499,34 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const tSetMap = (locator, mapIdx, aScore, bScore) => mutate((s) => {
     const t = s.tournament; if (!t || !t.locked) return null;
     const m = findMatch(t, locator); if (!m) return null;
+    if (m.forfeit) { delete m.forfeit; m.maps = []; }   // a typed score replaces a forfeit
     if (!m.maps) m.maps = [];
     while (m.maps.length <= mapIdx) m.maps.push({ a: null, b: null });
     m.maps[mapIdx] = { a: aScore == null || aScore === "" ? null : Number(aScore), b: bScore == null || bScore === "" ? null : Number(bScore) };
+    resolveMatch(m);
+    if (t.format === "single") propagateElim(t);
+    if (t.format === "group") syncFinal(s, t);
+    syncLeagueFinal(s, t);
+    return s;
+  }, true, true);
+
+  // A no-show. side is the team that forfeited ("a" | "b"); null undoes it. The
+  // 13–0 goes in as real map scores so tables, result lines and the Discord
+  // bot all read it without a special case; the flag is what marks it.
+  const tSetForfeit = (locator, side) => mutate((s) => {
+    const t = s.tournament; if (!t || !t.locked) return null;
+    const m = findMatch(t, locator); if (!m || !m.teamA || !m.teamB) return null;
+    if (side === "a" || side === "b") {
+      m.forfeit = side;
+      m.maps = Array.from({ length: boNeed(m.bo) }, () => (side === "a" ? { a: 0, b: 13 } : { a: 13, b: 0 }));
+      const out = s.teams.find((x) => x.id === (side === "a" ? m.teamA : m.teamB));
+      s.log.unshift(`${out ? out.name : "A team"} forfeited`);
+    } else {
+      if (!m.forfeit) return null;
+      delete m.forfeit; m.maps = [];
+      s.log.unshift("Forfeit undone");
+    }
+    s.log = s.log.slice(0, 8);
     resolveMatch(m);
     if (t.format === "single") propagateElim(t);
     if (t.format === "group") syncFinal(s, t);
@@ -6466,7 +6559,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     if (m.done) return null;                       // locked once played
     // Locked at kick-off. Enforced here as well as in the UI: the button is
     // hidden, but a stale tab could still fire this.
-    if (m.scheduledAt && Date.now() >= new Date(m.scheduledAt).getTime()) return null;
+    if (m.scheduledAt && voltNow() >= new Date(m.scheduledAt).getTime()) return null;
     const uid = window.__VOLT?.userId; if (!uid) return null;
     if (!m.votes || typeof m.votes !== "object") m.votes = {};
     const name = window.__VOLT?.userName || "Player";
@@ -7402,6 +7495,8 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   const capIdx = missing ? rankIdx(missing.rank) - 1 : null;
   const eligible = (p) => capIdx === null || rankIdx(p.rank) <= capIdx;
 
+  // The sub desk needs a real tournament with a finished or running draft.
+  const subDeskOn = latePhase && HAS_SUPABASE && !!chrome?.ev?.id && draftHasRun;
   const rFiltered = reserves.filter((p) =>
     (rRank === "All" || p.rank === rRank) &&
     (rRole === "All" || p.role === rRole) &&
@@ -7442,8 +7537,22 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                 Eligible subs: {capIdx >= 0 ? `${RANK_LIST[capIdx]} or below` : "none — they're already the lowest rank"}
               </span>
             )}
+            {missing && subDeskOn && !isAdmin && chrome?.isCaptainElect && !isManualPlayer(missing) && capIdx >= 0 && (
+              <button disabled={!!subAsk} onClick={() => setSubAsk(missing.id)} title="Messages every eligible reserve. You pick from whoever offers."
+                style={shellBtn("primary", { padding: "8px 14px", fontSize: 11 })}>Ask eligible reserves →</button>
+            )}
           </div>
         </div>
+      )}
+      {/* Staff run the desk for any team; a captain's shows their own requests and offers. */}
+      {subDeskOn && (isAdmin
+        ? <div className="mb-5"><SubDesk eventId={chrome.ev.id} /></div>
+        : myTeam && chrome?.isCaptainElect
+          ? <div className="mb-5"><SubDesk eventId={chrome.ev.id} team={myTeam.name} viewerId={chrome?.viewerId} askFor={subAsk} onAsked={() => setSubAsk(null)} startOpen /></div>
+          : null)}
+      {subDeskOn && chrome?.viewerId && reserves.some((p) => p.id === chrome.viewerId) && (
+        <SubCalls eventId={chrome.ev.id} viewerId={chrome.viewerId}
+          canCover={(outRank) => rankIdx((reserves.find((p) => p.id === chrome.viewerId) || {}).rank) < rankIdx(rankKey(outRank))} />
       )}
 
       <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,220,132,0.04)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(8) }}>
@@ -8017,7 +8126,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       state={state}
       isAdmin={isAdmin}
       teamOf={teamOf}
-      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance, tSetFinalBo }}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance, tSetFinalBo, tSetForfeit }}
     />
   );
 
@@ -9933,8 +10042,8 @@ async function voltNotify(rows) {
   catch (e) { console.error("notify", e); }
 }
 
-const NOTIF_GLYPH = { role: "◆", approved: "✓", rejected: "✕", captain: "★", settled: "🏆", weekend_open: "▸", suspension: "⚠", new_application: "◈" };
-const NOTIF_COLOR = { role: "#f5c453", approved: "#3ddc84", rejected: "#ff4655", captain: "#f5c453", settled: "#f5c453", weekend_open: "#3ddc84", suspension: "#ff4655", new_application: "#f5c453" };
+const NOTIF_GLYPH = { role: "◆", approved: "✓", rejected: "✕", captain: "★", settled: "🏆", weekend_open: "▸", suspension: "⚠", new_application: "◈", sub_request: "⇄", sub_in: "✓", sub_filled: "⇄" };
+const NOTIF_COLOR = { role: "#f5c453", approved: "#3ddc84", rejected: "#ff4655", captain: "#f5c453", settled: "#f5c453", weekend_open: "#3ddc84", suspension: "#ff4655", new_application: "#f5c453", sub_request: "#f5c453", sub_in: "#3ddc84", sub_filled: "#7da6ff" };
 
 function NotifBell() {
   const narrow = useNarrow(640);   // phones: the panel spans the screen instead of hanging off the bell
@@ -11880,8 +11989,12 @@ function BoardGapCard({ eventId }) {
 // thumbs. The rank rule (a sub must be strictly LOWER ranked than the player
 // going out) is enforced in the database, so a team can never come out of a
 // substitution stronger than it went in.
-function SubDesk({ eventId, onChanged }) {
-  const [open, setOpen] = useState(false);
+//
+// Staff see every team. A captain (team given) sees only their own requests,
+// and names the player from the Reserve Hub's "Who can't make it?" picker,
+// which arrives here as askFor.
+function SubDesk({ eventId, onChanged, team = null, viewerId = null, askFor = null, onAsked, startOpen = false }) {
+  const [open, setOpen] = useState(startOpen);
   const [roster, setRoster] = useState([]);
   const [reqs, setReqs] = useState([]);
   const [picking, setPicking] = useState(null);   // userId of the player going out
@@ -11895,8 +12008,8 @@ function SubDesk({ eventId, onChanged }) {
         __sb.rpc("volt_sub_open", { p_event: eventId }),
         __sb.rpc("volt_sub_roster", { p_event: eventId }),
       ]);
-      setReqs(Array.isArray(open) ? open : []);
-      setRoster(Array.isArray(ros) ? ros : []);
+      setReqs((Array.isArray(open) ? open : []).filter((r) => !team || r.team === team || r.captainId === viewerId));
+      setRoster((Array.isArray(ros) ? ros : []).filter((x) => !team || x.team === team));
     } catch (e) { console.error("sub desk", e); }
   }
   useEffect(() => { if (open) load(); }, [open, eventId]);
@@ -11918,37 +12031,31 @@ function SubDesk({ eventId, onChanged }) {
     setBusy(outUserId); setErr(""); setMsg("");
     let reqId = null;
     try {
-      const team = (roster.find((x) => x.userId === outUserId) || {}).team || "the team";
+      const teamName = team || (roster.find((x) => x.userId === outUserId) || {}).team || "the team";
       const { data, error } = await __sb.rpc("volt_sub_request",
-        { p_event: eventId, p_out: outUserId, p_team: team });
+        { p_event: eventId, p_out: outUserId, p_team: teamName });
       if (error) throw new Error(error.message);
       if (data?.error === "already_open") { setErr("There's already an open request for that player."); setPicking(null); setBusy(""); return; }
       reqId = data?.id || null;
 
-      const { data: el } = await __sb.rpc("volt_sub_eligible", { p_event: eventId, p_out: outUserId });
-      const targets = (el?.players || []).filter((x) => x.linked).map((x) => x.userId);
-      if (!targets.length) {
-        if (reqId) await cancel(reqId).catch((e) => console.error("sub cancel", e));
-        setErr(`Nobody below ${el?.outRank || "that rank"} has Discord connected, so there's no one to ask.`);
-        setPicking(null); setBusy(""); load(); return;
-      }
+      // The server picks who to ask (reserves below this player's rank) and
+      // writes the message, so a captain can send it as well as staff. Everyone
+      // eligible hears in the app; those with Discord connected get a DM too.
       const { data: sess } = await __sb.auth.getSession();
       const jwt = sess?.session?.access_token;
       const r = await fetch(apiUrl("/api/discord-notify"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({
-          communityId: window.__VOLT.communityId,
-          message: `**${team} needs a sub.**\n` +
-            `${data?.outName || "A player"} (${data?.outRank || "—"}) can't make it. ` +
-            `You're eligible to cover.\n\nTap below if you can play. The captain picks from everyone who offers.`,
-          userIds: targets, announce: false,
-          buttons: `sub:${data.id}`, dmButtons: true,
-        }),
+        body: JSON.stringify({ subRequest: reqId }),
       });
       const b = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(b?.error || "Couldn't send the DMs.");
-      setMsg(`Asked ${b?.delivered ?? targets.length} player${targets.length === 1 ? "" : "s"}. Offers show up here.`);
+      if (!r.ok) throw new Error(b?.error || "Couldn't send the request.");
+      if (!b?.eligible) {
+        if (reqId) await cancel(reqId).catch((e) => console.error("sub cancel", e));
+        setErr(`No reserve is ranked below ${data?.outRank || "that player"}, so there's no one to ask.`);
+        setPicking(null); setBusy(""); load(); return;
+      }
+      setMsg(`Asked ${b.eligible} reserve${b.eligible === 1 ? "" : "s"}${b.delivered < b.eligible ? ` (${b.delivered} by Discord DM, the rest in the app)` : ""}. Offers show up here.`);
       setPicking(null); load();
     } catch (e) {
       // Nobody was asked, so don't leave a request open that blocks a retry.
@@ -11973,6 +12080,12 @@ function SubDesk({ eventId, onChanged }) {
   }
 
   const waiting = reqs.reduce((n, r) => n + (r.offers?.length || 0), 0);
+  useEffect(() => {
+    if (!askFor) return;
+    setOpen(true); setPicking(askFor); ask(askFor); onAsked && onAsked();
+  }, [askFor]); // eslint-disable-line
+  // A captain's desk only exists while there's something on it.
+  if (team && !reqs.length && !msg && !err && !busy) return null;
 
   return (
     <div style={{ marginTop: 14 }}>
@@ -12023,7 +12136,7 @@ function SubDesk({ eventId, onChanged }) {
 
           {picking ? (
             <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)" }}>Opening the request…</div>
-          ) : (
+          ) : team ? null : (
             <>
               <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.6)", marginBottom: 10, lineHeight: 1.6 }}>
                 Who can't make it? Everyone <b style={{ color: "#cfe0ff" }}>below their rank</b> gets asked,
@@ -12051,6 +12164,57 @@ function SubDesk({ eventId, onChanged }) {
           {err && <div style={{ fontSize: 12, color: "#ff8f9a", marginTop: 10 }}>⚠ {err}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+// Open sub requests, shown to the reserves who could answer them. Offering here
+// is the same as tapping "I can sub" on the Discord DM; the rank rule is
+// checked in the database either way.
+function SubCalls({ eventId, viewerId, canCover }) {
+  const [reqs, setReqs] = useState([]);
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState({});
+  const load = useCallback(async () => {
+    try {
+      const { data } = await __sb.rpc("volt_sub_open", { p_event: eventId });
+      setReqs(Array.isArray(data) ? data : []);
+    } catch (e) { console.error("sub calls", e); }
+  }, [eventId]);
+  useEffect(() => { load(); const stop = visInterval(load, 15000); return () => stop(); }, [load]);
+  const mineIn = (r) => (r.offers || []).some((o) => o.userId === viewerId);
+  const open = reqs.filter((r) => r.outUserId !== viewerId && (mineIn(r) || !canCover || canCover(r.outRank)));
+  if (!open.length) return null;
+  async function offer(id) {
+    setBusy(id);
+    try {
+      const { data, error } = await __sb.rpc("volt_sub_offer_me", { p_request: id });
+      if (error) throw new Error(error.message);
+      setNote((n) => ({ ...n, [id]: data?.ok ? ""
+        : data?.error === "ineligible" ? "Subs have to be a lower rank than the player they cover, so this one isn't open to you."
+        : "That request has just been filled or cancelled." }));
+      await load();
+    } catch (e) { setNote((n) => ({ ...n, [id]: e.message || "Couldn't record that. Try again." })); }
+    setBusy("");
+  }
+  return (
+    <div style={{ ...PANEL("rgba(245,196,83,0.4)", "14px 16px"), clipPath: SHELL_NOTCH(10), marginBottom: 18, fontFamily: READ_FONT }}>
+      <p style={{ margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.06em", color: "#f5c453" }}>
+        {open.length === 1 ? "A team needs a sub" : `${open.length} teams need a sub`}</p>
+      <div className="flex flex-col gap-2">
+        {open.map((r) => (
+          <div key={r.id} style={{ padding: "8px 10px", background: "rgba(10,16,30,0.55)", border: "1px solid rgba(120,150,220,0.18)" }}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <span style={{ fontSize: 14, color: "#ecf3ff" }}><b>{r.team}</b> need cover for {r.outName || "a player"}
+                {r.outRank && <span style={{ color: "rgba(214,226,255,0.6)" }}> · {r.outRank}</span>}</span>
+              {mineIn(r)
+                ? <span style={{ fontSize: 13, color: "#9af5c2", fontWeight: 600 }}>✓ You've offered. The captain picks.</span>
+                : <button disabled={!!busy} onClick={() => offer(r.id)} style={shellBtn("primary", { padding: "7px 14px", fontSize: 11, opacity: busy ? 0.5 : 1 })}>{busy === r.id ? "…" : "I can sub"}</button>}
+            </div>
+            {note[r.id] && <p style={{ margin: "6px 0 0", fontSize: 13, color: "#ff8f9a" }}>{note[r.id]}</p>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -13404,8 +13568,8 @@ const TINY = { fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", 
 // A clock that re-renders the cell it's in. One interval per mounted cell —
 // only countdown cells use it.
 function useNow(ms = 1000) {
-  const [n, setN] = useState(() => Date.now());
-  useEffect(() => { const t = setInterval(() => setN(Date.now()), ms); return () => clearInterval(t); }, [ms]);
+  const [n, setN] = useState(() => voltNow());
+  useEffect(() => { const t = setInterval(() => setN(voltNow()), ms); return () => clearInterval(t); }, [ms]);
   return n;
 }
 

@@ -55,7 +55,11 @@ export default async function handler(req, res) {
   // `syncRole` recomputes who holds the league's player role and fixes the
   // difference; `mentionRole` pings it on the channel post.
   const { communityId, message, userIds, announce, buttons, dmButtons, embed, pin,
-          channelName, syncRole, mentionRole, roleName, buttonUrl } = req.body || {};
+          channelName, syncRole, mentionRole, roleName, buttonUrl, subRequest } = req.body || {};
+  // `subRequest` names an open sub request. The server works out who to ask and
+  // what to say, which is what lets a captain use it: they choose neither the
+  // recipients nor the words, so it can't be turned into a way to DM the league.
+  if (subRequest) return sendSubRequest(req, res, token, caller, bySecret, String(subRequest));
   if (!communityId) return res.status(400).json({ error: "communityId is required" });
   // A role-only sync sends nothing, so it legitimately has no message.
   if (!message && !syncRole) return res.status(400).json({ error: "message is required" });
@@ -237,6 +241,48 @@ export default async function handler(req, res) {
   } catch (e) {
     console.error("notify failed", e);
     return res.status(500).json({ error: "Could not reach Discord." });
+  }
+}
+
+async function sendSubRequest(req, res, token, caller, bySecret, id) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return res.status(400).json({ error: "bad request id" });
+  }
+  try {
+    const [r] = await sb(`/rest/v1/sub_requests?id=eq.${id}&select=community_id,captain_id,status`);
+    if (!r) return res.status(404).json({ error: "that request no longer exists" });
+    if (!bySecret && r.captain_id !== caller) {
+      const [me] = await sb(
+        `/rest/v1/users?id=eq.${caller}&community_id=eq.${r.community_id}&select=role`);
+      if (!me || !["host", "moderator"].includes(me.role)) {
+        return res.status(403).json({ error: "only the captain who asked, or staff, can send this" });
+      }
+    }
+    // Records the in-app notifications and returns who to DM. Once per request.
+    const out = await rpc("volt_sub_notify", { p_request: id });
+    if (!out?.ok) {
+      return res.status(409).json({ error: out?.error === "already_sent"
+        ? "this request has already been sent" : "that request is closed" });
+    }
+    const [community] = await sb(
+      `/rest/v1/communities?id=eq.${r.community_id}&select=name,slug,discord_guild_id`);
+    const tag = await rpcTag(community?.discord_guild_id);
+    const link = community
+      ? `[${community.name}](https://${req.headers.host}/?join=${encodeURIComponent(community.slug)})` : "VOLT";
+    const text = `-# ◈ ${link}${tag ? ` · ${tag}` : ""}\n` +
+      `**${out.team} needs a sub.**\n` +
+      `${out.outName || "A player"} (${out.outRank || "—"}) can't make it. You're eligible to cover.\n\n` +
+      `Tap below if you can play. The captain picks from everyone who offers.`;
+    let delivered = 0;
+    for (const discordId of out.targets || []) {
+      const x = await dm(token, discordId, text, buttonRow(`sub:${id}`));
+      if (x.ok) delivered++;
+      await sleep(250);
+    }
+    return res.status(200).json({ ok: true, eligible: out.eligible || 0, delivered });
+  } catch (e) {
+    console.error("sub request", e);
+    return res.status(500).json({ error: "couldn't send the sub request" });
   }
 }
 
