@@ -1018,6 +1018,10 @@ function propagateElim(t) {
 
 const byRecord = (a, b) => b.pts - a.pts || b.diff - a.diff || b.rf - a.rf;
 
+// The final's best-of: Bo3 unless the host picks otherwise (t.finalBo). The
+// rest of the tournament keeps t.bo.
+const finalBoOf = (t) => [1, 3, 5].includes(Number(t?.finalBo)) ? Number(t.finalBo) : 3;
+
 // The knockout draw: group winners seeded by record, then runners-up by record;
 // standard bracket order (1 v 8, 4 v 5, …) with byes for the top seeds, and a
 // first-round pairing of two teams from the same group swapped where a swap
@@ -1123,7 +1127,7 @@ function syncFinal(s, t) {
     t.semis = null;
     const winners = groups.map((g) => (g.done && g.rows.length ? g.rows[0].teamId : null));
     if (winners.length >= 2 && winners[0] && winners[1]) {
-      if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: t.bo, maps: [], done: false, winner: null };
+      if (!t.final) t.final = { id: "final", teamA: winners[0], teamB: winners[1], bo: finalBoOf(t), maps: [], done: false, winner: null };
       else if (!t.final.done) { t.final.teamA = winners[0]; t.final.teamB = winners[1]; }
     } else if (t.final && !t.final.done) t.final = null;
     return;
@@ -1191,7 +1195,7 @@ function syncFinal(s, t) {
 
   const w = t.semis.map((m) => (m.done ? m.winner : null));
   if (w[0] && w[1]) {
-    if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: t.bo, maps: [], done: false, winner: null };
+    if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: finalBoOf(t), maps: [], done: false, winner: null };
     else if (!t.final.done) { t.final.teamA = w[0]; t.final.teamB = w[1]; }
   } else if (t.final && !t.final.done) t.final = null;
 }
@@ -1994,6 +1998,25 @@ function TMatchRow({ match, locator, teamOf, isAdmin, onSetMap, onSetBo, onSetTi
     A={{ onSetMap, onSetBo, onSetTime, onVote }} />;
 }
 
+// Host control on the final's panel: Bo1 / Bo3 / Bo5. Read-only once played.
+function FinalBoPicker({ t, onPick }) {
+  const cur = t.final?.bo ? Number(t.final.bo) : finalBoOf(t);
+  if (!onPick || t.final?.done) return null;
+  return (
+    <span className="inline-flex items-center gap-1.5" title="Best-of for the final">
+      {[1, 3, 5].map((n) => (
+        <button key={n} onClick={() => n !== cur && onPick(n)} aria-pressed={n === cur}
+          style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 12, letterSpacing: "0.08em", padding: "4px 10px",
+            color: n === cur ? "#ffe2a0" : "rgba(200,215,255,0.5)",
+            border: `1px solid ${n === cur ? "rgba(255,209,102,0.7)" : "rgba(120,150,220,0.22)"}`,
+            background: n === cur ? "rgba(255,209,102,0.14)" : "transparent", cursor: n === cur ? "default" : "pointer" }}>
+          BO{n}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 // A playoff match that doesn't exist yet: the fixture card's shape, dimmed and
 // not clickable, naming the seed and the team currently in line for it.
 function SlotCard({ m, teamOf, stage, bo, big = false }) {
@@ -2789,11 +2812,11 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             </TPanel>
           )}
           {/* the final */}
-          <TPanel hue="#ffd166" title="★ Grand final">
+          <TPanel hue="#ffd166" title="★ Grand final" right={isAdmin ? <FinalBoPicker t={t} onPick={actions.tSetFinalBo} /> : null}>
             <div className="max-w-xl mx-auto">
               {t.final
                 ? <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Grand final" big {...A} />
-                : preview && <SlotCard m={preview.final} teamOf={teamOf} bo={t.bo} stage="Grand final" big />}
+                : preview && <SlotCard m={preview.final} teamOf={teamOf} bo={finalBoOf(t)} stage="Grand final" big />}
             </div>
           </TPanel>
         </>
@@ -2810,9 +2833,14 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           </TPanel>
 
           {/* ── THE SUNDAY FINAL — top two from the table settle the tournament ── */}
-          <TPanel hue="#ffd166" title="★ Sunday final" right={isAdmin && t.finalLock && !t.final?.done && actions.tResetFinal ? (
-                <button onClick={actions.tResetFinal} className="text-[11px] uppercase tracking-widest px-3 py-1.5"
-                  style={{ color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(120,150,220,0.3)", background: "transparent" }}>↺ Use table seeding</button>
+          <TPanel hue="#ffd166" title="★ Sunday final" right={isAdmin ? (
+                <span className="inline-flex items-center gap-2 flex-wrap justify-end">
+                  {t.finalLock && !t.final?.done && actions.tResetFinal && (
+                    <button onClick={actions.tResetFinal} className="text-[11px] uppercase tracking-widest px-3 py-1.5"
+                      style={{ color: "rgba(200,215,255,0.6)", fontFamily: "'Rajdhani',sans-serif", border: "1px solid rgba(120,150,220,0.3)", background: "transparent" }}>↺ Use table seeding</button>
+                  )}
+                  <FinalBoPicker t={t} onPick={actions.tSetFinalBo} />
+                </span>
               ) : null}>
             {t.final ? (
               <div className="max-w-xl mx-auto">
@@ -6439,9 +6467,19 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     return s;
   }, true);
 
+  // Best-of for the final, before or after it exists. Fixed once it's played.
+  const tSetFinalBo = (n) => mutate((s) => {
+    const t = s.tournament; if (!t || t.final?.done) return null;
+    t.finalBo = [1, 3, 5].includes(n) ? n : 3;
+    if (t.final) { t.final.bo = t.finalBo; resolveMatch(t.final); }
+    s.log.unshift(`Final set to Bo${t.finalBo}`);
+    s.log = s.log.slice(0, 8);
+    return s;
+  }, true, true);
+
   const tSetFinalTeam = (side, teamId) => mutate((s) => {
     const t = s.tournament; if (!t) return null;
-    if (!t.final) t.final = { id: "final", teamA: null, teamB: null, bo: t.bo, maps: [], done: false, winner: null };
+    if (!t.final) t.final = { id: "final", teamA: null, teamB: null, bo: finalBoOf(t), maps: [], done: false, winner: null };
     if (t.final.done) return null;
     t.final[side === "a" ? "teamA" : "teamB"] = teamId || null;
     t.finalLock = true;
@@ -6479,7 +6517,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const rows = computeStandings(t.teamIds, ms, t.overrides);
     if (rows.length < 2) return;
     const [a, b] = [rows[0].teamId, rows[1].teamId];
-    if (!t.final) t.final = { id: "final", teamA: a, teamB: b, bo: t.bo, maps: [], done: false, winner: null };
+    if (!t.final) t.final = { id: "final", teamA: a, teamB: b, bo: finalBoOf(t), maps: [], done: false, winner: null };
     else { t.final.teamA = a; t.final.teamB = b; }
   }
 
@@ -7936,7 +7974,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       state={state}
       isAdmin={isAdmin}
       teamOf={teamOf}
-      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance }}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance, tSetFinalBo }}
     />
   );
 
