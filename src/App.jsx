@@ -616,6 +616,9 @@ function computeSeasonPoints(s) {
 // Module scope, not component scope: the signup-guide builder sits above the
 // schedule component and needs these too, and a phase should read identically
 // wherever it appears.
+// Phases that still take sign-ups. Only registration_open feeds the draft pool;
+// the rest file people as reserves.
+const LATE_SIGNUP_PHASES = ["registration_open", "registration_closed", "drafting", "matches_live"];
 const PHASE_LABEL = { registration_open: "Registration open", registration_closed: "Registration closed", drafting: "Draft live", matches_live: "Matches live", settled: "Settled" };
 const PHASE_COLOR = { registration_open: "#3ddc84", registration_closed: "#f5c453", drafting: "#3d7bff", matches_live: "#af9aec", settled: "rgba(200,215,255,0.4)" };
 
@@ -5555,7 +5558,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             // Keep the host's board; fold in anyone who registered since. Match
             // on userId — registration rows have no `id`, so comparing p.id
             // matched nothing and re-appended the entire roster every poll.
-            const known = new Set((saved.players || []).map(p => p.id));
+            const known = new Set([...(saved.players || []).map(p => p.id), ...(saved.removed || [])]);
             const added = [
               ...(captains || []).filter(c => !known.has(c.userId)).map(c => regToPlayer(c, true)),
               ...(pool || []).filter(p => !known.has(p.userId)).map(p => regToPlayer(p, false)),
@@ -5622,7 +5625,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       if (alive && s && HAS_SUPABASE && window.__VOLT.weekendId) {
         try {
           const { captains: cs, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
-          const known = new Set((s.players || []).map((p) => p.id));
+          const known = new Set([...(s.players || []).map((p) => p.id), ...(s.removed || [])]);
           const late = [
             ...(cs || []).filter((c) => !known.has(c.userId)).map((c) => regToPlayer(c, true)),
             ...(pool || []).filter((p) => !known.has(p.userId)).map((p) => regToPlayer(p, false)),
@@ -5922,6 +5925,27 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     finally { setBusy(false); }
   }, [busy]);
 
+  // Sign-ups keep coming after the draft opens (as reserves). Fold anyone
+  // approved since into the board — additive only, re-checked inside the write.
+  const mergeLateRegs = useCallback(async () => {
+    if (!HAS_SUPABASE || browse || !window.__VOLT.weekendId || !stateRef.current) return;
+    try {
+      const { captains: cs, pool } = await fetchRosterForEvent(window.__VOLT.weekendId);
+      const fresh = (b) => {
+        const known = new Set([...(b.players || []).map((p) => p.id), ...(b.removed || [])]);
+        return [...(cs || []).map((r) => [r, true]), ...(pool || []).map((r) => [r, false])].filter(([r]) => !known.has(r.userId));
+      };
+      if (!fresh(stateRef.current).length) return;
+      await mutate((st) => {
+        const add = fresh(st);
+        if (!add.length) return null;
+        st.players = [...(st.players || []), ...add.map(([r, cap]) => regToPlayer(r, cap))];
+        st.log = [`${add.map(([r]) => r.name).join(", ")} joined the reserves`, ...(st.log || [])].slice(0, 8);
+        return st;
+      });
+    } catch (e) { console.error("late merge", e); }
+  }, [browse, mutate]);
+  const latePhase = chrome?.phase === "drafting" || chrome?.phase === "matches_live";
   const SPIN_MS = 7200, REVEAL_MS = 2000;
   // `reserve` decides which hub a hand-added player belongs to. It reuses
   // poolEligible rather than adding a second flag: false already means "not in
@@ -5949,6 +5973,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       if (t) { t.roster = t.roster.filter((id) => id !== pid); t.budget += Math.max(0, Number(p.soldPrice) || 0); }
     }
     s.players = s.players.filter((x) => x.id !== pid);
+    // Their registration still exists, so remember the removal or the next
+    // merge of late sign-ups would put them straight back.
+    if (p && !isManualPlayer(p)) s.removed = [...new Set([...(s.removed || []), pid])];
     return s;
   }, true, true);
   // Move a player between the draft roster and the reserve list. The board holds a
@@ -6751,6 +6778,12 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // are independent. Only an explicit choice to spectate stands them down.
   const isStaffRole = auth?.role === "host" || auth?.role === "moderator";
   const isAdmin = isStaffRole ? identity !== "spectator" : identity === "admin";
+  useEffect(() => {
+    if (!isAdmin || !latePhase || browse || !HAS_SUPABASE) return;
+    const t = setTimeout(mergeLateRegs, 4000);
+    const stop = visInterval(mergeLateRegs, 30000);
+    return () => { clearTimeout(t); stop(); };
+  }, [isAdmin, latePhase, browse, mergeLateRegs]);
   // Moderators share the admin identity but not the live auction. window.__VOLT
   // .isHost is strictly the league owner; it is undefined in the no-Supabase
   // preview, so treat undefined as allowed there.
@@ -7384,6 +7417,9 @@ function DraftApp({ auth, browse, chrome, initialView }) {
           ? "Players without a roster spot — available to sub in. Every match they play banks season points."
           : "Anyone outside this tournament's draft pool. Once the auction runs, undrafted players join them here."}
       </p>
+
+      {latePhase && <LateReserveDesk ev={chrome?.ev} isAdmin={isAdmin} myReg={chrome?.myReg} myProfile={chrome?.myProfile}
+        viewerId={chrome?.viewerId} onRegChanged={chrome?.onRegChanged} onMerge={mergeLateRegs} />}
 
       {myRoster.length > 0 && (
         <div className="mb-5 p-3" style={{ background: "rgba(61,220,132,0.05)", border: "1px solid rgba(61,220,132,0.25)", clipPath: SHELL_NOTCH(9) }}>
@@ -9250,6 +9286,80 @@ function ToggleSwitch({ on, color, disabled, onClick }) {
 // (applies them) on save so they never have to hunt for the toggle again.
 // startPhase: "intro" for a first-timer, "edit" when they're back from Discord
 // mid-setup, "terms" when the profile is already complete.
+// After the draft opens, sign-ups carry on as reserves: volt_apply files them
+// outside the draft pool. Players get their way in here, and staff get the
+// review queue, since the registration desk closes with the draft.
+function LateReserveDesk({ ev, isAdmin, myReg, myProfile, viewerId, onRegChanged, onMerge }) {
+  const [pending, setPending] = useState([]);
+  const [flow, setFlow] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const evId = ev?.id;
+  const loadQ = useCallback(async () => {
+    if (!isAdmin || !evId || !HAS_SUPABASE) return;
+    try { setPending((await fetchRosterForEvent(evId)).pending); } catch (e) { console.error(e); }
+  }, [isAdmin, evId]);
+  useEffect(() => { loadQ(); const stop = visInterval(loadQ, 20000); return () => stop(); }, [loadQ]);
+  if (!ev || !HAS_SUPABASE) return null;
+
+  async function decide(entry, status) {
+    setBusy(true); setErr("");
+    try {
+      const { error } = await __sb.from("registrations").update({ status, pool_eligible: false }).eq("id", entry.regId);
+      if (error) throw error;
+      await voltNotify([{ community_id: window.__VOLT.communityId, user_id: entry.userId, event_id: ev.id, kind: status === "approved" ? "approved" : "rejected",
+        title: status === "approved" ? "You're a reserve — " + weekendName(ev) : "Reserve sign-up not approved",
+        body: status === "approved" ? "You're on the reserve list. Captains can call you in as a sub." : "The host didn't approve this one. Reach out if that's a mistake." }]);
+      await loadQ();
+      if (status === "approved") await onMerge?.();
+    } catch (e) { console.error(e); setErr(e.message || "Couldn't save that — try again."); }
+    setBusy(false);
+  }
+
+  const box = { ...PANEL("rgba(61,220,132,0.3)", "16px 18px"), clipPath: SHELL_NOTCH(10), marginBottom: 18, fontFamily: READ_FONT };
+  const canJoin = viewerId && !myReg && !isAdmin;
+  return <>
+    {canJoin && (
+      <div style={box} className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <p style={{ margin: 0, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 17, textTransform: "uppercase", letterSpacing: "0.04em", color: "#ecf3ff" }}>Want in? Join as a reserve</p>
+          <p style={{ margin: "4px 0 0", fontSize: 13.5, color: "rgba(214,226,255,0.72)", lineHeight: 1.45 }}>The draft pool is closed, but captains pick subs from this list. Every match you play banks season points.</p>
+        </div>
+        <button onClick={() => setFlow(profileIsComplete(myProfile) ? "terms" : "intro")} style={shellBtn("primary", { padding: "11px 18px", fontSize: 12 })}>Sign up as a reserve →</button>
+      </div>
+    )}
+    {viewerId && myReg?.status === "pending" && (
+      <div style={{ ...box, borderColor: "rgba(245,196,83,0.45)" }}>
+        <p style={{ margin: 0, fontSize: 14, color: "#f5c453", fontWeight: 600 }}>Your reserve sign-up is with the host. You'll show up here once it's approved.</p>
+      </div>
+    )}
+    {isAdmin && pending.length > 0 && (
+      <div style={{ ...box, borderColor: "rgba(245,196,83,0.45)" }}>
+        <p style={{ margin: "0 0 10px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.06em", color: "#f5c453" }}>
+          {pending.length} reserve sign-up{pending.length === 1 ? "" : "s"} to review</p>
+        <div className="flex flex-col gap-2">
+          {pending.map((r) => (
+            <div key={r.regId} className="flex items-center justify-between gap-3 flex-wrap" style={{ padding: "8px 10px", background: "rgba(10,16,30,0.55)", border: "1px solid rgba(120,150,220,0.18)" }}>
+              <span style={{ fontSize: 14, color: "#ecf3ff" }}>
+                <b>{r.name}</b>
+                <span style={{ color: "rgba(214,226,255,0.6)" }}> · {r.rank ? rankLabel(rankKey(r.rank), r.rankDiv) : "no rank"} · {r.role || "Flex"}</span>
+                {r.noShows > 0 && <span style={{ color: "#ff8f9a" }}> · {r.noShows} no-show{r.noShows === 1 ? "" : "s"}</span>}
+              </span>
+              <span className="flex gap-2">
+                <button disabled={busy} onClick={() => decide(r, "approved")} style={shellBtn("primary", { padding: "7px 14px", fontSize: 11 })}>Approve</button>
+                <button disabled={busy} onClick={() => decide(r, "rejected")} style={shellBtn("ghost", { padding: "7px 12px", fontSize: 11 })}>Reject</button>
+              </span>
+            </div>
+          ))}
+        </div>
+        {err && <p style={{ margin: "8px 0 0", fontSize: 13, color: "#ff8f9a" }}>{err}</p>}
+      </div>
+    )}
+    {flow && <FirstTimeOnboard ev={ev} wantCap={false} startPhase={flow} onClose={() => setFlow(null)}
+      onApplied={async () => { await onRegChanged?.(); await onMerge?.(); }} />}
+  </>;
+}
+
 function FirstTimeOnboard({ ev, wantCap, onClose, onApplied, startPhase = "intro" }) {
   // "intro" opens straight on the form: a page of explanation before it only delayed people.
   const [phase, setPhase] = useState(startPhase === "intro" ? "edit" : startPhase); // edit → terms → applying → done
@@ -14569,11 +14679,13 @@ function MatchReadyCard({ prof, ev, myReg, susp, onOpenProfile, onChanged }) {
     { k: "discord", label: "Connect Discord", sub: "So the bot can DM you reminders and your team", done: discordOk },
     { k: "wa", label: "WhatsApp number", sub: "Only staff see it, and only if Discord fails", done: waOk },
   ];
-  const regOpen = ev && (ev.phase === "registration_open" || ev.phase === "registration_closed");
+  // Sign-ups never close before the tournament is settled: after registration
+  // they go to the reserve pool instead of the draft (volt_apply decides).
+  const regOpen = ev && LATE_SIGNUP_PHASES.includes(ev.phase);
   // A rejected application isn't something a button can fix, so it isn't a step.
   if (regOpen && !(myReg && myReg.status === "rejected")) {
-    steps.push({ k: "reg", label: `Sign up for ${weekendName(ev)}`,
-      sub: ev.phase === "registration_closed" ? "The draft pool is closed — you'd join as a reserve" : "One tap once your profile is done",
+    steps.push({ k: "reg", label: ev.phase === "registration_open" ? `Sign up for ${weekendName(ev)}` : `Join ${weekendName(ev)} as a reserve`,
+      sub: ev.phase !== "registration_open" ? "The draft pool is closed — you'd be a reserve, on call as a sub" : "One tap once your profile is done",
       done: !!myReg });
   }
   if (steps.every((s) => s.done)) return null;
@@ -15371,7 +15483,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       // Which tournament is taking sign-ups: the current one, or the next one
       // opening while this one is still running.
       const regEv = (current && (current.phase === "registration_open" || current.phase === "registration_closed")) ? current
-        : events.find(e => e.phase === "registration_open") || null;
+        : events.find(e => e.phase === "registration_open")
+        || (current && LATE_SIGNUP_PHASES.includes(current.phase) ? current : null);
       const capEv = events.find(e => e.phase !== "settled" && myRegs[e.id]?.is_captain && (myRegs[e.id]?.status || "approved") === "approved") || null;
       const needsSetup = myProf && !(myProf.ign && myProf.rank && myProf.role && (myProf.linked || myProf.discord) && myProf.whatsapp);
       const jumpTo = (id) => setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
@@ -15687,7 +15800,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
   async function loadMyReg() {
     if (!HAS_SUPABASE || !auth?.userId || !ev?.id) return;
     try {
-      const { data: r } = await __sb.from("registrations").select("id, status, wants_captain, is_captain").eq("event_id", ev.id).eq("user_id", auth.userId).maybeSingle();
+      const { data: r } = await __sb.from("registrations").select("id, status, wants_captain, is_captain, pool_eligible").eq("event_id", ev.id).eq("user_id", auth.userId).maybeSingle();
       setMyReg(r || null);
       setMyProfile(await loadProfileGate(auth.userId));
       const { data: u } = await __sb.from("users").select("suspension_remaining").eq("id", auth.userId).maybeSingle();
@@ -16192,6 +16305,7 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
         ? <MatchReport ev={ev} prefill={reportPrefill} onDone={() => { setMatchView(false); setReportPrefill(null); refreshReported(); }} />
         : null,
       account, onSignOut, hostControls,
+      onRegChanged: loadMyReg,
       // The Lobby shows this when registration is open — flipping it IS applying.
       regToggle: ((phase === "registration_open" || phase === "registration_closed") && HAS_SUPABASE && auth?.userId && !isHost)
         ? <PlayToggle ev={ev} mine={myReg} profileComplete={profileIsComplete(myProfile)} susp={mySusp2} strikes={myStrikes2}
