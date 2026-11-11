@@ -846,6 +846,19 @@ function MatchPrediction({ match, locator, a, b, onVote }) {
         <div style={{ width: `${total ? aPct : 50}%`, background: hueA, opacity: total ? 1 : 0.25, transition: "width .25s ease" }} />
         <div style={{ flex: 1, background: hueB, opacity: total ? 1 : 0.25 }} />
       </div>
+      {/* An upset pays double: the winner had under 25% of at least 5 picks.
+          Same rule as volt_pred_standings, said where the pick is made. */}
+      {(() => {
+        if (match.forfeit || total < 5) return null;
+        const dog = aPct < 25 ? "a" : aPct > 75 ? "b" : null;
+        if (!dog) return null;
+        const line = { fontSize: 11.5, fontWeight: 600, marginTop: 7, color: "#ffcf7a", fontFamily: READ_FONT, lineHeight: 1.4 };
+        if (match.done) {
+          return (match.winner === match.teamA ? "a" : "b") === dog
+            ? <div style={line}>⚡ Upset. Correct picks counted double.</div> : null;
+        }
+        return <div style={line}>⚡ {(dog === "a" ? a : b).name} are the underdog. Calling them right counts double{started ? "" : ", if they're still under 25% at kick-off"}.</div>;
+      })()}
       {open && total > 0 && (
         <div className="flex gap-2 mt-2.5 flex-wrap">
           {side(a.name, aV, hueA, "left")}
@@ -3624,7 +3637,124 @@ function LbPodium({ rows, metric }) {
   );
 }
 
-function Leaderboard({ isAdmin }) {
+// ── Draft value ───────────────────────────────────────────────────────────
+// Did the auction get it right? Among drafted players who have played, compare
+// where each one's price ranked with where their average performance ranks.
+// "14th most expensive, 3rd best performer" is a gap of +11: a bargain. A
+// negative gap is a player who hasn't matched their price yet.
+//
+// Ranks rather than dollars-per-point so one $300 pick can't swamp the list,
+// and so it reads as a sentence. Ties share the average of the places they
+// cover for the gap; `place` (how many are strictly ahead, plus one) is what's
+// shown. Captains have no price, and subs were never bought, so neither counts.
+function draftValue(list) {
+  const rank = (key) => {
+    const sorted = [...list].sort((x, y) => y[key] - x[key]);
+    const avg = {}, place = {};
+    for (let i = 0; i < sorted.length;) {
+      let j = i;
+      while (j + 1 < sorted.length && sorted[j + 1][key] === sorted[i][key]) j++;
+      for (let k = i; k <= j; k++) { avg[sorted[k].id] = (i + j) / 2 + 1; place[sorted[k].id] = i + 1; }
+      i = j + 1;
+    }
+    return { avg, place };
+  };
+  const price = rank("price"), perf = rank("perf");
+  return list.map((p) => ({ ...p, pricePlace: price.place[p.id], perfPlace: perf.place[p.id], gap: price.avg[p.id] - perf.avg[p.id] }));
+}
+const DRAFT_VALUE_MIN = 6;   // fewer drafted players with a game than this and the ranks mean nothing
+const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
+
+function DraftValuePanel({ board, eventId }) {
+  const [perf, setPerf] = useState(null);   // { userId: { m, sum } } for this tournament
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      if (DEMO || !HAS_SUPABASE || !eventId) return;
+      try {
+        const { data } = await __sb.from("match_results").select("user_id, stat_payload").eq("event_id", eventId);
+        if (!alive) return;
+        const agg = {};
+        (data || []).forEach((r) => {
+          const sp = r.stat_payload || {};
+          const played = perfOf(sp) > 0 || Number(sp.k || 0) > 0 || Number(sp.a || 0) > 0 || Number(sp.d || 0) > 0;
+          if (!r.user_id || !played) return;
+          const a = (agg[r.user_id] = agg[r.user_id] || { m: 0, sum: 0 });
+          a.m++; a.sum += perfOf(sp);
+        });
+        setPerf(agg);
+      } catch (e) { console.error("draft value", e); }
+    }
+    load();
+    const stop = visInterval(load, 30000);
+    return () => { alive = false; stop(); };
+  }, [eventId]);
+
+  const teamOf = (id) => (board?.teams || []).find((t) => t.id === id);
+  const drafted = (board?.players || []).filter((p) => p.status === "sold" && Number(p.soldPrice) > 0);
+  // The offline demo has no match reports; its tracker ACS stands in so the panel can be seen.
+  const list = drafted.map((p) => {
+    const a = DEMO ? (p.acs ? { m: 1, sum: Number(p.acs) } : null) : perf?.[p.id];
+    return a && a.m > 0 ? { id: p.id, name: p.name, price: Number(p.soldPrice), perf: Math.round(a.sum / a.m), team: teamOf(p.soldTo) } : null;
+  }).filter(Boolean);
+  if (list.length < DRAFT_VALUE_MIN) return null;
+
+  const rows = draftValue(list);
+  const bargains = rows.filter((r) => r.gap > 0).sort((x, y) => y.gap - x.gap || x.price - y.price).slice(0, 3);
+  const overpaid = rows.filter((r) => r.gap < 0).sort((x, y) => x.gap - y.gap || y.price - x.price).slice(0, 3);
+  // A captain's drafting: the average gap across their picks who've played.
+  const byTeam = {};
+  rows.forEach((r) => { if (!r.team) return; (byTeam[r.team.id] = byTeam[r.team.id] || { team: r.team, sum: 0, n: 0 }); byTeam[r.team.id].sum += r.gap; byTeam[r.team.id].n++; });
+  const teams = Object.values(byTeam).filter((t) => t.n >= 2).map((t) => ({ ...t, avg: t.sum / t.n })).sort((x, y) => y.avg - x.avg);
+  const signed = (v, d = 0) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d).replace(/\.0$/, "");
+
+  const chip = (v, d) => (
+    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 13, minWidth: 44, textAlign: "center", padding: "3px 7px", whiteSpace: "nowrap",
+      color: v > 0 ? "#9af5c2" : v < 0 ? "#ff9aa5" : "rgba(200,215,255,0.6)",
+      border: `1px solid ${v > 0 ? "rgba(61,220,132,0.4)" : v < 0 ? "rgba(255,70,85,0.4)" : "rgba(120,150,220,0.25)"}`,
+      background: v > 0 ? "rgba(61,220,132,0.08)" : v < 0 ? "rgba(255,70,85,0.07)" : "transparent" }}>{signed(v, d)}</span>
+  );
+  const player = (r) => (
+    <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: "1px solid rgba(120,150,220,0.1)" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.03em", color: "#ecf3ff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {r.name}{r.team && <span style={{ color: r.team.hue, fontSize: 11.5, marginLeft: 8, letterSpacing: "0.08em" }}>{r.team.name}</span>}</div>
+        <div style={{ fontSize: 12.5, color: "rgba(214,226,255,0.66)", fontFamily: READ_FONT, marginTop: 2, lineHeight: 1.35 }}>
+          {fmt(r.price)}, {ordinal(r.pricePlace)} priciest · averaging {r.perf}, {ordinal(r.perfPlace)} best</div>
+      </div>
+      {chip(r.gap)}
+    </div>
+  );
+  const card = (title, tone, hint, body) => (
+    <div style={{ ...PANEL(tone, "15px 17px 10px"), clipPath: SHELL_NOTCH(12) }}>
+      <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.08em", color: "#ecf3ff" }}>{title}</div>
+      <div style={{ fontSize: 12, color: "rgba(214,226,255,0.55)", fontFamily: READ_FONT, margin: "2px 0 8px", lineHeight: 1.4 }}>{hint}</div>
+      {body}
+    </div>
+  );
+  return (
+    <div style={{ marginTop: 34 }}>
+      <div style={{ ...SEC_LABEL, color: "#7da6ff", marginBottom: 4 }}>// Draft value · this tournament</div>
+      <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 26, textTransform: "uppercase", letterSpacing: "0.02em", color: "#f4f8ff", lineHeight: 1 }}>
+        Steal of the <span style={{ color: "#3ddc84" }}>draft</span></div>
+      <p style={{ fontSize: 13.5, color: "rgba(214,226,255,0.66)", fontFamily: READ_FONT, margin: "6px 0 14px", maxWidth: 620, lineHeight: 1.45 }}>
+        Where each drafted player's price ranked against where their performance ranks now. +5 means they're playing five places better than they were paid for.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", gap: 12 }}>
+        {bargains.length > 0 && card("Best bargains", "rgba(61,220,132,0.35)", "Cheap in the auction, near the top of the table.", bargains.map(player))}
+        {overpaid.length > 0 && card("Most overpaid", "rgba(255,70,85,0.3)", "Paid for like a star, not playing like one yet.", overpaid.map(player))}
+        {teams.length > 1 && card("Best drafting", "rgba(245,196,83,0.35)", "Average across each captain's picks.", teams.map((t) => (
+          <div key={t.team.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid rgba(120,150,220,0.1)" }}>
+            <TeamMono name={t.team.name} hue={t.team.hue} size={20} />
+            <span style={{ flex: 1, minWidth: 0, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.03em", color: t.team.hue, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.team.name}</span>
+            {chip(Math.round(t.avg * 10) / 10, 1)}
+          </div>
+        )))}
+      </div>
+    </div>
+  );
+}
+
+function Leaderboard({ isAdmin, board, eventId }) {
   // Two honest answers to "who's best".
   //
   // Average performance score is output per game — it doesn't care whether
@@ -3766,6 +3896,7 @@ function Leaderboard({ isAdmin }) {
           </div>
         </div>
       )}
+      <DraftValuePanel board={board} eventId={eventId} />
     </div>
   );
 }
@@ -7135,7 +7266,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   );
 
   const LeaderboardView = (
-    <Leaderboard isAdmin={isAdmin} />
+    <Leaderboard isAdmin={isAdmin} board={state} eventId={chrome?.ev?.id || window.__VOLT?.weekendId} />
   );
 
   const views = { lobby: LobbyView, scout: ScoutView, reserve: ReserveView, block: BlockView, locker: LockerView, warroom: WarRoomView, bracket: BracketView, veto: VetoView, leaderboard: LeaderboardView,
@@ -8416,16 +8547,16 @@ function PredictGlance({ viewerId, onOpen }) {
   }, []);
   if (!rows) return <Skeleton rows={5} />;
   if (!rows.length) return <Empty title="No calls scored yet"
-    hint="Anyone in the server can predict a match before kick-off. Correct calls rank here." />;
+    hint="Anyone in the server can predict a match before kick-off. A correct call is a point, an upset is two." />;
   const [first, ...rest] = rows;
   const meFirst = first.userId === viewerId;
   return (
     <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
       <FeatureTile
-        label="Sharpest caller"
-        value={<CountUp to={first.pct} format={(v) => Math.round(v) + "%"} />}
+        label="Top caller"
+        value={<CountUp to={first.pts ?? first.hit} format={(v) => Math.round(v) + " pts"} />}
         name={<PName uid={first.userId} onOpen={onOpen}>{first.name}</PName>}
-        sub={`${first.hit} of ${first.total} called`}
+        sub={`${first.hit} of ${first.total} called${first.streak >= 3 ? ` · 🔥 ${first.streak} in a row` : ""}`}
         hue={meFirst ? "#7da6ff" : "#f5c453"} />
       <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column",
         justifyContent: "center", gap: 10, minWidth: 0 }}>
@@ -8437,10 +8568,11 @@ function PredictGlance({ viewerId, onOpen }) {
               <PName uid={r.userId} onOpen={onOpen} style={{ flex: 1, minWidth: 0, textTransform: "uppercase", fontWeight: 600,
                 color: me ? "#7da6ff" : "rgba(236,243,255,0.78)",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</PName>
-              <Bar pct={r.pct} i={i} color={me ? "#7da6ff" : "#00e5ff"} opacity={0.75} style={{ flex: "0 0 68px" }} />
+              {r.streak >= 3 && <span style={{ fontSize: 11.5, fontWeight: 700, color: "#ffb454", whiteSpace: "nowrap" }}>🔥 {r.streak}</span>}
+              <Bar pct={(first.pts ?? first.hit) ? ((r.pts ?? r.hit) / (first.pts ?? first.hit)) * 100 : 0} i={i} color={me ? "#7da6ff" : "#00e5ff"} opacity={0.75} style={{ flex: "0 0 68px" }} />
               <span style={{ flex: "0 0 52px", textAlign: "right",
                 fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
-                color: "rgba(200,215,255,0.5)" }}>{r.hit}/{r.total}</span>
+                color: "rgba(200,215,255,0.5)" }}>{r.pts ?? r.hit} pts</span>
             </div>
           );
         })}

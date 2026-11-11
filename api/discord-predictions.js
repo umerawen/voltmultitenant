@@ -222,7 +222,29 @@ const labelFor = (matchId) => String(matchId).slice(-4).toUpperCase();
 const perfOf = (sp) => Number(sp?.ps ?? sp?.acs ?? 0) || 0;
 const played = (sp) => perfOf(sp) > 0 || Number(sp?.k || 0) > 0 || Number(sp?.a || 0) > 0 || Number(sp?.d || 0) > 0;
 
-export function playerOfNightMessage(night, rows, names, reported) {
+// The cheapest-for-what-they-did player of the night: among everyone who played
+// and was bought in the auction, whose performance placed furthest above where
+// their price placed. Needs four priced players and a gap of two places.
+export function bargainOfNight(ranked, prices) {
+  const list = ranked.filter((r) => Number(prices?.[r.user_id]) > 0)
+    .map((r) => ({ r, price: Number(prices[r.user_id]), perf: perfOf(r.stat_payload) }));
+  if (list.length < 4) return null;
+  const place = (key) => {
+    const sorted = [...list].sort((x, y) => y[key] - x[key]); const out = new Map();
+    for (let i = 0; i < sorted.length;) {
+      let j = i; while (j + 1 < sorted.length && sorted[j + 1][key] === sorted[i][key]) j++;
+      for (let k = i; k <= j; k++) out.set(sorted[k], (i + j) / 2 + 1);
+      i = j + 1;
+    }
+    return out;
+  };
+  const byPrice = place("price"), byPerf = place("perf");
+  const best = list.map((x) => ({ ...x, gap: byPrice.get(x) - byPerf.get(x) }))
+    .sort((x, y) => y.gap - x.gap || x.price - y.price)[0];
+  return best && best.gap >= 2 ? best : null;
+}
+
+export function playerOfNightMessage(night, rows, names, reported, prices = null) {
   // Each player's best game of the night, so one player can't fill the podium.
   const seen = new Set();
   const ranked = rows.filter((r) => played(r.stat_payload))
@@ -233,6 +255,7 @@ export function playerOfNightMessage(night, rows, names, reported) {
   const unit = (sp) => (sp?.ps == null && sp?.acs != null ? "ACS" : "performance");
   const top = ranked[0], sp = top.stat_payload || {};
   const next = ranked.slice(1, 3).map((r) => `**${who(r)}** ${perfOf(r.stat_payload)}`).join(" · ");
+  const steal = bargainOfNight(ranked, prices);
   const of = reported < night.length ? `${reported} of ${night.length} reported matches` : `${night.length === 1 ? "the match" : `all ${night.length} matches`}`;
   return {
     content: [
@@ -240,9 +263,21 @@ export function playerOfNightMessage(night, rows, names, reported) {
       `**${who(top)}**${sp.team ? ` · ${sp.team}` : ""}`,
       `**${perfOf(sp)}** ${unit(sp)} · ${Number(sp.k || 0)} kills · ${Number(sp.a || 0)} assists`,
       `-# Best ${unit(sp) === "ACS" ? "ACS" : "performance score"} across ${of}.${next ? ` Next best: ${next}` : ""}`,
+      ...(steal ? [`💰 **Bargain of the night:** **${who(steal.r)}**, bought for $${steal.price.toLocaleString("en-US")}, put up ${steal.perf}.`] : []),
     ].join("\n"),
     allowed_mentions: { parse: [] },
   };
+}
+
+// What each drafted player went for, from the board. No board just means no bargain line.
+async function soldPrices(eventId) {
+  try {
+    const [row] = await sb(`/rest/v1/community_kv?k=eq.${encodeURIComponent("volt-auction-v2::" + eventId)}&shared=eq.true&user_id=is.null&select=val`) || [];
+    const board = typeof row?.val === "string" ? JSON.parse(row.val) : row?.val;
+    const out = {};
+    for (const p of board?.players || []) if (p?.status === "sold" && Number(p.soldPrice) > 0) out[p.id] = Number(p.soldPrice);
+    return out;
+  } catch (e) { console.error("sold prices", e); return null; }
 }
 
 async function playerOfNight(token, errors) {
@@ -274,7 +309,7 @@ async function playerOfNight(token, errors) {
     const uids = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
     const us = uids.length ? await sb(`/rest/v1/users?id=in.(${uids.join(",")})&select=id,display_name`) : [];
     const names = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
-    const msg = playerOfNightMessage(games, rows, names, reported);
+    const msg = playerOfNightMessage(games, rows, names, reported, await soldPrices(eventId));
     if (!msg) { await stamp(); continue; }
     const ch = await channelFor(night[0].guild, night[0].communityId, "results");
     if (!ch) { errors.push("player of the night: no channel"); continue; }

@@ -437,7 +437,12 @@ export async function predictionLine(ctx, payload, read = sb) {
   const names = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
   const shown = right.slice(0, 12).map((k) => (k.startsWith("dc:") ? `<@${k.slice(3)}>` : names[k] || "a player"));
   const more = right.length - shown.length;
-  const upset = pct < 40 ? ` Upset: most picked ${won === "a" ? nameOf(m.teamB) : nameOf(m.teamA)}.` : "";
+  // Under 25% of at least 5 picks is an upset, and those picks score double
+  // on the prediction board (same rule as volt_pred_standings).
+  const other = won === "a" ? nameOf(m.teamB) : nameOf(m.teamA);
+  const upset = votes.length >= 5 && right.length / votes.length < 0.25
+    ? ` Upset: most picked ${other}, so these picks count double.`
+    : pct < 40 ? ` Most picked ${other}.` : "";
   if (!right.length) return `🔮 **Nobody called it.** All ${votes.length} picks were on ${won === "a" ? nameOf(m.teamB) : nameOf(m.teamA)}.`;
   return `🔮 **${right.length} of ${votes.length}** called it (${pct}%).${upset}\n` +
     `-# ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;

@@ -5345,9 +5345,11 @@ const DiscordConsole = ({ tabs }) => <TabPanel label="Discord bot" tabs={tabs} /
 // drafted — predicting is how people sitting out a weekend stay in it, and the
 // season race already belongs to the players.
 //
-// Ranked on correct calls rather than accuracy, so it rewards turning up to
-// every match; accuracy breaks ties, so someone who called 8 of 10 edges
-// someone who called 8 of 20.
+// Ranked on points rather than accuracy, so it rewards turning up to every
+// match: 1 for a correct call, 2 when it was an upset (the winner had under 25%
+// of at least 5 picks). Correct calls, then accuracy, break ties. The streak is
+// the run of correct calls they're on right now. All of it is worked out in
+// volt_pred_standings.
 function PredictionBoard({ bare = false }) {
   const [rows, setRows] = useState(null);
   const [all, setAll] = useState(false);
@@ -5376,7 +5378,7 @@ function PredictionBoard({ bare = false }) {
             Crystal <span style={{ color: "#3d7bff" }}>Ball</span>
           </div>
           <div style={{ fontSize: 11.5, color: "rgba(200,215,255,0.4)", marginTop: 5 }}>
-            Call the winner before kick-off — anyone in the league can play
+            Call the winner before kick-off — anyone in the league can play. Calling an upset counts double.
           </div>
         </div>
       )}
@@ -5399,12 +5401,15 @@ function PredictionBoard({ bare = false }) {
                 {r.guest && <span style={{ fontSize: 9.5, letterSpacing: "0.14em", marginLeft: 8,
                   color: "rgba(200,215,255,0.35)" }}>GUEST</span>}
               </span>
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.45)" }}>
-                {r.pct}%
+              {r.streak >= 3 && <span title={`${r.streak} correct calls in a row`}
+                style={{ fontSize: 12.5, fontWeight: 700, color: "#ffb454", whiteSpace: "nowrap" }}>🔥 {r.streak}</span>}
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.45)", whiteSpace: "nowrap" }}
+                title={r.upsets > 0 ? `${r.upsets} of those were upsets, worth double` : undefined}>
+                {r.hit}/{r.total}{r.upsets > 0 ? ` · ⚡${r.upsets}` : ""}
               </span>
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 700,
-                color: i === 0 ? "#f5c453" : "#00e5ff", minWidth: 54, textAlign: "right" }}>
-                {r.hit}/{r.total}
+                color: i === 0 ? "#f5c453" : "#00e5ff", minWidth: 58, textAlign: "right", whiteSpace: "nowrap" }}>
+                {r.pts ?? r.hit}<span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.7 }}> pts</span>
               </span>
             </div>
           );
