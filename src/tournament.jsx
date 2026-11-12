@@ -3992,6 +3992,10 @@ function MapVeto({ teams }) {
   useEffect(() => () => clearTimeout(coinTimer.current), []);
   const [coinTeam, setCoinTeam] = useState(null);              // teamId assigned the coin result
   const [turn, setTurn] = useState(null);                      // teamId whose ban turn it is
+  // The toss is for one of two prizes: the last ban (you choose between the
+  // final two maps) or the side on the decider. This is the team holding the
+  // last ban; the other team holds the side.
+  const [lastBan, setLastBan] = useState(null);
   const [setup, setSetup] = useState(true);                    // setup vs running
   const [showRules, setShowRules] = useState(false);           // veto rules explainer
 
@@ -4003,6 +4007,12 @@ function MapVeto({ teams }) {
 
   const pool = ALL_MAPS.filter((m) => active.has(m));
   const remaining = pool.filter((m) => !banned[m]);
+  // Bans alternate, so who opens follows from who must close: with an odd
+  // number of bans the opener also makes the last one, with an even number the
+  // other team does. Worked out from the pool, so toggling a map in or out
+  // can't quietly hand the last ban to the wrong team.
+  const holdsToss = lastBan && (lastBan === teamA || lastBan === teamB) && teamA !== teamB;
+  const firstBan = holdsToss ? ((pool.length - 1) % 2 === 1 ? lastBan : other(lastBan)) : null;
 
   const toggleActive = (m) => {
     if (!setup) return;
@@ -4017,7 +4027,7 @@ function MapVeto({ teams }) {
     if (flipping) return;
     const result = Math.random() < 0.5 ? "HEADS" : "TAILS";
     setCoinTeam(null);
-    setTurn(null);
+    setTurn(null); setLastBan(null);
 
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       setCoin(result); setCoinDeg((d) => d + (result === "HEADS" ? 0 : 180));
@@ -4047,9 +4057,10 @@ function MapVeto({ teams }) {
     const left = pool.filter((x) => !nextBanned[x]);
     setBanned(nextBanned);
     if (left.length === 1) {
-      // last map standing becomes the decider; the OTHER team (not whoever just banned) picks side
+      // Last map standing is the decider. The side belongs to the team that
+      // took it at the toss, which is the one that didn't make this ban.
       setDecider(left[0]);
-      setSidePick({ teamId: other(turn), side: null });   // sensible default; host can switch
+      setSidePick({ teamId: other(lastBan || turn), side: null });
       setTurn(null);
     } else {
       setTurn(other(turn)); // alternate
@@ -4057,13 +4068,14 @@ function MapVeto({ teams }) {
   };
 
   const startVeto = () => {
-    if (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn) return;
+    if (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !firstBan) return;
+    setTurn(firstBan);
     setSetup(false);
   };
 
   const resetAll = () => {
     setActive(new Set(ALL_MAPS)); setBanned({}); setDecider(null); setSidePick(null);
-    setCoin(null); setCoinTeam(null); setFlipping(false); setTurn(null); setSetup(true);
+    setCoin(null); setCoinTeam(null); setFlipping(false); setTurn(null); setLastBan(null); setSetup(true);
   };
 
   const teamPill = (id, label) => {
@@ -4087,7 +4099,7 @@ function MapVeto({ teams }) {
       </div>
       <h2 className="font-bold uppercase mb-1" style={{ fontFamily: "'Tungsten','Rajdhani',sans-serif", fontSize: "clamp(2.4rem,5vw,3.8rem)", lineHeight: 0.86, letterSpacing: "0.04em", color: "#f4f8ff", textShadow: "0 0 40px rgba(61,123,255,0.22)" }}>Map <span style={{ color: "#3d7bff" }}>Veto</span></h2>
       <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <p className="volt-desc text-sm" style={{ color: "rgba(200,215,255,0.5)", margin: 0 }}>Flip the coin, assign who bans first, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
+        <p className="volt-desc text-sm" style={{ color: "rgba(200,215,255,0.5)", margin: 0 }}>Flip the coin, let the winner take the last ban or the side, then tap maps to ban them down to a decider. Nothing is saved — hit Reset to run the next one.</p>
         <button onClick={() => setShowRules(true)} title="How the veto works"
           className="uppercase shrink-0" style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(61,123,255,0.4)", background: "rgba(61,123,255,0.08)", padding: "5px 11px", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
           ◈ Veto rules
@@ -4105,10 +4117,10 @@ function MapVeto({ teams }) {
             </div>
 
             {[
-              ["1 · Coin toss", <>The coin picks a winner. The winner decides whether their team <b style={{ color: "#ecf3ff" }}>bans first or second</b>.</>],
-              ["2 · Banning", <>Teams take turns removing one map at a time until a single map is left. With an even number of maps in the pool the team that bans first removes one extra; with an odd number the bans split evenly.</>],
+              ["1 · Coin toss", <>The coin picks a winner. The winner takes one of two things: the <b style={{ color: "#ecf3ff" }}>last ban</b> or the <b style={{ color: "#f5c453" }}>side</b>. The other team gets the one that's left.</>],
+              ["2 · Banning", <>Teams take turns removing one map at a time until a single map is left. The order is set so that the team holding the last ban removes the final map, choosing between the last two.</>],
               ["3 · The decider", <>The last map standing is played.</>],
-              ["4 · Sides", <>The team that did <b style={{ color: "#ecf3ff" }}>not</b> make the final ban picks <b style={{ color: "#f5c453" }}>Attack or Defence</b>; the other team takes the opposite side. The host can hand the side pick over if the captains agree.</>],
+              ["4 · Sides", <>The team holding the side picks <b style={{ color: "#f5c453" }}>Attack or Defence</b> on the decider; the other team takes the opposite side.</>],
             ].map(([title, body], i) => (
               <div key={i} style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "#7da6ff", marginBottom: 5 }}>{title}</div>
@@ -4119,7 +4131,7 @@ function MapVeto({ teams }) {
             <div style={{ marginTop: 18, padding: "14px 16px", background: "rgba(10,16,30,0.6)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(9) }}>
               <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "#5b8dff", fontWeight: 700, marginBottom: 7 }}>In short</div>
               <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(200,215,255,0.7)", margin: 0 }}>
-                Ban down to one map. Whoever got the last ban gave up the side choice, so the other team picks the starting side.
+                Win the toss, then choose what matters more: the last ban decides the map, the side decides how you start on it.
               </p>
             </div>
           </div>
@@ -4184,18 +4196,13 @@ function MapVeto({ teams }) {
                       <p className="text-xs uppercase tracking-[0.2em] text-center mb-3" style={{ color: "rgba(200,215,255,0.55)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
                         <span style={{ color: W.hue }}>{W.name}</span> chooses</p>
                       <div className="flex gap-3">
-                        {(() => {
-                          // Who makes the final ban depends on how many bans there are
-                          // (one fewer than the maps in play), not on going second.
-                          const lastBy = (first) => ((remaining.length - 1) % 2 === 1 ? first : other(first));
-                          const tail = (first) => (lastBy(first) === coinTeam
-                            ? `${W.name} gets the last ban, ${L?.name} picks the side`
-                            : `${L?.name} gets the last ban, ${W.name} picks the side`);
-                          return [[coinTeam, "Ban first", `${W.name} opens · ${tail(coinTeam)}`], [other(coinTeam), "Ban second", `${L?.name} opens · ${tail(other(coinTeam))}`]];
-                        })().map(([first, label, sub]) => {
-                          const on = turn === first;
+                        {[
+                          [coinTeam, "Last ban", `${W.name} remove the final map, choosing between the last two · ${L?.name} pick Attack or Defence`],
+                          [other(coinTeam), "Side", `${W.name} pick Attack or Defence on the decider · ${L?.name} remove the final map`],
+                        ].map(([holder, label, sub]) => {
+                          const on = lastBan === holder;
                           return (
-                            <button key={label} onClick={() => setTurn(first)} className="relative flex-1 px-4 py-3 text-left"
+                            <button key={label} onClick={() => setLastBan(holder)} className="relative flex-1 px-4 py-3 text-left"
                               style={{ fontFamily: "'Rajdhani',sans-serif", background: on ? W.hue + "26" : "rgba(255,255,255,0.03)",
                                 border: `1px solid ${on ? W.hue : "rgba(120,150,220,0.2)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))",
                                 boxShadow: on ? `0 0 18px ${W.hue}44` : "none" }}>
@@ -4205,27 +4212,17 @@ function MapVeto({ teams }) {
                           );
                         })}
                       </div>
+                      {firstBan && (
+                        <p className="text-xs text-center mt-3" style={{ color: "rgba(200,215,255,0.6)", fontFamily: READ_FONT }}>
+                          <b style={{ color: hueOf(firstBan) }}>{nameOf(firstBan)}</b> ban first, <b style={{ color: hueOf(lastBan) }}>{nameOf(lastBan)}</b> ban last, <b style={{ color: hueOf(other(lastBan)) }}>{nameOf(other(lastBan))}</b> pick the side.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
               );
             })()}
           </HudPanel>
-
-          {/* manual override when there's no toss */}
-          {teamA && teamB && teamA !== teamB && !coinTeam && (
-            <HudPanel>
-              <HudLabel>Or set first ban manually</HudLabel>
-              <div className="flex gap-3">
-                {[teamA, teamB].map((id) => (
-                  <button key={id} onClick={() => setTurn(id)} className="relative flex-1 px-3 py-2.5 font-bold uppercase text-sm"
-                    style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.04em", background: turn === id ? hueOf(id) + "22" : "rgba(255,255,255,0.03)", border: `1px solid ${turn === id ? hueOf(id) : "rgba(120,150,220,0.2)"}`, color: hueOf(id), clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))", boxShadow: turn === id ? `0 0 18px ${hueOf(id)}33` : "none" }}>
-                    {nameOf(id)} bans 1st
-                  </button>
-                ))}
-              </div>
-            </HudPanel>
-          )}
 
           {/* map pool toggles */}
           <div>
@@ -4237,7 +4234,7 @@ function MapVeto({ teams }) {
             </div>
           </div>
 
-          <button onClick={startVeto} disabled={!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn}
+          <button onClick={startVeto} disabled={!teamA || !teamB || teamA === teamB || remaining.length < 2 || !firstBan}
             className="ea-btn relative self-start" style={{ display: "inline-flex", alignItems: "center", gap: 14, padding: "15px 38px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.9rem", letterSpacing: "0.3em", textTransform: "uppercase", color: "#9af5c2", background: "linear-gradient(180deg, rgba(13,32,24,0.55), rgba(7,18,14,0.45))", border: "1px solid rgba(61,220,132,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)", opacity: (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn) ? 0.4 : 1 }}>
             <span className="absolute left-0 top-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderTop: "2px solid #3ddc84" }} />
             <span className="absolute left-0 bottom-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderBottom: "2px solid #3ddc84" }} />
@@ -4285,12 +4282,6 @@ function MapVeto({ teams }) {
               <HudLabel dot="#3ddc84">Side Selection</HudLabel>
               <p className="text-sm mb-3" style={{ color: "rgba(200,215,255,0.6)" }}>
                 Decider is <span className="font-bold" style={{ color: "#9af5c2" }}>{decider}</span>. <span className="font-bold uppercase" style={{ color: hueOf(sidePick.teamId), fontFamily: "'Rajdhani',sans-serif" }}>{nameOf(sidePick.teamId)}</span> picks side:
-                {!sidePick.side && (
-                  <button onClick={() => setSidePick({ teamId: other(sidePick.teamId), side: null })}
-                    className="ml-2 uppercase" style={{ fontSize: 10.5, letterSpacing: "0.12em", fontWeight: 700, color: "rgba(200,215,255,0.55)", border: "1px solid rgba(120,150,220,0.3)", padding: "3px 8px", background: "transparent", cursor: "pointer", fontFamily: "'Rajdhani',sans-serif" }}>
-                    ⇄ Switch team
-                  </button>
-                )}
               </p>
               <div className="flex gap-3">
                 {["ATTACK", "DEFENSE"].map((s) => {
