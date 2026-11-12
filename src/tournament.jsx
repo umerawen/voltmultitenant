@@ -3568,11 +3568,13 @@ function CoinFace({ label, back, team }) {
         border: `1px solid ${hue}88`,
       }}>
         {team ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-            <TeamMono name={team.name} hue={team.hue} size={34} />
-            <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 11, letterSpacing: "0.12em",
-              color: "#e8f0ff", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              textShadow: `0 0 10px ${hue}` }}>{team.name}</span>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+            <TeamMono name={team.name} hue={team.hue} size={36} />
+            {/* The face, not the team name: a name is as long as the captain
+                likes and ran off the edge of the coin. It's printed in full
+                beside the coin. */}
+            <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 10, letterSpacing: "0.2em", lineHeight: 1,
+              color: "#e8f0ff", whiteSpace: "nowrap", textShadow: `0 0 10px ${hue}` }}>{label}</span>
           </div>
         ) : (
           <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 14,
@@ -4030,7 +4032,9 @@ function MapVeto({ teams }) {
     setTurn(null); setLastBan(null);
 
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      setCoin(result); setCoinDeg((d) => d + (result === "HEADS" ? 0 : 180));
+      // No spin, but still turn to the face that won from wherever the coin is
+      // (adding 180 for tails showed heads whenever it was already on tails).
+      setCoin(result); setCoinDeg((d) => { const want = result === "HEADS" ? 0 : 180; return d + (((want - (d % 360)) % 360) + 360) % 360; });
       if (teamA && teamB) setCoinTeam(result === "HEADS" ? teamA : teamB);
       return;
     }
@@ -4077,6 +4081,18 @@ function MapVeto({ teams }) {
     setActive(new Set(ALL_MAPS)); setBanned({}); setDecider(null); setSidePick(null);
     setCoin(null); setCoinTeam(null); setFlipping(false); setTurn(null); setLastBan(null); setSetup(true);
   };
+
+  const canStart = !!(teamA && teamB && teamA !== teamB && remaining.length >= 2 && firstBan);
+  const startButton = (cls = "") => (
+    <button onClick={startVeto} disabled={!canStart}
+      className={"ea-btn relative " + cls} style={{ display: "inline-flex", alignItems: "center", gap: 14, padding: "15px 38px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.9rem", letterSpacing: "0.3em", textTransform: "uppercase",
+        color: canStart ? "#06210f" : "#9af5c2",
+        background: canStart ? "linear-gradient(180deg,#52e596,#2fbf73)" : "linear-gradient(180deg, rgba(13,32,24,0.55), rgba(7,18,14,0.45))",
+        border: "1px solid rgba(61,220,132,0.6)", boxShadow: canStart ? "0 0 26px rgba(61,220,132,0.35)" : "none",
+        clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)", opacity: canStart ? 1 : 0.4, cursor: canStart ? "pointer" : "default" }}>
+      Start veto <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400 }}>→</span>
+    </button>
+  );
 
   const teamPill = (id, label) => {
     const sel = coinTeam === id;
@@ -4217,6 +4233,13 @@ function MapVeto({ teams }) {
                           <b style={{ color: hueOf(firstBan) }}>{nameOf(firstBan)}</b> ban first, <b style={{ color: hueOf(lastBan) }}>{nameOf(lastBan)}</b> ban last, <b style={{ color: hueOf(other(lastBan)) }}>{nameOf(other(lastBan))}</b> pick the side.
                         </p>
                       )}
+                      {firstBan && (
+                        <div className="flex flex-col items-center gap-2 mt-4">
+                          {startButton()}
+                          <span className="text-xs" style={{ color: "rgba(200,215,255,0.5)", fontFamily: READ_FONT }}>
+                            {remaining.length} maps in the pool. Take any out below before you start.</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -4234,12 +4257,7 @@ function MapVeto({ teams }) {
             </div>
           </div>
 
-          <button onClick={startVeto} disabled={!teamA || !teamB || teamA === teamB || remaining.length < 2 || !firstBan}
-            className="ea-btn relative self-start" style={{ display: "inline-flex", alignItems: "center", gap: 14, padding: "15px 38px", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: "0.9rem", letterSpacing: "0.3em", textTransform: "uppercase", color: "#9af5c2", background: "linear-gradient(180deg, rgba(13,32,24,0.55), rgba(7,18,14,0.45))", border: "1px solid rgba(61,220,132,0.5)", clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%)", opacity: (!teamA || !teamB || teamA === teamB || remaining.length < 2 || !turn) ? 0.4 : 1 }}>
-            <span className="absolute left-0 top-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderTop: "2px solid #3ddc84" }} />
-            <span className="absolute left-0 bottom-0" style={{ width: 11, height: 11, borderLeft: "2px solid #3ddc84", borderBottom: "2px solid #3ddc84" }} />
-            Start veto <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 400 }}>→</span>
-          </button>
+          {startButton("self-start")}
         </div>
       )}
 
