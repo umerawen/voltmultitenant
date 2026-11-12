@@ -1062,35 +1062,109 @@ function FxVoteBar({ f }) {
   );
 }
 
+// A finished Valorant map: someone reached 13, and in overtime the winner is
+// two clear. 13–12 is allowed too, for lobbies set to sudden-death overtime.
+const isFinalMapScore = (x, y) => {
+  const hi = Math.max(x, y), lo = Math.min(x, y);
+  return Number.isInteger(x) && Number.isInteger(y) && lo >= 0 && hi >= 13 && hi > lo && (hi === 13 || hi - lo === 2);
+};
+
 // Host score entry, one box pair per map.
+//
+// Typing happens in a local draft and is only saved once the pair is a finished
+// score. It used to save on every keystroke, which meant the match briefly had
+// whatever was half-typed as its result: "7" then "1" on the way to "13" was a
+// 1–7 loss for the winner, and retyping a group score left the box empty for a
+// moment, so the group counted as unfinished and the playoff matches built from
+// it (their times, everyone's picks) were thrown away and rebuilt. Now a
+// correction goes straight from the old result to the new one. Removing a
+// result is its own button, never a side effect of an empty box.
 function ScoreEntry({ match, locator, onSetMap, onSetBo }) {
   const bo = match.bo || 1;
   const n = [3, 5].includes(Number(bo)) ? Number(bo) : 1, need = boNeed(bo);
+  const saved = (mi) => match.maps?.[mi] || { a: null, b: null };
+  const asText = (v) => (v == null ? "" : String(v));
+  const fromMatch = () => Array.from({ length: n }, (_, mi) => ({ a: asText(saved(mi).a), b: asText(saved(mi).b) }));
+  const [draft, setDraft] = useState(fromMatch);
+  // Follow the board when the saved score changes (our own save landing, or another host's edit).
+  const sig = JSON.stringify((match.maps || []).map((x) => [x?.a ?? null, x?.b ?? null])) + "|" + n;
+  useEffect(() => { setDraft(fromMatch()); }, [sig]); // eslint-disable-line
+
+  const live = useRef({}); live.current = { onSetMap, locator };
+  const pending = useRef(null);
+  const flush = () => {
+    const q = pending.current; if (!q) return;
+    clearTimeout(q.t); pending.current = null;
+    live.current.onSetMap(live.current.locator, q.mi, q.x, q.y);
+  };
+  useEffect(() => flush, []);   // closing the panel mid-pause still saves a finished score
+  const clear = async (mi) => {
+    if (!(await voltConfirm("The match goes back to not played. If a group or a bracket round depended on it, the matches built from it are rebuilt.",
+      { title: n > 1 ? `Clear map ${mi + 1}?` : "Clear this result?", confirmLabel: "Clear it", danger: true }))) return;
+    if (pending.current) { clearTimeout(pending.current.t); pending.current = null; }
+    onSetMap(locator, mi, "", "");
+  };
+
   const box = { width: 56, height: 40, background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff",
     fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, fontWeight: 700, textAlign: "center", outline: "none" };
+  const num = (t) => (/^\d{1,2}$/.test(t) ? Number(t) : null);
+  const edit = (mi, side, text) => {
+    const clean = text.replace(/[^0-9]/g, "").slice(0, 2);
+    const next = { ...(draft[mi] || { a: "", b: "" }), [side]: clean };
+    setDraft((d) => d.map((x, i) => (i === mi ? next : x)));
+    const x = num(next.a), y = num(next.b);
+    // Save a finished score after a short pause, not per keystroke: "13" and
+    // "1" is a finished score on the way to typing 13–15.
+    if (pending.current) { clearTimeout(pending.current.t); pending.current = null; }
+    if (x != null && y != null && isFinalMapScore(x, y)) {
+      pending.current = { mi, x, y, t: setTimeout(flush, 700) };
+    }
+  };
+  const rows = Array.from({ length: n }).map((_, mi) => {
+    const mp = saved(mi), d = draft[mi] || { a: "", b: "" };
+    // A series stops once it's won: no box for a map that isn't played.
+    const before = (match.maps || []).slice(0, mi).filter((x) => x && x.a != null && x.b != null);
+    const decidedEarly = before.filter((x) => x.a > x.b).length >= need || before.filter((x) => x.b > x.a).length >= need;
+    if (decidedEarly && mp.a == null) return null;
+    const x = num(d.a), y = num(d.b);
+    const hasSaved = mp.a != null && mp.b != null;
+    const dirty = d.a !== asText(mp.a) || d.b !== asText(mp.b);
+    // Both boxes filled, but not a score a map can end on.
+    const odd = dirty && x != null && y != null && !isFinalMapScore(x, y);
+    return { mi, d, hasSaved, dirty, odd, x, y };
+  }).filter(Boolean);
+  const small = { fontSize: 12, color: "rgba(214,226,255,0.7)", fontFamily: READ_FONT, lineHeight: 1.45 };
+  const link = { ...shellBtn("ghost", { padding: "5px 10px", fontSize: 10.5 }) };
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
-      {Array.from({ length: n }).map((_, mi) => {
-        const mp = match.maps?.[mi] || { a: null, b: null };
-        // A series stops once it's won: no box for a map that isn't played.
-        const before = (match.maps || []).slice(0, mi).filter((x) => x && x.a != null && x.b != null);
-        const decidedEarly = before.filter((x) => x.a > x.b).length >= need || before.filter((x) => x.b > x.a).length >= need;
-        if (decidedEarly && mp.a == null) return null;
-        return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+        {rows.map(({ mi, d, dirty }) => (
           <span key={mi} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             {n > 1 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace", marginRight: 2 }}>MAP {mi + 1}</span>}
-            <input type="number" inputMode="numeric" min="0" aria-label={`Map ${mi + 1}, first team's rounds`} value={mp.a == null ? "" : mp.a}
-              onChange={(e) => onSetMap(locator, mi, e.target.value, mp.b)} placeholder="–" style={box} />
+            <input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`Map ${mi + 1}, first team's rounds`} value={d.a}
+              onChange={(e) => edit(mi, "a", e.target.value)} onBlur={flush} placeholder="–" style={{ ...box, border: dirty ? "1px solid rgba(245,196,83,0.6)" : box.border }} />
             <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 18 }}>:</span>
-            <input type="number" inputMode="numeric" min="0" aria-label={`Map ${mi + 1}, second team's rounds`} value={mp.b == null ? "" : mp.b}
-              onChange={(e) => onSetMap(locator, mi, mp.a, e.target.value)} placeholder="–" style={box} />
+            <input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`Map ${mi + 1}, second team's rounds`} value={d.b}
+              onChange={(e) => edit(mi, "b", e.target.value)} onBlur={flush} placeholder="–" style={{ ...box, border: dirty ? "1px solid rgba(245,196,83,0.6)" : box.border }} />
           </span>
-        );
-      })}
-      {onSetBo && locator?.kind !== "final" && (
-        <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} title="Switch this match's length"
-          style={shellBtn("ghost", { padding: "8px 12px", fontSize: 10.5 })}>Make it BO{bo === 1 ? 3 : 1}</button>
-      )}
+        ))}
+        {onSetBo && locator?.kind !== "final" && (
+          <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} title="Switch this match's length"
+            style={shellBtn("ghost", { padding: "8px 12px", fontSize: 10.5 })}>Make it BO{bo === 1 ? 3 : 1}</button>
+        )}
+      </div>
+      {rows.map(({ mi, hasSaved, dirty, odd, x, y }) => (
+        (odd || hasSaved) && (
+          <div key={mi} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap", marginTop: 8, textAlign: "center" }}>
+            {odd && <>
+              <span style={{ ...small, color: "#ffcf7a" }}>{n > 1 ? `Map ${mi + 1}: ` : ""}{x}–{y} isn't a finished score, so it hasn't been saved.</span>
+              <button onClick={() => { if (pending.current) { clearTimeout(pending.current.t); pending.current = null; } onSetMap(locator, mi, x, y); }} style={link}>Save it anyway</button>
+            </>}
+            {!odd && dirty && hasSaved && <span style={small}>{n > 1 ? `Map ${mi + 1}: ` : ""}still showing {match.maps[mi].a}–{match.maps[mi].b} until the new score is complete.</span>}
+            {hasSaved && <button onClick={() => clear(mi)} style={link}>{n > 1 ? `Clear map ${mi + 1}` : "Clear result"}</button>}
+          </div>
+        )
+      ))}
     </div>
   );
 }
