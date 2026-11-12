@@ -4276,7 +4276,7 @@ function MapVeto({ teams }) {
             {decider ? (
               <span className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-widest" style={{ color: "#3ddc84" }}><span className="cd-pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: "#3ddc84", color: "#3ddc84" }} />Decider locked</span>
             ) : turn ? (
-              <span className="relative text-sm font-bold uppercase tracking-widest px-3 py-1" style={{ background: hueOf(turn) + "22", color: hueOf(turn), clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{nameOf(turn)} bans next</span>
+              <span className="relative text-sm font-bold uppercase tracking-widest px-3 py-1" style={{ background: hueOf(turn) + "22", color: hueOf(turn), clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))" }}>{nameOf(turn)} ban</span>
             ) : null}
           </HudPanel>
 
