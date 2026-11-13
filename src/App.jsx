@@ -3155,7 +3155,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
           <div style={{ position: "relative", overflow: "hidden", borderRadius: 14, padding: "22px 22px 18px", border: "1px solid rgba(255,255,255,0.08)",
             background: `linear-gradient(120deg, ${hue}3a, ${hue}18 55%, rgba(10,13,22,0.35))` }}>
             <span style={{ position: "absolute", right: -8, top: -22, fontSize: 128, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.04em", color: "rgba(255,255,255,0.07)", fontFamily: "'Rajdhani',sans-serif", pointerEvents: "none", userSelect: "none" }}>{avgPerf || p.acs || ""}</span>
-            {(avgPerf || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>{avgPerf ? "PERF" : "ACS"}</span> : null}
+            {(avgPerf || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>ACS</span> : null}
             <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
               <RankCrest rank={rank} div={rankDiv} />
               <div style={{ minWidth: 0 }}>
@@ -3231,7 +3231,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
         {bigTile("Matches", mrs.length, "#5b8dff")}
         {bigTile("Wins", wins, "#3ddc84", winRate != null ? winRate + "% win rate" : null)}
         {bigTile("Tournaments won", u.weekends_won || 0, "#f5c453")}
-        {bigTile("Avg performance", avgPerf, "#ff4655")}
+        {bigTile("Avg ACS", avgPerf, "#ff4655")}
       </div>
       <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
 
@@ -6454,7 +6454,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Season race ──
   if (page === "season") return wrap(<>
-    <PageHead league={leagueName} title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, performance score ÷ 4, and kills plus a third of assists." accent="#f5c453" />
+    <PageHead league={leagueName} title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, ACS ÷ 4, and kills plus a third of assists." accent="#f5c453" />
     {board && board.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
         {board.slice(0, 3).map((r, i) => {
@@ -6481,7 +6481,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <div>
       <TabPanel label="League" tabs={[
         { key: "race", label: "Season race",
-          hint: "+50 a win, performance\u00f74, K+\u2153A. Every match counts, subs included.",
+          hint: "+50 a win, ACS\u00f74, K+\u2153A. Every match counts, subs included.",
           node: board ? (
             <div style={{ display: "grid", gap: 6 }}>
             {board.map((r, i) => (

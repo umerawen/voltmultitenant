@@ -390,7 +390,7 @@ async function postResult(ctx, payload) {
     title: `${payload.teamA} ${payload.scoreA ?? ""} — ${payload.scoreB ?? ""} ${payload.teamB}`,
     color: 0x3d7bff,
     description: (payload.map ? `**${payload.map}**\n` : "") + (rows
-      ? `-# Performance score · K/D/A\n${rows}` : "_No player stats recorded._")
+      ? `-# ACS · K/D/A\n${rows}` : "_No player stats recorded._")
       + (calls ? `\n\n${calls}` : ""),
     footer: { text: payload.tag || ctx.ev.weekend_label || "" },
   };
@@ -546,17 +546,17 @@ async function postStandings(ctx) {
   const list = (rows, key) => rows.slice(0, 10).map((r, i) =>
     `${medal[i] || `\`${String(i + 1).padStart(2)}\``} **${r.name}** — ` +
     (key === "pts"
-      ? `${Math.round(r.pts)} pts · ${perf(r)} perf`
-      : `${perf(r)} perf · ${Math.round(r.pts)} pts`) +
+      ? `${Math.round(r.pts)} pts · ${perf(r)} ACS`
+      : `${perf(r)} ACS · ${Math.round(r.pts)} pts`) +
     ` (${r.played})`).join("\n");
 
   const body = [
-    "### ◈ Top average performance score",
+    "### ◈ Top average ACS",
     "-# Output per game — wins aside",
     list(byPerf, "perf"),
     "",
     "### ◈ Top season points",
-    "-# 50 a win, plus performance ÷4 and kills",
+    "-# 50 a win, plus ACS ÷4 and kills",
     list(byPts, "pts"),
   ].join("\n");
 

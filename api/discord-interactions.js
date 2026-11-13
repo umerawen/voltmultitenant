@@ -223,15 +223,15 @@ async function onCommand(out, body, guild, discordId, origin) {
     const line = (r, i) =>
       `${medal[i] || `${i + 1}.`} **${r.name}** — ` +
       (sort === "pts"
-        ? `${num(r.pts, 0)} pts · ${perf(r)} perf`
-        : `${perf(r)} perf · ${num(r.pts, 0)} pts`) +
+        ? `${num(r.pts, 0)} pts · ${perf(r)} ACS`
+        : `${perf(r)} ACS · ${num(r.pts, 0)} pts`) +
       ` (${r.played} match${r.played === 1 ? "" : "es"})`;
     return reply(out,
       (sort === "pts"
-        ? "**Season leaderboard** · points\n-# 50 a win, plus performance ÷4 and kills"
-        : "**Season leaderboard** · average performance score\n-# Output per game, wins aside") +
+        ? "**Season leaderboard** · points\n-# 50 a win, plus ACS ÷4 and kills"
+        : "**Season leaderboard** · average ACS\n-# Output per game, wins aside") +
       "\n" + rows.slice(0, 10).map(line).join("\n") +
-      `\n-# \`/leaderboard sort:${sort === "pts" ? "performance" : "points"}\` for the other ranking`);
+      `\n-# \`/leaderboard sort:${sort === "pts" ? "ACS" : "points"}\` for the other ranking`);
   }
 
   if (name === "subs") {
@@ -305,7 +305,7 @@ const HELP =
   "**Following along**\n" +
   "`/status` — sign-ups and draft time\n" +
   "`/standings` — the tournament table\n" +
-  "`/leaderboard` — season leaderboard (`sort:` performance or points)\n" +
+  "`/leaderboard` — season leaderboard (`sort:` ACS or points)\n" +
   "`/predictions` — who's calling matches best\n" +
   "`/scout` — anyone's rank, stats and record\n" +
   "`/me` — your own card\n\n" +

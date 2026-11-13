@@ -252,7 +252,7 @@ export function playerOfNightMessage(night, rows, names, reported, prices = null
     .filter((r) => { const k = r.user_id || r.stat_payload?.name; if (seen.has(k)) return false; seen.add(k); return true; });
   if (!ranked.length) return null;
   const who = (r) => names[r.user_id] || r.stat_payload?.name || "Player";
-  const unit = (sp) => (sp?.ps == null && sp?.acs != null ? "ACS" : "performance");
+  const unit = () => "ACS";
   const top = ranked[0], sp = top.stat_payload || {};
   const next = ranked.slice(1, 3).map((r) => `**${who(r)}** ${perfOf(r.stat_payload)}`).join(" · ");
   const steal = bargainOfNight(ranked, prices);
@@ -262,7 +262,7 @@ export function playerOfNightMessage(night, rows, names, reported, prices = null
       `## ⭐ Player of the night — <t:${night[0].at}:D>`,
       `**${who(top)}**${sp.team ? ` · ${sp.team}` : ""}`,
       `**${perfOf(sp)}** ${unit(sp)} · ${Number(sp.k || 0)} kills · ${Number(sp.a || 0)} assists`,
-      `-# Best ${unit(sp) === "ACS" ? "ACS" : "performance score"} across ${of}.${next ? ` Next best: ${next}` : ""}`,
+      `-# Best ACS across ${of}.${next ? ` Next best: ${next}` : ""}`,
       ...(steal ? [`💰 **Bargain of the night:** **${who(steal.r)}**, bought for $${steal.price.toLocaleString("en-US")}, put up ${steal.perf}.`] : []),
     ].join("\n"),
     allowed_mentions: { parse: [] },

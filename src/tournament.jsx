@@ -3699,12 +3699,12 @@ function LbPodium({ rows, metric }) {
             <div className="volt-pod-val" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
               color: c, marginTop: 14, textShadow: `0 0 24px ${c}55` }}>
               <CountUp to={val} dur={1000} delay={k * 90} />
-              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "perf" ? "PERF" : "PTS"}</span>
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "perf" ? "ACS" : "PTS"}</span>
             </div>
             <div className="volt-pod-meta" style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 12, fontFamily: "'IBM Plex Mono',monospace",
               fontSize: 11, color: "rgba(200,215,255,0.5)" }}>
               <span>{r.m} played</span><span style={{ color: "#3ddc84" }}>{r.w}W</span>
-              <span>{metric === "perf" ? `${r.pts} pts` : `${r.avgPerf} perf`}</span>
+              <span>{metric === "perf" ? `${r.pts} pts` : `${r.avgPerf} ACS`}</span>
             </div>
           </div>
         );
@@ -3796,7 +3796,7 @@ function DraftValuePanel({ board, eventId }) {
         <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.03em", color: "#ecf3ff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {r.name}{r.team && <span style={{ color: r.team.hue, fontSize: 11.5, marginLeft: 8, letterSpacing: "0.08em" }}>{r.team.name}</span>}</div>
         <div style={{ fontSize: 12.5, color: "rgba(214,226,255,0.66)", fontFamily: READ_FONT, marginTop: 2, lineHeight: 1.35 }}>
-          {fmt(r.price)}, {ordinal(r.pricePlace)} priciest · averaging {r.perf}, {ordinal(r.perfPlace)} best</div>
+          {fmt(r.price)}, {ordinal(r.pricePlace)} priciest · averaging {r.perf} ACS, {ordinal(r.perfPlace)} best</div>
       </div>
       {chip(r.gap)}
     </div>
@@ -3814,7 +3814,7 @@ function DraftValuePanel({ board, eventId }) {
       <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 26, textTransform: "uppercase", letterSpacing: "0.02em", color: "#f4f8ff", lineHeight: 1 }}>
         Steal of the <span style={{ color: "#3ddc84" }}>draft</span></div>
       <p style={{ fontSize: 13.5, color: "rgba(214,226,255,0.66)", fontFamily: READ_FONT, margin: "6px 0 14px", maxWidth: 620, lineHeight: 1.45 }}>
-        Where each drafted player's price ranked against where their performance ranks now. +5 means they're playing five places better than they were paid for.</p>
+        Where each drafted player's price ranked against where their ACS ranks now. +5 means they're playing five places better than they were paid for.</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", gap: 12 }}>
         {bargains.length > 0 && card("Best bargains", "rgba(61,220,132,0.35)", "Cheap in the auction, near the top of the table.", bargains.map(player))}
         {overpaid.length > 0 && card("Most overpaid", "rgba(255,70,85,0.3)", "Paid for like a star, not playing like one yet.", overpaid.map(player))}
@@ -3901,12 +3901,12 @@ function Leaderboard({ isAdmin, board, eventId }) {
       <h1 className="font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.01em", fontSize: "clamp(34px, 4.6vw, 52px)", lineHeight: 0.95, textShadow: "0 0 36px rgba(61,123,255,0.35)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
       <p className="volt-desc text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
         {sortBy === "perf"
-          ? "Ranked by average performance score — output per game, wins aside."
-          : "Ranked by season points — 50 a win, plus performance ÷4 and kills."}
+          ? "Ranked by average ACS — output per game, wins aside."
+          : "Ranked by season points — 50 a win, plus ACS ÷4 and kills."}
         {isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}
       </p>
       <div className="flex gap-2">
-        {[["perf", "Top performance"], ["pts", "Top points"]].map(([k, label]) => (
+        {[["perf", "Top ACS"], ["pts", "Top points"]].map(([k, label]) => (
           <button key={k} onClick={() => setSortBy(k)}
             className="text-xs uppercase tracking-widest px-4 py-2"
             style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
@@ -3933,7 +3933,7 @@ function Leaderboard({ isAdmin, board, eventId }) {
       {rows && rows.length > 0 && (
         <div>
           <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
-            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg perf</span>
+            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg ACS</span>
           </div>
           <div className="grid gap-1.5">
             {sorted.map((r, i) => {
@@ -7957,7 +7957,7 @@ function FormStrip({ games, part = "both", w = 150 }) {
         {games.map((g, i) => (
           <circle key={i} cx={x(i)} cy={y(g.perf)} r={i === games.length - 1 ? 3.6 : 2.6}
             fill={g.won ? "#3ddc84" : "#ff4655"}>
-            <title>{`${g.perf} ${g.unit === "ACS" ? "ACS" : "performance"} · ${g.won ? "won" : "lost"}`}</title>
+            <title>{`${g.perf} ACS · ${g.won ? "won" : "lost"}`}</title>
           </circle>
         ))}
       </svg>}
@@ -8272,7 +8272,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             )}
             {lg?.best > 0 && (
               <div>
-                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> perf</span></div>
+                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> ACS</span></div>
                 <div style={LBL}>Best game</div>
               </div>
             )}
@@ -8287,7 +8287,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
               <div style={BIG("#00e5ff")}>
                 <CountUp to={lg.avg} />
               </div>
-              <div style={LBL}>Avg performance here</div>
+              <div style={LBL}>Avg ACS here</div>
             </div>
             <div>
               <div style={BIG("#3ddc84")}>{lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}</div>
@@ -8295,7 +8295,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             </div>
             <div className="volt-yc-form" style={{ marginLeft: "auto" }}>
               <FormStrip games={lg.recent} part="line" w={160} />
-              <div style={LBL}>Form · performance per match</div>
+              <div style={LBL}>Form · ACS per match</div>
             </div>
           </> : lg && !lg.failed ? <>
             {tiles.slice(2).map((t) => (
@@ -8609,7 +8609,7 @@ function LeaderGlance({ viewerId, onOpen }) {
                 color: lead ? "#f5c453" : "#00e5ff" }}>
                 {lead ? <CountUp to={r.perf} /> : r.perf}
               </span>
-              <span style={{ fontSize: 8, letterSpacing: "0.16em", color: "rgba(200,215,255,0.28)" }}>PERF</span>
+              <span style={{ fontSize: 8, letterSpacing: "0.16em", color: "rgba(200,215,255,0.28)" }}>ACS</span>
             </div>
           </div>
         );
@@ -9416,7 +9416,9 @@ async function fetchRosterForEvent(eventId) {
   };
 }
 
-const perfUnit = (sp) => (sp?.ps == null && sp?.acs != null ? "ACS" : "PERF");
+// Leagues report ACS (custom games still show it), so every score is labelled
+// ACS, including the few matches saved as performance score before the switch.
+const perfUnit = () => "ACS";
 
 function matchPoints({ won, perf: score, kills, assists }) {
   const win = won ? 50 : 0;
@@ -10087,9 +10089,6 @@ function MatchReport({ ev, onDone, prefill }) {
   const [shotErr, setShotErr] = useState("");
   const [shot, setShot] = useState(null);   // [{ srcName, playerId|null, perf, kills, assists }]
   const [shotUnit, setShotUnit] = useState("ps");   // what the last screenshot showed: "ps" or "acs"
-  // What the score box holds for a player typed by hand. Custom games still
-  // show ACS, so that's the default; the host can switch it per match.
-  const [unitDefault, setUnitDefault] = useState("acs");
   const fileRef = useRef(null);
 
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
@@ -10165,8 +10164,6 @@ function MatchReport({ ev, onDone, prefill }) {
         unit: sp.ps == null && sp.acs != null ? "acs" : "ps" };
     });
     setLines(ls);
-    const firstUnit = Object.values(ls)[0]?.unit;
-    if (firstUnit) setUnitDefault(firstUnit);
     // Anyone in the saved match who isn't on the current roster is a sub.
     const onBoard = new Set([...(t1?.players || []), ...(t2?.players || [])].map(p => p.id));
     const exA = [], exB = [];
@@ -10185,11 +10182,7 @@ function MatchReport({ ev, onDone, prefill }) {
   function cancelEdit() {
     setEditing(null); setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setErr("");
   }
-  const line = (uid) => lines[uid] || { k: "", a: "", ps: "", unit: unitDefault };
-  const setUnitAll = (u) => {
-    setUnitDefault(u);
-    setLines((ls) => Object.fromEntries(Object.entries(ls).map(([id, l]) => [id, { ...l, unit: u }])));
-  };
+  const line = (uid) => lines[uid] || { k: "", a: "", ps: "", unit: "acs" };
   const setLine = (uid, k, v) => setLines(ls => ({ ...ls, [uid]: { ...line(uid), [k]: v.replace(/[^0-9]/g, "") } }));
   const ptsFor = (uid, won) => matchPoints({ won, perf: line(uid).ps, kills: line(uid).k, assists: line(uid).a });
 
@@ -10239,11 +10232,10 @@ function MatchReport({ ev, onDone, prefill }) {
       const next = { ...ls };
       for (const row of shot) {
         if (!row.playerId) continue;
-        next[row.playerId] = { k: String(row.kills), a: String(row.assists), ps: String(row.perf), unit: shotUnit };
+        next[row.playerId] = { k: String(row.kills), a: String(row.assists), ps: String(row.perf), unit: "acs" };
       }
       return next;
     });
-    setUnitDefault(shotUnit);
     setShot(null); setShotErr("");
   }
 
@@ -10382,9 +10374,9 @@ function MatchReport({ ev, onDone, prefill }) {
               </span>
               {/* Score first, then K then A — the column order Valorant's scoreboard
                   uses, so you read across the game screen and type across the row. */}
-              <input placeholder={line(p.id).unit === "acs" ? "ACS" : "PERF"} title={line(p.id).unit === "acs" ? "ACS" : "Performance score"}
+              <input placeholder="ACS" title="ACS"
                 value={line(p.id).ps} onChange={e => setLine(p.id, "ps", e.target.value)} style={fieldS}
-                aria-label={`${p.name} ${line(p.id).unit === "acs" ? "ACS" : "performance score"}`} />
+                aria-label={`${p.name} ACS`} />
               <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
               <input placeholder="A" value={line(p.id).a} onChange={e => setLine(p.id, "a", e.target.value)} style={fieldS} aria-label={`${p.name} assists`} />
               <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: won ? "#3ddc84" : "#7da6ff", width: 58, textAlign: "right" }}>{ptsFor(p.id, won)} pts</span>
@@ -10414,7 +10406,7 @@ function MatchReport({ ev, onDone, prefill }) {
       <div style={{ textAlign: "center", marginBottom: 24 }}>
         <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)} · Match report</div>
         <h1 style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Record a <span style={{ color: "#3d7bff" }}>Match</span></h1>
-        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · performance score÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · ACS÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
       </div>
       <div style={panel}>
         <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
@@ -10544,7 +10536,7 @@ function MatchReport({ ev, onDone, prefill }) {
                       <span style={{ flex: 1 }} />
                       {["perf", "kills", "assists"].map((f) => (
                         <label key={f} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>{f === "perf" ? (shotUnit === "acs" ? "ACS" : "PERF") : f === "kills" ? "K" : "A"}</span>
+                          <span style={{ fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(200,215,255,0.4)" }}>{f === "perf" ? "ACS" : f === "kills" ? "K" : "A"}</span>
                           <input value={row[f]} inputMode="numeric"
                             onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setShot((rs) => rs.map((r, k) => k === i ? { ...r, [f]: v === "" ? 0 : Number(v) } : r)); }}
                             style={{ width: 52, padding: "4px 6px", background: "rgba(10,16,30,0.85)", border: "1px solid rgba(120,150,220,0.25)", color: "#ecf3ff", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, textAlign: "center" }} />
@@ -10569,20 +10561,6 @@ function MatchReport({ ev, onDone, prefill }) {
           )}
         </div>
 
-        {(() => {
-          // Which number the score box holds. One switch for the whole match:
-          // every row in a match comes off the same scoreboard.
-          const u = Object.values(lines)[0]?.unit || unitDefault;
-          return (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 12px" }}>
-              <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.55)" }}>Score column is</span>
-              {[["acs", "ACS"], ["ps", "Performance score"]].map(([k, lbl]) => (
-                <button key={k} onClick={() => setUnitAll(k)} aria-pressed={u === k}
-                  style={shellBtn(u === k ? "accent" : "ghost", { padding: "6px 12px", fontSize: 11 })}>{lbl}</button>
-              ))}
-            </div>
-          );
-        })()}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 20, alignItems: "start" }}>
           {rosterBlock(tA, "A")}
           {rosterBlock(tB, "B")}
