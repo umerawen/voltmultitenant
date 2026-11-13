@@ -10087,6 +10087,9 @@ function MatchReport({ ev, onDone, prefill }) {
   const [shotErr, setShotErr] = useState("");
   const [shot, setShot] = useState(null);   // [{ srcName, playerId|null, perf, kills, assists }]
   const [shotUnit, setShotUnit] = useState("ps");   // what the last screenshot showed: "ps" or "acs"
+  // What the score box holds for a player typed by hand. Custom games still
+  // show ACS, so that's the default; the host can switch it per match.
+  const [unitDefault, setUnitDefault] = useState("acs");
   const fileRef = useRef(null);
 
   const panel = { position: "relative", background: "linear-gradient(160deg,rgba(20,26,42,0.85),rgba(10,13,22,0.85))", border: "1px solid rgba(61,123,255,0.28)", clipPath: SHELL_NOTCH(16), padding: "22px 24px", textAlign: "left" };
@@ -10162,6 +10165,8 @@ function MatchReport({ ev, onDone, prefill }) {
         unit: sp.ps == null && sp.acs != null ? "acs" : "ps" };
     });
     setLines(ls);
+    const firstUnit = Object.values(ls)[0]?.unit;
+    if (firstUnit) setUnitDefault(firstUnit);
     // Anyone in the saved match who isn't on the current roster is a sub.
     const onBoard = new Set([...(t1?.players || []), ...(t2?.players || [])].map(p => p.id));
     const exA = [], exB = [];
@@ -10180,7 +10185,11 @@ function MatchReport({ ev, onDone, prefill }) {
   function cancelEdit() {
     setEditing(null); setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setErr("");
   }
-  const line = (uid) => lines[uid] || { k: "", a: "", ps: "", unit: "ps" };
+  const line = (uid) => lines[uid] || { k: "", a: "", ps: "", unit: unitDefault };
+  const setUnitAll = (u) => {
+    setUnitDefault(u);
+    setLines((ls) => Object.fromEntries(Object.entries(ls).map(([id, l]) => [id, { ...l, unit: u }])));
+  };
   const setLine = (uid, k, v) => setLines(ls => ({ ...ls, [uid]: { ...line(uid), [k]: v.replace(/[^0-9]/g, "") } }));
   const ptsFor = (uid, won) => matchPoints({ won, perf: line(uid).ps, kills: line(uid).k, assists: line(uid).a });
 
@@ -10234,6 +10243,7 @@ function MatchReport({ ev, onDone, prefill }) {
       }
       return next;
     });
+    setUnitDefault(shotUnit);
     setShot(null); setShotErr("");
   }
 
@@ -10372,7 +10382,7 @@ function MatchReport({ ev, onDone, prefill }) {
               </span>
               {/* Score first, then K then A — the column order Valorant's scoreboard
                   uses, so you read across the game screen and type across the row. */}
-              <input placeholder={line(p.id).unit === "acs" ? "ACS" : "PERF"} title={line(p.id).unit === "acs" ? "ACS (match from before the performance score)" : "Performance score"}
+              <input placeholder={line(p.id).unit === "acs" ? "ACS" : "PERF"} title={line(p.id).unit === "acs" ? "ACS" : "Performance score"}
                 value={line(p.id).ps} onChange={e => setLine(p.id, "ps", e.target.value)} style={fieldS}
                 aria-label={`${p.name} ${line(p.id).unit === "acs" ? "ACS" : "performance score"}`} />
               <input placeholder="K" value={line(p.id).k} onChange={e => setLine(p.id, "k", e.target.value)} style={fieldS} aria-label={`${p.name} kills`} />
@@ -10500,7 +10510,7 @@ function MatchReport({ ev, onDone, prefill }) {
               {shotBusy ? "Reading…" : "⊞ Read from screenshot"}
             </button>
             <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)" }}>
-              Upload the end-of-match scoreboard. You'll review everything before it fills in.
+              Upload the end-of-match scoreboard or the tracker.gg match page (one screenshot per team is fine). You'll review everything before it fills in.
             </span>
           </div>
           {shotErr && <div style={{ fontSize: 11.5, color: "#ff8f9a", marginTop: 8 }}>⚠ {shotErr}</div>}
@@ -10559,6 +10569,20 @@ function MatchReport({ ev, onDone, prefill }) {
           )}
         </div>
 
+        {(() => {
+          // Which number the score box holds. One switch for the whole match:
+          // every row in a match comes off the same scoreboard.
+          const u = Object.values(lines)[0]?.unit || unitDefault;
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 12px" }}>
+              <span style={{ fontSize: 11.5, color: "rgba(200,215,255,0.55)" }}>Score column is</span>
+              {[["acs", "ACS"], ["ps", "Performance score"]].map(([k, lbl]) => (
+                <button key={k} onClick={() => setUnitAll(k)} aria-pressed={u === k}
+                  style={shellBtn(u === k ? "accent" : "ghost", { padding: "6px 12px", fontSize: 11 })}>{lbl}</button>
+              ))}
+            </div>
+          );
+        })()}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 20, alignItems: "start" }}>
           {rosterBlock(tA, "A")}
           {rosterBlock(tB, "B")}

@@ -1,6 +1,7 @@
 // api/read-scoreboard.js — Vercel serverless function.
 //
-// Reads a Valorant end-of-match scoreboard screenshot and returns one row per
+// Reads a Valorant end-of-match scoreboard screenshot (the in-game one, or a
+// tracker.gg match page) and returns one row per
 // player: name, performance score, kills, assists. Those are the only stats
 // VOLT's scoring formula uses (+50 win · score÷4 · K+⅓A), so nothing else is
 // requested.
@@ -9,6 +10,10 @@
 // Score (0-500). Older screenshots still show ACS, so the reader says which one
 // it found (`kind`) and the app saves it under the right name. Each row also
 // carries the number as `acs`, for app builds from before the switch.
+//
+// Custom games still show ACS, so leagues report from tracker.gg's match page.
+// That page lays K, D and A out as separate columns and puts its own "Tracker
+// Score" (out of 1000) next to ACS, which is the number most easily misread.
 //
 // The Gemini key lives here as an environment variable and never reaches the
 // browser. Do NOT move this logic client-side: a key in the bundle can be lifted
@@ -44,7 +49,8 @@ const SCHEMA = {
   required: ["scoreKind", "rows"],
 };
 
-const PROMPT = `This is a Valorant end-of-match scoreboard.
+const PROMPT = `This is a Valorant end-of-match scoreboard: either the in-game
+scoreboard, or a match page from a stats site such as tracker.gg.
 
 Read every player row and return one object per player.
 
@@ -57,12 +63,21 @@ both, use the performance score.
 For each row:
 - "name": the player's display name exactly as shown, without the #TAG if one is present.
 - "score": that player's performance score (or their ACS, if scoreKind is "acs").
-- "kills": the FIRST number in the K/D/A group.
-- "assists": the THIRD number in the K/D/A group.
+- "kills": the player's kills.
+- "assists": the player's assists.
 
-Critical: the K/D/A column shows three numbers in the order kills / deaths / assists.
-Take the first as kills and the third as assists. Ignore deaths entirely.
-Ignore every other column (econ rating, first bloods, plants, defuses).
+In-game scoreboard: the K/D/A column shows three numbers in the order
+kills / deaths / assists. Take the first as kills and the third as assists.
+
+Stats-site match page (tracker.gg and similar): K, D and A are separate
+columns, usually headed "K", "D" and "A". Take kills from K and assists from A.
+The score is the column headed "ACS". Do NOT use "TRS" / "Tracker Score" (a
+number out of 1000, often in a coloured badge), "ADR", "+/-", "K/D", "KAST",
+"HS%", "DDΔ", "FK", "FD" or "MK". These pages only show ACS, so scoreKind is "acs".
+The two teams may be in two separate tables; read both.
+
+Ignore deaths and every other column (econ rating, first bloods, plants,
+defuses, rank badges).
 
 Read the digits carefully and do not guess. If a row's numbers are not clearly
 legible, still include the row but set the unreadable fields to 0 so a human can
