@@ -8633,11 +8633,12 @@ function PredictGlance({ viewerId, onOpen }) {
     hint="Anyone in the server can predict a match before kick-off. A correct call is a point, an upset is two." />;
   const [first, ...others] = rows;
   const meFirst = first.userId === viewerId;
-  // Top six, plus your own line underneath when you're further down, so you
-  // can always see how your calls are doing.
-  const rest = others.slice(0, 5).map((r, i) => ({ ...r, i: i + 1 }));
+  // Top six. When you're further down, the top five and then your own line,
+  // so you can always see how your calls are doing.
   const pos = rows.findIndex((r) => r.userId === viewerId);
-  if (pos >= 6) rest.push({ ...rows[pos], i: pos, pinned: true });
+  const pin = pos >= 5;
+  const rest = others.slice(0, pin ? 4 : 5).map((r, i) => ({ ...r, i: i + 1 }));
+  if (pin) rest.push({ ...rows[pos], i: pos, pinned: true });
   return (
     <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
       <FeatureTile
