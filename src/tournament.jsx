@@ -8624,15 +8624,20 @@ function PredictGlance({ viewerId, onOpen }) {
   useEffect(() => {
     let ok = true;
     __sb.rpc("volt_pred_standings", { p_community: window.__VOLT.communityId })
-      .then(({ data }) => ok && setRows(Array.isArray(data) ? data.slice(0, 6) : []))
+      .then(({ data }) => ok && setRows(Array.isArray(data) ? data : []))
       .catch(() => ok && setRows([]));
     return () => { ok = false; };
   }, []);
   if (!rows) return <Skeleton rows={5} />;
   if (!rows.length) return <Empty title="No calls scored yet"
     hint="Anyone in the server can predict a match before kick-off. A correct call is a point, an upset is two." />;
-  const [first, ...rest] = rows;
+  const [first, ...others] = rows;
   const meFirst = first.userId === viewerId;
+  // Top six, plus your own line underneath when you're further down, so you
+  // can always see how your calls are doing.
+  const rest = others.slice(0, 5).map((r, i) => ({ ...r, i: i + 1 }));
+  const pos = rows.findIndex((r) => r.userId === viewerId);
+  if (pos >= 6) rest.push({ ...rows[pos], i: pos, pinned: true });
   return (
     <div style={{ display: "flex", gap: 16, height: "100%", flexWrap: "wrap" }}>
       <FeatureTile
@@ -8643,22 +8648,31 @@ function PredictGlance({ viewerId, onOpen }) {
         hue={meFirst ? "#7da6ff" : "#f5c453"} />
       <div style={{ flex: "2 1 300px", display: "flex", flexDirection: "column",
         justifyContent: "center", gap: 10, minWidth: 0 }}>
-        {rest.map((r, i) => {
-          const me = r.userId === viewerId;
+        {rest.map((r) => {
+          const me = r.userId === viewerId, i = r.i;
           return (
-            <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
-              <Pip i={i + 1} />
+            <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5,
+              ...(r.pinned ? { borderTop: "1px dashed rgba(125,166,255,0.25)", paddingTop: 9 } : null) }}>
+              {r.pinned
+                ? <span style={{ flex: "0 0 auto", minWidth: 19, textAlign: "center", fontFamily: "'IBM Plex Mono',monospace",
+                    fontSize: 10, fontWeight: 700, color: "#7da6ff" }}>{i + 1}</span>
+                : <Pip i={i} />}
               <PName uid={r.userId} onOpen={onOpen} style={{ flex: 1, minWidth: 0, textTransform: "uppercase", fontWeight: 600,
                 color: me ? "#7da6ff" : "rgba(236,243,255,0.78)",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</PName>
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}{me ? "  · you" : ""}
+                {me && <span style={{ textTransform: "none", fontWeight: 400, fontSize: 11, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{r.hit} of {r.total} called</span>}</PName>
               {r.streak >= 3 && <span style={{ fontSize: 11.5, fontWeight: 700, color: "#ffb454", whiteSpace: "nowrap" }}>🔥 {r.streak}</span>}
-              <Bar pct={(first.pts ?? first.hit) ? ((r.pts ?? r.hit) / (first.pts ?? first.hit)) * 100 : 0} i={i} color={me ? "#7da6ff" : "#00e5ff"} opacity={0.75} style={{ flex: "0 0 68px" }} />
+              <Bar pct={(first.pts ?? first.hit) ? ((r.pts ?? r.hit) / (first.pts ?? first.hit)) * 100 : 0} i={Math.min(i, 5)} color={me ? "#7da6ff" : "#00e5ff"} opacity={0.75} style={{ flex: "0 0 68px" }} />
               <span style={{ flex: "0 0 52px", textAlign: "right",
                 fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
                 color: "rgba(200,215,255,0.5)" }}>{r.pts ?? r.hit} pts</span>
             </div>
           );
         })}
+        {viewerId && pos < 0 && (
+          <div style={{ borderTop: "1px dashed rgba(125,166,255,0.25)", paddingTop: 9, fontSize: 12, color: "rgba(200,215,255,0.5)" }}>
+            You haven't had a call scored yet. Pick a winner before the next match starts.</div>
+        )}
       </div>
     </div>
   );
