@@ -88,7 +88,8 @@ correct them. Include every player from both teams.`;
 // model is overloaded, not broken. Retry it briefly, then fall back to the
 // next model in the list. A model name that doesn't exist on this key (404)
 // is simply skipped. The whole thing stays inside Vercel's time limit.
-const MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest"];
+// gemini-2.5-flash was retired (404 for this key, Nov 2026); Google points to 3.8.
+const MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
