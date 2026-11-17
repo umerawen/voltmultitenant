@@ -94,20 +94,25 @@ is not, because captains bid real money against these numbers.`;
 // model is overloaded, not broken. Retry it briefly, then fall back to the
 // next model in the list. A model name that doesn't exist on this key (404)
 // is simply skipped. The whole thing stays inside Vercel's time limit.
-// gemini-2.5-flash was retired (404 for this key, Nov 2026); Google points to 3.8.
-const MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
+// One quick try per model, then a second lap if there's time. When Google is
+// overloaded the 503s come back fast, but a busy model can also just hang, so
+// each try is capped short enough that every model gets a turn. The lite model
+// sits early: it's the one most often still answering when the others are full.
+const MODELS = ["gemini-3.8-flash", "gemini-flash-lite-latest", "gemini-3.6-flash", "gemini-flash-latest", "gemini-3.8-flash-lite", "gemini-pro-latest"];
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function callGemini(key, payload, budgetMs = 50000) {
+async function callGemini(key, payload, budgetMs = 52000) {
   const started = Date.now();
   let last = { status: 503, message: "The reader is busy right now." };
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
+  const gone = new Set();   // models this key doesn't have (404): don't ask again
+  for (let lap = 0; lap < 2; lap++) {
+    for (const model of MODELS) {
+      if (gone.has(model)) continue;
       const left = budgetMs - (Date.now() - started);
       if (left < 4000) return { ok: false, ...last };
       const ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), Math.min(left - 1000, 25000));
+      const t = setTimeout(() => ctl.abort(), Math.min(left - 1000, 15000));
       try {
         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: "POST", signal: ctl.signal,
@@ -116,16 +121,17 @@ async function callGemini(key, payload, budgetMs = 50000) {
         });
         const body = await r.json().catch(() => null);
         if (r.ok) return { ok: true, body, model };
-        last = { status: r.status, message: body?.error?.message || `Gemini returned ${r.status}.` };
-        console.error("gemini", model, r.status, last.message);
-        if (r.status === 404 || r.status === 400 && /not found|not supported/i.test(last.message)) break; // try next model
+        const msg = body?.error?.message || `Gemini returned ${r.status}.`;
+        console.error("gemini", model, r.status, msg);
+        if (r.status === 404 || r.status === 400 && /not found|not supported|no longer available/i.test(msg)) { gone.add(model); continue; }
+        last = { status: r.status, message: msg };
         if (!RETRY_STATUS.has(r.status)) return { ok: false, ...last };      // a real error — don't mask it
-        if (attempt === 0) await sleep(900 + Math.random() * 600);
       } catch (e) {
         last = { status: 504, message: e.name === "AbortError" ? "The reader took too long." : String(e.message || e) };
         console.error("gemini", model, last.message);
       } finally { clearTimeout(t); }
     }
+    await sleep(800 + Math.random() * 700);
   }
   return { ok: false, ...last };
 }
