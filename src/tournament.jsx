@@ -3741,8 +3741,10 @@ function draftValue(list) {
 const DRAFT_VALUE_MIN = 6;   // fewer drafted players with a game than this and the ranks mean nothing
 const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
 
-function DraftValuePanel({ board, eventId }) {
-  const [perf, setPerf] = useState(null);   // { userId: { m, sum } } for this tournament
+// This tournament's average ACS per player, refreshed every 30s.
+// { userId: { m, sum } }, or null while loading.
+function useEventPerf(eventId) {
+  const [perf, setPerf] = useState(null);
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -3765,14 +3767,30 @@ function DraftValuePanel({ board, eventId }) {
     const stop = visInterval(load, 30000);
     return () => { alive = false; stop(); };
   }, [eventId]);
+  return perf;
+}
 
+// Drafted players (bought for a price) who have played in this tournament.
+function draftedWithPerf(board, perf) {
   const teamOf = (id) => (board?.teams || []).find((t) => t.id === id);
   const drafted = (board?.players || []).filter((p) => p.status === "sold" && Number(p.soldPrice) > 0);
   // The offline demo has no match reports; its tracker ACS stands in so the panel can be seen.
-  const list = drafted.map((p) => {
+  return drafted.map((p) => {
     const a = DEMO ? (p.acs ? { m: 1, sum: Number(p.acs) } : null) : perf?.[p.id];
-    return a && a.m > 0 ? { id: p.id, name: p.name, price: Number(p.soldPrice), perf: Math.round(a.sum / a.m), team: teamOf(p.soldTo) } : null;
+    return a && a.m > 0 ? { id: p.id, name: p.name, price: Number(p.soldPrice), perf: Math.round(a.sum / a.m), m: a.m, team: teamOf(p.soldTo) } : null;
   }).filter(Boolean);
+}
+const signedNum = (v, d = 0) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d).replace(/\.0$/, "");
+const ValueChip = ({ v, d = 0 }) => (
+  <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 13, minWidth: 44, textAlign: "center", padding: "3px 7px", whiteSpace: "nowrap",
+    color: v > 0 ? "#9af5c2" : v < 0 ? "#ff9aa5" : "rgba(200,215,255,0.6)",
+    border: `1px solid ${v > 0 ? "rgba(61,220,132,0.4)" : v < 0 ? "rgba(255,70,85,0.4)" : "rgba(120,150,220,0.25)"}`,
+    background: v > 0 ? "rgba(61,220,132,0.08)" : v < 0 ? "rgba(255,70,85,0.07)" : "transparent" }}>{signedNum(v, d)}</span>
+);
+
+function DraftValuePanel({ board, eventId }) {
+  const perf = useEventPerf(eventId);
+  const list = draftedWithPerf(board, perf);
   if (list.length < DRAFT_VALUE_MIN) return null;
 
   const rows = draftValue(list);
@@ -3782,14 +3800,7 @@ function DraftValuePanel({ board, eventId }) {
   const byTeam = {};
   rows.forEach((r) => { if (!r.team) return; (byTeam[r.team.id] = byTeam[r.team.id] || { team: r.team, sum: 0, n: 0 }); byTeam[r.team.id].sum += r.gap; byTeam[r.team.id].n++; });
   const teams = Object.values(byTeam).filter((t) => t.n >= 2).map((t) => ({ ...t, avg: t.sum / t.n })).sort((x, y) => y.avg - x.avg);
-  const signed = (v, d = 0) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d).replace(/\.0$/, "");
-
-  const chip = (v, d) => (
-    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 13, minWidth: 44, textAlign: "center", padding: "3px 7px", whiteSpace: "nowrap",
-      color: v > 0 ? "#9af5c2" : v < 0 ? "#ff9aa5" : "rgba(200,215,255,0.6)",
-      border: `1px solid ${v > 0 ? "rgba(61,220,132,0.4)" : v < 0 ? "rgba(255,70,85,0.4)" : "rgba(120,150,220,0.25)"}`,
-      background: v > 0 ? "rgba(61,220,132,0.08)" : v < 0 ? "rgba(255,70,85,0.07)" : "transparent" }}>{signed(v, d)}</span>
-  );
+  const chip = (v, d) => <ValueChip v={v} d={d} />;
   const player = (r) => (
     <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: "1px solid rgba(120,150,220,0.1)" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -3830,6 +3841,8 @@ function DraftValuePanel({ board, eventId }) {
   );
 }
 
+const VALUE_COLS = "34px minmax(0,1fr) 74px 56px 58px";
+
 function Leaderboard({ isAdmin, board, eventId }) {
   // Two honest answers to "who's best".
   //
@@ -3837,8 +3850,15 @@ function Leaderboard({ isAdmin, board, eventId }) {
   // you won or how many you played. Points reward turning up and winning: 50 a
   // win, plus performance ÷4 and kills. Someone can lead one and not the other,
   // and that gap is interesting rather than a bug, so both are one tap away.
+  // A third view, "value": every drafted player's price rank against their ACS
+  // rank in this tournament, the same sum as the Steal of the draft panel.
   const [sortBy, setSortBy] = useState("perf");
   const [rows, setRows] = useState(null);
+  const evPerf = useEventPerf(eventId);
+  const valueList = draftedWithPerf(board, evPerf);
+  const valueRows = valueList.length >= DRAFT_VALUE_MIN
+    ? draftValue(valueList).sort((x, y) => y.gap - x.gap || x.price - y.price || y.perf - x.perf)
+    : [];
   // Ties fall back to the other metric, so an equal score is settled by the
   // better season and vice versa — never by whatever order the rows arrived in.
   const sorted = [...(rows || [])].sort((x, y) =>
@@ -3902,11 +3922,13 @@ function Leaderboard({ isAdmin, board, eventId }) {
       <p className="volt-desc text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
         {sortBy === "perf"
           ? "Ranked by average ACS — output per game, wins aside."
+          : sortBy === "value"
+          ? "Drafted players, ranked by how their ACS this tournament compares with their auction price. +5 means playing five places better than they were paid for."
           : "Ranked by season points — 50 a win, plus ACS ÷4 and kills."}
         {isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}
       </p>
       <div className="flex gap-2">
-        {[["perf", "Top ACS"], ["pts", "Top points"]].map(([k, label]) => (
+        {[["perf", "Top ACS"], ["pts", "Top points"], ["value", "Price vs ACS"]].map(([k, label]) => (
           <button key={k} onClick={() => setSortBy(k)}
             className="text-xs uppercase tracking-widest px-4 py-2"
             style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
@@ -3922,15 +3944,49 @@ function Leaderboard({ isAdmin, board, eventId }) {
       </div>
 
       <style>{DASH_CSS + SWEEP_CSS}</style>
-      {rows === null && <div style={{ ...PANEL(null, "20px 22px") }}><Skeleton rows={6} /></div>}
-      {rows && rows.length === 0 && (
+      {sortBy !== "value" && rows === null && <div style={{ ...PANEL(null, "20px 22px") }}><Skeleton rows={6} /></div>}
+      {sortBy !== "value" && rows && rows.length === 0 && (
         <div style={{ ...PANEL(null, "30px 22px") }}>
           <Empty title="No matches yet"
             hint="Rankings start after the first reported match." />
         </div>
       )}
-      {rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} />}
-      {rows && rows.length > 0 && (
+      {sortBy === "value" && (valueRows.length === 0
+        ? <div style={{ ...PANEL(null, "30px 22px") }}>
+            <Empty title={evPerf === null && !DEMO ? "Loading…" : "Not enough games yet"}
+              hint={`Shows once ${DRAFT_VALUE_MIN} drafted players have played a match this tournament.`} />
+          </div>
+        : <div>
+            <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em]" style={{ gridTemplateColumns: VALUE_COLS, gap: 8, color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
+              <span>#</span><span>Player</span><span className="text-right">Price</span><span className="text-right">ACS</span><span className="text-right">Value</span>
+            </div>
+            <div className="grid gap-1.5">
+              {valueRows.map((r, i) => (
+                <div key={r.id} className="grid items-center px-4 py-3" style={{ gridTemplateColumns: VALUE_COLS, gap: 8,
+                  background: "rgba(255,255,255,0.025)", border: "1px solid rgba(120,150,220,0.13)",
+                  clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
+                  <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: "#5b8dff" }}>{String(i + 1).padStart(2, "0")}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span className="font-bold uppercase" style={{ display: "block", fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.03em", fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+                    {r.team && <span className="text-[11px] uppercase tracking-[0.1em]" style={{ display: "block", color: r.team.hue, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.team.name}</span>}
+                  </span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1.25 }}>
+                    <span style={{ display: "block", color: "rgba(236,243,255,0.85)" }}>{fmt(r.price)}</span>
+                    <span style={{ display: "block", fontSize: 11, color: "rgba(200,215,255,0.45)" }}>{ordinal(r.pricePlace)}</span>
+                  </span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", lineHeight: 1.25 }}>
+                    <span style={{ display: "block", color: "#00e5ff", fontWeight: 700 }}>{r.perf}</span>
+                    <span style={{ display: "block", fontSize: 11, color: "rgba(200,215,255,0.45)" }}>{ordinal(r.perfPlace)}</span>
+                  </span>
+                  <span style={{ display: "flex", justifyContent: "flex-end" }}><ValueChip v={r.gap} /></span>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", fontFamily: READ_FONT, margin: "10px 4px 0", lineHeight: 1.45 }}>
+              Price and ACS show the place among the {valueRows.length} drafted players who've played. Captains and subs weren't bought, so they're not in this list.</p>
+          </div>)}
+      {sortBy !== "value" && rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} />}
+      {sortBy !== "value" && rows && rows.length > 0 && (
         <div>
           <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
             <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg ACS</span>
