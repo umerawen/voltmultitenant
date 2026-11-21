@@ -3688,11 +3688,12 @@ function LbPodium({ rows, metric, board }) {
     const pl = (board?.players || []).find((p) => p.id === uid && p.soldTo);
     return (pl && ts.find((t) => t.id === pl.soldTo)) || ts.find((t) => t.captainUserId === uid) || null;
   };
-  const statCell = (label, v, col, first) => (
-    <div style={{ minWidth: 0, overflow: "hidden", padding: first ? "8px 2px" : "7px 2px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.12)",
-      clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
-      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 16 : 14, lineHeight: 1, color: col, whiteSpace: "nowrap" }}>{v}</div>
-      <div style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 4, fontWeight: 700 }}>{label}</div>
+  // One stat in the strip along the bottom of a card.
+  const statCell = (label, v, col, first, lead) => (
+    <div className="volt-pod-cell" style={{ minWidth: 0, padding: first ? "11px 2px 10px" : "9px 2px 8px",
+      borderLeft: lead ? "none" : "1px solid rgba(120,150,220,0.14)" }}>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 18 : 15, lineHeight: 1, color: col, whiteSpace: "nowrap" }}>{v}</div>
+      <div style={{ fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 5, fontWeight: 700, whiteSpace: "nowrap" }}>{label}</div>
     </div>
   );
   const MED = ["#f5c453", "#d7e1ee", "#c08a52"];
@@ -3704,7 +3705,6 @@ function LbPodium({ rows, metric, board }) {
         const r = rows[idx]; const c = MED[idx]; const first = idx === 0;
         const val = metric === "perf" ? r.avgPerf : r.pts;
         const team = teamOf(r.id);
-        const kd = r.d == null ? "—" : r.d > 0 ? (r.k / r.d).toFixed(2) : r.k > 0 ? "∞" : "—";
         return (
           <div key={r.id || idx} className="volt-pod" style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
             position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(14),
@@ -3737,16 +3737,15 @@ function LbPodium({ rows, metric, board }) {
               <CountUp to={val} dur={1000} delay={k * 90} />
               <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "perf" ? "ACS" : "PTS"}</span>
             </div>
-            <div className="volt-pod-meta" style={{ display: "flex", justifyContent: "center", gap: 14, marginTop: 12, fontFamily: "'IBM Plex Mono',monospace",
-              fontSize: 11, color: "rgba(200,215,255,0.5)" }}>
-              <span>{r.m} played</span><span style={{ color: "#3ddc84" }}>{r.w}W</span>
-              <span>{metric === "perf" ? `${r.pts} pts` : `${r.avgPerf} ACS`}</span>
-            </div>
-            <div className="volt-pod-kda" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 5, marginTop: 12 }}>
-              {statCell("K", r.k, "#ecf3ff", first)}
-              {statCell("D", r.d ?? "—", "#ff9aa5", first)}
-              {statCell("A", r.as, "#ecf3ff", first)}
-              {statCell("K/D", kd, kd !== "—" && Number(kd) >= 1 || kd === "∞" ? "#3ddc84" : "#ffb86b", first)}
+            {/* Match reports record kills and assists, not deaths, so no D or K/D. */}
+            <div className="volt-pod-strip" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", maxWidth: first ? 380 : 340,
+              margin: "18px auto 0", background: "rgba(5,8,16,0.45)", border: `1px solid ${c}33`, borderTop: `2px solid ${c}88`,
+              clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px))" }}>
+              {statCell("Played", r.m, "#ecf3ff", first, true)}
+              {statCell("Won", r.w, "#3ddc84", first)}
+              {statCell("Kills", r.k, "#ecf3ff", first)}
+              {statCell("Assists", r.as, "#ecf3ff", first)}
+              {metric === "perf" ? statCell("Points", r.pts, "#00e5ff", first) : statCell("ACS", r.avgPerf, "#00e5ff", first)}
             </div>
           </div>
         );

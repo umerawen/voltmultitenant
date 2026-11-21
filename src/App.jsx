@@ -1927,8 +1927,13 @@ const MOBILE_CSS = `
       .volt-pod-val { font-size: 26px !important; }
       .volt-pod-val > span:last-child { display: block; margin: 4px 0 0 !important; font-size: 9.5px !important; }
       .volt-pod-meta { flex-direction: column; gap: 2px !important; font-size: 10px !important; }
-      .volt-pod-kda { grid-template-columns: repeat(2, minmax(0,1fr)) !important; gap: 4px !important; }
-      .volt-pod-kda > div > div:first-child { font-size: 11px !important; }
+      .volt-pod-strip { grid-template-columns: repeat(2, minmax(0,1fr)) !important; margin-top: 12px !important; }
+      .volt-pod-strip > .volt-pod-cell { border-left: none !important; border-top: 1px solid rgba(120,150,220,0.12); padding: 6px 1px !important; }
+      .volt-pod-strip > .volt-pod-cell:nth-child(-n+2) { border-top: none; }
+      .volt-pod-strip > .volt-pod-cell:nth-child(even) { border-left: 1px solid rgba(120,150,220,0.12) !important; }
+      .volt-pod-strip > .volt-pod-cell:last-child { grid-column: 1 / -1; }
+      .volt-pod-strip > .volt-pod-cell > div:first-child { font-size: 13px !important; }
+      .volt-pod-strip > .volt-pod-cell > div:last-child { font-size: 7.5px !important; letter-spacing: 0.08em !important; }
       .volt-pod-team { padding: 3px 6px 3px 3px !important; gap: 5px !important; }
       .volt-pod-team > span { font-size: 10px !important; letter-spacing: 0.04em !important; }
 
