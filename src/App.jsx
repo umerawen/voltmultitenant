@@ -762,6 +762,7 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
   const [view, setView] = useState(() => (value ? new Date(value) : new Date()));
   const boxRef = useRef(null);
   const [anchor, setAnchor] = useState(null); // viewport rect of the trigger
+  const [panelH, setPanelH] = useState(380);  // the open panel's real height, measured once it renders
   useEffect(() => {
     if (!window.matchMedia) return;
     const mq = window.matchMedia("(min-width: 768px)");
@@ -777,7 +778,7 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
       if (e.target.closest && e.target.closest("[data-volt-dtpanel]")) return; // clicks inside the portalled panel
       setOpen(false);
     };
-    const place = () => { const r = boxRef.current?.getBoundingClientRect(); if (r) setAnchor({ top: r.bottom, left: r.left, right: r.right }); };
+    const place = () => { const r = boxRef.current?.getBoundingClientRect(); if (r) setAnchor({ top: r.bottom, above: r.top, left: r.left, right: r.right }); };
     place();
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("scroll", place, true);
@@ -852,8 +853,16 @@ function VoltDateTime({ value, onChange, placeholder = "Set date & time" }) {
       </button>
 
       {open && anchor && createPortal((
-        <div data-volt-dtpanel="1" style={{ position: "fixed", zIndex: 200,
-          top: Math.min(anchor.top + 7, Math.max(8, (typeof window !== "undefined" ? window.innerHeight : 800) - 320)),
+        <div data-volt-dtpanel="1" ref={(el) => { if (el && el.offsetHeight && Math.abs(el.offsetHeight - panelH) > 1) setPanelH(el.offsetHeight); }}
+          style={{ position: "fixed", zIndex: 200,
+          // Below the button when it fits, otherwise above it, otherwise
+          // pinned to the bottom edge, so the time list never runs off screen.
+          top: (() => {
+            const H = typeof window !== "undefined" ? window.innerHeight : 800;
+            if (anchor.top + 7 + panelH <= H - 8) return anchor.top + 7;
+            if (anchor.above - 7 - panelH >= 8) return anchor.above - 7 - panelH;
+            return Math.max(8, H - 8 - panelH);
+          })(),
           left: Math.max(8, Math.min(anchor.left, (typeof window !== "undefined" ? window.innerWidth : 1200) - 420)),
           display: "flex", gap: 0,
           background: "linear-gradient(160deg, rgba(20,26,42,0.99), rgba(10,13,22,0.99))", border: "1px solid rgba(61,123,255,0.45)",
