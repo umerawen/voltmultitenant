@@ -3680,6 +3680,20 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
 // strong game can top the table, and that's the intended behaviour.
 // Top three on a podium: second, first, third, with first raised. Gold,
 // silver and bronze edges; the metric being ranked on is the big number.
+// Gold trophy next to a player who has won a tournament before; ×2 and up for more.
+function TitleChip({ n, big = false }) {
+  if (!n) return null;
+  return (
+    <span title={`Won ${n} tournament${n === 1 ? "" : "s"}`} style={{ display: "inline-flex", alignItems: "center", gap: 3, flex: "0 0 auto",
+      padding: big ? "3px 7px" : "2px 6px", fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: big ? 12 : 10.5, lineHeight: 1,
+      color: "#f5c453", background: "linear-gradient(135deg, rgba(245,196,83,0.22), rgba(245,196,83,0.06))", border: "1px solid rgba(245,196,83,0.55)",
+      boxShadow: "0 0 12px rgba(245,196,83,0.25)", textShadow: "0 0 8px rgba(245,196,83,0.6)",
+      clipPath: "polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px))" }}>
+      <Icon name="trophy" size={big ? 13 : 11} />{n > 1 && <span>×{n}</span>}
+    </span>
+  );
+}
+
 function LbPodium({ rows, metric, board }) {
   if (!rows.length) return null;
   // The team each player is on in this tournament: bought onto it, or its captain.
@@ -3718,9 +3732,12 @@ function LbPodium({ rows, metric, board }) {
             <div style={{ display: "flex", justifyContent: "center" }}>
               <RankBadge rank={r.rank || "Iron"} div={r.rankDiv} size={first ? "lg" : "md"} solidDiv />
             </div>
-            <div className="volt-pod-name" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
-              fontSize: first ? 26 : 20, marginTop: 10, lineHeight: 1,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 10, minWidth: 0 }}>
+              <span className="volt-pod-name" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
+                fontSize: first ? 26 : 20, lineHeight: 1, minWidth: 0,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+              <TitleChip n={r.titles} big={first} />
+            </div>
             <div className="volt-pod-role" style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: RANKS[r.rank]?.c || "rgba(200,215,255,0.5)",
               marginTop: 5, fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ") || "—"}</div>
             {team && (
@@ -3915,10 +3932,10 @@ function Leaderboard({ isAdmin, board, eventId }) {
         const { data: mrs } = await __sb.from("match_results")
           .select("user_id, points_computed, team_won, stat_payload")
           .eq("community_id", window.__VOLT.communityId);
-        const { data: us } = await __sb.from("users").select("id, display_name").eq("community_id", window.__VOLT.communityId);
+        const { data: us } = await __sb.from("users").select("id, display_name, weekends_won").eq("community_id", window.__VOLT.communityId);
         const { data: pp } = await __sb.from("player_profiles").select("user_id, rank, rank_div, role").eq("community_id", window.__VOLT.communityId);
         if (!alive) return;
-        const names = {}; (us || []).forEach(u => { names[u.id] = u.display_name; });
+        const names = {}, titles = {}; (us || []).forEach(u => { names[u.id] = u.display_name; titles[u.id] = Number(u.weekends_won || 0); });
         const profs = {}; (pp || []).forEach(p => { profs[p.user_id] = p; });
         // A row of all zeros is someone rostered who didn't take the server —
         // subbed out, or replaced by a stand-in. Averaging those in halves a
@@ -3931,7 +3948,7 @@ function Leaderboard({ isAdmin, board, eventId }) {
           // Stand-ins without an account have no user_id; keyed on null they all
           // merged into one phantom "Player" row with everyone's stats.
           if (!r.user_id) return;
-          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, d: 0, as: 0, perfSum: 0 });
+          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, titles: titles[r.user_id] || 0, pts: 0, m: 0, w: 0, k: 0, d: 0, as: 0, perfSum: 0 });
           a.pts += Number(r.points_computed || 0);
           const sp = r.stat_payload || {};
           if (!didPlay(sp)) return;                 // rostered, didn't play
@@ -4046,6 +4063,7 @@ function Leaderboard({ isAdmin, board, eventId }) {
                     <span style={{ minWidth: 0, flex: 1 }}>
                       <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
                         <span className="font-bold uppercase" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.03em", fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: "0 1 auto", minWidth: 36 }}>{r.name}</span>
+                        <TitleChip n={r.titles} />
                         {(r.rank || r.role) && <span className="text-[11px] uppercase tracking-[0.1em]" style={{ color: rc, fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: "1 1 0", minWidth: 0 }}>{[r.role, r.rank].filter(Boolean).join(" · ")}</span>}
                       </span>
                       <Bar pct={topV ? (myV / topV) * 100 : 0} h={2} i={i} color="#00e5ff" opacity={0.5} style={{ marginTop: 5, maxWidth: 260 }} />
