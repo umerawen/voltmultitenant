@@ -3680,8 +3680,21 @@ function MapTile({ m, onClick, state, stamp, stampColor, disabled }) {
 // strong game can top the table, and that's the intended behaviour.
 // Top three on a podium: second, first, third, with first raised. Gold,
 // silver and bronze edges; the metric being ranked on is the big number.
-function LbPodium({ rows, metric }) {
+function LbPodium({ rows, metric, board }) {
   if (!rows.length) return null;
+  // The team each player is on in this tournament: bought onto it, or its captain.
+  const teamOf = (uid) => {
+    const ts = board?.teams || [];
+    const pl = (board?.players || []).find((p) => p.id === uid && p.soldTo);
+    return (pl && ts.find((t) => t.id === pl.soldTo)) || ts.find((t) => t.captainUserId === uid) || null;
+  };
+  const statCell = (label, v, col, first) => (
+    <div style={{ minWidth: 0, overflow: "hidden", padding: first ? "8px 2px" : "7px 2px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(120,150,220,0.12)",
+      clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))" }}>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 16 : 14, lineHeight: 1, color: col, whiteSpace: "nowrap" }}>{v}</div>
+      <div style={{ fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(200,215,255,0.42)", marginTop: 4, fontWeight: 700 }}>{label}</div>
+    </div>
+  );
   const MED = ["#f5c453", "#d7e1ee", "#c08a52"];
   const order = rows.length === 3 ? [1, 0, 2] : rows.map((_, i) => i);
   return (
@@ -3690,6 +3703,8 @@ function LbPodium({ rows, metric }) {
       {order.map((idx, k) => {
         const r = rows[idx]; const c = MED[idx]; const first = idx === 0;
         const val = metric === "perf" ? r.avgPerf : r.pts;
+        const team = teamOf(r.id);
+        const kd = r.d == null ? "—" : r.d > 0 ? (r.k / r.d).toFixed(2) : r.k > 0 ? "∞" : "—";
         return (
           <div key={r.id || idx} className="volt-pod" style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
             position: "relative", overflow: "hidden", clipPath: SHELL_NOTCH(14),
@@ -3708,6 +3723,15 @@ function LbPodium({ rows, metric }) {
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
             <div className="volt-pod-role" style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: RANKS[r.rank]?.c || "rgba(200,215,255,0.5)",
               marginTop: 5, fontWeight: 700 }}>{[r.role, r.rank].filter(Boolean).join(" · ") || "—"}</div>
+            {team && (
+              <div className="volt-pod-team" style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 10, padding: "4px 10px 4px 5px",
+                maxWidth: "100%", background: `linear-gradient(90deg, ${team.hue}30, ${team.hue}0d)`, border: `1px solid ${team.hue}55`,
+                clipPath: "polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px))" }}>
+                <TeamMono name={team.name} hue={team.hue} size={first ? 20 : 18} />
+                <span style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: first ? 13 : 12, letterSpacing: "0.1em", textTransform: "uppercase",
+                  color: team.hue, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{team.name}</span>
+              </div>
+            )}
             <div className="volt-pod-val" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
               color: c, marginTop: 14, textShadow: `0 0 24px ${c}55` }}>
               <CountUp to={val} dur={1000} delay={k * 90} />
@@ -3717,6 +3741,12 @@ function LbPodium({ rows, metric }) {
               fontSize: 11, color: "rgba(200,215,255,0.5)" }}>
               <span>{r.m} played</span><span style={{ color: "#3ddc84" }}>{r.w}W</span>
               <span>{metric === "perf" ? `${r.pts} pts` : `${r.avgPerf} ACS`}</span>
+            </div>
+            <div className="volt-pod-kda" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 5, marginTop: 12 }}>
+              {statCell("K", r.k, "#ecf3ff", first)}
+              {statCell("D", r.d ?? "—", "#ff9aa5", first)}
+              {statCell("A", r.as, "#ecf3ff", first)}
+              {statCell("K/D", kd, kd !== "—" && Number(kd) >= 1 || kd === "∞" ? "#3ddc84" : "#ffb86b", first)}
             </div>
           </div>
         );
@@ -3902,12 +3932,12 @@ function Leaderboard({ isAdmin, board, eventId }) {
           // Stand-ins without an account have no user_id; keyed on null they all
           // merged into one phantom "Player" row with everyone's stats.
           if (!r.user_id) return;
-          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, as: 0, perfSum: 0 });
+          const a = (agg[r.user_id] = agg[r.user_id] || { id: r.user_id, name: names[r.user_id] || "Player", rank: profs[r.user_id]?.rank, rankDiv: profs[r.user_id]?.rank_div, role: profs[r.user_id]?.role, pts: 0, m: 0, w: 0, k: 0, d: 0, as: 0, perfSum: 0 });
           a.pts += Number(r.points_computed || 0);
           const sp = r.stat_payload || {};
           if (!didPlay(sp)) return;                 // rostered, didn't play
           a.m++; if (r.team_won) a.w++;
-          a.k += Number(sp.k || 0); a.as += Number(sp.a || 0); a.perfSum += perfOf(sp);
+          a.k += Number(sp.k || 0); a.d += Number(sp.d || 0); a.as += Number(sp.a || 0); a.perfSum += perfOf(sp);
         });
         // Unsorted here — the view sorts, so switching between the two rankings
         // is instant instead of a refetch.
@@ -3997,7 +4027,7 @@ function Leaderboard({ isAdmin, board, eventId }) {
             <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", fontFamily: READ_FONT, margin: "10px 4px 0", lineHeight: 1.45 }}>
               Price and ACS show the place among the {valueRows.length} drafted players who've played. Captains and subs weren't bought, so they're not in this list.</p>
           </div>)}
-      {sortBy !== "value" && rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} />}
+      {sortBy !== "value" && rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} board={board} />}
       {sortBy !== "value" && rows && rows.length > 0 && (
         <div>
           <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>

@@ -1927,6 +1927,10 @@ const MOBILE_CSS = `
       .volt-pod-val { font-size: 26px !important; }
       .volt-pod-val > span:last-child { display: block; margin: 4px 0 0 !important; font-size: 9.5px !important; }
       .volt-pod-meta { flex-direction: column; gap: 2px !important; font-size: 10px !important; }
+      .volt-pod-kda { grid-template-columns: repeat(2, minmax(0,1fr)) !important; gap: 4px !important; }
+      .volt-pod-kda > div > div:first-child { font-size: 11px !important; }
+      .volt-pod-team { padding: 3px 6px 3px 3px !important; gap: 5px !important; }
+      .volt-pod-team > span { font-size: 10px !important; letter-spacing: 0.04em !important; }
 
       /* Page intros: two lines at most on a phone. */
       .volt-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
