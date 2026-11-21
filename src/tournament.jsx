@@ -689,9 +689,12 @@ function syncFinal(s, t) {
     });
   }
 
+  const slotAt = (id) => t.slotTimes?.[id] || null;
+  t.semis.forEach((m) => { if (!m.scheduledAt && slotAt(m.id)) m.scheduledAt = slotAt(m.id); });
+
   const w = t.semis.map((m) => (m.done ? m.winner : null));
   if (w[0] && w[1]) {
-    if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: finalBoOf(t), maps: [], done: false, winner: null };
+    if (!t.final) t.final = { id: "final", teamA: w[0], teamB: w[1], bo: finalBoOf(t), maps: [], done: false, winner: null, scheduledAt: slotAt("final") };
     else if (!t.final.done) { t.final.teamA = w[0]; t.final.teamB = w[1]; }
   } else if (t.final && !t.final.done) t.final = null;
 }
@@ -1299,14 +1302,14 @@ function FixtureCard({ match, locator, teamOf, isAdmin, A, stage, big = false, s
           </div>
           {name(f.b, f.winB, f.winA, "right")}
         </div>
-        {(canVote || mine || (isAdmin && !f.bye && f.a && f.b) || f.statsRecorded || (f.scoreIn && f.canReport)) && (
+        {(canVote || mine || (isAdmin && !f.bye) || f.statsRecorded || (f.scoreIn && f.canReport)) && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 14px 10px", flexWrap: "wrap" }}>
             {mine ? <span style={{ fontSize: 12, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.06em" }}>✓ You picked {mine === "a" ? f.a?.name : f.b?.name}</span>
               : canVote ? <span style={{ fontSize: 12, color: "#9af5c2", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>◈ Make your prediction →</span> : null}
             <span style={{ flex: 1 }} />
             {f.statsRecorded ? <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, letterSpacing: "0.1em" }}>✓ STATS</span>
               : f.scoreIn && f.canReport ? <span style={{ fontSize: 11.5, color: "#f5c453", fontWeight: 700, letterSpacing: "0.1em" }}>⚠ STATS NEEDED</span> : null}
-            {isAdmin && !f.bye && f.a && f.b && <span style={{ fontSize: 11.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.1em" }}>EDIT ▸</span>}
+            {isAdmin && !f.bye && <span style={{ fontSize: 11.5, color: "#7da6ff", fontWeight: 700, letterSpacing: "0.1em" }}>{f.a && f.b ? "EDIT ▸" : match.scheduledAt ? "CHANGE TIME ▸" : "SET TIME ▸"}</span>}
           </div>
         )}
         <FxVoteBar f={f} />
@@ -1343,7 +1346,7 @@ function FinalBoPicker({ t, onPick }) {
 
 // A playoff match that doesn't exist yet: the fixture card's shape, dimmed and
 // not clickable, naming the seed and the team currently in line for it.
-function SlotCard({ m, teamOf, stage, bo, big = false }) {
+function SlotCard({ m, teamOf, stage, bo, big = false, at = null, onSetTime = null }) {
   const side = (s, align) => {
     const team = s.team ? teamOf(s.team) : null;
     const mono = <TeamMono name={team ? team.name : "?"} hue={team ? team.hue : "#4a5570"} size={big ? 26 : 22} />;
@@ -1367,13 +1370,20 @@ function SlotCard({ m, teamOf, stage, bo, big = false }) {
         <span style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono',monospace", color: "rgba(200,215,255,0.5)" }}>BO{bo || 1}</span>
         {projected && <span style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 700, color: "#7da6ff", border: "1px solid rgba(125,166,255,0.3)", padding: "0 5px" }}>Projected</span>}
         <span style={{ flex: 1 }} />
-        <span style={{ fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap", color: "rgba(200,215,255,0.45)" }}>Time TBC</span>
+        {at
+          ? <span style={{ fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap", color: "#9af5c2" }}>{whenLabel(at)}</span>
+          : <span style={{ fontWeight: 700, fontSize: 11.5, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap", color: "rgba(200,215,255,0.45)" }}>Time TBC</span>}
       </div>
       <div className="volt-fx-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: big ? "14px 16px 14px" : "10px 14px 12px" }}>
         {side(m.a, "left")}
         <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 11, letterSpacing: "0.2em", color: "rgba(200,215,255,0.3)", minWidth: 40, textAlign: "center" }}>VS</div>
         {side(m.b, "right")}
       </div>
+      {onSetTime && (
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 14px 12px" }}>
+          <VoltDateTime value={at} onChange={onSetTime} placeholder="Set match time" />
+        </div>
+      )}
     </div>
   );
 }
@@ -2117,7 +2127,8 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                   ? t.semis.map((m, si) => (
                       <TMatchRow key={m.id} match={m} locator={{ kind: "semi", matchId: m.id }} teamOf={teamOf} isAdmin={isAdmin} stage={`Semifinal ${si + 1}`} slotA={qfSlot(si * 2)} slotB={qfSlot(si * 2 + 1)} {...A} />
                     ))
-                  : preview?.semis.map((m, si) => <SlotCard key={si} m={m} teamOf={teamOf} bo={t.bo} stage={`Semifinal ${si + 1}`} />)}
+                  : preview?.semis.map((m, si) => <SlotCard key={si} m={m} teamOf={teamOf} bo={t.bo} stage={`Semifinal ${si + 1}`}
+                      at={t.slotTimes?.[`sf${si + 1}`] || null} onSetTime={isAdmin ? (iso) => actions.tSetSlotTime(`sf${si + 1}`, iso) : null} />)}
               </div>
             </TPanel>
           )}
@@ -2126,7 +2137,8 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
             <div className="max-w-xl mx-auto">
               {t.final
                 ? <TMatchRow match={t.final} locator={{ kind: "final" }} teamOf={teamOf} isAdmin={isAdmin} stage="Grand final" big {...A} />
-                : preview && <SlotCard m={preview.final} teamOf={teamOf} bo={finalBoOf(t)} stage="Grand final" big />}
+                : preview && <SlotCard m={preview.final} teamOf={teamOf} bo={finalBoOf(t)} stage="Grand final" big
+                    at={t.slotTimes?.final || null} onSetTime={isAdmin ? (iso) => actions.tSetSlotTime("final", iso) : null} />}
             </div>
           </TPanel>
         </>
@@ -5813,6 +5825,18 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const t = s.tournament; if (!t) return null;
     const m = findMatch(t, locator); if (!m) return null;
     m.scheduledAt = iso || null;
+    if (locator.kind === "semi" || locator.kind === "final") t.slotTimes = { ...(t.slotTimes || {}), [m.id]: iso || null };
+    return s;
+  }, true, true);
+
+  // Time a semi or the final before its match exists (the teams aren't known
+  // yet). Kept in t.slotTimes by slot id (sf1, sf2, final); syncFinal copies it
+  // onto the match when it's built.
+  const tSetSlotTime = (key, iso) => mutate((s) => {
+    const t = s.tournament; if (!t) return null;
+    t.slotTimes = { ...(t.slotTimes || {}), [key]: iso || null };
+    const m = key === "final" ? t.final : (t.semis || []).find((x) => x.id === key);
+    if (m) m.scheduledAt = iso || null;
     return s;
   }, true, true);
 
@@ -7391,7 +7415,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       state={state}
       isAdmin={isAdmin}
       teamOf={teamOf}
-      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance, tSetFinalBo, tSetForfeit }}
+      actions={{ tCreate, tClear, armTClear, tClearArmed, tAssign, tSetSlot, tSetSlotCount, tLock, tSetMap, tSetBo, tSetTime, tSetSlotTime, tVote, tOverride, tSwitchFormat, tSetFinalTeam, tResetFinal, tSetPlayoff, tSetAdvance, tSetFinalBo, tSetForfeit }}
     />
   );
 
