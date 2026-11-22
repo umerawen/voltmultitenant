@@ -6,6 +6,7 @@
 //   results    — post a match result card to #results
 //   standings  — post/refresh the leaderboard, editing one message in place
 //   wrapup     — delete finished tournaments' team roles and rooms
+//   champion   — the "we have a winner" post in #results, sent on settling
 //
 // Everything is idempotent. Each object created is recorded in discord_objects,
 // so a second run updates instead of duplicating — pressing "build" twice must
@@ -106,6 +107,7 @@ export default async function handler(req, res) {
     if (mode === "standings") return res.status(200).json(await postStandings(ctx));
     if (mode === "fixtures")  return res.status(200).json(await postFixtures(ctx));
     if (mode === "wrapup")    return res.status(200).json(await wrapUp(ctx));
+    if (mode === "champion")  return res.status(200).json(await postChampion(ctx));
     return res.status(400).json({ error: `unknown mode ${mode}` });
   } catch (e) {
     console.error("arena failed", e);
@@ -398,6 +400,100 @@ async function postResult(ctx, payload) {
     { embeds: [embed], allowed_mentions: { parse: [] } });
   if (!r.ok) throw new Error(`Couldn't post the result — ${r.reason}`);
   return { ok: true };
+}
+
+// The champion post. Everything is read from the board and the banked stats
+// rather than taken from the caller, so a re-post always says the same thing.
+// It edits its earlier message if there is one (an edit doesn't ping again).
+async function postChampion(ctx) {
+  const ch = await liveChannel(ctx, "results");
+  const [row] = await sb(`/rest/v1/community_kv?community_id=eq.${ctx.community}` +
+    `&k=eq.${encodeURIComponent("volt-auction-v2::" + ctx.eventId)}&shared=eq.true&user_id=is.null&select=val`);
+  const board = typeof row?.val === "string" ? JSON.parse(row.val) : row?.val;
+  const t = board?.tournament;
+  if (!t) throw new Error("There's no tournament on the board.");
+  // The decider: the grand final, else the last match of a single-elim bracket.
+  const last = t.format === "single" && t.rounds?.length ? t.rounds[t.rounds.length - 1]?.[0] : null;
+  const fin = t.final?.done && t.final.winner ? t.final : last?.done && last.winner ? last : null;
+  if (!fin) throw new Error("The final hasn't been decided yet.");
+  const team = (id) => (board.teams || []).find((x) => x.id === id);
+  const champ = team(fin.winner);
+  const runner = team(fin.winner === fin.teamA ? fin.teamB : fin.teamA);
+  if (!champ) throw new Error("Couldn't find the winning team on the board.");
+
+  // Series score from the maps, read from the champion's side.
+  const maps = (Array.isArray(fin.maps) ? fin.maps : []).filter((m) => m && m.a != null && m.b != null);
+  const champIsA = fin.winner === fin.teamA;
+  const mine = (m) => (champIsA ? [m.a, m.b] : [m.b, m.a]);
+  const won = maps.filter((m) => { const [x, y] = mine(m); return x > y; }).length;
+  const score = fin.forfeit ? "by forfeit"
+    : maps.length > 1 ? `${won}–${maps.length - won}`
+    : maps.length === 1 ? mine(maps[0]).join("–") : "";
+  const mapLines = maps.length > 1 ? maps.map((m, i) => {
+    const [x, y] = mine(m);
+    return `Map ${i + 1}: **${x}–${y}** ${x > y ? champ.name : runner?.name || "them"}`;
+  }).join("\n") : "";
+
+  // Roster: the drafted players plus the captain (the board stores roster as
+  // id strings or {id} objects), plus any sub who played for them.
+  const ids = new Set((champ.roster || []).map((p) => (typeof p === "string" ? p : p?.id)).filter(Boolean));
+  if (champ.captainUserId) ids.add(champ.captainUserId);
+  const results = await sb(`/rest/v1/match_results?event_id=eq.${ctx.eventId}` +
+    `&select=user_id,points_computed,stat_payload`) || [];
+  for (const r of results) if (r.user_id && r.stat_payload?.teamId === champ.id) ids.add(r.user_id);
+  const list = [...ids].filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+  const [us, contacts] = list.length ? await Promise.all([
+    sb(`/rest/v1/users?id=in.(${list.join(",")})&select=id,display_name`),
+    sb(`/rest/v1/player_contacts?community_id=eq.${ctx.community}&user_id=in.(${list.join(",")})` +
+       `&discord_user_id=not.is.null&select=user_id,discord_user_id`),
+  ]) : [[], []];
+  const nameOf = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
+  for (const p of board.players || []) if (p?.id && !nameOf[p.id] && p.name) nameOf[p.id] = p.name;
+  const dc = Object.fromEntries((contacts || []).map((c) => [c.user_id, c.discord_user_id]));
+  const roster = list.map((id) => ({ id, name: nameOf[id] || "Player", dc: dc[id] || null,
+    cap: id === champ.captainUserId }))
+    .sort((a, b) => (b.cap - a.cap) || a.name.localeCompare(b.name));
+
+  // MVP and top fragger, the same way the settled tournament's recap picks them.
+  let mvp = null; const kills = {};
+  for (const r of results) {
+    const nm = r.stat_payload?.name || "Player", pts = Number(r.points_computed || 0);
+    if (!mvp || pts > mvp.pts) mvp = { name: nm, pts };
+    kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0);
+  }
+  const top = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
+
+  const label = ctx.ev.weekend_label || "the tournament";
+  const tag = (p) => (p.dc ? `<@${p.dc}>` : `**${p.name}**`) + (p.cap ? " (captain)" : "");
+  const embed = {
+    title: `🏆 ${champ.name} win ${label}!`,
+    color: 0xffd166,
+    description: [
+      runner ? `Beat **${runner.name}** ${score} in the final.` : "",
+      mapLines,
+      "",
+      `**Champions**\n${roster.map(tag).join("\n")}`,
+      "",
+      mvp ? `⭐ **MVP:** ${mvp.name} (${Math.round(mvp.pts)} pts in one match)` : "",
+      top && top[1] > 0 ? `🎯 **Top fragger:** ${top[0]} (${top[1]} kills)` : "",
+    ].join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+    footer: { text: `${label} · GGs to every team` },
+  };
+  const pings = roster.filter((p) => p.dc).map((p) => p.dc);
+  const payload = {
+    content: `🎉 Congratulations ${pings.length ? pings.map((d) => `<@${d}>`).join(" ") : `**${champ.name}**`}!`,
+    embeds: [embed],
+    allowed_mentions: { users: pings.slice(0, 100) },
+  };
+  const prior = await lookup(ctx, "message", "champion");
+  if (prior) {
+    const upd = await call(ctx.token, `/channels/${ch}/messages/${prior}`, "PATCH", payload);
+    if (upd.ok) return { ok: true, edited: true, team: champ.name };
+  }
+  const r = await call(ctx.token, `/channels/${ch}/messages`, "POST", payload);
+  if (!r.ok) throw new Error(`Couldn't post the champions — ${r.reason}`);
+  await remember(ctx, "message", "champion", r.body.id, true, { channel: ch });
+  return { ok: true, edited: false, team: champ.name };
 }
 
 // Every match in a tournament, whatever the format.

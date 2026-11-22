@@ -7647,6 +7647,23 @@ const voltAlert = (message, opts = {}) => __openDialog({ kind: "alert", message,
 // when a tournament is settled; best-effort, so a league without Discord (or a
 // missing bot permission) never gets in the way of settling. Resolves to the
 // server's result, or null when there was nothing it could do.
+// The champion post in #results. Before the wrap-up: that deletes the team
+// roles, and the post reads better landing first.
+async function discordChampion(eventId) {
+  try {
+    const { data: sess } = await __sb.auth.getSession();
+    const jwt = sess?.session?.access_token;
+    if (!jwt) return { error: "Session expired" };
+    const r = await fetch(apiUrl("/api/discord-arena"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ eventId, mode: "champion" }),
+    });
+    const b = await r.json().catch(() => null);
+    return r.ok ? b : { error: b?.error || `Failed (${r.status})` };
+  } catch (e) { return { error: e.message || "Couldn't reach Discord." }; }
+}
+
 async function discordWrapUp(eventId) {
   try {
     const { data: sess } = await __sb.auth.getSession();
@@ -9854,7 +9871,11 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       setEv(data);
       // The tournament is over, so its team roles and rooms go. In the
       // background: settling is already done and mustn't wait on Discord.
-      if (next === "settled") discordWrapUp(ev.id).then((b) => {
+      if (next === "settled") discordChampion(ev.id).then((c) => {
+        if (c?.ok) voltToast(`Champions announced in Discord: ${c.team}.`);
+        else if (c?.error) voltToast(`Couldn't post the champions in Discord: ${c.error}`, "warn");
+        return discordWrapUp(ev.id);
+      }).then((b) => {
         if (b?.deleted) voltToast(`Discord tidied up: ${b.deleted} team role${b.deleted === 1 ? "" : "s"} and room${b.deleted === 1 ? "" : "s"} deleted.`);
         else if (b?.errors?.length) voltToast(`Couldn't clear the team rooms in Discord: ${b.errors[0]}`, "warn");
       });

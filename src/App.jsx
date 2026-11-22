@@ -4431,6 +4431,8 @@ function DiscordArenaCard({ eventId, phase }) {
                `${b.assigned} players given their role.`);
       } else if (mode === "standings") {
         setMsg(b.edited ? "Standings updated in place." : "Standings posted.");
+      } else if (mode === "champion") {
+        setMsg(b.edited ? `Champion post for ${b.team} updated.` : `${b.team} announced as champions.`);
       } else if (mode === "fixtures") {
         setMsg(`${b.matches} fixtures ${b.edited ? "updated in place" : "posted"}.`);
       } else {
@@ -4491,6 +4493,8 @@ function DiscordArenaCard({ eventId, phase }) {
             {busy === "predictions" ? "Posting…" : <><Icon name="eye" size={15} style={{ marginRight: 6 }} />Open predictions</>}
           </button>
           <B mode="standings" label={<><Icon name="refresh" size={15} style={{ marginRight: 6 }} />Post standings</>} />
+          {phase === "settled" && <B mode="champion" label={<><Icon name="trophy" size={15} style={{ marginRight: 6 }} />Announce champions</>}
+             tip="Posts (or refreshes) the champions in #results. It goes out by itself when you settle." />}
           <B mode="wrapup" label={<><Icon name="clean" size={15} style={{ marginRight: 6 }} />Clear old tournaments</>}
              tip="Delete team roles and rooms left over from finished tournaments" />
         </div>
