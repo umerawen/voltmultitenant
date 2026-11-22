@@ -450,6 +450,22 @@ async function postChampion(ctx) {
   const nameOf = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
   for (const p of board.players || []) if (p?.id && !nameOf[p.id] && p.name) nameOf[p.id] = p.name;
   const dc = Object.fromEntries((contacts || []).map((c) => [c.user_id, c.discord_user_id]));
+  // A player who never linked Discord can still be tagged if the username on
+  // their profile is in the server. Usernames are unique, so only an exact
+  // username match counts (nicknames aren't). Best effort: no match, no tag.
+  const unlinked = list.filter((id) => !dc[id]);
+  if (unlinked.length) {
+    try {
+      const profs = await sb(`/rest/v1/player_profiles?user_id=in.(${unlinked.join(",")})&discord=not.is.null&select=user_id,discord`);
+      for (const p of profs || []) {
+        const handle = String(p.discord || "").trim().replace(/^@/, "").replace(/#\d{4}$/, "").toLowerCase();
+        if (!handle) continue;
+        const s = await call(ctx.token, `/guilds/${ctx.guild}/members/search?query=${encodeURIComponent(handle)}&limit=10`, "GET");
+        const hit = (Array.isArray(s.body) ? s.body : []).find((m) => String(m.user?.username || "").toLowerCase() === handle);
+        if (hit?.user?.id) dc[p.user_id] = hit.user.id;
+      }
+    } catch (e) { console.error("champion: profile lookup", e); }
+  }
   const roster = list.map((id) => ({ id, name: nameOf[id] || "Player", dc: dc[id] || null,
     cap: id === champ.captainUserId }))
     .sort((a, b) => (b.cap - a.cap) || a.name.localeCompare(b.name));
