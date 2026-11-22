@@ -333,6 +333,12 @@ function fxLabel(a, b, match) {
   return a && b ? `${a.name} vs ${b.name}${match.id ? " · " + String(match.id).slice(-4).toUpperCase() : ""}` : null;
 }
 
+// A Bo3/Bo5 is reported one map at a time, each under its own label. The map
+// goes first so the label still ends in the fixture id (the Discord bot reads
+// that suffix); mapBase() turns any map label back into the fixture's label.
+const mapLabel = (base, n) => `Map ${n} · ${base}`;
+const mapBase = (label) => String(label || "").replace(/^Map \d+ · /, "");
+
 // round-robin pairing for a list of teamIds (each plays each once)
 function roundRobinMatches(teamIds, bo) {
   const ms = [];
@@ -1209,7 +1215,8 @@ function StatsActions({ match, f }) {
       {f.statsRecorded ? chip("✓ Stats recorded", "#3ddc84") : f.scoreIn ? chip("⚠ Stats still needed", "#f5c453") : null}
       {f.canReport && (
         <button onClick={() => window.__VOLT.openReport({ teamAName: f.a.name, teamBName: f.b.name, label: f.statsLabel,
-            winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null, ...fixtureScore(match) })}
+            winner: match.done ? (match.winner === match.teamA ? "A" : "B") : null, ...fixtureScore(match),
+            bo: match.bo || 1, maps: match.maps || [] })}
           style={shellBtn(f.statsRecorded ? "ghost" : f.scoreIn ? "warn" : "accent", { padding: "8px 14px", fontSize: 11 })}>
           ▦ {f.statsRecorded ? "Edit player stats" : "Add player stats"}</button>
       )}
@@ -6023,14 +6030,21 @@ function DraftApp({ auth, browse, chrome, initialView }) {
   // pair can meet more than once); Bo1 only, since a Bo3's total rounds don't
   // say how the maps went. Re-runs the same resolve/seed steps as tSetMap.
   useEffect(() => {
-    window.__VOLT.setFixtureScore = (label, aId, bId, a, b) => mutate((s) => {
+    // mapIdx: which map of a Bo3/Bo5 this score is (reported one map at a time).
+    window.__VOLT.setFixtureScore = (label, aId, bId, a, b, mapIdx = null) => mutate((s) => {
       const t = s.tournament; if (!t || !t.locked) return null;
       const team = (id) => s.teams.find((x) => x.id === id);
       const m = tournamentMatches(t).find((x) => x.teamA && x.teamB && fxLabel(team(x.teamA), team(x.teamB), x) === label);
-      if (!m || (m.bo || 1) !== 1) return null;
+      if (!m) return null;
+      const bo = m.bo || 1;
+      if (bo === 1 ? mapIdx != null : (mapIdx == null || mapIdx >= bo)) return null;
+      const i = bo === 1 ? 0 : mapIdx;
       const [sa, sb] = m.teamA === aId ? [a, b] : [b, a];
-      if (m.maps?.[0]?.a === sa && m.maps?.[0]?.b === sb) return null;
-      m.maps = [{ a: sa, b: sb }];
+      if (m.maps?.[i]?.a === sa && m.maps?.[i]?.b === sb) return null;
+      const maps = [...(m.maps || [])];
+      while (maps.length < i) maps.push({ a: null, b: null });
+      maps[i] = { a: sa, b: sb };
+      m.maps = bo === 1 ? [maps[0]] : maps;
       resolveMatch(m);
       if (t.format === "single") propagateElim(t);
       if (t.format === "group") syncFinal(s, t);
@@ -9630,10 +9644,12 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       const { data } = await __sb.from("match_results").select("match_label, points_computed, stat_payload").eq("event_id", ev.id);
       const labels = new Set(); const stats = {};
       (data || []).forEach(r => {
-        labels.add(r.match_label);
-        const cur = stats[r.match_label];
+        // A Bo3 map's rows count towards its fixture too.
+        const base = mapBase(r.match_label);
+        labels.add(r.match_label); labels.add(base);
+        const cur = stats[base];
         if (!cur || Number(r.points_computed || 0) > cur.pts)
-          stats[r.match_label] = { name: r.stat_payload?.name || "Player", pts: Number(r.points_computed || 0) };
+          stats[base] = { name: r.stat_payload?.name || "Player", pts: Number(r.points_computed || 0) };
       });
       window.__VOLT.reportedLabels = labels;
       window.__VOLT.reportedStats = stats;
@@ -10169,7 +10185,7 @@ function matchScoreboardName(raw, players) {
 // Fire-and-forget: the match is already banked by the time this runs, so every
 // failure is logged and swallowed rather than surfaced. Standings are refreshed
 // in the same breath, since a result that doesn't move the table looks broken.
-async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
+async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB, mapNo = null) {
   try {
     const { data: sess } = await __sb.auth.getSession();
     const jwt = sess?.session?.access_token;
@@ -10183,7 +10199,9 @@ async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify({ eventId: ev.id, mode, payload }),
     }).catch(() => {});
-    await send("results", {
+    // One map of a series isn't a result (its winner may lose the series), so
+    // only the standings move for it.
+    if (!mapNo) await send("results", {
       teamA: A.name, teamB: B.name,
       // The label ends in the fixture's id; with the winner, the bot finds the
       // match's picks and adds who called it.
@@ -10224,6 +10242,10 @@ function MatchReport({ ev, onDone, prefill }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(null); // match_label being edited (null = new match)
+  // A Bo3/Bo5 opened from its fixture is reported map by map: mapNo is the map
+  // on screen (null for a Bo1), and each map saves under mapLabel(base, n).
+  const seriesBo = prefill?.label && Number(prefill?.bo) > 1 ? Number(prefill.bo) : 0;
+  const [mapNo, setMapNo] = useState(null);
   // Screenshot reader. `shot` holds the parsed rows awaiting review — nothing is
   // written to the stat grid until the host confirms, because a misread score
   // becomes wrong season points that look plausible.
@@ -10274,14 +10296,40 @@ function MatchReport({ ev, onDone, prefill }) {
     const byLabel = {};
     (data || []).forEach(r => { const k = r.match_label || "match"; (byLabel[k] = byLabel[k] || []).push(r); });
     setSaved(Object.entries(byLabel));
+    // A series opens on the first map that has no stats yet (after a save, that
+    // moves the form on to the next map).
+    if (seriesBo) {
+      let n = 1;
+      while (n < seriesBo && byLabel[mapLabel(prefill.label, n)]) n++;
+      openMap(n, byLabel, board);
+    }
   }
+
+  // Show one map of a series: its saved stats if it has any, else a blank form
+  // with that map's score from the bracket.
+  function openMap(n, byLabel, board) {
+    const ml = mapLabel(prefill.label, n);
+    setMapNo(n); setShot(null); setShotErr(""); setErr("");
+    const rows = byLabel?.[ml];
+    if (rows?.length) { editMatch(ml, rows, board, true); return; }
+    setEditing(null); setLines({}); setExtras({ A: [], B: [] }); setLabel(ml);
+    const pA = (board || []).find(t => t.name === prefill.teamAName);
+    const pB = (board || []).find(t => t.name === prefill.teamBName);
+    if (pA) setTA(pA.id);
+    if (pB) setTB(pB.id);
+    const mp = (prefill.maps || [])[n - 1];
+    const a = mp?.a ?? "", b = mp?.b ?? "";
+    setScoreA(String(a)); setScoreB(String(b));
+    setWinner(a !== "" && b !== "" && a !== b ? (a > b ? "A" : "B") : null);
+  }
+  const savedMap = (n) => saved.find(([ml]) => ml === mapLabel(prefill?.label, n));
   useEffect(() => { load(); }, [ev?.id]);
 
   const teamOf = (id) => (teams || []).find(t => t.id === id);
 
   // Pull a reported match back into the form so its stats can be corrected.
-  function editMatch(ml, rows) {
-    const board = teams || [];
+  function editMatch(ml, rows, boardArg = null, quiet = false) {
+    const board = boardArg || teams || [];
     const nameOfRow = (r) => r.stat_payload?.team;
     const idOfRow = (r) => r.stat_payload?.teamId;
     // Winning side first, so team A/B and the winner toggle line up.
@@ -10292,12 +10340,16 @@ function MatchReport({ ev, onDone, prefill }) {
     if (t2) setTB(t2.id);
     const wonKey = rows.find(r => r.team_won);
     const wonId = wonKey ? (idOfRow(wonKey) || nameOfRow(wonKey)) : null;
-    setWinner(wonId && t2 && (t2.id === wonId || t2.name === wonId) ? "B" : "A");
+    const winSide = wonId && t2 && (t2.id === wonId || t2.name === wonId) ? "B" : "A";
+    setWinner(winSide);
     setLabel(ml);
     // Restore the round score if it was recorded (it's identical on every row).
+    // The sides above can come back in either order, so the winner gets the
+    // higher number rather than trusting which box it was typed in.
     const sp0 = rows.find(r => r.stat_payload && r.stat_payload.scoreA != null)?.stat_payload;
-    setScoreA(sp0 ? String(sp0.scoreA) : "");
-    setScoreB(sp0 ? String(sp0.scoreB) : "");
+    const hi = sp0 ? Math.max(+sp0.scoreA, +sp0.scoreB) : null, lo = sp0 ? Math.min(+sp0.scoreA, +sp0.scoreB) : null;
+    setScoreA(sp0 ? String(winSide === "A" ? hi : lo) : "");
+    setScoreB(sp0 ? String(winSide === "A" ? lo : hi) : "");
     // Restore the stat lines.
     const ls = {};
     rows.forEach(r => {
@@ -10318,10 +10370,17 @@ function MatchReport({ ev, onDone, prefill }) {
     setExtras({ A: exA, B: exB });
     setEditing(ml);
     setErr("");
-    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+    // Editing a map of this series from the list below: show that map's tab.
+    if (seriesBo) {
+      const mm = /^Map (\d+) · (.*)$/.exec(ml);
+      setMapNo(mm && mm[2] === prefill.label ? Number(mm[1]) : null);
+    }
+    if (!quiet) { try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {} }
   }
 
   function cancelEdit() {
+    // In a series, cancelling goes back to the map's saved stats.
+    if (seriesBo && mapNo) { openMap(mapNo, Object.fromEntries(saved), teams); return; }
     setEditing(null); setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setErr("");
   }
   const line = (uid) => lines[uid] || { k: "", a: "", ps: "", unit: "acs" };
@@ -10442,12 +10501,15 @@ function MatchReport({ ev, onDone, prefill }) {
       // Push the result to Discord. Deliberately after the save and outside the
       // failure path: a Discord outage must never make a recorded match look
       // like it didn't save. Worst case the host presses "Post standings".
-      postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB);
+      postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB, seriesBo ? mapNo : null);
       // And the other direction: a reported score lands on the bracket too, so
       // the fixture shows the result without a second entry. The draft room
       // owns board edits (it re-seeds semis/finals), so it does the write.
       if (scoreA !== "" && scoreB !== "" && window.__VOLT?.setFixtureScore) {
-        try { window.__VOLT.setFixtureScore(ml, A.id, B.id, +scoreA, +scoreB); }
+        try {
+          if (seriesBo && mapNo) window.__VOLT.setFixtureScore(prefill.label, A.id, B.id, +scoreA, +scoreB, mapNo - 1);
+          else window.__VOLT.setFixtureScore(ml, A.id, B.id, +scoreA, +scoreB);
+        }
         catch (e) { console.error("fixture score", e); }
       }
       setLines({}); setLabel(""); setExtras({ A: [], B: [] }); setEditing(null); setScoreA(""); setScoreB(""); await load();
@@ -10559,6 +10621,35 @@ function MatchReport({ ev, onDone, prefill }) {
               ✎ Editing <b style={{ color: "#ffe4a0" }}>{editing}</b> — saving replaces the existing stats and points.
             </span>
             <button onClick={cancelEdit} style={shellBtn("ghost", { padding: "5px 11px", fontSize: 11 })}>Cancel edit</button>
+          </div>
+        )}
+
+        {seriesBo > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${seriesBo}, minmax(0, 1fr))`, gap: 8 }}>
+              {Array.from({ length: seriesBo }, (_, i) => i + 1).map((n) => {
+                const on = mapNo === n;
+                const done = !!savedMap(n);
+                const mp = (prefill.maps || [])[n - 1];
+                const sc = mp && mp.a != null && mp.b != null ? `${mp.a}–${mp.b}` : null;
+                return (
+                  <button key={n} onClick={() => openMap(n, Object.fromEntries(saved), teams)}
+                    style={{ padding: "11px 8px 10px", cursor: "pointer", textAlign: "center",
+                      background: on ? "linear-gradient(160deg, rgba(61,123,255,0.28), rgba(61,123,255,0.08))" : "rgba(10,16,30,0.6)",
+                      border: `1px solid ${on ? "rgba(91,141,255,0.8)" : done ? "rgba(61,220,132,0.45)" : "rgba(120,150,220,0.2)"}`,
+                      boxShadow: on ? "0 0 18px rgba(61,123,255,0.25)" : "none", clipPath: SHELL_NOTCH(8), color: "#ecf3ff" }}>
+                    <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 800, fontSize: 15, letterSpacing: "0.12em", textTransform: "uppercase" }}>Map {n}</div>
+                    <div style={{ fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700, marginTop: 3,
+                      color: done ? "#3ddc84" : sc ? "rgba(200,215,255,0.6)" : "rgba(200,215,255,0.35)" }}>
+                      {done ? "✓ Stats saved" : sc ? `${sc} · no stats` : n > Math.ceil(seriesBo / 2) ? "Only if played" : "No stats yet"}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: "8px 2px 0", lineHeight: 1.45 }}>
+              Best of {seriesBo}: save each map's scoreboard on its own tab. The map score goes onto the bracket, and each map counts as a game for season points (+50 to the map's winner).
+            </p>
           </div>
         )}
 
@@ -10708,7 +10799,7 @@ function MatchReport({ ev, onDone, prefill }) {
           {rosterBlock(tB, "B")}
         </div>
         <div style={{ display: "flex", gap: 10, marginTop: 18, alignItems: "center" }}>
-          <button disabled={busy} onClick={save} style={shellBtn(editing ? "accent" : "primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : editing ? "✎ Update match →" : "Save match →"}</button>
+          <button disabled={busy} onClick={save} style={shellBtn(editing ? "accent" : "primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : seriesBo && mapNo ? (editing ? `✎ Update map ${mapNo} →` : `Save map ${mapNo} →`) : editing ? "✎ Update match →" : "Save match →"}</button>
           <button onClick={onDone} style={shellBtn("ghost", { padding: "11px 18px", fontSize: 13 })}>Done</button>
           {err && <span style={{ color: "#ff8a94", fontSize: 13 }}>{err}</span>}
         </div>
