@@ -462,7 +462,18 @@ async function postChampion(ctx) {
         if (!handle) continue;
         const s = await call(ctx.token, `/guilds/${ctx.guild}/members/search?query=${encodeURIComponent(handle)}&limit=10`, "GET");
         const hit = (Array.isArray(s.body) ? s.body : []).find((m) => String(m.user?.username || "").toLowerCase() === handle);
-        if (hit?.user?.id) dc[p.user_id] = hit.user.id;
+        if (!hit?.user?.id) continue;
+        dc[p.user_id] = hit.user.id;
+        // Keep the link, so DMs and later posts reach them too. Only fills an
+        // empty link; never overwrites one the player made themselves.
+        await fetch(`${process.env.SUPABASE_URL}/rest/v1/player_contacts?community_id=eq.${ctx.community}` +
+          `&user_id=eq.${p.user_id}&discord_user_id=is.null`, {
+          method: "PATCH",
+          headers: { apikey: process.env.SUPABASE_SERVICE_KEY,
+                     Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+                     "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ discord_user_id: hit.user.id }),
+        }).catch((e) => console.error("champion: save link", e));
       }
     } catch (e) { console.error("champion: profile lookup", e); }
   }
