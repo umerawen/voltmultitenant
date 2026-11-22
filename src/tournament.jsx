@@ -8016,15 +8016,19 @@ function PhaseBanner({ phase, ev, regToggle, onGo, myTeam, isAdmin, state }) {
           ].filter(Boolean);
           if (!names.length) return null;
           return (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", position: "relative", zIndex: 1 }}>
               <span aria-hidden style={{ fontSize: 30, lineHeight: 1, marginRight: 4,
                 filter: "drop-shadow(0 0 10px rgba(245,196,83,0.45))", color: "#f5c453", display: "inline-flex" }}><Icon name="trophy" size={30} strokeWidth={1.5} /></span>
               {names.slice(0, 5).map((p, i) => (
                 <span key={p.id} style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase",
                   padding: "6px 11px", whiteSpace: "nowrap",
-                  color: i === 0 ? "#f5c453" : "rgba(236,243,255,0.82)",
-                  background: i === 0 ? "rgba(245,196,83,0.14)" : "rgba(255,255,255,0.04)",
-                  border: `1px solid ${i === 0 ? "rgba(245,196,83,0.45)" : "rgba(120,150,220,0.22)"}` }}>
+                  // Solid chips: they sit on the gold key art, and see-through
+                  // ones washed the names out.
+                  color: i === 0 ? "#ffd166" : "#ecf3ff",
+                  background: i === 0 ? "rgba(36,26,6,0.92)" : "rgba(8,12,22,0.9)",
+                  backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+                  textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+                  border: `1px solid ${i === 0 ? "rgba(245,196,83,0.6)" : "rgba(160,185,240,0.3)"}` }}>
                   {i === 0 ? "★ " : ""}{p.name}
                 </span>
               ))}
@@ -9962,13 +9966,23 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
       try {
         const { data: mrs } = await __sb.from("match_results").select("user_id, points_computed, team_won, stat_payload").eq("event_id", ev.id);
         const rows = mrs || [];
-        // MVP: single highest-scoring match line.
-        let mvp = null; rows.forEach(r => { if (!mvp || Number(r.points_computed || 0) > mvp.pts) mvp = { name: r.stat_payload?.name || "Player", pts: Math.round(Number(r.points_computed || 0)) }; });
+        // MVP: top average ACS over the games they actually played, the same
+        // rule as the leaderboard's ACS tab. One huge game used to win it.
+        const perfBy = {};
+        rows.forEach(r => {
+          const sp = r.stat_payload || {};
+          if (!(perfOf(sp) > 0 || Number(sp.k || 0) > 0 || Number(sp.a || 0) > 0)) return;
+          const key = r.user_id || sp.name || "Player";
+          const a = (perfBy[key] = perfBy[key] || { name: sp.name || "Player", sum: 0, n: 0 });
+          a.sum += perfOf(sp); a.n++;
+        });
+        const best = Object.values(perfBy).map(a => ({ name: a.name, avg: Math.round(a.sum / a.n) })).sort((a, b) => b.avg - a.avg)[0];
+        const mvp = best ? { name: best.name, acs: best.avg } : null;
         // Top fragger: most kills summed across the tournament.
         const kills = {};
         rows.forEach(r => { const nm = r.stat_payload?.name || "Player"; kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0); });
         const topFrag = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
-        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.pts + " pts" : null, topFrag: topFrag ? topFrag[0] : null, decidedBy: decidedByFinal ? "final" : "table" };
+        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.acs + " ACS" : null, topFrag: topFrag ? topFrag[0] : null, decidedBy: decidedByFinal ? "final" : "table" };
       } catch (e) { console.error("recap stats", e); }
       // Fire the security-definer RPC: streak +1 for champions, reset for the rest.
       //

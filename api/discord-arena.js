@@ -481,13 +481,19 @@ async function postChampion(ctx) {
     cap: id === champ.captainUserId }))
     .sort((a, b) => (b.cap - a.cap) || a.name.localeCompare(b.name));
 
-  // MVP and top fragger, the same way the settled tournament's recap picks them.
-  let mvp = null; const kills = {};
+  // MVP (top average ACS over games played, the leaderboard's ACS rule) and
+  // top fragger (most kills), the same way the settled recap picks them.
+  const perfBy = {}, kills = {};
   for (const r of results) {
-    const nm = r.stat_payload?.name || "Player", pts = Number(r.points_computed || 0);
-    if (!mvp || pts > mvp.pts) mvp = { name: nm, pts };
-    kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0);
+    const sp = r.stat_payload || {}, nm = sp.name || "Player";
+    kills[nm] = (kills[nm] || 0) + Number(sp.k || 0);
+    const perf = Number(sp.ps ?? sp.acs ?? 0) || 0;
+    if (!(perf > 0 || Number(sp.k || 0) > 0 || Number(sp.a || 0) > 0)) continue;
+    const a = (perfBy[r.user_id || nm] = perfBy[r.user_id || nm] || { name: nm, sum: 0, n: 0 });
+    a.sum += perf; a.n++;
   }
+  const mvp = Object.values(perfBy).map((a) => ({ name: a.name, acs: Math.round(a.sum / a.n), n: a.n }))
+    .sort((a, b) => b.acs - a.acs)[0] || null;
   const top = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
 
   const label = ctx.ev.weekend_label || "the tournament";
@@ -501,7 +507,7 @@ async function postChampion(ctx) {
       "",
       `**Champions**\n${roster.map(tag).join("\n")}`,
       "",
-      mvp ? `⭐ **MVP:** ${mvp.name} (${Math.round(mvp.pts)} pts in one match)` : "",
+      mvp ? `⭐ **MVP:** ${mvp.name} (${mvp.acs} avg ACS over ${mvp.n} game${mvp.n === 1 ? "" : "s"})` : "",
       top && top[1] > 0 ? `🎯 **Top fragger:** ${top[0]} (${top[1]} kills)` : "",
     ].join("\n").replace(/\n{3,}/g, "\n\n").trim(),
     footer: { text: `${label} · GGs to every team` },
