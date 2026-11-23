@@ -217,7 +217,7 @@ export const demoLeague = REAL?.leagueEvents ? {
   name: REAL.league,
   events: REAL.leagueEvents,
   live: REAL.live,
-  board: demoLeaderboard.map((r) => ({ name: r.name, pts: r.pts })),
+  board: demoLeaderboard.map((r) => ({ name: r.name, pts: r.pts, acs: r.avgPerf, matches: r.m, wins: r.w })).sort((x, y) => y.acs - x.acs),
 } : {
   name: "APEX LEAGUE",
   events: [
@@ -226,5 +226,5 @@ export const demoLeague = REAL?.leagueEvents ? {
       recap: { team: "PHANTOMS", mvp: "Vanta", mvpPts: 312, decidedBy: "final" } },
   ],
   live: { count: 24, pending: 3, mineStatus: "approved" },
-  board: PLAYERS.slice(0, 30).map(([name, , , , , , acs], i) => ({ name, pts: Math.round(acs * 2.1 - i * 9) })).sort((a, b) => b.pts - a.pts),
+  board: PLAYERS.slice(0, 30).map(([name, , , , , , acs], i) => ({ name, acs, pts: Math.round(acs * 2.1 - i * 9), matches: 4 + (i % 3), wins: Math.max(0, 3 - (i % 4)) })).sort((a, b) => b.acs - a.acs),
 };

@@ -6108,11 +6108,12 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     loadPlayerBoard();
   }
 
-  // Player season leaderboard: sum of every match's points (+50 win · perf÷4 · K+⅓A).
+  // Player season leaderboard, ranked by average ACS over the games each player
+  // actually played (the tournament leaderboard's ACS rule). Points ride along.
   async function loadPlayerBoard() {
     try {
       const { data: mrs } = await __sb.from("match_results")
-        .select("user_id, points_computed, team_won, event_id")
+        .select("user_id, points_computed, team_won, event_id, stat_payload")
         .eq("community_id", window.__VOLT.communityId);
       if (!mrs || !mrs.length) { setBoard(null); return; }
       const { data: us } = await __sb.from("users").select("id, display_name, trophy_streak").eq("community_id", window.__VOLT.communityId);
@@ -6126,10 +6127,19 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       const build = (rows) => {
         const agg = {};
         rows.forEach(r => {
-          const a = (agg[r.user_id] = agg[r.user_id] || { uid: r.user_id, name: names[r.user_id] || "Player", pts: 0, matches: 0, wins: 0 });
-          a.pts += Number(r.points_computed || 0); a.matches++; if (r.team_won) a.wins++;
+          if (!r.user_id) return;
+          const a = (agg[r.user_id] = agg[r.user_id] || { uid: r.user_id, name: names[r.user_id] || "Player", pts: 0, matches: 0, wins: 0, perfSum: 0 });
+          a.pts += Number(r.points_computed || 0);
+          // An all-zero row is someone rostered who didn't play; averaging it
+          // in would halve a real score.
+          const sp = r.stat_payload || {};
+          if (!(perfOf(sp) > 0 || Number(sp.k || 0) > 0 || Number(sp.a || 0) > 0)) return;
+          a.matches++; if (r.team_won) a.wins++; a.perfSum += perfOf(sp);
         });
-        return Object.values(agg).sort((x, y) => y.pts - x.pts);
+        return Object.values(agg)
+          .filter(a => a.matches > 0)
+          .map(a => ({ ...a, pts: Math.round(a.pts), acs: Math.round(a.perfSum / a.matches) }))
+          .sort((x, y) => (y.acs - x.acs) || (y.pts - x.pts));
       };
       const cur = build(mrs);
       cur.forEach(p => { p.trophies = streaks[p.uid] || 0; });
@@ -6412,7 +6422,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     {rule}
                     {stat(board ? <CountUp to={board.length} /> : "—", "Players ranked", "#7da6ff", 1)}
                     {rule}
-                    {stat(lead ? String(lead.name).toUpperCase() : "—", "Season leader", "#f5c453", 2, lead ? `${lead.pts} pts` : null)}
+                    {stat(lead ? String(lead.name).toUpperCase() : "—", "Season leader", "#f5c453", 2, lead ? `${lead.acs} ACS` : null)}
                   </div>
                 )}
               </div>
@@ -6476,7 +6486,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Season race ──
   if (page === "season") return wrap(<>
-    <PageHead league={leagueName} title="Season race" sub="Every match counts toward the season, subs included: +50 for a win, ACS ÷ 4, and kills plus a third of assists." accent="#f5c453" />
+    <PageHead league={leagueName} title="Season race" sub="Ranked by average ACS over every match played this season, subs included. Season points (+50 a win, ACS ÷ 4, kills plus a third of assists) are shown alongside." accent="#f5c453" />
     {board && board.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
         {board.slice(0, 3).map((r, i) => {
@@ -6491,8 +6501,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
               </div>
               <div style={{ position: "relative", fontSize: 24, fontWeight: 700, textTransform: "uppercase", marginTop: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center" }}>{r.name}<TrophyChip n={r.trophies} /></div>
               <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
-                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, color: col }}>{r.pts}</span>
-                <span style={{ fontSize: 11, letterSpacing: "0.14em", color: "rgba(200,215,255,0.5)", textTransform: "uppercase" }}>pts{r.matches != null ? ` · ${r.matches} played · ${r.wins}W` : ""}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, color: col }}>{r.acs}</span>
+                <span style={{ fontSize: 11, letterSpacing: "0.14em", color: "rgba(200,215,255,0.5)", textTransform: "uppercase" }}>ACS · {r.pts} pts{r.matches != null ? ` · ${r.matches} played · ${r.wins}W` : ""}</span>
               </div>
             </div>
           );
@@ -6503,7 +6513,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <div>
       <TabPanel label="League" tabs={[
         { key: "race", label: "Season race",
-          hint: "+50 a win, ACS\u00f74, K+\u2153A. Every match counts, subs included.",
+          hint: "Average ACS per match played. Subs included.",
           node: board ? (
             <div style={{ display: "grid", gap: 6 }}>
             {board.map((r, i) => (
@@ -6516,10 +6526,10 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             {typeof r.move === "number" && r.move > 0 && <span style={{ fontSize: 11.5, color: "#3ddc84", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▲{r.move}</span>}
             {typeof r.move === "number" && r.move < 0 && <span style={{ fontSize: 11.5, color: "#ff8f9a", fontWeight: 700, marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace" }}>▼{-r.move}</span>}
             </span>
-            <Bar pct={board[0].pts ? (r.pts / board[0].pts) * 100 : 0} h={2} i={i} color={i === 0 ? "#f5c453" : "#3d7bff"} opacity={0.6} style={{ marginTop: 5, maxWidth: 280 }} />
+            <Bar pct={board[0].acs ? (r.acs / board[0].acs) * 100 : 0} h={2} i={i} color={i === 0 ? "#f5c453" : "#3d7bff"} opacity={0.6} style={{ marginTop: 5, maxWidth: 280 }} />
             </span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.5)", whiteSpace: "nowrap" }}>{r.matches} played · {r.wins}W</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.pts}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>PTS</span></span>
+            <span className="volt-race-meta" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.5)", whiteSpace: "nowrap" }}>{r.matches} played · {r.wins}W · {r.pts} pts</span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.acs}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>ACS</span></span>
             </div>
             ))}
             </div>
@@ -6816,7 +6826,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase", fontSize: i === 0 ? 15 : 13,
                       color: i === 0 ? "#f5c453" : "rgba(236,243,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
                     {typeof r.move === "number" && r.move !== 0 && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5, color: r.move > 0 ? "#3ddc84" : "#ff8f9a" }}>{r.move > 0 ? "▲" : "▼"}{Math.abs(r.move)}</span>}
-                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: i === 0 ? 15 : 13, color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.pts}</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: i === 0 ? 15 : 13, color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.acs}<span style={{ fontSize: 9, color: "rgba(200,215,255,0.45)", marginLeft: 3 }}>ACS</span></span>
                   </div>
                 ))}
               </div>
