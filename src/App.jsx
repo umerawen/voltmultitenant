@@ -4317,7 +4317,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
   add(`# ${community?.name || "Our league"}`);
   add("Dota 2 auction tournament. Sign up solo, no team needed.", "");
 
-  add("## 💰 Details");
+  add("## Details");
   add("**Entry fee:** Rs 1,000 · **Prize pool:** TBD");
   add("**Matches:** Sat 5 Dec if we fill up, otherwise Sat 12 Dec.");
   if (current?.draft_at) {
@@ -4327,13 +4327,13 @@ function buildJoinGuide({ community, current, connected, origin }) {
   }
   add("");
 
-  add("## 🔨 How it works");
+  add("## How it works");
   add("**1.** Sign up solo. Captains are picked from the sign-ups.");
   add("**2.** Captains get equal budgets and bid on players live, one at a time.");
   add("**3.** Your opening price comes from your medal, so put your real one.");
   add("**4.** Teams of 5 play the bracket together.", "");
 
-  add("## ✍️ Sign up");
+  add("## Sign up");
   add(`**1.** Make your account: ${link}`);
   add("**2.** Fill in your profile: medal, position, WhatsApp, and your **Steam ID or Dotabuff link** (turn on *Expose Public Match Data* in Dota).");
   add(connected
@@ -4341,7 +4341,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
     : "**3.** Flip “I'm playing this tournament” on the site.");
   add("");
 
-  add("## 📜 Rules");
+  add("## Rules");
   add("· **Subs:** the host provides the sub, a **lower-skill** player. Neither team can object.");
   add("· **Walkover:** if **more than 2** players from a team can't play, the other team wins.");
   add("· Answer the availability check the day before the draft. Not showing up is a no-show.", "");
