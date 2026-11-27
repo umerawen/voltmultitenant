@@ -4337,7 +4337,8 @@ function buildJoinGuide({ community, current, connected, origin, pay = "" }) {
   add("**4.** Teams of 5 play the bracket together.", "");
 
   add("## Sign up");
-  add(`**1.** Make your account: ${link}`);
+  // <link> stops Discord drawing a preview card under the post; the button does that job.
+  add(`**1.** Make your account: <${link}>`);
   add("**2.** Fill in your profile: medal, position, WhatsApp, and your **Steam ID or Dotabuff link** (turn on *Expose Public Match Data* in Dota).");
   add(connected
     ? "**3.** Connect Discord on your profile, then hit **Already signed up? Add me** below."
