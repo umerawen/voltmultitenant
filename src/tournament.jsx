@@ -2241,7 +2241,7 @@ function TOverrideEditor({ state, t, teamOf, onOverride }) {
 }
 
 function RankBadge({ rank, div, size = "md", solidDiv = false }) {
-  const r = RANKS[rank] || RANKS.Iron;
+  const r = RANKS[rank] || RANKS.Herald;
   const dim = size === "xl" ? 80 : size === "lg" ? 64 : size === "md" ? 34 : 24;
   const showDiv = hasDivisions(rank) && !!div;
   return (
@@ -2290,7 +2290,7 @@ function Stat({ label, value, hue }) {
 
 function PlayerCard({ player, lite = false }) {
   if (!player) return null;
-  const r = RANKS[player.rank] || RANKS.Iron;
+  const r = RANKS[player.rank] || RANKS.Herald;
   return (
     <div className="relative mx-auto w-full" style={{ maxWidth: 420 }}>
       {/* closest-side so the glow fades out inside its own box (no flat band above the card) */}
@@ -2359,7 +2359,7 @@ function PlayerCard({ player, lite = false }) {
    The full card is a tap away (it opens the scout file). */
 function PlayerCardCompact({ player }) {
   if (!player) return null;
-  const r = RANKS[player.rank] || RANKS.Iron;
+  const r = RANKS[player.rank] || RANKS.Herald;
   const st = [
     player.kda != null && ["KDA", Number(player.kda).toFixed(2), "#00e5ff"],
     player.acs != null && ["GPM", player.acs, "#ff4655"],
@@ -2598,7 +2598,7 @@ function ReelStage({ spin, players, pool, isAdmin, onDraw, canDraw }) {
   const winnerIndex = REEL_LEAD + REEL_TRAVEL;
   const drawReel = drawing ? Array.from({ length: REEL_LEAD + REEL_TRAVEL + 9 }, (_, i) => wheelPool[(startPoolIdx + i) % n]) : [];
   const winner = drawing ? players.find((p) => p.id === spin.playerId) : null;
-  const wr = winner ? rankOf(winner.rank) : RANKS.Iron;
+  const wr = winner ? rankOf(winner.rank) : RANKS.Herald;
   const done = drawing && Date.now() >= spin.startTs + spin.duration;
 
   useEffect(() => {
@@ -6927,7 +6927,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
           {rFiltered.map((p) => {
-            const r = rankOf(p.rank) || RANKS.Silver;
+            const r = rankOf(p.rank) || RANKS.Crusader;
             const ok = eligible(p);
             return (
               <div key={p.id} role="button" tabIndex={0}

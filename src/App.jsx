@@ -977,7 +977,7 @@ function useNarrow(px = 640) {
 
 // Big hero crest that foregrounds the player's RANK (the meaningful headline stat)
 function RankCrest({ rank, div }) {
-  const r = RANKS[rank] || RANKS.Iron;
+  const r = RANKS[rank] || RANKS.Herald;
   const s = 104;
   const letter = rank === "Radiant" ? "R" : (rank || "?")[0];
   const showDiv = hasDivisions(rank) && !!div;
@@ -3143,7 +3143,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
   const isStaffViewer = window.__VOLT?.isStaff ?? window.__VOLT?.isHost; // + moderators
   const rank = p.rank || "Iron";
   const rankDiv = p.rank_div ?? null;
-  const r = RANKS[rank] || RANKS.Iron;
+  const r = RANKS[rank] || RANKS.Herald;
   const hue = r.c;
   const name = u.display_name || "Player";
 
