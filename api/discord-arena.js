@@ -45,7 +45,7 @@ const P = {
 // somewhere a message can be missed.
 const COMMON = [
   { ref: "results",   name: "results",    type: 0, readOnly: true,
-    topic: "Valorant match results as they come in. Posted automatically." },
+    topic: "Dota 2 match results as they come in. Posted automatically." },
   { ref: "standings", name: "standings",  type: 0, readOnly: true,
     topic: "The season race. Updated after every match." },
   { ref: "fixtures",  name: "fixtures",   type: 0, readOnly: true,
@@ -392,7 +392,7 @@ async function postResult(ctx, payload) {
     title: `${payload.teamA} ${payload.scoreA ?? ""} — ${payload.scoreB ?? ""} ${payload.teamB}`,
     color: 0x3d7bff,
     description: (payload.map ? `**${payload.map}**\n` : "") + (rows
-      ? `-# ACS · K/D/A\n${rows}` : "_No player stats recorded._")
+      ? `-# GPM · K/D/A\n${rows}` : "_No player stats recorded._")
       + (calls ? `\n\n${calls}` : ""),
     footer: { text: payload.tag || ctx.ev.weekend_label || "" },
   };
@@ -481,7 +481,7 @@ async function postChampion(ctx) {
     cap: id === champ.captainUserId }))
     .sort((a, b) => (b.cap - a.cap) || a.name.localeCompare(b.name));
 
-  // MVP (top average ACS over games played, the leaderboard's ACS rule) and
+  // MVP (top average GPM over games played, the leaderboard's GPM rule) and
   // top fragger (most kills), the same way the settled recap picks them.
   const perfBy = {}, kills = {};
   for (const r of results) {
@@ -507,7 +507,7 @@ async function postChampion(ctx) {
       "",
       `**Champions**\n${roster.map(tag).join("\n")}`,
       "",
-      mvp ? `⭐ **MVP:** ${mvp.name} (${mvp.acs} avg ACS over ${mvp.n} game${mvp.n === 1 ? "" : "s"})` : "",
+      mvp ? `⭐ **MVP:** ${mvp.name} (${mvp.acs} avg GPM over ${mvp.n} game${mvp.n === 1 ? "" : "s"})` : "",
       top && top[1] > 0 ? `🎯 **Top fragger:** ${top[0]} (${top[1]} kills)` : "",
     ].join("\n").replace(/\n{3,}/g, "\n\n").trim(),
     footer: { text: `${label} · GGs to every team` },
@@ -675,17 +675,17 @@ async function postStandings(ctx) {
   const list = (rows, key) => rows.slice(0, 10).map((r, i) =>
     `${medal[i] || `\`${String(i + 1).padStart(2)}\``} **${r.name}** — ` +
     (key === "pts"
-      ? `${Math.round(r.pts)} pts · ${perf(r)} ACS`
-      : `${perf(r)} ACS · ${Math.round(r.pts)} pts`) +
+      ? `${Math.round(r.pts)} pts · ${perf(r)} GPM`
+      : `${perf(r)} GPM · ${Math.round(r.pts)} pts`) +
     ` (${r.played})`).join("\n");
 
   const body = [
-    "### ◈ Top average ACS",
+    "### ◈ Top average GPM",
     "-# Output per game — wins aside",
     list(byPerf, "perf"),
     "",
     "### ◈ Top season points",
-    "-# 50 a win, plus ACS ÷4 and kills",
+    "-# 50 a win, plus GPM ÷4 and kills",
     list(byPts, "pts"),
   ].join("\n");
 

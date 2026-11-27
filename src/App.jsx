@@ -472,6 +472,8 @@ const ART_FRAME = {
   "/img/art-sage-gold.webp":  { pos: "70% 25%", fade: 48 },
 };
 function KeyArt({ src, pos: posIn, width = "68%", fade: fadeIn, opacity = 1, center = false }) {
+  // The artwork is Valorant's agents; the Dota build shows none.
+  if (true) return null;
   const pos = posIn || ART_FRAME[src]?.pos || "72% 10%";
   const fade = fadeIn ?? ART_FRAME[src]?.fade ?? 48;
   const mask = center
@@ -505,7 +507,7 @@ const SWEEP_CSS = `
 `;
 
 /* ════════════════════════════════════════════════════════════════════
-   VOLT PROTOCOL — Community Valorant Auction Draft
+   VOLT PROTOCOL — Community Dota 2 Auction Draft
    4 routed screens · live-synced via shared storage
    Lobby · Scout Hub · Auction Block · Locker Room
    ════════════════════════════════════════════════════════════════════ */
@@ -537,26 +539,52 @@ function visInterval(fn, activeMs, hiddenMs) {
 
 
 
+// Dota 2 medals. Opening bids match volt_rank_bid() in the database.
 const RANKS = {
-  Iron:      { bid: 300,  c: "#8d97a8", glow: "rgba(141,151,168,0.45)" },
-  Bronze:    { bid: 500,  c: "#c08a52", glow: "rgba(192,138,82,0.45)" },
-  Silver:    { bid: 800,  c: "#d7e1ee", glow: "rgba(215,225,238,0.40)" },
-  Gold:      { bid: 1100,  c: "#f5c453", glow: "rgba(245,196,83,0.45)" },
-  Platinum:  { bid: 1500, c: "#3be8d8", glow: "rgba(59,232,216,0.45)" },
-  Diamond:   { bid: 2000, c: "#c08bff", glow: "rgba(192,139,255,0.50)" },
-  Ascendant: { bid: 2600, c: "#3ddc84", glow: "rgba(61,220,132,0.50)" },
+  Herald:    { bid: 300,  c: "#8d97a8", glow: "rgba(141,151,168,0.45)" },
+  Guardian:  { bid: 500,  c: "#9fb6a0", glow: "rgba(159,182,160,0.45)" },
+  Crusader:  { bid: 800,  c: "#c08a52", glow: "rgba(192,138,82,0.45)" },
+  Archon:    { bid: 1100, c: "#3be8d8", glow: "rgba(59,232,216,0.45)" },
+  Legend:    { bid: 1500, c: "#3ddc84", glow: "rgba(61,220,132,0.50)" },
+  Ancient:   { bid: 2000, c: "#5b8dff", glow: "rgba(91,141,255,0.50)" },
+  Divine:    { bid: 2600, c: "#c08bff", glow: "rgba(192,139,255,0.50)" },
   Immortal:  { bid: 3500, c: "#ff4d6d", glow: "rgba(255,77,109,0.55)" },
-  Radiant:   { bid: 4500, c: "#fff3b0", glow: "rgba(255,243,176,0.60)" },
 };
 const RANK_LIST = Object.keys(RANKS);
-const rankOf = (r) => RANKS[r] || RANKS.Silver;
+const rankOf = (r) => RANKS[r] || RANKS.Crusader;
 // Divisions are display only. The tier stays in `rank` because bid values,
 // filters and sorting all key off it — folding "Platinum 3" into one string
 // would mean every one of those lookups has to parse it back apart.
-const RANK_DIVS = [1, 2, 3];
-const hasDivisions = (r) => !!RANKS[r] && r !== "Radiant";
+// Medal stars 1–5; Immortal has none.
+const RANK_DIVS = [1, 2, 3, 4, 5];
+const hasDivisions = (r) => !!RANKS[r] && r !== "Immortal";
 const rankLabel = (r, div) => (r ? r + (hasDivisions(r) && div ? ` ${div}` : "") : "—");
-const ROLE_GLYPH = { Duelist: "◆", Initiator: "▲", Controller: "●", Sentinel: "■", Flex: "✦" };
+const ROLE_GLYPH = { Carry: "◆", Mid: "▲", Offlane: "■", "Soft Support": "●", "Hard Support": "○", Flex: "✦" };
+// Dota position names, also the order players pick from.
+const ROLE_LIST = ["Carry", "Mid", "Offlane", "Soft Support", "Hard Support"];
+// A Steam ID in any common form (Steam64, the 32-bit friend code, or a
+// steamcommunity.com/profiles link) → the 32-bit account id OpenDota and
+// Dotabuff use. Dotabuff links carry that id too. Null when it can't tell.
+const STEAM64_BASE = 76561197960265728n;
+function dotaAccountId(steamId, dotabuff) {
+  const fromDb = String(dotabuff || "").match(/players\/(\d+)/);
+  if (fromDb) return fromDb[1];
+  const digits = String(steamId || "").match(/(\d{5,20})/);
+  if (!digits) return null;
+  try {
+    const n = BigInt(digits[1]);
+    return String(n > STEAM64_BASE ? n - STEAM64_BASE : n);
+  } catch { return null; }
+}
+const steamProfileUrl = (steamId, dotabuff) => {
+  const id = dotaAccountId(steamId, dotabuff);
+  return id ? `https://steamcommunity.com/profiles/${(BigInt(id) + STEAM64_BASE).toString()}` : null;
+};
+const dotabuffUrl = (steamId, dotabuff) => {
+  if (dotabuff) return /^https?:\/\//i.test(dotabuff) ? dotabuff : "https://" + dotabuff;
+  const id = dotaAccountId(steamId, null);
+  return id ? `https://www.dotabuff.com/players/${id}` : null;
+};
    // No demo teams/players: a real league seeds itself from registrations. An
 // empty board is the honest empty state — fake operators in the Scout Hub read
 // as real ones and get scouted, tagged, and drafted by mistake.
@@ -990,12 +1018,12 @@ function StatRadar({ player, size = 200, hue, compare = null }) {
   // nothing.
   const [hot, setHot] = useState(null);
   const axes = [
-    { label: "KDA",  v: Math.min(player.kda / 1.8, 1),
+    { label: "KDA",  v: Math.min(player.kda / 4, 1),
       show: player.kda != null ? Number(player.kda).toFixed(2) : "—" },
-    { label: "ACS",  v: Math.min(player.acs / 320, 1),
+    { label: "GPM",  v: Math.min(player.acs / 700, 1),
       show: player.acs != null ? String(Math.round(player.acs)) : "—" },
-    { label: "HS%",  v: Math.min(player.hs / 45, 1),
-      show: player.hs != null ? Math.round(player.hs) + "%" : "—" },
+    { label: "XPM",  v: Math.min(player.hs / 800, 1),
+      show: player.hs != null ? String(Math.round(player.hs)) : "—" },
     { label: "WIN%", v: Math.min((player.win || 0) / 100, 1),
       show: player.win != null ? Math.round(player.win) + "%" : "—" },
     { label: "RANK", v: (RANK_LIST.indexOf(player.rank) + 1) / RANK_LIST.length,
@@ -1128,7 +1156,6 @@ const NAV = [
 const TOURNEY_NAV = [
   { id: "bracket", label: "Fixtures", glyph: "fixtures" },
   { id: "leaderboard", label: "Leaderboard", glyph: "leaderboard" },
-  { id: "veto", label: "Map Veto", glyph: "veto", adminOnly: true },
 ];
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1670,7 +1697,7 @@ function VoltGate() {
 
   // Intent picker — the three front doors.
   if (phase === "welcome") return wrap(<>
-    <p style={{ margin: "0 0 20px", color: "rgba(200,215,255,0.7)", fontSize: 14, textAlign: "center" }}>Run a Valorant auction league, or join one you were invited to.</p>
+    <p style={{ margin: "0 0 20px", color: "rgba(200,215,255,0.7)", fontSize: 14, textAlign: "center" }}>Run a Dota 2 auction league, or join one you were invited to.</p>
     <button onClick={() => { setErr(""); setPendingIntent("host"); setPhase("host"); }} style={{ ...btn(true), marginTop: 0, marginBottom: 10 }}>◆ Host a league</button>
     <button onClick={() => { setErr(""); setPendingIntent("join"); setPhase("join"); }} style={{ ...btn(false), marginBottom: 18 }}>Join a league</button>
     <div style={{ textAlign: "center", borderTop: "1px solid rgba(120,150,220,0.15)", paddingTop: 14 }}>
@@ -3173,7 +3200,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
           <div style={{ position: "relative", overflow: "hidden", borderRadius: 14, padding: "22px 22px 18px", border: "1px solid rgba(255,255,255,0.08)",
             background: `linear-gradient(120deg, ${hue}3a, ${hue}18 55%, rgba(10,13,22,0.35))` }}>
             <span style={{ position: "absolute", right: -8, top: -22, fontSize: 128, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.04em", color: "rgba(255,255,255,0.07)", fontFamily: "'Rajdhani',sans-serif", pointerEvents: "none", userSelect: "none" }}>{avgPerf || p.acs || ""}</span>
-            {(avgPerf || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>ACS</span> : null}
+            {(avgPerf || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>GPM</span> : null}
             <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
               <RankCrest rank={rank} div={rankDiv} />
               <div style={{ minWidth: 0 }}>
@@ -3198,10 +3225,8 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
                 <div style={{ display: "flex", gap: 10, marginTop: 9, fontSize: 12.5, flexWrap: "wrap", alignItems: "center" }}>
                   {p.role && <span style={{ color: "rgba(236,243,255,0.75)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{ROLE_GLYPH[p.role] || "▪"} {p.role}</span>}
                   {p.agent && <span style={{ color: "rgba(200,215,255,0.55)", textTransform: "capitalize" }}>{p.agent}</span>}
-                  {p.tracker_url
-                    ? <a href={p.tracker_url} target="_blank" rel="noopener noreferrer"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#7deaff", background: "rgba(0,229,255,0.1)", border: "1px solid rgba(0,229,255,0.5)", borderRadius: 6, textDecoration: "none", whiteSpace: "nowrap" }}>⌖ View tracker ↗</a>
-                    : !onBack && <span style={{ fontSize: 11, color: "rgba(200,215,255,0.4)" }}>No tracker link — add one in your scouting profile below.</span>}
+                  <DotaLinks steamId={p.steam_id} dotabuff={p.tracker_url}
+                    empty={!onBack ? "No Dotabuff or Steam link yet. Add one in your scouting profile below." : null} />
                 </div>
               </div>
             </div>
@@ -3220,7 +3245,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
           {/* scouting stats — value-first, exactly the card's Stat treatment */}
           {hasScout ? (
             <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: "auto" }}>
-              {[["KDA", p.kda != null ? p.kda : null, "#00e5ff"], ["Tracker ACS", p.acs != null ? p.acs : null, "#ff4655"], ["HS %", p.hs != null ? p.hs + "%" : null, "#9d6bff"], ["WIN %", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
+              {[["KDA", p.kda != null ? p.kda : null, "#00e5ff"], ["GPM", p.acs != null ? p.acs : null, "#ff4655"], ["XPM", p.hs != null ? p.hs : null, "#9d6bff"], ["WIN %", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
                 <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "12px 4px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                   <span style={{ fontSize: 21, fontWeight: 700, lineHeight: 1, color: v == null ? "rgba(200,215,255,0.3)" : c, fontFamily: "'Rajdhani',sans-serif", textShadow: v == null ? "none" : `0 0 14px ${c}66` }}>{v == null ? "—" : v}</span>
                   <span style={{ fontSize: 9.5, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(236,243,255,0.5)", fontWeight: 600 }}>{lb}</span>
@@ -3249,7 +3274,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
         {bigTile("Matches", mrs.length, "#5b8dff")}
         {bigTile("Wins", wins, "#3ddc84", winRate != null ? winRate + "% win rate" : null)}
         {bigTile("Tournaments won", u.weekends_won || 0, "#f5c453")}
-        {bigTile("Avg ACS", avgPerf, "#ff4655")}
+        {bigTile("Avg GPM", avgPerf, "#ff4655")}
       </div>
       <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
 
@@ -3336,7 +3361,7 @@ const RAIL_PHASE_VIEWS = {
   registration_open:   ["lobby", "scout", "warroom", "leaderboard"],
   registration_closed: ["lobby", "scout", "warroom", "leaderboard"],
   drafting:            ["lobby", "block", "scout", "reserve", "locker", "warroom"],
-  matches_live:        ["lobby", "bracket", "locker", "reserve", "leaderboard", "veto"],
+  matches_live:        ["lobby", "bracket", "locker", "reserve", "leaderboard"],
   settled:             ["lobby", "bracket", "locker", "leaderboard"],
 };
 function HubRail({ community, target, onEnter, onAccount, isHost, wide, setWide, hasTournaments, onCreate, page, onPage, showStaff }) {
@@ -4118,7 +4143,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
   const add = (...xs) => L.push(...xs);
 
   add(`# ${community?.name || "Our league"}`, "");
-  add("### A weekend Valorant league — and you don't need a team.", "");
+  add("### A weekend Dota 2 league — and you don't need a team.", "");
   add("Sign up on your own, captains bid for you at a live auction, " +
       "and you play the weekend with whoever wins you.", "");
 
@@ -4142,7 +4167,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
   add(`**1. Make your account** — ${link}`);
   add("> The join code is already filled in.");
   add("**2. Fill in your profile** — your rank, your role, and a WhatsApp number.");
-  add("> Quickest way: paste a screenshot of your tracker.gg Competitive page and it reads your stats for you.");
+  add("> Add your Steam ID or Dotabuff link too, so your match stats fill in automatically.");
   add("> Your number is only ever seen by the host and mods, and only if a match is falling apart.");
   if (connected) {
     add("**3. Press Connect Discord** on your profile.");
@@ -4576,7 +4601,7 @@ function DiscordMomentsCard({ eventId, phase, draftAt }) {
   );
 }
 
-// ── Valorant name check ──────────────────────────────────────────────────
+// ── Dota name check ──────────────────────────────────────────────────
 // Scoreboard OCR matches stats to players by in-game name. Anyone without one
 // gets their scores dropped on the floor — silently, because a failed match
 // looks identical to a player who didn't play. Better to catch it before the
@@ -4609,8 +4634,8 @@ function IgnCheckCard({ eventId }) {
           communityId: window.__VOLT.communityId,
           message: "**One thing missing from your profile.**\n" +
             "We read match scores off the end-of-game screenshot, and we match them to you by your " +
-            "Valorant name. Yours isn't set, so right now your stats would go to nobody and you'd " +
-            "score zero season points.\n\nOpen VOLT → your profile → **Valorant name**, and put it in " +
+            "Dota name. Yours isn't set, so right now your stats would go to nobody and you'd " +
+            "score zero season points.\n\nOpen VOLT → your profile → **Dota name**, and put it in " +
             "exactly as it appears in game (no #tag). Takes ten seconds.",
           userIds: targets, announce: false,
         }),
@@ -4625,10 +4650,10 @@ function IgnCheckCard({ eventId }) {
   if (rows === null || !rows.length) return null;   // nothing to fix, say nothing
   return (
     <div style={{ marginTop: 14 }}>
-      <SectionHead title="Valorant names missing" />
+      <SectionHead title="Dota names missing" />
       <div style={PANEL("rgba(245,196,83,0.45)")}>
         <div style={{ fontSize: 13.5, color: "#ffe4a0", fontWeight: 700 }}>
-          {rows.length} player{rows.length === 1 ? " hasn't" : "s haven't"} set their Valorant name
+          {rows.length} player{rows.length === 1 ? " hasn't" : "s haven't"} set their Dota name
         </div>
         <div style={{ fontSize: 12.5, color: "rgba(200,215,255,0.55)", marginTop: 6, lineHeight: 1.6 }}>
           Scoreboard screenshots are matched to players by in-game name. Without it their stats are
@@ -5861,7 +5886,7 @@ function MatchReadyCard({ prof, ev, myReg, susp, onOpenProfile, onChanged }) {
   const discordOk = !!(prof.linked || prof.discord);
   const waOk = !!prof.whatsapp;
   const steps = [
-    { k: "profile", label: "Scouting profile", sub: "Valorant name, rank and role — captains bid off this", done: profileOk },
+    { k: "profile", label: "Scouting profile", sub: "Dota name, rank and role — captains bid off this", done: profileOk },
     { k: "discord", label: "Connect Discord", sub: "So the bot can DM you reminders and your team", done: discordOk },
     { k: "wa", label: "WhatsApp number", sub: "Only staff see it, and only if Discord fails", done: waOk },
   ];
@@ -6108,8 +6133,8 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
     loadPlayerBoard();
   }
 
-  // Player season leaderboard, ranked by average ACS over the games each player
-  // actually played (the tournament leaderboard's ACS rule). Points ride along.
+  // Player season leaderboard, ranked by average GPM over the games each player
+  // actually played (the tournament leaderboard's GPM rule). Points ride along.
   async function loadPlayerBoard() {
     try {
       const { data: mrs } = await __sb.from("match_results")
@@ -6422,7 +6447,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     {rule}
                     {stat(board ? <CountUp to={board.length} /> : "—", "Players ranked", "#7da6ff", 1)}
                     {rule}
-                    {stat(lead ? String(lead.name).toUpperCase() : "—", "Season leader", "#f5c453", 2, lead ? `${lead.acs} ACS` : null)}
+                    {stat(lead ? String(lead.name).toUpperCase() : "—", "Season leader", "#f5c453", 2, lead ? `${lead.acs} GPM` : null)}
                   </div>
                 )}
               </div>
@@ -6486,7 +6511,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Season race ──
   if (page === "season") return wrap(<>
-    <PageHead league={leagueName} title="Season race" sub="Ranked by average ACS over every match played this season, subs included. Season points (+50 a win, ACS ÷ 4, kills plus a third of assists) are shown alongside." accent="#f5c453" />
+    <PageHead league={leagueName} title="Season race" sub="Ranked by average GPM over every match played this season, subs included. Season points (+50 a win, GPM ÷ 4, kills plus a third of assists) are shown alongside." accent="#f5c453" />
     {board && board.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
         {board.slice(0, 3).map((r, i) => {
@@ -6502,7 +6527,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
               <div style={{ position: "relative", fontSize: 24, fontWeight: 700, textTransform: "uppercase", marginTop: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center" }}>{r.name}<TrophyChip n={r.trophies} /></div>
               <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                 <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, color: col }}>{r.acs}</span>
-                <span style={{ fontSize: 11, letterSpacing: "0.14em", color: "rgba(200,215,255,0.5)", textTransform: "uppercase" }}>ACS · {r.pts} pts{r.matches != null ? ` · ${r.matches} played · ${r.wins}W` : ""}</span>
+                <span style={{ fontSize: 11, letterSpacing: "0.14em", color: "rgba(200,215,255,0.5)", textTransform: "uppercase" }}>GPM · {r.pts} pts{r.matches != null ? ` · ${r.matches} played · ${r.wins}W` : ""}</span>
               </div>
             </div>
           );
@@ -6513,7 +6538,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <div>
       <TabPanel label="League" tabs={[
         { key: "race", label: "Season race",
-          hint: "Average ACS per match played. Subs included.",
+          hint: "Average GPM per match played. Subs included.",
           node: board ? (
             <div style={{ display: "grid", gap: 6 }}>
             {board.map((r, i) => (
@@ -6529,7 +6554,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <Bar pct={board[0].acs ? (r.acs / board[0].acs) * 100 : 0} h={2} i={i} color={i === 0 ? "#f5c453" : "#3d7bff"} opacity={0.6} style={{ marginTop: 5, maxWidth: 280 }} />
             </span>
             <span className="volt-race-meta" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.5)", whiteSpace: "nowrap" }}>{r.matches} played · {r.wins}W · {r.pts} pts</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.acs}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>ACS</span></span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.acs}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>GPM</span></span>
             </div>
             ))}
             </div>
@@ -6826,7 +6851,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase", fontSize: i === 0 ? 15 : 13,
                       color: i === 0 ? "#f5c453" : "rgba(236,243,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
                     {typeof r.move === "number" && r.move !== 0 && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5, color: r.move > 0 ? "#3ddc84" : "#ff8f9a" }}>{r.move > 0 ? "▲" : "▼"}{Math.abs(r.move)}</span>}
-                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: i === 0 ? 15 : 13, color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.acs}<span style={{ fontSize: 9, color: "rgba(200,215,255,0.45)", marginLeft: 3 }}>ACS</span></span>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: i === 0 ? 15 : 13, color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.acs}<span style={{ fontSize: 9, color: "rgba(200,215,255,0.45)", marginLeft: 3 }}>GPM</span></span>
                   </div>
                 ))}
               </div>
@@ -6902,10 +6927,10 @@ async function activeStrikeCount(userId) {
 //   +50 win bonus (heaviest) · performance score ÷4 (middle) · K + ⅓A (lightest)
 //   Season total = sum of every match's points across all tournaments.
 //
-// Valorant's scoreboard swapped ACS for Performance Score (0-500) in patch
+// Valorant's scoreboard swapped GPM for Performance Score (0-500) in patch
 // 13.06. Matches reported since carry stat_payload.ps; older ones only have
 // .acs. perfOf reads one or the other, so a season spanning the switch still
-// averages (the two share a range). Tracker profiles are still ACS and never
+// averages (the two share a range). Tracker profiles are still GPM and never
 // go through this.
 function perfOf(sp) { return Number(sp?.ps ?? sp?.acs ?? 0) || 0; }
 // Scouting profile — the stats captains study before bidding. Saved once per
@@ -6969,7 +6994,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
   // the user said yes — so open straight into the form instead of showing a
   // second button that asks the same thing again.
   const [editing, setEditing] = useState(embedded);
-  const [d, setD] = useState({ ign: "", rank: "", rankDiv: "", peakRank: "", peakRankDiv: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", whatsapp: "" });
+  const [d, setD] = useState({ ign: "", rank: "", rankDiv: "", peakRank: "", peakRankDiv: "", role: "", agent: "", kda: "", acs: "", hs: "", win: "", tracker: "", steam: "", whatsapp: "" });
   // Screenshot import. Prefills the form and stops — the player still reviews
   // and saves, because captains bid real money against these numbers and an
   // auto-saved OCR result looks verified when it isn't.
@@ -6982,7 +7007,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
   const [dc, setDc] = useState({ linked: false, handle: "" });
   const [dcBusy, setDcBusy] = useState(false);
   const [busy, setBusy] = useState(false);
-  const ROLES = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
+  const ROLES = ROLE_LIST;
   // 16px inputs: anything smaller makes iPhones zoom the page on focus.
   const fieldS = { width: "100%", minHeight: 44, padding: "10px 12px", background: "rgba(10,16,30,0.75)", border: "1px solid rgba(125,166,255,0.42)", color: "#ecf3ff", fontFamily: READ_FONT, fontSize: 16, boxSizing: "border-box" };
   const labS = { fontSize: 13.5, fontWeight: 500, color: "rgba(232,239,255,0.95)", fontFamily: READ_FONT, display: "block", marginBottom: 6, textAlign: "left" };
@@ -7003,7 +7028,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
       c = cd || null;
     } catch (e) { console.error("contacts", e); }
     setDc({ linked: !!c?.discord_user_id, handle: data?.discord || "" });
-    const saved = { ign: data?.ign || "", rank: data?.rank || "", rankDiv: data?.rank_div ?? "", peakRank: data?.peak_rank || "", peakRankDiv: data?.peak_rank_div ?? "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", whatsapp: c?.whatsapp || "" };
+    const saved = { ign: data?.ign || "", rank: data?.rank || "", rankDiv: data?.rank_div ?? "", peakRank: data?.peak_rank || "", peakRankDiv: data?.peak_rank_div ?? "", role: data?.role || "", agent: data?.agent || "", kda: data?.kda ?? "", acs: data?.acs ?? "", hs: data?.hs ?? "", win: data?.win ?? "", tracker: data?.tracker_url || "", steam: data?.steam_id || "", whatsapp: c?.whatsapp || "" };
     // An unsaved draft (typed before stepping out to connect Discord) wins over
     // what's stored, field by field.
     const draft = readDraft();
@@ -7053,14 +7078,14 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
           if (val === null || val === undefined || val === "") return;
           next[key] = String(val); filled.push(label);
         };
-        put("ign", body.ign, "Valorant name");
+        put("ign", body.ign, "Dota name");
         put("rank", body.rank, "rank");
         if (body.rank) next.rankDiv = body.rankDiv ? String(body.rankDiv) : "";
         put("peakRank", body.peakRank, "peak rank");
         if (body.peakRank) next.peakRankDiv = body.peakRankDiv ? String(body.peakRankDiv) : "";
         put("agent", body.agent, "agent");
         put("kda", body.kda, "KDA");
-        put("acs", body.acs, "ACS");
+        put("acs", body.acs, "GPM");
         put("hs", body.hs, "HS%");
         put("win", body.win, "win%");
         return next;
@@ -7077,7 +7102,8 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
 
   // Only while the form is open, so a stray paste elsewhere in the app is ignored.
   useEffect(() => {
-    if (!editing) return;
+    // No tracker screenshot reader for Dota: stats come from OpenDota.
+    if (!editing || true) return;
     const onPaste = (e) => {
       const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
       if (!item) return;
@@ -7103,6 +7129,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
       kda: d.kda === "" ? null : parseFloat(d.kda), acs: d.acs === "" ? null : parseInt(d.acs),
       hs: d.hs === "" ? null : parseInt(d.hs), win: d.win === "" ? null : parseInt(d.win),
       tracker_url: d.tracker ? (/^https?:\/\//i.test(d.tracker) ? d.tracker.trim() : "https://" + d.tracker.trim()) : null,
+      steam_id: d.steam.trim() || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: "user_id,community_id" });
     // Digits only — wa.me needs a bare international number, and normalising on
@@ -7142,20 +7169,21 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
       {!editing && <>
         {has
           ? <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-              {[["RANK", rankLabel(prof.rank, prof.rank_div)], ["PEAK", prof.peak_rank ? rankLabel(prof.peak_rank, prof.peak_rank_div) : "—"], ["ROLE", prof.role || "—"], ["AGENT", prof.agent || "—"], ["KDA", prof.kda ?? "—"], ["ACS", prof.acs ?? "—"], ["HS%", prof.hs != null ? prof.hs + "%" : "—"], ["WIN%", prof.win != null ? prof.win + "%" : "—"]].map(([k, v]) => (
+              {[["RANK", rankLabel(prof.rank, prof.rank_div)], ["PEAK", prof.peak_rank ? rankLabel(prof.peak_rank, prof.peak_rank_div) : "—"], ["ROLE", prof.role || "—"], ["HEROES", prof.agent || "—"], ["KDA", prof.kda ?? "—"], ["GPM", prof.acs ?? "—"], ["XPM", prof.hs ?? "—"], ["WIN%", prof.win != null ? prof.win + "%" : "—"]].map(([k, v]) => (
                 <div key={k} style={{ padding: "6px 11px", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(6) }}>
                   <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7da6ff" }}>{k}</div>
                   <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, color: "#ecf3ff", fontWeight: 700 }}>{v}</div>
                 </div>))}
             </div>
-          : <p style={{ color: "rgba(200,215,255,0.55)", fontSize: 13, margin: "0 0 12px" }}>Captains study this before bidding on you. Add your rank and tracker stats — it takes 30 seconds.</p>}
+          : <p style={{ color: "rgba(200,215,255,0.55)", fontSize: 13, margin: "0 0 12px" }}>Captains study this before bidding on you. Add your medal and role. It takes 30 seconds.</p>}
+        {has && <div style={{ marginBottom: 12 }}><DotaLinks steamId={prof.steam_id} dotabuff={prof.tracker_url} /></div>}
         <button onClick={() => setEditing(true)} style={shellBtn("primary", { padding: "9px 18px", fontSize: 12 })}>{has ? "Edit my stats" : "Set up my stats →"}</button>
       </>}
       {editing && <>
         {/* Filling seven stat fields by hand is the heaviest friction in the
             gate. This reads them off a tracker screenshot instead — prefill
             only, never autosave. */}
-        <div
+        {false && <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => { e.preventDefault(); setDragOver(false); readTracker(e.dataTransfer?.files?.[0]); }}
@@ -7181,17 +7209,17 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
             </div>
           )}
           {shotErr && <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "#f5c453", marginTop: 8 }}>⚠ {shotErr}</div>}
-        </div>
+        </div>}
 
         {/* Required first, so what stands between a player and the Save button is
             all in one place. Match reporting looks players up by this name, which
             is why it leads. */}
         <div style={groupS}>Required</div>
         <label style={{ display: "block", marginBottom: 14 }}>
-          <span style={labS}>Valorant name</span>
-          <input value={d.ign} placeholder="Exactly as it appears in-game"
+          <span style={labS}>Dota name</span>
+          <input value={d.ign} placeholder="Your Steam / in-game name"
             onChange={(e) => setD({ ...d, ign: e.target.value })} style={fieldS} />
-          <span style={helpS}>Leave off the #tag. If this doesn't match the game, your match stats won't reach you.</span>
+          <span style={helpS}>The name people know you by in Dota.</span>
         </label>
         <div style={twoCol}>
           {/* Tier and division are separate controls because the tier alone
@@ -7200,10 +7228,10 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
             <select value={d.rank} onChange={e => setD({ ...d, rank: e.target.value, rankDiv: hasDivisions(e.target.value) ? d.rankDiv : "" })} style={fieldS}>
               <option value="">Select</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
             </select></label>
-          <label><span style={labS}>Division</span>
+          <label><span style={labS}>Stars</span>
             <select value={d.rankDiv} disabled={!hasDivisions(d.rank)} onChange={e => setD({ ...d, rankDiv: e.target.value })}
               style={{ ...fieldS, opacity: hasDivisions(d.rank) ? 1 : 0.55 }}>
-              <option value="">{d.rank === "Radiant" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
+              <option value="">{d.rank === "Immortal" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
             </select></label>
         </div>
         <label style={{ display: "block", marginBottom: 14 }}><span style={labS}>Role</span>
@@ -7231,28 +7259,33 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
         </label>
 
         <div style={groupS}>Optional <span style={{ fontFamily: READ_FONT, fontSize: 13, fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "rgba(214,226,255,0.74)" }}>· helps captains bid on you</span></div>
+        <label style={{ display: "block", marginBottom: 14 }}><span style={labS}>Steam ID</span>
+          <input value={d.steam} placeholder="e.g. 76561198012345678 or your Dota friend ID"
+            onChange={e => setD({ ...d, steam: e.target.value })} style={fieldS} />
+          <span style={helpS}>Your Steam64 ID, Dota friend ID, or a steamcommunity.com/profiles/… link. With this (or your Dotabuff link) your match stats fill in automatically.</span>
+        </label>
+        <label style={{ display: "block", marginBottom: 14 }}><span style={labS}>Dotabuff link</span>
+          <input value={d.tracker} placeholder="dotabuff.com/players/123456789" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
         <div style={twoCol}>
           <label><span style={labS}>Peak rank</span>
             <select value={d.peakRank} onChange={e => setD({ ...d, peakRank: e.target.value, peakRankDiv: hasDivisions(e.target.value) ? d.peakRankDiv : "" })} style={fieldS}>
               <option value="">None</option>{Object.keys(RANKS).map(r => <option key={r} value={r}>{r}</option>)}
             </select></label>
-          <label><span style={labS}>Peak division</span>
+          <label><span style={labS}>Peak stars</span>
             <select value={d.peakRankDiv} disabled={!hasDivisions(d.peakRank)} onChange={e => setD({ ...d, peakRankDiv: e.target.value })}
               style={{ ...fieldS, opacity: hasDivisions(d.peakRank) ? 1 : 0.55 }}>
-              <option value="">{d.peakRank === "Radiant" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
+              <option value="">{d.peakRank === "Immortal" ? "n/a" : "—"}</option>{RANK_DIVS.map(n => <option key={n} value={n}>{n}</option>)}
             </select></label>
-          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Main agent</span>
-            <input value={d.agent} onChange={e => setD({ ...d, agent: e.target.value })} style={fieldS} /></label>
-          {[["kda", "KDA"], ["acs", "ACS"], ["hs", "HS %"], ["win", "Win %"]].map(([k, label]) => (
+          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Main heroes</span>
+            <input value={d.agent} placeholder="e.g. Invoker, Pudge" onChange={e => setD({ ...d, agent: e.target.value })} style={fieldS} /></label>
+          {[["kda", "KDA"], ["acs", "GPM"], ["hs", "XPM"], ["win", "Win %"]].map(([k, label]) => (
             <label key={k}><span style={labS}>{label}</span>
               <input value={d[k]} inputMode="decimal" onChange={e => setD({ ...d, [k]: e.target.value.replace(/[^0-9.]/g, "") })} style={fieldS} /></label>))}
-          <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Tracker link</span>
-            <input value={d.tracker} placeholder="tracker.gg/valorant/profile/riot/yourname" onChange={e => setD({ ...d, tracker: e.target.value })} style={fieldS} /></label>
         </div>
 
         {(() => {
           const need = [];
-          if (!d.ign.trim()) need.push("Valorant name");
+          if (!d.ign.trim()) need.push("Dota name");
           if (!d.rank) need.push("rank");
           if (!d.role) need.push("role");
           if (!dc.linked && !dc.handle) need.push("Discord");
@@ -7273,12 +7306,30 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
   );
 }
 
+// Steam and Dotabuff buttons for a player, from whichever of the two they gave.
+function DotaLinks({ steamId, dotabuff, empty = null, small = false }) {
+  const st = steamProfileUrl(steamId, dotabuff), db = dotabuffUrl(steamId, dotabuff);
+  if (!st && !db) return empty ? <span style={{ fontSize: 11, color: "rgba(200,215,255,0.4)" }}>{empty}</span> : null;
+  const btn = (href, label, col) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: small ? "3px 9px" : "5px 12px", fontSize: small ? 10 : 10.5,
+        fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: col, background: `${col}1a`,
+        border: `1px solid ${col}80`, borderRadius: 6, textDecoration: "none", whiteSpace: "nowrap" }}>{label} ↗</a>
+  );
+  return (
+    <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+      {db && btn(db, "Dotabuff", "#ff7a6b")}
+      {st && btn(st, "Steam", "#7deaff")}
+    </span>
+  );
+}
+
 export default function App() { return <><VoltGate /><VoltDialogHost /><VoltToastHost /></>; }
 
 // Shared with tournament.jsx (the lazily loaded tournament shell).
 export {
   ART, AccountChip, AccountView, Bar, Cell, CountUp, DASH_CSS, DEMO,
-  DiscordLinkCard, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
+  DiscordLinkCard, DotaLinks, ROLE_LIST, dotaAccountId, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
   MOBILE_CSS, NAV, NotifBell, PANEL, PHASE_COLOR, PHASE_LABEL, Pip, PlayToggle,
   PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
   SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,
