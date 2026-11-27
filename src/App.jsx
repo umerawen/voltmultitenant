@@ -3141,7 +3141,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
   const { u, p, mrs, evs, strikes = [], contact = null } = d;
   const isHostViewer = window.__VOLT?.isHost;                 // league owner only
   const isStaffViewer = window.__VOLT?.isStaff ?? window.__VOLT?.isHost; // + moderators
-  const rank = p.rank || "Iron";
+  const rank = p.rank || "Herald";
   const rankDiv = p.rank_div ?? null;
   const r = RANKS[rank] || RANKS.Herald;
   const hue = r.c;

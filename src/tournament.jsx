@@ -3736,7 +3736,7 @@ function LbPodium({ rows, metric, board }) {
             <div style={{ position: "absolute", right: 14, top: 8, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700,
               fontSize: first ? 64 : 48, lineHeight: 1, color: c, opacity: 0.14 }}>{idx + 1}</div>
             <div style={{ display: "flex", justifyContent: "center" }}>
-              <RankBadge rank={r.rank || "Iron"} div={r.rankDiv} size={first ? "lg" : "md"} solidDiv />
+              <RankBadge rank={r.rank || "Herald"} div={r.rankDiv} size={first ? "lg" : "md"} solidDiv />
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, marginTop: 10, minWidth: 0 }}>
               <span className="volt-pod-name" style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, textTransform: "uppercase",
