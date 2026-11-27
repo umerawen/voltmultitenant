@@ -3154,7 +3154,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
   const pts = mrs.reduce((a, x) => a + Number(x.points_computed || 0), 0);
   const wins = mrs.filter(x => x.team_won).length;
   const perfRows = mrs.map(x => perfOf(x.stat_payload)).filter(Boolean);
-  const avgPerf = perfRows.length ? Math.round(perfRows.reduce((a, b) => a + b, 0) / perfRows.length) : null;
+  const avgPerf = perfRows.length ? one(perfRows.reduce((a, b) => a + b, 0) / perfRows.length) : null;
   const winRate = mrs.length ? Math.round(wins / mrs.length * 100) : null;
   const evMap = {}; evs.forEach(e => { evMap[e.id] = e; });
   const champEvents = evs.filter(e => Array.isArray(e.recap?.ids) && e.recap.ids.includes(userId));
@@ -3203,7 +3203,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
           <div style={{ position: "relative", overflow: "hidden", borderRadius: 14, padding: "22px 22px 18px", border: "1px solid rgba(255,255,255,0.08)",
             background: `linear-gradient(120deg, ${hue}3a, ${hue}18 55%, rgba(10,13,22,0.35))` }}>
             <span style={{ position: "absolute", right: -8, top: -22, fontSize: 128, fontWeight: 800, lineHeight: 1, letterSpacing: "-0.04em", color: "rgba(255,255,255,0.07)", fontFamily: "'Rajdhani',sans-serif", pointerEvents: "none", userSelect: "none" }}>{avgPerf || p.acs || ""}</span>
-            {(avgPerf || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>GPM</span> : null}
+            {(avgPerf || p.acs) ? <span style={{ position: "absolute", right: 16, top: 96, fontSize: 10, letterSpacing: 3, fontWeight: 700, color: "rgba(255,255,255,0.16)", fontFamily: "'Rajdhani',sans-serif" }}>{avgPerf ? "KILLS/G" : "GPM"}</span> : null}
             <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 16 }}>
               <RankCrest rank={rank} div={rankDiv} />
               <div style={{ minWidth: 0 }}>
@@ -3277,7 +3277,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
         {bigTile("Matches", mrs.length, "#5b8dff")}
         {bigTile("Wins", wins, "#3ddc84", winRate != null ? winRate + "% win rate" : null)}
         {bigTile("Tournaments won", u.weekends_won || 0, "#f5c453")}
-        {bigTile("Avg GPM", avgPerf, "#ff4655")}
+        {bigTile("Kills a game", avgPerf, "#ff4655")}
       </div>
       <style>{`@media (max-width: 720px){ .volt-statgrid{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; } } @media (min-width:721px) and (max-width:980px){ .volt-statgrid{ grid-template-columns: repeat(3, minmax(0,1fr)) !important; } }`}</style>
 
@@ -6166,7 +6166,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
         });
         return Object.values(agg)
           .filter(a => a.matches > 0)
-          .map(a => ({ ...a, pts: Math.round(a.pts), acs: Math.round(a.perfSum / a.matches) }))
+          .map(a => ({ ...a, pts: Math.round(a.pts), acs: one(a.perfSum / a.matches) }))
           .sort((x, y) => (y.acs - x.acs) || (y.pts - x.pts));
       };
       const cur = build(mrs);
@@ -6450,7 +6450,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     {rule}
                     {stat(board ? <CountUp to={board.length} /> : "—", "Players ranked", "#7da6ff", 1)}
                     {rule}
-                    {stat(lead ? String(lead.name).toUpperCase() : "—", "Season leader", "#f5c453", 2, lead ? `${lead.acs} GPM` : null)}
+                    {stat(lead ? String(lead.name).toUpperCase() : "—", "Season leader", "#f5c453", 2, lead ? `${lead.acs} kills a game` : null)}
                   </div>
                 )}
               </div>
@@ -6514,7 +6514,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
 
   // ── Season race ──
   if (page === "season") return wrap(<>
-    <PageHead league={leagueName} title="Season race" sub="Ranked by average GPM over every match played this season, subs included. Season points (+50 a win, GPM ÷ 4, kills plus a third of assists) are shown alongside." accent="#f5c453" />
+    <PageHead league={leagueName} title="Season race" sub="Ranked by kills a game over every game played, subs included. Season points: +50 a win, plus kills and half your assists." accent="#f5c453" />
     {board && board.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 18 }}>
         {board.slice(0, 3).map((r, i) => {
@@ -6530,7 +6530,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
               <div style={{ position: "relative", fontSize: 24, fontWeight: 700, textTransform: "uppercase", marginTop: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center" }}>{r.name}<TrophyChip n={r.trophies} /></div>
               <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                 <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 26, color: col }}>{r.acs}</span>
-                <span style={{ fontSize: 11, letterSpacing: "0.14em", color: "rgba(200,215,255,0.5)", textTransform: "uppercase" }}>GPM · {r.pts} pts{r.matches != null ? ` · ${r.matches} played · ${r.wins}W` : ""}</span>
+                <span style={{ fontSize: 11, letterSpacing: "0.14em", color: "rgba(200,215,255,0.5)", textTransform: "uppercase" }}>kills a game · {r.pts} pts{r.matches != null ? ` · ${r.matches} played · ${r.wins}W` : ""}</span>
               </div>
             </div>
           );
@@ -6541,7 +6541,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
       <div>
       <TabPanel label="League" tabs={[
         { key: "race", label: "Season race",
-          hint: "Average GPM per match played. Subs included.",
+          hint: "Kills a game. Assists rank on the tournament's Support board.",
           node: board ? (
             <div style={{ display: "grid", gap: 6 }}>
             {board.map((r, i) => (
@@ -6557,7 +6557,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
             <Bar pct={board[0].acs ? (r.acs / board[0].acs) * 100 : 0} h={2} i={i} color={i === 0 ? "#f5c453" : "#3d7bff"} opacity={0.6} style={{ marginTop: 5, maxWidth: 280 }} />
             </span>
             <span className="volt-race-meta" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "rgba(200,215,255,0.5)", whiteSpace: "nowrap" }}>{r.matches} played · {r.wins}W · {r.pts} pts</span>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.acs}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>GPM</span></span>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: i === 0 ? "#f5c453" : "#ecf3ff", minWidth: 78, textAlign: "right", whiteSpace: "nowrap" }}>{r.acs}<span style={{ fontSize: 10, color: "rgba(200,215,255,0.45)", marginLeft: 4 }}>K/G</span></span>
             </div>
             ))}
             </div>
@@ -6854,7 +6854,7 @@ function WeekendSchedule({ community, isHost, isTrueHost, account, onSignOut, on
                     <span style={{ flex: 1, minWidth: 0, fontWeight: 700, textTransform: "uppercase", fontSize: i === 0 ? 15 : 13,
                       color: i === 0 ? "#f5c453" : "rgba(236,243,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
                     {typeof r.move === "number" && r.move !== 0 && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5, color: r.move > 0 ? "#3ddc84" : "#ff8f9a" }}>{r.move > 0 ? "▲" : "▼"}{Math.abs(r.move)}</span>}
-                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: i === 0 ? 15 : 13, color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.acs}<span style={{ fontSize: 9, color: "rgba(200,215,255,0.45)", marginLeft: 3 }}>GPM</span></span>
+                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: i === 0 ? 15 : 13, color: i === 0 ? "#f5c453" : "#ecf3ff" }}>{r.acs}<span style={{ fontSize: 9, color: "rgba(200,215,255,0.45)", marginLeft: 3 }}>K/G</span></span>
                   </div>
                 ))}
               </div>
@@ -6935,7 +6935,11 @@ async function activeStrikeCount(userId) {
 // .acs. perfOf reads one or the other, so a season spanning the switch still
 // averages (the two share a range). Tracker profiles are still GPM and never
 // go through this.
-function perfOf(sp) { return Number(sp?.ps ?? sp?.acs ?? 0) || 0; }
+// Dota ranks on kills: this is the number every leaderboard, the season race
+// and the MVP rank by. GPM (saved as `ps`) is shown but decides nothing.
+function perfOf(sp) { return Number(sp?.k ?? 0) || 0; }
+const gpmOf = (sp) => Number(sp?.ps ?? sp?.acs ?? 0) || 0;
+const one = (x) => Math.round(x * 10) / 10;
 // Scouting profile — the stats captains study before bidding. Saved once per
 // player (player_profiles), reused across tournaments, feeds the draft-pool cards.
 // What a player must have on file before they can enter a tournament. rank and
@@ -7337,7 +7341,7 @@ export {
   PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
   SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,
   TOPBAR, TOPBAR_LINE, TOURNEY_NAV, TeamMono, VoltDateTime, VoltOverlay, __openDialog, __sb,
-  activeStrikeCount, downscaleImage, fmt, glyphNode, hasDivisions, loadDemo, loadProfileGate, perfOf,
+  activeStrikeCount, downscaleImage, fmt, glyphNode, gpmOf, hasDivisions, loadDemo, loadProfileGate, perfOf,
   profileIsComplete, rankLabel, rankOf, shellBtn, useNarrow, visInterval, voltConfirm, voltNotify,
   voltNow, voltToast, weekendName,
 };

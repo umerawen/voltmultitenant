@@ -481,20 +481,20 @@ async function postChampion(ctx) {
     cap: id === champ.captainUserId }))
     .sort((a, b) => (b.cap - a.cap) || a.name.localeCompare(b.name));
 
-  // MVP (top average GPM over games played, the leaderboard's GPM rule) and
-  // top fragger (most kills), the same way the settled recap picks them.
-  const perfBy = {}, kills = {};
+  // Dota: MVP is the most kills a game (fewer deaths breaks a tie), the
+  // leaderboard's rule; the top support is the most assists a game.
+  const by = {};
   for (const r of results) {
     const sp = r.stat_payload || {}, nm = sp.name || "Player";
-    kills[nm] = (kills[nm] || 0) + Number(sp.k || 0);
-    const perf = Number(sp.ps ?? sp.acs ?? 0) || 0;
-    if (!(perf > 0 || Number(sp.k || 0) > 0 || Number(sp.a || 0) > 0)) continue;
-    const a = (perfBy[r.user_id || nm] = perfBy[r.user_id || nm] || { name: nm, sum: 0, n: 0 });
-    a.sum += perf; a.n++;
+    const k = Number(sp.k || 0), d = Number(sp.d || 0), as = Number(sp.a || 0);
+    if (!(k > 0 || as > 0 || d > 0 || Number(sp.ps || 0) > 0)) continue;
+    const a = (by[r.user_id || nm] = by[r.user_id || nm] || { name: nm, k: 0, d: 0, a: 0, n: 0 });
+    a.k += k; a.d += d; a.a += as; a.n++;
   }
-  const mvp = Object.values(perfBy).map((a) => ({ name: a.name, acs: Math.round(a.sum / a.n), n: a.n }))
-    .sort((a, b) => b.acs - a.acs)[0] || null;
-  const top = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
+  const avgs = Object.values(by).map((x) => ({ name: x.name, n: x.n, k: x.k / x.n, d: x.d / x.n, a: x.a / x.n }));
+  const f1 = (v) => (Math.round(v * 10) / 10).toFixed(1);
+  const mvp = [...avgs].sort((x, y) => y.k - x.k || x.d - y.d)[0] || null;
+  const sup = [...avgs].sort((x, y) => y.a - x.a || x.d - y.d)[0] || null;
 
   const label = ctx.ev.weekend_label || "the tournament";
   const tag = (p) => (p.dc ? `<@${p.dc}>` : `**${p.name}**`) + (p.cap ? " (captain)" : "");
@@ -507,8 +507,8 @@ async function postChampion(ctx) {
       "",
       `**Champions**\n${roster.map(tag).join("\n")}`,
       "",
-      mvp ? `⭐ **MVP:** ${mvp.name} (${mvp.acs} avg GPM over ${mvp.n} game${mvp.n === 1 ? "" : "s"})` : "",
-      top && top[1] > 0 ? `🎯 **Top fragger:** ${top[0]} (${top[1]} kills)` : "",
+      mvp ? `⭐ **MVP:** ${mvp.name} (${f1(mvp.k)} kills a game over ${mvp.n} game${mvp.n === 1 ? "" : "s"})` : "",
+      sup && sup.a > 0 ? `🛡️ **Top support:** ${sup.name} (${f1(sup.a)} assists a game)` : "",
     ].join("\n").replace(/\n{3,}/g, "\n\n").trim(),
     footer: { text: `${label} · GGs to every team` },
   };
@@ -663,30 +663,29 @@ async function postStandings(ctx) {
   // Two rankings of the same players, fetched separately so each is sorted and
   // cut by its own metric — taking one list and re-sorting it in JS would show
   // the top 25 by performance re-ordered by points, which isn't the top 25 by points.
-  const byPerf = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "perf" });
-  const byPts = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "pts" });
+  // Dota: kills a game, and a support board on assists a game.
+  const byPerf = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "kills" });
+  const byPts = await rpc("volt_dc_leaderboard", { p_guild: ctx.guild, p_sort: "assists" });
   if (byPerf?.error || byPts?.error) throw new Error("Couldn't read the leaderboard.");
-  if (!byPerf?.length) throw new Error("No matches recorded yet.");
+  if (!byPerf?.length) throw new Error("No games recorded yet.");
 
   const medal = ["🥇", "🥈", "🥉"];
   // Whichever metric a section ranks by is printed first — showing points under
   // a performance-ordered list is what made the old post look unsorted.
-  const perf = (r) => Math.round(r.avgPerf ?? r.avgAcs);
+  const f1 = (v) => (Math.round(Number(v || 0) * 10) / 10).toFixed(1);
   const list = (rows, key) => rows.slice(0, 10).map((r, i) =>
     `${medal[i] || `\`${String(i + 1).padStart(2)}\``} **${r.name}** — ` +
-    (key === "pts"
-      ? `${Math.round(r.pts)} pts · ${perf(r)} GPM`
-      : `${perf(r)} GPM · ${Math.round(r.pts)} pts`) +
+    `${f1(key === "kills" ? r.avgK : r.avgA)} ${key} a game · ${f1(r.avgK)}/${f1(r.avgD)}/${f1(r.avgA)}` +
     ` (${r.played})`).join("\n");
 
   const body = [
-    "### ◈ Top average GPM",
-    "-# Output per game — wins aside",
-    list(byPerf, "perf"),
+    "### ◈ Top kills",
+    "-# Kills a game; fewer deaths breaks a tie. K/D/A are per-game averages, games played in brackets.",
+    list(byPerf, "kills"),
     "",
-    "### ◈ Top season points",
-    "-# 50 a win, plus GPM ÷4 and kills",
-    list(byPts, "pts"),
+    "### ◈ Support board",
+    "-# Assists a game",
+    list(byPts, "assists"),
   ].join("\n");
 
   // Plain text, not an embed: embeds render a size down and shrink the section

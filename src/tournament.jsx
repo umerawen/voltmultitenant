@@ -12,7 +12,7 @@ import {
   PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
   SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,
   TOPBAR, TOPBAR_LINE, TOURNEY_NAV, TeamMono, VoltDateTime, VoltOverlay, __openDialog, __sb,
-  activeStrikeCount, downscaleImage, fmt, glyphNode, hasDivisions, loadDemo, loadProfileGate, perfOf,
+  activeStrikeCount, downscaleImage, fmt, glyphNode, gpmOf, hasDivisions, loadDemo, loadProfileGate, perfOf,
   profileIsComplete, rankLabel, rankOf, shellBtn, useNarrow, visInterval, voltConfirm, voltNotify,
   voltNow, voltToast, weekendName,
 } from "./App.jsx";
@@ -3659,7 +3659,7 @@ function LbPodium({ rows, metric, board }) {
       alignItems: "end", marginBottom: 18 }}>
       {order.map((idx, k) => {
         const r = rows[idx]; const c = MED[idx]; const first = idx === 0;
-        const val = metric === "perf" ? r.avgPerf : r.pts;
+        const val = metric === "perf" ? r.avgPerf : metric === "assists" ? r.avgA : r.pts;
         const team = teamOf(r.id);
         return (
           <div key={r.id || idx} className="volt-pod" style={{ ...PANEL(`${c}66`, first ? "26px 22px 22px" : "20px 20px 18px"),
@@ -3693,18 +3693,18 @@ function LbPodium({ rows, metric, board }) {
             )}
             <div className="volt-pod-val" style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: first ? 44 : 34, lineHeight: 1,
               color: c, marginTop: 14, textShadow: `0 0 24px ${c}55` }}>
-              <CountUp to={val} dur={1000} delay={k * 90} />
-              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "perf" ? "GPM" : "PTS"}</span>
+              <CountUp to={val} dur={1000} delay={k * 90} format={(v) => (metric === "pts" ? String(Math.round(v)) : (Math.round(v * 10) / 10).toFixed(1))} />
+              <span style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", marginLeft: 6 }}>{metric === "perf" ? "K/G" : metric === "assists" ? "A/G" : "PTS"}</span>
             </div>
             {/* Match reports record kills and assists, not deaths, so no D or K/D. */}
             <div className="volt-pod-strip" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", maxWidth: first ? 380 : 340,
               margin: "18px auto 0", background: "rgba(5,8,16,0.45)", border: `1px solid ${c}33`, borderTop: `2px solid ${c}88`,
               clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px))" }}>
               {statCell("Played", r.m, "#ecf3ff", first, true)}
-              {statCell("Won", r.w, "#3ddc84", first)}
               {statCell("Kills", r.k, "#ecf3ff", first)}
+              {statCell("Deaths", r.d, "#ff8f9a", first)}
               {statCell("Assists", r.as, "#ecf3ff", first)}
-              {metric === "perf" ? statCell("Points", r.pts, "#00e5ff", first) : statCell("GPM", r.avgPerf, "#00e5ff", first)}
+              {statCell("Points", r.pts, "#00e5ff", first)}
             </div>
           </div>
         );
@@ -3777,7 +3777,7 @@ function draftedWithPerf(board, perf) {
   // The offline demo has no match reports; its tracker GPM stands in so the panel can be seen.
   return drafted.map((p) => {
     const a = DEMO ? (p.acs ? { m: 1, sum: Number(p.acs) } : null) : perf?.[p.id];
-    return a && a.m > 0 ? { id: p.id, name: p.name, price: Number(p.soldPrice), perf: Math.round(a.sum / a.m), m: a.m, team: teamOf(p.soldTo) } : null;
+    return a && a.m > 0 ? { id: p.id, name: p.name, price: Number(p.soldPrice), perf: Math.round((a.sum / a.m) * 10) / 10, m: a.m, team: teamOf(p.soldTo) } : null;
   }).filter(Boolean);
 }
 const signedNum = (v, d = 0) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d).replace(/\.0$/, "");
@@ -3807,7 +3807,7 @@ function DraftValuePanel({ board, eventId }) {
         <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.03em", color: "#ecf3ff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {r.name}{r.team && <span style={{ color: r.team.hue, fontSize: 11.5, marginLeft: 8, letterSpacing: "0.08em" }}>{r.team.name}</span>}</div>
         <div style={{ fontSize: 12.5, color: "rgba(214,226,255,0.66)", fontFamily: READ_FONT, marginTop: 2, lineHeight: 1.35 }}>
-          {fmt(r.price)}, {ordinal(r.pricePlace)} priciest · averaging {r.perf} GPM, {ordinal(r.perfPlace)} best</div>
+          {fmt(r.price)}, {ordinal(r.pricePlace)} priciest · averaging {r.perf} kills a game, {ordinal(r.perfPlace)} best</div>
       </div>
       {chip(r.gap)}
     </div>
@@ -3825,7 +3825,7 @@ function DraftValuePanel({ board, eventId }) {
       <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700, fontSize: 26, textTransform: "uppercase", letterSpacing: "0.02em", color: "#f4f8ff", lineHeight: 1 }}>
         Steal of the <span style={{ color: "#3ddc84" }}>draft</span></div>
       <p style={{ fontSize: 13.5, color: "rgba(214,226,255,0.66)", fontFamily: READ_FONT, margin: "6px 0 14px", maxWidth: 620, lineHeight: 1.45 }}>
-        Where each drafted player's price ranked against where their GPM ranks now. +5 means they're playing five places better than they were paid for.</p>
+        Where each drafted player's price ranked against where their kills a game rank now. +5 means they're playing five places better than they were paid for.</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))", gap: 12 }}>
         {bargains.length > 0 && card("Best bargains", "rgba(61,220,132,0.35)", "Cheap in the auction, near the top of the table.", bargains.map(player))}
         {overpaid.length > 0 && card("Most overpaid", "rgba(255,70,85,0.3)", "Paid for like a star, not playing like one yet.", overpaid.map(player))}
@@ -3861,10 +3861,15 @@ function Leaderboard({ isAdmin, board, eventId }) {
     : [];
   // Ties fall back to the other metric, so an equal score is settled by the
   // better season and vice versa — never by whatever order the rows arrived in.
+  // Dota: kills a game, or assists a game on the Support board. Fewer deaths
+  // a game breaks a tie, then points.
   const sorted = [...(rows || [])].sort((x, y) =>
     sortBy === "perf"
-      ? y.avgPerf - x.avgPerf || y.pts - x.pts || y.m - x.m
+      ? y.avgPerf - x.avgPerf || x.avgD - y.avgD || y.pts - x.pts || y.m - x.m
+      : sortBy === "assists"
+      ? y.avgA - x.avgA || x.avgD - y.avgD || y.pts - x.pts || y.m - x.m
       : y.pts - x.pts || y.avgPerf - x.avgPerf || y.m - x.m);
+  const pick = (r) => (sortBy === "perf" ? r.avgPerf : sortBy === "assists" ? r.avgA : r.pts);
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -3901,7 +3906,8 @@ function Leaderboard({ isAdmin, board, eventId }) {
         // is instant instead of a refetch.
         setRows(Object.values(agg)
           .filter(a => a.m > 0)                     // nobody ranks off zero appearances
-          .map(a => ({ ...a, pts: Math.round(a.pts), avgPerf: Math.round(a.perfSum / a.m) })));
+          .map(a => ({ ...a, pts: Math.round(a.pts), avgPerf: Math.round((a.perfSum / a.m) * 10) / 10,
+            avgA: Math.round((a.as / a.m) * 10) / 10, avgD: Math.round((a.d / a.m) * 10) / 10 })));
       } catch (e) { console.error("leaderboard", e); if (alive) setRows([]); }
     }
     load();
@@ -3921,14 +3927,16 @@ function Leaderboard({ isAdmin, board, eventId }) {
       <h1 className="font-extrabold uppercase mb-1" style={{ fontFamily: "'Rajdhani',sans-serif", letterSpacing: "0.01em", fontSize: "clamp(34px, 4.6vw, 52px)", lineHeight: 0.95, textShadow: "0 0 36px rgba(61,123,255,0.35)" }}>Leader<span style={{ color: "#3d7bff" }}>board</span></h1>
       <p className="volt-desc text-sm mb-4" style={{ color: "rgba(200,215,255,0.6)", maxWidth: 520 }}>
         {sortBy === "perf"
-          ? "Ranked by average GPM — output per game, wins aside."
+          ? "Ranked by kills a game. Fewer deaths breaks a tie."
+          : sortBy === "assists"
+          ? "The support board: ranked by assists a game. Fewer deaths breaks a tie."
           : sortBy === "value"
-          ? "Drafted players, ranked by how their GPM this tournament compares with their auction price. +5 means playing five places better than they were paid for."
-          : "Ranked by season points — 50 a win, plus GPM ÷4 and kills."}
+          ? "Drafted players, ranked by how their kills a game compare with their auction price. +5 means playing five places better than they were paid for."
+          : "Ranked by season points: +50 a win, plus kills and half your assists."}
         {isAdmin ? " Record results via ▦ Report match during the matches phase." : ""}
       </p>
       <div className="flex gap-2">
-        {[["perf", "Top GPM"], ["pts", "Top points"], ["value", "Price vs GPM"]].map(([k, label]) => (
+        {[["perf", "Top kills"], ["assists", "Supports"], ["pts", "Top points"], ["value", "Price vs kills"]].map(([k, label]) => (
           <button key={k} onClick={() => setSortBy(k)}
             className="text-xs uppercase tracking-widest px-4 py-2"
             style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 700,
@@ -3958,7 +3966,7 @@ function Leaderboard({ isAdmin, board, eventId }) {
           </div>
         : <div>
             <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em]" style={{ gridTemplateColumns: VALUE_COLS, gap: 8, color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
-              <span>#</span><span>Player</span><span className="text-right">Price</span><span className="text-right">GPM</span><span className="text-right">Value</span>
+              <span>#</span><span>Player</span><span className="text-right">Price</span><span className="text-right">K/G</span><span className="text-right">Value</span>
             </div>
             <div className="grid gap-1.5">
               {valueRows.map((r, i) => (
@@ -3983,20 +3991,20 @@ function Leaderboard({ isAdmin, board, eventId }) {
               ))}
             </div>
             <p style={{ fontSize: 12, color: "rgba(200,215,255,0.45)", fontFamily: READ_FONT, margin: "10px 4px 0", lineHeight: 1.45 }}>
-              Price and GPM show the place among the {valueRows.length} drafted players who've played. Captains and subs weren't bought, so they're not in this list.</p>
+              Price and kills show the place among the {valueRows.length} drafted players who've played. Captains and subs weren't bought, so they're not in this list.</p>
           </div>)}
       {sortBy !== "value" && rows && rows.length > 0 && <LbPodium rows={sorted.slice(0, 3)} metric={sortBy} board={board} />}
       {sortBy !== "value" && rows && rows.length > 0 && (
         <div>
           <div className="grid items-center px-4 py-2 text-[11px] uppercase tracking-[0.16em] volt-lb-head" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", color: "rgba(200,215,255,0.45)", fontFamily: "'Rajdhani',sans-serif", fontWeight: 700 }}>
-            <span>#</span><span>Player</span><span className="text-right">Matches</span><span className="text-right">W</span><span className="text-right">K</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">Avg GPM</span>
+            <span>#</span><span>Player</span><span className="text-right">Games</span><span className="text-right">K</span><span className="text-right">D</span><span className="text-right">A</span><span className="text-right">Points</span><span className="text-right">{sortBy === "assists" ? "A/G" : "K/G"}</span>
           </div>
           <div className="grid gap-1.5">
             {sorted.map((r, i) => {
               if (i < 3 && sorted.length > 3) return null;   // the podium shows them
               const rc = (RANKS[r.rank] || {}).c || "#8d97a8";
-              const topV = sortBy === "perf" ? sorted[0].avgPerf : sorted[0].pts;
-              const myV = sortBy === "perf" ? r.avgPerf : r.pts;
+              const topV = pick(sorted[0]);
+              const myV = pick(r);
               return (
                 <div key={i} className="grid items-center px-4 py-3 volt-lb-row" style={{ gridTemplateColumns: "44px 1fr 76px 56px 56px 56px 70px 84px", background: i === 0 ? "rgba(245,196,83,0.07)" : "rgba(255,255,255,0.025)", border: "1px solid " + (i === 0 ? "rgba(245,196,83,0.35)" : "rgba(120,150,220,0.13)"), clipPath: "polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))" }}>
                   <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, color: i === 0 ? "#f5c453" : "#5b8dff" }}>{String(i + 1).padStart(2, "0")}</span>
@@ -4012,17 +4020,17 @@ function Leaderboard({ isAdmin, board, eventId }) {
                     </span>
                   </span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.m}</span>
-                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#3ddc84" }}>{r.w}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.k}</span>
+                  <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "#ff8f9a" }}>{r.d}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace", color: "rgba(236,243,255,0.75)" }}>{r.as}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
                     fontWeight: sortBy === "pts" ? 700 : 400,
                     fontSize: sortBy === "pts" ? 15 : 13,
                     color: sortBy === "pts" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.pts}</span>
                   <span className="text-right" style={{ fontFamily: "'IBM Plex Mono',monospace",
-                    fontWeight: sortBy === "perf" ? 700 : 400,
-                    fontSize: sortBy === "perf" ? 15 : 13,
-                    color: sortBy === "perf" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{r.avgPerf}</span>
+                    fontWeight: sortBy !== "pts" ? 700 : 400,
+                    fontSize: sortBy !== "pts" ? 15 : 13,
+                    color: sortBy !== "pts" ? (i === 0 ? "#f5c453" : "#00e5ff") : "rgba(200,215,255,0.5)" }}>{sortBy === "assists" ? r.avgA : r.avgPerf}</span>
                 </div>
               );
             })}
@@ -8054,7 +8062,7 @@ function FormStrip({ games, part = "both", w = 150 }) {
         {games.map((g, i) => (
           <circle key={i} cx={x(i)} cy={y(g.perf)} r={i === games.length - 1 ? 3.6 : 2.6}
             fill={g.won ? "#3ddc84" : "#ff4655"}>
-            <title>{`${g.perf} GPM · ${g.won ? "won" : "lost"}`}</title>
+            <title>{`${g.perf} kills · ${g.won ? "won" : "lost"}`}</title>
           </circle>
         ))}
       </svg>}
@@ -8117,7 +8125,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
         const avgRank = ranks.length ? RANK_LIST[Math.round(ranks.reduce((a, b) => a + b, 0) / ranks.length)] : null;
         if (ok) setLg({
           pos: pos >= 0 ? pos + 1 : null, of: table.length,
-          avg: pos >= 0 ? Math.round(table[pos].perf) : null,
+          avg: pos >= 0 ? Math.round(table[pos].perf * 10) / 10 : null,
           played: mine.length, wins: mine.filter((g) => g.won).length,
           best: mine.reduce((m, g) => Math.max(m, g.perf), 0),
           points: Math.round((mrs || []).filter((r) => r.user_id === viewerId)
@@ -8369,7 +8377,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             )}
             {lg?.best > 0 && (
               <div>
-                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> GPM</span></div>
+                <div style={BIG("#ff8f9a")}><CountUp to={lg.best} /><span style={{ fontSize: 13, color: "rgba(200,215,255,0.4)", fontWeight: 400 }}> kills</span></div>
                 <div style={LBL}>Best game</div>
               </div>
             )}
@@ -8382,9 +8390,9 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
           {lg && lg.played > 0 ? <>
             <div>
               <div style={BIG("#00e5ff")}>
-                <CountUp to={lg.avg} />
+                <CountUp to={lg.avg} format={(v) => (Math.round(v * 10) / 10).toFixed(1)} />
               </div>
-              <div style={LBL}>Avg GPM here</div>
+              <div style={LBL}>Kills a game here</div>
             </div>
             <div>
               <div style={BIG("#3ddc84")}>{lg.wins}<span style={{ color: "rgba(200,215,255,0.35)" }}>–</span>{lg.played - lg.wins}</div>
@@ -8392,7 +8400,7 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
             </div>
             <div className="volt-yc-form" style={{ marginLeft: "auto" }}>
               <FormStrip games={lg.recent} part="line" w={160} />
-              <div style={LBL}>Form · GPM per match</div>
+              <div style={LBL}>Form · kills per game</div>
             </div>
           </> : lg && !lg.failed ? <>
             {tiles.slice(2).map((t) => (
@@ -8653,7 +8661,7 @@ function LeaderGlance({ viewerId, onOpen }) {
           a.sum += perfOf(sp); a.n++;
         }
         const out = Object.entries(agg)
-          .map(([id, a]) => ({ id, name: name[id] || "Player", perf: Math.round(a.sum / a.n), n: a.n,
+          .map(([id, a]) => ({ id, name: name[id] || "Player", perf: Math.round((a.sum / a.n) * 10) / 10, n: a.n,
             rank: prof[id]?.rank, div: prof[id]?.rank_div }))
           .sort((x, y) => y.perf - x.perf || y.n - x.n);
         if (ok) setRows(out);
@@ -8706,7 +8714,7 @@ function LeaderGlance({ viewerId, onOpen }) {
                 color: lead ? "#f5c453" : "#00e5ff" }}>
                 {lead ? <CountUp to={r.perf} /> : r.perf}
               </span>
-              <span style={{ fontSize: 8, letterSpacing: "0.16em", color: "rgba(200,215,255,0.28)" }}>GPM</span>
+              <span style={{ fontSize: 8, letterSpacing: "0.16em", color: "rgba(200,215,255,0.28)" }}>K/G</span>
             </div>
           </div>
         );
@@ -9532,11 +9540,10 @@ async function fetchRosterForEvent(eventId) {
 // GPM, including the few matches saved as performance score before the switch.
 const perfUnit = () => "GPM";
 
-function matchPoints({ won, perf: score, kills, assists }) {
+// Dota: +50 a win, plus kills and half your assists. GPM isn't in it.
+function matchPoints({ won, kills, assists }) {
   const win = won ? 50 : 0;
-  const perf = Math.round((Number(score) || 0) / 4);
-  const frags = Math.round((Number(kills) || 0) + (Number(assists) || 0) / 3);
-  return win + perf + frags;
+  return win + Math.round((Number(kills) || 0) + (Number(assists) || 0) / 2);
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -9911,13 +9918,13 @@ function WeekendApp({ auth, event, isHost, isTrueHost, account, onSignOut, onBac
           const a = (perfBy[key] = perfBy[key] || { name: sp.name || "Player", sum: 0, n: 0 });
           a.sum += perfOf(sp); a.n++;
         });
-        const best = Object.values(perfBy).map(a => ({ name: a.name, avg: Math.round(a.sum / a.n) })).sort((a, b) => b.avg - a.avg)[0];
+        const best = Object.values(perfBy).map(a => ({ name: a.name, avg: Math.round((a.sum / a.n) * 10) / 10 })).sort((a, b) => b.avg - a.avg)[0];
         const mvp = best ? { name: best.name, acs: best.avg } : null;
         // Top fragger: most kills summed across the tournament.
         const kills = {};
         rows.forEach(r => { const nm = r.stat_payload?.name || "Player"; kills[nm] = (kills[nm] || 0) + Number(r.stat_payload?.k || 0); });
         const topFrag = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
-        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.acs + " GPM" : null, topFrag: topFrag ? topFrag[0] : null, decidedBy: decidedByFinal ? "final" : "table" };
+        recap = { mvp: mvp?.name || null, mvpPts: mvp ? mvp.acs + " kills a game" : null, topFrag: topFrag ? topFrag[0] : null, decidedBy: decidedByFinal ? "final" : "table" };
       } catch (e) { console.error("recap stats", e); }
       // Fire the security-definer RPC: streak +1 for champions, reset for the rest.
       //
@@ -10161,7 +10168,7 @@ async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB, mapNo
     const jwt = sess?.session?.access_token;
     if (!jwt) return;
     const players = rows.map((r) => ({
-      name: r.stat_payload?.name, perf: perfOf(r.stat_payload), unit: perfUnit(r.stat_payload), hero: r.stat_payload?.hero || null,
+      name: r.stat_payload?.name, perf: gpmOf(r.stat_payload), unit: perfUnit(r.stat_payload), hero: r.stat_payload?.hero || null,
       kills: r.stat_payload?.k, assists: r.stat_payload?.a, deaths: r.stat_payload?.d ?? 0,
     })).sort((x, y) => (y.perf || 0) - (x.perf || 0));
     const send = (mode, payload) => fetch(apiUrl("/api/discord-arena"), {
@@ -10662,7 +10669,7 @@ function MatchReport({ ev, onDone, prefill }) {
       <div style={{ textAlign: "center", marginBottom: 24 }}>
         <div style={{ fontSize: 12, letterSpacing: "0.35em", color: "#5b8dff", fontWeight: 700, textTransform: "uppercase", textShadow: "0 0 14px rgba(61,123,255,0.6)" }}>// {weekendName(ev)} · Match report</div>
         <h1 style={{ fontSize: 34, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", margin: "6px 0 4px" }}>Record a <span style={{ color: "#3d7bff" }}>Match</span></h1>
-        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 win · GPM÷4 · K+⅓A — points bank to the season leaderboard instantly.</p>
+        <p style={{ color: "rgba(200,215,255,0.55)", margin: 0, fontSize: 13 }}>+50 a win · kills · half your assists. GPM is recorded but doesn't score.</p>
       </div>
       <div style={panel}>
         <span style={{ position: "absolute", left: 0, top: 0, width: 9, height: 9, borderLeft: "2px solid #3d7bff", borderTop: "2px solid #3d7bff" }} />
