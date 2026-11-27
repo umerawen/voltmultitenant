@@ -382,7 +382,7 @@ async function postResult(ctx, payload) {
 
   const rows = (payload.players || []).slice(0, 12)
     // perf from the current app; acs from a build from before the switch.
-    .map((p) => `\`${String(p.perf ?? p.acs ?? "—").padStart(4)}\` **${p.name}** ${p.kills ?? 0}/${p.deaths ?? 0}/${p.assists ?? 0}`)
+    .map((p) => `\`${String(p.perf ?? p.acs ?? "—").padStart(4)}\` **${p.name}**${p.hero ? ` (${p.hero})` : ""} ${p.kills ?? 0}/${p.deaths ?? 0}/${p.assists ?? 0}`)
     .join("\n");
   // Who called it. Best effort: a result without its prediction line is still
   // a result, so any failure here is logged and the post goes out without it.

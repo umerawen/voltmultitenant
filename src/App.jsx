@@ -4200,7 +4200,7 @@ function buildJoinGuide({ community, current, connected, origin }) {
   }
 
   add("-# We store your Discord name and ID, your display name, the stats you enter, and a WhatsApp " +
-      "number that only the host and mods can see. We never see your Riot or email password, or any payment details.");
+      "number that only the host and mods can see. We never see your Steam or email password, or any payment details.");
   return L.join("\n");
 }
 
@@ -4636,7 +4636,7 @@ function IgnCheckCard({ eventId }) {
             "We read match scores off the end-of-game screenshot, and we match them to you by your " +
             "Dota name. Yours isn't set, so right now your stats would go to nobody and you'd " +
             "score zero season points.\n\nOpen VOLT → your profile → **Dota name**, and put it in " +
-            "exactly as it appears in game (no #tag). Takes ten seconds.",
+            "exactly as people know you in Dota. Takes ten seconds.",
           userIds: targets, announce: false,
         }),
       });

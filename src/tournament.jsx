@@ -337,8 +337,8 @@ function fxLabel(a, b, match) {
 // A Bo3/Bo5 is reported one map at a time, each under its own label. The map
 // goes first so the label still ends in the fixture id (the Discord bot reads
 // that suffix); mapBase() turns any map label back into the fixture's label.
-const mapLabel = (base, n) => `Map ${n} · ${base}`;
-const mapBase = (label) => String(label || "").replace(/^Map \d+ · /, "");
+const mapLabel = (base, n) => `Game ${n} · ${base}`;
+const mapBase = (label) => String(label || "").replace(/^(?:Map|Game) \d+ · /, "");
 
 // round-robin pairing for a list of teamIds (each plays each once)
 function roundRobinMatches(teamIds, bo) {
@@ -1072,114 +1072,50 @@ function FxVoteBar({ f }) {
   );
 }
 
-// A finished Valorant map: someone reached 13, and in overtime the winner is
-// two clear. 13–12 is allowed too, for lobbies set to sudden-death overtime.
-const isFinalMapScore = (x, y) => {
-  const hi = Math.max(x, y), lo = Math.min(x, y);
-  return Number.isInteger(x) && Number.isInteger(y) && lo >= 0 && hi >= 13 && hi > lo && (hi === 13 || hi - lo === 2);
-};
-
-// Host score entry, one box pair per map.
-//
-// Typing happens in a local draft and is only saved once the pair is a finished
-// score. It used to save on every keystroke, which meant the match briefly had
-// whatever was half-typed as its result: "7" then "1" on the way to "13" was a
-// 1–7 loss for the winner, and retyping a group score left the box empty for a
-// moment, so the group counted as unfinished and the playoff matches built from
-// it (their times, everyone's picks) were thrown away and rebuilt. Now a
-// correction goes straight from the old result to the new one. Removing a
-// result is its own button, never a side effect of an empty box.
-function ScoreEntry({ match, locator, onSetMap, onSetBo }) {
+// Dota has no round score: each game is a win, saved as 1–0 so standings,
+// series counts and the Discord posts read it like any other score.
+function ScoreEntry({ match, locator, onSetMap, onSetBo, names = [] }) {
   const bo = match.bo || 1;
   const n = [3, 5].includes(Number(bo)) ? Number(bo) : 1, need = boNeed(bo);
   const saved = (mi) => match.maps?.[mi] || { a: null, b: null };
-  const asText = (v) => (v == null ? "" : String(v));
-  const fromMatch = () => Array.from({ length: n }, (_, mi) => ({ a: asText(saved(mi).a), b: asText(saved(mi).b) }));
-  const [draft, setDraft] = useState(fromMatch);
-  // Follow the board when the saved score changes (our own save landing, or another host's edit).
-  const sig = JSON.stringify((match.maps || []).map((x) => [x?.a ?? null, x?.b ?? null])) + "|" + n;
-  useEffect(() => { setDraft(fromMatch()); }, [sig]); // eslint-disable-line
-
-  const live = useRef({}); live.current = { onSetMap, locator };
-  const pending = useRef(null);
-  const flush = () => {
-    const q = pending.current; if (!q) return;
-    clearTimeout(q.t); pending.current = null;
-    live.current.onSetMap(live.current.locator, q.mi, q.x, q.y);
-  };
-  useEffect(() => flush, []);   // closing the panel mid-pause still saves a finished score
   const clear = async (mi) => {
     if (!(await voltConfirm("The match goes back to not played. If a group or a bracket round depended on it, the matches built from it are rebuilt.",
-      { title: n > 1 ? `Clear map ${mi + 1}?` : "Clear this result?", confirmLabel: "Clear it", danger: true }))) return;
-    if (pending.current) { clearTimeout(pending.current.t); pending.current = null; }
+      { title: n > 1 ? `Clear game ${mi + 1}?` : "Clear this result?", confirmLabel: "Clear it", danger: true }))) return;
     onSetMap(locator, mi, "", "");
   };
-
-  const box = { width: 56, height: 40, background: "rgba(61,123,255,0.08)", border: "1px solid rgba(61,123,255,0.3)", color: "#ecf3ff",
-    fontFamily: "'IBM Plex Mono',monospace", fontSize: 18, fontWeight: 700, textAlign: "center", outline: "none" };
-  const num = (t) => (/^\d{1,2}$/.test(t) ? Number(t) : null);
-  const edit = (mi, side, text) => {
-    const clean = text.replace(/[^0-9]/g, "").slice(0, 2);
-    const next = { ...(draft[mi] || { a: "", b: "" }), [side]: clean };
-    setDraft((d) => d.map((x, i) => (i === mi ? next : x)));
-    const x = num(next.a), y = num(next.b);
-    // Save a finished score after a short pause, not per keystroke: "13" and
-    // "1" is a finished score on the way to typing 13–15.
-    if (pending.current) { clearTimeout(pending.current.t); pending.current = null; }
-    if (x != null && y != null && isFinalMapScore(x, y)) {
-      pending.current = { mi, x, y, t: setTimeout(flush, 700) };
-    }
-  };
   const rows = Array.from({ length: n }).map((_, mi) => {
-    const mp = saved(mi), d = draft[mi] || { a: "", b: "" };
-    // A series stops once it's won: no box for a map that isn't played.
+    const mp = saved(mi);
+    // A series stops once it's won: no pick for a game that isn't played.
     const before = (match.maps || []).slice(0, mi).filter((x) => x && x.a != null && x.b != null);
     const decidedEarly = before.filter((x) => x.a > x.b).length >= need || before.filter((x) => x.b > x.a).length >= need;
     if (decidedEarly && mp.a == null) return null;
-    const x = num(d.a), y = num(d.b);
-    const hasSaved = mp.a != null && mp.b != null;
-    const dirty = d.a !== asText(mp.a) || d.b !== asText(mp.b);
-    // Both boxes filled, but not a score a map can end on.
-    const odd = dirty && x != null && y != null && !isFinalMapScore(x, y);
-    return { mi, d, hasSaved, dirty, odd, x, y };
+    const won = mp.a != null && mp.b != null ? (mp.a > mp.b ? "a" : mp.b > mp.a ? "b" : null) : null;
+    return { mi, won };
   }).filter(Boolean);
-  const small = { fontSize: 12, color: "rgba(214,226,255,0.7)", fontFamily: READ_FONT, lineHeight: 1.45 };
-  const link = { ...shellBtn("ghost", { padding: "5px 10px", fontSize: 10.5 }) };
+  const tag = { fontSize: 10.5, color: "rgba(200,215,255,0.45)", fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.1em", minWidth: 54, textAlign: "right" };
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
-        {rows.map(({ mi, d, dirty }) => (
-          <span key={mi} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {n > 1 && <span style={{ fontSize: 10, color: "rgba(200,215,255,0.4)", fontFamily: "'IBM Plex Mono',monospace", marginRight: 2 }}>MAP {mi + 1}</span>}
-            <input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`Map ${mi + 1}, first team's rounds`} value={d.a}
-              onChange={(e) => edit(mi, "a", e.target.value)} onBlur={flush} placeholder="–" style={{ ...box, border: dirty ? "1px solid rgba(245,196,83,0.6)" : box.border }} />
-            <span style={{ color: "rgba(200,215,255,0.35)", fontSize: 18 }}>:</span>
-            <input type="text" inputMode="numeric" pattern="[0-9]*" aria-label={`Map ${mi + 1}, second team's rounds`} value={d.b}
-              onChange={(e) => edit(mi, "b", e.target.value)} onBlur={flush} placeholder="–" style={{ ...box, border: dirty ? "1px solid rgba(245,196,83,0.6)" : box.border }} />
-          </span>
-        ))}
-        {onSetBo && locator?.kind !== "final" && (
-          <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} title="Switch this match's length"
-            style={shellBtn("ghost", { padding: "8px 12px", fontSize: 10.5 })}>Make it BO{bo === 1 ? 3 : 1}</button>
-        )}
-      </div>
-      {rows.map(({ mi, hasSaved, dirty, odd, x, y }) => (
-        (odd || hasSaved) && (
-          <div key={mi} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap", marginTop: 8, textAlign: "center" }}>
-            {odd && <>
-              <span style={{ ...small, color: "#ffcf7a" }}>{n > 1 ? `Map ${mi + 1}: ` : ""}{x}–{y} isn't a finished score, so it hasn't been saved.</span>
-              <button onClick={() => { if (pending.current) { clearTimeout(pending.current.t); pending.current = null; } onSetMap(locator, mi, x, y); }} style={link}>Save it anyway</button>
-            </>}
-            {!odd && dirty && hasSaved && <span style={small}>{n > 1 ? `Map ${mi + 1}: ` : ""}still showing {match.maps[mi].a}–{match.maps[mi].b} until the new score is complete.</span>}
-            {hasSaved && <button onClick={() => clear(mi)} style={link}>{n > 1 ? `Clear map ${mi + 1}` : "Clear result"}</button>}
-          </div>
-        )
+    <div style={{ display: "grid", gap: 8, justifyItems: "center" }}>
+      {rows.map(({ mi, won }) => (
+        <div key={mi} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+          <span style={tag}>{n > 1 ? `GAME ${mi + 1}` : "WINNER"}</span>
+          {["a", "b"].map((sd) => (
+            <button key={sd} onClick={() => onSetMap(locator, mi, sd === "a" ? 1 : 0, sd === "a" ? 0 : 1)}
+              style={shellBtn(won === sd ? "primary" : "ghost", { padding: "8px 14px", fontSize: 12, opacity: won && won !== sd ? 0.55 : 1 })}>
+              {won === sd ? "✓ " : ""}{names[sd === "a" ? 0 : 1] || (sd === "a" ? "Team A" : "Team B")}
+            </button>
+          ))}
+          {won && <button onClick={() => clear(mi)} style={shellBtn("ghost", { padding: "5px 10px", fontSize: 10.5 })}>Clear</button>}
+        </div>
       ))}
+      {onSetBo && locator?.kind !== "final" && (
+        <button onClick={() => onSetBo(locator, bo === 1 ? 3 : 1)} title="Switch this match's length"
+          style={shellBtn("ghost", { padding: "8px 12px", fontSize: 10.5 })}>Make it BO{bo === 1 ? 3 : 1}</button>
+      )}
     </div>
   );
 }
 
-// A team that doesn't show. The other side takes a 13–0 win on each map it
+// A team that doesn't show. The other side takes a 1–0 win on each game it
 // needed, with no player stats and no prediction points. Host only.
 function ForfeitEntry({ locator, f, onForfeit }) {
   if (!onForfeit) return null;
@@ -1193,7 +1129,7 @@ function ForfeitEntry({ locator, f, onForfeit }) {
   if (f.scoreIn) return null;
   const go = async (side) => {
     const out = side === "a" ? f.a : f.b, win = side === "a" ? f.b : f.a;
-    if (!(await voltConfirm(`${win.name} take a 13–0 win. No player stats are recorded and predictions on this match won't count. You can undo it afterwards.`,
+    if (!(await voltConfirm(`${win.name} take the win. No player stats are recorded and predictions on this match won't count. You can undo it afterwards.`,
       { title: `${out.name} forfeit?`, confirmLabel: "Record forfeit" }))) return;
     onForfeit(locator, side);
   };
@@ -1267,7 +1203,7 @@ function MatchModal({ match, locator, teamOf, isAdmin, A, stage, onClose }) {
         {!f.bye && (isAdmin || f.at) && <>{label("When")}<MatchSchedule match={match} locator={locator} isAdmin={isAdmin} onSetTime={A.onSetTime} /></>}
         {!f.bye && f.a && f.b && (f.votes.length > 0 || !match.done) && <>{label("Prediction")}<MatchPrediction match={match} locator={locator} a={f.a} b={f.b} onVote={A.onVote} /></>}
         {isAdmin && !f.bye && f.a && f.b && <>{label("Result")}
-          {!f.forfeit && <ScoreEntry match={match} locator={locator} onSetMap={A.onSetMap} onSetBo={A.onSetBo} />}
+          {!f.forfeit && <ScoreEntry match={match} locator={locator} names={[f.a?.name, f.b?.name]} onSetMap={A.onSetMap} onSetBo={A.onSetBo} />}
           <ForfeitEntry locator={locator} f={f} onForfeit={A.onForfeit} /></>}
         {!f.bye && (f.canReport || f.statsRecorded) && <>{label("Player stats")}<StatsActions match={match} f={f} /></>}
       </div>
@@ -1782,7 +1718,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
           <TPanel>
             <p className="uppercase text-sm font-bold tracking-widest mb-3" style={{ color: "#7da6ff", fontFamily: "'Rajdhani',sans-serif" }}>2 · Default match length</p>
             <div className="flex gap-3">
-              {[{ id: "bo1", name: "Best of 1", desc: "One map per match" }, { id: "bo3", name: "Best of 3", desc: "First to 2 maps" }].map((b) => (
+              {[{ id: "bo1", name: "Best of 1", desc: "One game per match" }, { id: "bo3", name: "Best of 3", desc: "First to 2 games" }].map((b) => (
                 <button key={b.id} onClick={() => setDraftBo(b.id)} className="flex-1 text-left p-3 transition-all"
                   style={{ background: draftBo === b.id ? "rgba(61,123,255,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${draftBo === b.id ? "#3d7bff" : "rgba(120,150,220,0.18)"}`, clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
                   <p className="font-bold uppercase text-sm" style={{ fontFamily: "'Rajdhani',sans-serif", color: draftBo === b.id ? "#aec6ff" : "#dce6ff" }}>{b.name}</p>
@@ -2086,7 +2022,7 @@ function TournamentView({ state, isAdmin, teamOf, actions }) {
                 {ri === 0 && (
                   <p className="text-xs mb-3" style={{ color: "rgba(200,215,255,0.45)", marginTop: -6 }}>
                     {top2of3
-                      ? "Group winners are seeds 1–3 and runners-up 4–6, ranked by points, then round difference. Teams from the same group are kept apart here."
+                      ? "Group winners are seeds 1–3 and runners-up 4–6, ranked by points, then game difference. Teams from the same group are kept apart here."
                       : `${t.advance === 2 ? "Group winners and runners-up" : "Group winners"}, seeded by record. Teams from the same group are kept apart where possible.`}
                   </p>
                 )}
@@ -5848,7 +5784,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
     const m = findMatch(t, locator); if (!m || !m.teamA || !m.teamB) return null;
     if (side === "a" || side === "b") {
       m.forfeit = side;
-      m.maps = Array.from({ length: boNeed(m.bo) }, () => (side === "a" ? { a: 0, b: 13 } : { a: 13, b: 0 }));
+      m.maps = Array.from({ length: boNeed(m.bo) }, () => (side === "a" ? { a: 0, b: 1 } : { a: 1, b: 0 }));
       const out = s.teams.find((x) => x.id === (side === "a" ? m.teamA : m.teamB));
       s.log.unshift(`${out ? out.name : "A team"} forfeited`);
     } else {
@@ -10225,7 +10161,7 @@ async function postResultToDiscord(ev, A, B, rows, winner, scoreA, scoreB, mapNo
     const jwt = sess?.session?.access_token;
     if (!jwt) return;
     const players = rows.map((r) => ({
-      name: r.stat_payload?.name, perf: perfOf(r.stat_payload), unit: perfUnit(r.stat_payload),
+      name: r.stat_payload?.name, perf: perfOf(r.stat_payload), unit: perfUnit(r.stat_payload), hero: r.stat_payload?.hero || null,
       kills: r.stat_payload?.k, assists: r.stat_payload?.a, deaths: r.stat_payload?.d ?? 0,
     })).sort((x, y) => (y.perf || 0) - (x.perf || 0));
     const send = (mode, payload) => fetch(apiUrl("/api/discord-arena"), {
@@ -10406,7 +10342,7 @@ function MatchReport({ ev, onDone, prefill }) {
     setErr("");
     // Editing a map of this series from the list below: show that map's tab.
     if (seriesBo) {
-      const mm = /^Map (\d+) · (.*)$/.exec(ml);
+      const mm = /^(?:Map|Game) (\d+) · (.*)$/.exec(ml);
       setMapNo(mm && mm[2] === prefill.label ? Number(mm[1]) : null);
     }
     if (!quiet) { try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {} }
@@ -10510,7 +10446,10 @@ function MatchReport({ ev, onDone, prefill }) {
         const hero = heroes[pl.hero_id] || `Hero ${pl.hero_id}`;
         const radiant = pl.isRadiant != null ? !!pl.isRadiant : pl.player_slot < 128;
         return { srcName: `${pl.personaname || "Anonymous"} · ${hero} · ${radiant ? "Radiant" : "Dire"}`,
-          playerId: pid, perf: pl.gold_per_min ?? 0, kills: pl.kills ?? 0, deaths: pl.deaths ?? 0, assists: pl.assists ?? 0, radiant };
+          playerId: pid, perf: pl.gold_per_min ?? 0, kills: pl.kills ?? 0, deaths: pl.deaths ?? 0, assists: pl.assists ?? 0, radiant,
+          // Kept on the saved row for match pages and Discord; not scored.
+          extra: { hero, xpm: pl.xp_per_min ?? null, lh: pl.last_hits ?? null, nw: pl.net_worth ?? pl.total_gold ?? null,
+            hd: pl.hero_damage ?? null, matchId: String(m.match_id || id), dur: m.duration ?? null } };
       });
       // Which board team played Radiant: whichever way most matched players say.
       let aRad = 0, aDire = 0;
@@ -10541,7 +10480,7 @@ function MatchReport({ ev, onDone, prefill }) {
       const next = { ...ls };
       for (const row of shot) {
         if (!row.playerId) continue;
-        next[row.playerId] = { k: String(row.kills), a: String(row.assists), ps: String(row.perf), d: String(row.deaths ?? ""), unit: "ps" };
+        next[row.playerId] = { k: String(row.kills), a: String(row.assists), ps: String(row.perf), d: String(row.deaths ?? ""), unit: "ps", x: row.extra || null };
       }
       return next;
     });
@@ -10577,6 +10516,7 @@ function MatchReport({ ev, onDone, prefill }) {
             // scoreboard saves as `acs`, so the two are never confused later.
             stat_payload: { name: p.name, team: team.name, teamId: team.id || null, k: +l.k || 0, a: +l.a || 0,
               ...(l.d != null && l.d !== "" ? { d: +l.d || 0 } : {}),
+              ...(l.x || {}),
               ...(l.unit === "acs" ? { acs: +l.ps || 0 } : { ps: +l.ps || 0 }),
               // Round score, same on every row of the match — the only place it
               // can live, since match_results has no score column of its own.
@@ -10750,7 +10690,7 @@ function MatchReport({ ev, onDone, prefill }) {
                       background: on ? "linear-gradient(160deg, rgba(61,123,255,0.28), rgba(61,123,255,0.08))" : "rgba(10,16,30,0.6)",
                       border: `1px solid ${on ? "rgba(91,141,255,0.8)" : done ? "rgba(61,220,132,0.45)" : "rgba(120,150,220,0.2)"}`,
                       boxShadow: on ? "0 0 18px rgba(61,123,255,0.25)" : "none", clipPath: SHELL_NOTCH(8), color: "#ecf3ff" }}>
-                    <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 800, fontSize: 15, letterSpacing: "0.12em", textTransform: "uppercase" }}>Map {n}</div>
+                    <div style={{ fontFamily: "'Rajdhani',sans-serif", fontWeight: 800, fontSize: 15, letterSpacing: "0.12em", textTransform: "uppercase" }}>Game {n}</div>
                     <div style={{ fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700, marginTop: 3,
                       color: done ? "#3ddc84" : sc ? "rgba(200,215,255,0.6)" : "rgba(200,215,255,0.35)" }}>
                       {done ? "✓ Stats saved" : sc ? `${sc} · no stats` : n > Math.ceil(seriesBo / 2) ? "Only if played" : "No stats yet"}
@@ -10760,7 +10700,7 @@ function MatchReport({ ev, onDone, prefill }) {
               })}
             </div>
             <p style={{ fontSize: 11.5, color: "rgba(200,215,255,0.5)", margin: "8px 2px 0", lineHeight: 1.45 }}>
-              Best of {seriesBo}: save each map's scoreboard on its own tab. The map score goes onto the bracket, and each map counts as a game for season points (+50 to the map's winner).
+              Best of {seriesBo}: import each game on its own tab. The game's result goes onto the bracket, and each game counts for season points (+50 to its winner).
             </p>
           </div>
         )}
@@ -10914,7 +10854,7 @@ function MatchReport({ ev, onDone, prefill }) {
           {rosterBlock(tB, "B")}
         </div>
         <div style={{ display: "flex", gap: 10, marginTop: 18, alignItems: "center" }}>
-          <button disabled={busy} onClick={save} style={shellBtn(editing ? "accent" : "primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : seriesBo && mapNo ? (editing ? `✎ Update map ${mapNo} →` : `Save map ${mapNo} →`) : editing ? "✎ Update match →" : "Save match →"}</button>
+          <button disabled={busy} onClick={save} style={shellBtn(editing ? "accent" : "primary", { padding: "11px 24px", fontSize: 13 })}>{busy ? "…" : seriesBo && mapNo ? (editing ? `✎ Update game ${mapNo} →` : `Save game ${mapNo} →`) : editing ? "✎ Update match →" : "Save match →"}</button>
           <button onClick={onDone} style={shellBtn("ghost", { padding: "11px 18px", fontSize: 13 })}>Done</button>
           {err && <span style={{ color: "#ff8a94", fontSize: 13 }}>{err}</span>}
         </div>
