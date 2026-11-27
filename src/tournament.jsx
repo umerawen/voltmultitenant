@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { apiUrl, haptic } from "./native.js";
 import {
   ART, AccountChip, AccountView, Bar, Cell, CountUp, DASH_CSS, DEMO,
-  DiscordLinkCard, DotaLinks, DotaRadar, ROLE_LIST, dotaAccountId, useDotaStats, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
+  DiscordLinkCard, DotaLinks, DotaRadar, ROLE_LIST, dotaAccountId, useDotaLite, useDotaStats, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
   MOBILE_CSS, NAV, NotifBell, PANEL, PHASE_COLOR, PHASE_LABEL, Pip, PlayToggle,
   PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
   SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,
@@ -2238,6 +2238,37 @@ function DotaCardStats({ player, mark = false }) {
       <Stat label="KDA" value={st.kda.toFixed(2)} hue="#00e5ff" />
       <Stat label="GPM" value={Math.round(st.gpm)} hue="#ff4655" />
       <Stat label="XPM" value={Math.round(st.xpm)} hue="#9d6bff" />
+    </div>
+  );
+}
+
+// The small pool card's stat row, from OpenDota (queued, cached).
+function PoolCardStats({ p }) {
+  const st = useDotaLite(p.steam, p.tracker);
+  const dim = { fontSize: 11.5, color: "rgba(200,215,255,0.32)", marginTop: 14 };
+  if (st?.none) return <p style={dim}>No Steam ID or Dotabuff yet</p>;
+  if (st === null) return <p style={dim}>Loading stats…</p>;
+  if (!st.ax) return <p style={dim}>{st.empty ? "Match data is private" : "Stats unavailable"}</p>;
+  const items = [
+    { v: Math.round(st.gpm), k: "GPM", c: "#ff4655" },
+    { v: st.kda.toFixed(2), k: "KDA", c: "#00e5ff" },
+    { v: Math.round(st.xpm), k: "XPM", c: "#af9aec" },
+  ];
+  return (
+    <div className="flex gap-4 mt-3.5" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+      {items.map((x) => <span key={x.k} style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}
+        <span style={{ fontSize: 9, color: "rgba(200,215,255,0.4)", marginLeft: 4, fontWeight: 400 }}>{x.k}</span></span>)}
+    </div>
+  );
+}
+// The phone list's single number on the right: GPM from OpenDota.
+function PoolCardGpm({ p }) {
+  const st = useDotaLite(p.steam, p.tracker);
+  if (!st?.ax) return null;
+  return (
+    <div className="shrink-0 text-right" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+      <div style={{ fontSize: 18, fontWeight: 700, color: "#ff4655", lineHeight: 1 }}>{Math.round(st.gpm)}</div>
+      <div style={{ fontSize: 9, letterSpacing: "0.16em", color: "rgba(200,215,255,0.4)", marginTop: 4 }}>GPM</div>
     </div>
   );
 }
@@ -6996,12 +7027,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                   color: p.isCaptain ? "#f5c453" : tm ? tm.hue : "#3ddc84" }}>
                   {p.isCaptain ? "★ Captain" : tm ? `${tm.name} · ${fmt(p.soldPrice)}` : `Available · opens ${fmt(r.bid)}`}</p>
               </div>
-              {p.acs != null && (
-                <div className="shrink-0 text-right" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#ff4655", lineHeight: 1 }}>{p.acs}</div>
-                  <div style={{ fontSize: 9, letterSpacing: "0.16em", color: "rgba(200,215,255,0.4)", marginTop: 4 }}>GPM</div>
-                </div>
-              )}
+              <PoolCardGpm p={p} />
             </button>
           );
           return (
@@ -7018,18 +7044,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
             {/* Full card width, under the badge: role and agent were being cut short beside it. */}
             <p className="uppercase truncate" style={{ fontSize: 11, letterSpacing: "0.06em", marginTop: 7, color: "rgba(200,215,255,0.6)" }}>
               <span style={{ color: r.c }}>{ROLE_GLYPH[p.role]}</span> {p.role}{p.agent && p.agent !== "—" ? ` · ${p.agent}` : ""}</p>
-            {/* Only the stats we actually have — no row of dashes. */}
-            {(() => { const st = [
-                p.acs != null && { v: p.acs, k: "GPM", c: "#ff4655" },
-                p.kda != null && { v: Number(p.kda).toFixed(2), k: "KDA", c: "#00e5ff" },
-                p.hs != null && { v: p.hs + "%", k: "HS", c: "#af9aec" },
-              ].filter(Boolean);
-              return st.length
-                ? <div className="flex gap-4 mt-3.5" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
-                    {st.map((x) => <span key={x.k} style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}
-                      <span style={{ fontSize: 9, color: "rgba(200,215,255,0.4)", marginLeft: 4, fontWeight: 400 }}>{x.k}</span></span>)}
-                  </div>
-                : <p className="mt-3.5 text-xs" style={{ color: "rgba(200,215,255,0.32)" }}>No tracker stats yet</p>; })()}
+            <PoolCardStats p={p} />
             <div className="mt-3">
               {p.isCaptain
                 ? <span title="Captains pick their team; they aren't in the draw." style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", whiteSpace: "nowrap", padding: "4px 9px", color: "#f5c453", background: "rgba(245,196,83,0.12)", border: "1px solid rgba(245,196,83,0.35)" }}>★ Captain</span>

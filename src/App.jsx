@@ -1013,6 +1013,58 @@ function RankCrest({ rank, div }) {
    the same ingredients, scaled so a typical pub game sits mid-way. Fetched on
    demand (opening a player), cached in memory and for 6h in localStorage. */
 const DOTA_CACHE = new Map();
+// Every OpenDota request goes through one queue, about one a second: the free
+// tier allows ~60 a minute and a draft pool is 30+ players. Opening a player
+// (urgent) jumps the queue.
+const OD_QUEUE = []; let odBusy = false;
+function odFetch(url, urgent = false) {
+  return new Promise((resolve) => {
+    const job = { url, resolve };
+    if (urgent) OD_QUEUE.unshift(job); else OD_QUEUE.push(job);
+    odPump();
+  });
+}
+async function odPump() {
+  if (odBusy) return; odBusy = true;
+  while (OD_QUEUE.length) {
+    const { url, resolve } = OD_QUEUE.shift();
+    try { const r = await fetch(url); resolve(r.ok ? await r.json() : null); } catch { resolve(null); }
+    await new Promise((r) => setTimeout(r, 1050));
+  }
+  odBusy = false;
+}
+const odCached = (key) => {
+  try { const hit = JSON.parse(localStorage.getItem(key) || "null"); return hit && Date.now() - hit.at < 6 * 3600e3 ? hit.d : null; }
+  catch { return null; }
+};
+const odStore = (key, d) => { try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), d })); } catch { /* private mode */ } };
+// The small pool cards only need KDA / GPM / XPM: one request (totals), not three.
+const DOTA_LITE = new Map(), DOTA_PENDING = new Map();
+function useDotaLite(steamId, dotabuff) {
+  const acc = dotaAccountId(steamId, dotabuff);
+  const pick = () => (acc ? DOTA_CACHE.get(acc) || DOTA_LITE.get(acc) || null : null);
+  const [st, setSt] = useState(pick);
+  useEffect(() => {
+    if (!acc) { setSt(null); return; }
+    const have = pick(); if (have) { setSt(have); return; }
+    const key = "volt.dota.lite." + acc;
+    const hit = odCached(key) || odCached("volt.dota." + acc);
+    if (hit) { DOTA_LITE.set(acc, hit); setSt(hit); return; }
+    let alive = true;
+    setSt(null);
+    // One request per player, shared by every card showing them.
+    if (!DOTA_PENDING.has(acc)) DOTA_PENDING.set(acc,
+      odFetch(`https://api.opendota.com/api/players/${acc}/totals?limit=50`).then((tot) => {
+        const d = tot ? buildDotaStats(tot, null, null) : { error: true };
+        if (!d.error) { DOTA_LITE.set(acc, d); odStore(key, d); }
+        DOTA_PENDING.delete(acc);
+        return d;
+      }));
+    DOTA_PENDING.get(acc).then((d) => { if (alive) setSt(d); });
+    return () => { alive = false; };
+  }, [acc]); // eslint-disable-line
+  return acc ? st : { none: true };
+}
 function buildDotaStats(tot, heroes, wl) {
   const T = Object.fromEntries((Array.isArray(tot) ? tot : []).map((x) => [x.field, x]));
   const n = T.kills?.n || 0;
@@ -1052,18 +1104,16 @@ function useDotaStats(steamId, dotabuff) {
     setSt(null);
     (async () => {
       const key = "volt.dota." + acc;
-      try {
-        const hit = JSON.parse(localStorage.getItem(key) || "null");
-        if (hit && Date.now() - hit.at < 6 * 3600e3) { DOTA_CACHE.set(acc, hit.d); if (alive) setSt(hit.d); return; }
-      } catch { /* private mode */ }
+      const hit = odCached(key);
+      if (hit) { DOTA_CACHE.set(acc, hit); if (alive) setSt(hit); return; }
       try {
         const base = `https://api.opendota.com/api/players/${acc}`;
-        const get = (p) => fetch(base + p).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        const get = (p) => odFetch(base + p, true);
         const [tot, heroes, wl] = await Promise.all([get("/totals?limit=50"), get("/heroes?limit=50"), get("/wl?limit=50")]);
         if (!tot) { if (alive) setSt({ error: true }); return; }
         const d = buildDotaStats(tot, heroes, wl);
         DOTA_CACHE.set(acc, d);
-        try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), d })); } catch { /* private mode */ }
+        odStore(key, d);
         if (alive) setSt(d);
       } catch { if (alive) setSt({ error: true }); }
     })();
@@ -7438,7 +7488,7 @@ export default function App() { return <><VoltGate /><VoltDialogHost /><VoltToas
 // Shared with tournament.jsx (the lazily loaded tournament shell).
 export {
   ART, AccountChip, AccountView, Bar, Cell, CountUp, DASH_CSS, DEMO,
-  DiscordLinkCard, DotaLinks, DotaRadar, ROLE_LIST, dotaAccountId, useDotaStats, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
+  DiscordLinkCard, DotaLinks, DotaRadar, ROLE_LIST, dotaAccountId, useDotaLite, useDotaStats, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
   MOBILE_CSS, NAV, NotifBell, PANEL, PHASE_COLOR, PHASE_LABEL, Pip, PlayToggle,
   PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
   SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,
