@@ -4306,7 +4306,7 @@ function useDiscordLinked() {
 // a newcomer gets the full three steps without having to ask. Putting the
 // steps first would make everyone read four paragraphs to find the button.
 const DISCORD_MSG_LIMIT = 2000;
-function buildJoinGuide({ community, current, connected, origin }) {
+function buildJoinGuide({ community, current, connected, origin, pay = "" }) {
   // Dota build: written for the Nobrainer Dota Cup, where most players have
   // never played an auction tournament. Kept under 1900 characters so the bot
   // sends it as a plain message: Discord shrinks headings inside an embed.
@@ -4319,6 +4319,9 @@ function buildJoinGuide({ community, current, connected, origin }) {
 
   add("## Details");
   add("**Entry fee:** Rs 1,000 · **Prize pool:** TBD");
+  // Payment details live in the league's data (community_kv "guide-pay"),
+  // not in this public code.
+  if (pay) add(`**How to pay:** ${pay}`);
   add("**Matches:** Sat 5 Dec if we fill up, otherwise Sat 12 Dec.");
   if (current?.draft_at) {
     // <t:unix:F> renders in each reader's own clock.
@@ -4371,7 +4374,13 @@ function JoinGuideCard({ community, current }) {
     return () => { ok = false; };
   }, [open, connected]);
 
-  const text = buildJoinGuide({ community, current, connected: !!connected, origin });
+  const [pay, setPay] = useState("");
+  useEffect(() => {
+    let ok = true;
+    window.storage.get("guide-pay", true).then((r) => { if (ok && r?.value) setPay(String(r.value)); }).catch(() => {});
+    return () => { ok = false; };
+  }, [community?.id]);
+  const text = buildJoinGuide({ community, current, connected: !!connected, origin, pay });
 
   // Fix the role without sending anything. Useful after approving a batch of
   // applications, or the first time — it's what creates the role.
