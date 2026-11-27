@@ -1047,8 +1047,8 @@ function useDotaLite(steamId, dotabuff) {
   useEffect(() => {
     if (!acc) { setSt(null); return; }
     const have = pick(); if (have) { setSt(have); return; }
-    const key = "volt.dota.lite." + acc;
-    const hit = odCached(key) || odCached("volt.dota." + acc);
+    const key = "volt.dota.v2.lite." + acc;
+    const hit = odCached(key) || odCached("volt.dota.v2." + acc);
     if (hit) { DOTA_LITE.set(acc, hit); setSt(hit); return; }
     let alive = true;
     setSt(null);
@@ -1071,7 +1071,13 @@ function buildDotaStats(tot, heroes, wl) {
   if (!n) return { empty: true };
   const per = (f) => (T[f]?.n ? T[f].sum / T[f].n : 0);
   const mins = Math.max(1, (T.duration?.sum || 0) / 60);
-  const c = (x) => Math.max(0, Math.min(1, x || 0));
+  const sat = (x, avg) => (x > 0 ? x / (x + avg) : 0);
+  const has = (f) => (T[f]?.sum || 0) > 0;
+  const mix = (parts) => {
+    const use = parts.filter((x) => x[2] !== false);
+    const w = use.reduce((sum, x) => sum + x[0], 0);
+    return w ? use.reduce((sum, x) => sum + x[0] * x[1], 0) / w : 0;
+  };
   const k = per("kills"), d = per("deaths"), a = per("assists");
   const gpm = per("gold_per_min"), xpm = per("xp_per_min"), lh = per("last_hits");
   const lhpm = (T.last_hits?.sum || 0) / mins, hdpm = (T.hero_damage?.sum || 0) / mins;
@@ -1083,12 +1089,18 @@ function buildDotaStats(tot, heroes, wl) {
     games: n, win: games ? Math.round(((wl.win || 0) / games) * 100) : null,
     k, d, a, kda: (k + a) / Math.max(1, d), gpm, xpm, lh, td, heroesPlayed,
     couriers: T.courier_kills?.sum || 0, wards: T.purchase_ward_observer?.sum || 0,
+    // Each ingredient is x / (x + a typical ranked pub average): an average
+    // player sits half-way and only standout numbers near the edge, which a
+    // hard cap at "good" used to hit for anyone above average. Ingredients
+    // OpenDota hasn't parsed (all zero: wards, stuns, towers) are left out
+    // rather than counted as nothing.
     ax: {
-      fight: c(0.6 * c((k + a) / 25) + 0.4 * c(hdpm / 800)),
-      farm: c(0.6 * c(gpm / 700) + 0.4 * c(lhpm / 8)),
-      support: c(0.4 * c(a / 18) + 0.3 * c(obs / 8) + 0.15 * c(heal / 3000) + 0.15 * c(stuns / 40)),
-      push: c(0.7 * c(td / 5000) + 0.3 * c(tk / 1.5)),
-      versatile: c(heroesPlayed / 20),
+      fight: mix([[0.6, sat(k + a, 20)], [0.4, sat(hdpm, 600), has("hero_damage")]]),
+      farm: mix([[0.6, sat(gpm, 480)], [0.4, sat(lhpm, 4), has("last_hits")]]),
+      support: mix([[0.4, sat(a, 13)], [0.3, sat(obs, 3), has("purchase_ward_observer")],
+        [0.15, sat(heal, 1500), has("hero_healing")], [0.15, sat(stuns, 15), has("stuns")]]),
+      push: mix([[0.7, sat(td, 2500), has("tower_damage")], [0.3, sat(tk, 1), has("tower_kills")]]),
+      versatile: sat(heroesPlayed, 15),
     },
   };
 }
@@ -1103,7 +1115,7 @@ function useDotaStats(steamId, dotabuff) {
     let alive = true;
     setSt(null);
     (async () => {
-      const key = "volt.dota." + acc;
+      const key = "volt.dota.v2." + acc;
       const hit = odCached(key);
       if (hit) { DOTA_CACHE.set(acc, hit); if (alive) setSt(hit); return; }
       try {
