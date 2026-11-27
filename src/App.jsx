@@ -1527,9 +1527,9 @@ function VoltGate() {
       `}</style>
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
         {/* the art — dimmed so the UI reads clearly on top */}
-        <img src={IMG_GATE_BG} alt="" className="volt-bg-img"
+        {false && <img src={IMG_GATE_BG} alt="" className="volt-bg-img"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 40%",
-            opacity: 0.38, filter: "brightness(0.62) saturate(1.08)" }} />
+            opacity: 0.38, filter: "brightness(0.62) saturate(1.08)" }} />}
 
         {/* circuit grid — perspective floor with pulses running up its lines */}
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "42%", overflow: "hidden",
@@ -1698,11 +1698,14 @@ function VoltGate() {
   // Intent picker — the three front doors.
   if (phase === "welcome") return wrap(<>
     <p style={{ margin: "0 0 20px", color: "rgba(200,215,255,0.7)", fontSize: 14, textAlign: "center" }}>Run a Dota 2 auction league, or join one you were invited to.</p>
-    <button onClick={() => { setErr(""); setPendingIntent("host"); setPhase("host"); }} style={{ ...btn(true), marginTop: 0, marginBottom: 10 }}>◆ Host a league</button>
+    {discordAuth && <button disabled={busy} onClick={async () => { setErr(""); if (session) { try { await __sb.auth.signOut(); } catch { /* already out */ } } continueWithDiscord("signin"); }}
+      style={{ ...btn(true), marginTop: 0, marginBottom: 10, background: "#5865F2", borderColor: "#7983f5", color: "#fff", boxShadow: "0 0 24px rgba(88,101,242,0.35)" }}>
+      {busy ? "…" : "Sign in with Discord"}</button>}
+    <button onClick={() => { setErr(""); setPendingIntent("host"); setPhase("host"); }} style={{ ...btn(false), marginTop: 0, marginBottom: 10 }}>◆ Host a league</button>
     <button onClick={() => { setErr(""); setPendingIntent("join"); setPhase("join"); }} style={{ ...btn(false), marginBottom: 18 }}>Join a league</button>
     <div style={{ textAlign: "center", borderTop: "1px solid rgba(120,150,220,0.15)", paddingTop: 14 }}>
       <span style={{ color: "rgba(200,215,255,0.5)", fontSize: 13 }}>Already have an account? </span>
-      <button onClick={() => { setErr(""); setPhase("signin"); }} style={{ background: "none", border: "none", color: "#5b8dff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", textTransform: "uppercase", letterSpacing: "0.06em" }}>Sign in</button>
+      <button onClick={async () => { setErr(""); if (session) { try { await __sb.auth.signOut(); } catch { /* already out */ } } setPhase("signin"); }} style={{ background: "none", border: "none", color: "#5b8dff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Rajdhani',sans-serif", textTransform: "uppercase", letterSpacing: "0.06em" }}>Sign in</button>
     </div>
   </>);
 
@@ -5054,7 +5057,7 @@ function Cell({ title, action, onGo, span = 1, tall = false, tone, art, children
     }} onClick={onGo || undefined}>
       {/* Optional art, faint and fading out to the left, for cells that have a
           picture to carry rather than only rows. */}
-      {art && <img src={art} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0,
+      {false && art && <img src={art} alt="" aria-hidden style={{ position: "absolute", right: 0, top: 0,
         width: "62%", height: "100%", objectFit: "cover", opacity: 0.13, pointerEvents: "none",
         maskImage: "linear-gradient(90deg, transparent, #000 70%)",
         WebkitMaskImage: "linear-gradient(90deg, transparent, #000 70%)" }} />}
