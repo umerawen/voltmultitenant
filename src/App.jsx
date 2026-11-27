@@ -4308,50 +4308,46 @@ function useDiscordLinked() {
 const DISCORD_MSG_LIMIT = 2000;
 function buildJoinGuide({ community, current, connected, origin }) {
   // Dota build: written for the Nobrainer Dota Cup, where most players have
-  // never played an auction tournament, so it explains the format first.
+  // never played an auction tournament. Kept under 1900 characters so the bot
+  // sends it as a plain message: Discord shrinks headings inside an embed.
   const link = `${origin}/?join=${community?.slug || ""}`;
   const L = [];
   const add = (...xs) => L.push(...xs);
 
-  add(`# ${community?.name || "Our league"}`, "");
-  add("### A Dota 2 auction tournament. Sign up solo, no team needed.", "");
+  add(`# ${community?.name || "Our league"}`);
+  add("Dota 2 auction tournament. Sign up solo, no team needed.", "");
+
+  add("## 💰 Details");
   add("**Entry fee:** Rs 1,000 · **Prize pool:** TBD");
-  add("**When:** matches start **next weekend (Sat 5 Dec)** if we get enough sign-ups, otherwise the weekend after (Sat 12 Dec).");
+  add("**Matches:** Sat 5 Dec if we fill up, otherwise Sat 12 Dec.");
   if (current?.draft_at) {
     // <t:unix:F> renders in each reader's own clock.
     const unix = Math.floor(new Date(current.draft_at).getTime() / 1000);
-    add(`**Draft:** <t:${unix}:F> (<t:${unix}:R>), live on the site and in voice.`);
+    add(`**Draft:** <t:${unix}:F> (<t:${unix}:R>)`);
   }
   add("");
 
-  add("## How an auction tournament works", "");
-  add("**1.** Everyone signs up on their own. Captains are picked from the sign-ups.");
-  add("**2.** Every captain gets the same budget. At the live draft, players come up one at a time and captains bid on them. Highest bid takes the player.");
-  add("**3.** Your opening price comes from your medal, so put your real one. Captains can also see your Dotabuff stats and playstyle graph.");
-  add("**4.** Once every team has 5, the bracket starts and you play with whoever bought you.", "");
+  add("## 🔨 How it works");
+  add("**1.** Sign up solo. Captains are picked from the sign-ups.");
+  add("**2.** Captains get equal budgets and bid on players live, one at a time.");
+  add("**3.** Your opening price comes from your medal, so put your real one.");
+  add("**4.** Teams of 5 play the bracket together.", "");
 
-  add("## How to sign up", "");
-  add(`**1. Make your account:** ${link}`);
-  add("> The join code is already filled in.");
-  add("**2. Fill in your profile:** medal, position and a WhatsApp number (only the host and mods see it).");
-  add("> Add your **Steam ID or Dotabuff link** so your stats fill in automatically, and turn on *Expose Public Match Data* in Dota's settings.");
-  if (connected) {
-    add("**3. Press Connect Discord** on your profile, then hit **Already signed up? Add me** below.");
-  } else {
-    add("**3. Flip “I'm playing this tournament”** on the site.");
-  }
+  add("## ✍️ Sign up");
+  add(`**1.** Make your account: ${link}`);
+  add("**2.** Fill in your profile: medal, position, WhatsApp, and your **Steam ID or Dotabuff link** (turn on *Expose Public Match Data* in Dota).");
+  add(connected
+    ? "**3.** Connect Discord on your profile, then hit **Already signed up? Add me** below."
+    : "**3.** Flip “I'm playing this tournament” on the site.");
   add("");
 
-  add("## Rules", "");
-  add("· **Subs:** if a player can't make a match, the **host provides the sub**, and it will be a **lower-skill player**. Neither team (the one being subbed or the opponent) can object to the sub.");
-  add("· **Walkover:** if **more than 2 players** from a team can't play a match, the other team gets a walkover.");
-  add("· The day before the draft you'll be asked if you're still free. **Answer it.** Pulling out early is fine; going quiet and not showing up is a no-show.", "");
+  add("## 📜 Rules");
+  add("· **Subs:** the host provides the sub, a **lower-skill** player. Neither team can object.");
+  add("· **Walkover:** if **more than 2** players from a team can't play, the other team wins.");
+  add("· Answer the availability check the day before the draft. Not showing up is a no-show.", "");
 
-  if (connected) {
-    add("**Commands:** `/signup` · `/withdraw` · `/schedule` · `/roster` · `/leaderboard` · `/scout` · `/help`", "");
-  }
-
-  add("-# We store your Discord name and ID, your display name, your profile and a WhatsApp number only the host and mods can see. We never see your Steam or email password, or any payment details.");
+  if (connected) add("**Commands:** `/signup` `/withdraw` `/schedule` `/roster` `/leaderboard` `/scout` `/help`", "");
+  add("-# Only the host and mods see your WhatsApp. We never see your Steam or email password.");
   return L.join("\n");
 }
 
