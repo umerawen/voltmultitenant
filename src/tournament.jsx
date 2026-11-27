@@ -2242,6 +2242,13 @@ function DotaCardStats({ player, mark = false }) {
   );
 }
 
+// An application row's numbers, from OpenDota rather than anything typed in.
+function RegDotaStats({ r, stat }) {
+  const st = useDotaLite(r.steam, r.tracker);
+  if (!st?.ax) return null;
+  return <>{stat("GPM", Math.round(st.gpm))}{stat("XPM", Math.round(st.xpm))}{stat("KDA", st.kda.toFixed(2))}</>;
+}
+
 // The small pool card's stat row, from OpenDota (queued, cached).
 function PoolCardStats({ p }) {
   const st = useDotaLite(p.steam, p.tracker);
@@ -11066,7 +11073,7 @@ function WeekendRegistration({ ev, auth, phase }) {
     return (
       <div style={{ padding: "2px 14px 14px 34px", borderTop: `1px solid ${borderColor}` }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-          {stat("Rank", r.rank ? rankLabel(r.rank, r.rankDiv) : null)}{stat("Peak", r.peakRank ? rankLabel(r.peakRank, r.peakRankDiv) : null)}{stat("Role", r.role)}{stat("Agent", r.agent)}{stat("KDA", r.kda)}{stat("GPM", r.acs)}{stat("HS%", r.hs != null && r.hs !== "" ? r.hs + "%" : null)}{stat("Win%", r.win != null && r.win !== "" ? r.win + "%" : null)}
+          {stat("Rank", r.rank ? rankLabel(r.rank, r.rankDiv) : null)}{stat("Peak", r.peakRank ? rankLabel(r.peakRank, r.peakRankDiv) : null)}{stat("Role", r.role)}{stat("Heroes", r.agent)}<RegDotaStats r={r} stat={stat} />
         </div>
         <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 10, flexWrap: "wrap", fontSize: 12, color: "rgba(200,215,255,0.55)" }}>
           {r.volunteered && <span style={{ color: "#7da6ff", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="flag" size={12} />wants to captain</span>}
