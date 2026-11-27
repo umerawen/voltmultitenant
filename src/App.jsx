@@ -1006,7 +1006,113 @@ function RankCrest({ rank, div }) {
 }
 
 /* ── KDA / performance radar ── */
-function StatRadar({ player, size = 200, hue, compare = null }) {
+/* ── Dota playstyle radar, from OpenDota ──
+   Dota's own profile graph (Fighting / Farming / Supporting / Pushing /
+   Versatility) isn't published, so this rebuilds it from the player's last 50
+   public matches. Valve's formula is private: the axes are our own blend of
+   the same ingredients, scaled so a typical pub game sits mid-way. Fetched on
+   demand (opening a player), cached in memory and for 6h in localStorage. */
+const DOTA_CACHE = new Map();
+function buildDotaStats(tot, heroes, wl) {
+  const T = Object.fromEntries((Array.isArray(tot) ? tot : []).map((x) => [x.field, x]));
+  const n = T.kills?.n || 0;
+  if (!n) return { empty: true };
+  const per = (f) => (T[f]?.n ? T[f].sum / T[f].n : 0);
+  const mins = Math.max(1, (T.duration?.sum || 0) / 60);
+  const c = (x) => Math.max(0, Math.min(1, x || 0));
+  const k = per("kills"), d = per("deaths"), a = per("assists");
+  const gpm = per("gold_per_min"), xpm = per("xp_per_min"), lh = per("last_hits");
+  const lhpm = (T.last_hits?.sum || 0) / mins, hdpm = (T.hero_damage?.sum || 0) / mins;
+  const obs = per("purchase_ward_observer"), heal = per("hero_healing"), stuns = per("stuns");
+  const td = per("tower_damage"), tk = per("tower_kills");
+  const heroesPlayed = (Array.isArray(heroes) ? heroes : []).filter((h) => h.games > 0).length;
+  const games = wl ? (wl.win || 0) + (wl.lose || 0) : 0;
+  return {
+    games: n, win: games ? Math.round(((wl.win || 0) / games) * 100) : null,
+    k, d, a, kda: (k + a) / Math.max(1, d), gpm, xpm, lh, td, heroesPlayed,
+    couriers: T.courier_kills?.sum || 0, wards: T.purchase_ward_observer?.sum || 0,
+    ax: {
+      fight: c(0.6 * c((k + a) / 25) + 0.4 * c(hdpm / 800)),
+      farm: c(0.6 * c(gpm / 700) + 0.4 * c(lhpm / 8)),
+      support: c(0.4 * c(a / 18) + 0.3 * c(obs / 8) + 0.15 * c(heal / 3000) + 0.15 * c(stuns / 40)),
+      push: c(0.7 * c(td / 5000) + 0.3 * c(tk / 1.5)),
+      versatile: c(heroesPlayed / 20),
+    },
+  };
+}
+// null while loading; { none } with no Steam/Dotabuff; { empty } when the
+// player's matches aren't public; { error } when OpenDota can't be reached.
+function useDotaStats(steamId, dotabuff) {
+  const acc = dotaAccountId(steamId, dotabuff);
+  const [st, setSt] = useState(() => (acc ? DOTA_CACHE.get(acc) || null : null));
+  useEffect(() => {
+    if (!acc) { setSt(null); return; }
+    if (DOTA_CACHE.has(acc)) { setSt(DOTA_CACHE.get(acc)); return; }
+    let alive = true;
+    setSt(null);
+    (async () => {
+      const key = "volt.dota." + acc;
+      try {
+        const hit = JSON.parse(localStorage.getItem(key) || "null");
+        if (hit && Date.now() - hit.at < 6 * 3600e3) { DOTA_CACHE.set(acc, hit.d); if (alive) setSt(hit.d); return; }
+      } catch { /* private mode */ }
+      try {
+        const base = `https://api.opendota.com/api/players/${acc}`;
+        const get = (p) => fetch(base + p).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        const [tot, heroes, wl] = await Promise.all([get("/totals?limit=50"), get("/heroes?limit=50"), get("/wl?limit=50")]);
+        if (!tot) { if (alive) setSt({ error: true }); return; }
+        const d = buildDotaStats(tot, heroes, wl);
+        DOTA_CACHE.set(acc, d);
+        try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), d })); } catch { /* private mode */ }
+        if (alive) setSt(d);
+      } catch { if (alive) setSt({ error: true }); }
+    })();
+    return () => { alive = false; };
+  }, [acc]);
+  return acc ? st : { none: true };
+}
+function DotaRadar({ steamId, dotabuff, size = 280, hue = "#f5a623", showStats = true }) {
+  const st = useDotaStats(steamId, dotabuff);
+  const note = (t) => <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.45)", textAlign: "center", padding: "30px 10px", margin: 0, lineHeight: 1.5, maxWidth: 300 }}>{t}</p>;
+  if (st?.none) return note("No Steam ID or Dotabuff link yet. Add one to the scouting profile and this fills in from their Dota matches.");
+  if (st === null) return note("Loading Dota stats…");
+  if (st.error) return note("Couldn't reach OpenDota just now. Try again in a minute.");
+  if (st.empty) return note("No public matches found. In Dota: Settings → Options → Social → Expose Public Match Data.");
+  const f1 = (v) => (Math.round(v * 10) / 10).toFixed(1);
+  const axes = [
+    { label: "FIGHTING", v: st.ax.fight, show: `${f1(st.k)}/${f1(st.d)}/${f1(st.a)}` },
+    { label: "FARMING", v: st.ax.farm, show: `${Math.round(st.gpm)} GPM` },
+    { label: "SUPPORTING", v: st.ax.support, show: `${f1(st.a)} AST` },
+    { label: "PUSHING", v: st.ax.push, show: `${(st.td / 1000).toFixed(1)}k TWR` },
+    { label: "VERSATILITY", v: st.ax.versatile, show: `${st.heroesPlayed} heroes` },
+  ];
+  const row = (label, v) => (
+    <div key={label} style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+      <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, fontSize: 15, color: hue, minWidth: 52, textAlign: "right" }}>{v}</span>
+      <span style={{ fontSize: 12, color: "rgba(236,243,255,0.7)" }}>{label}</span>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
+      <StatRadar player={{}} axes={axes} size={size} hue={hue} />
+      {showStats && (
+        <div style={{ display: "grid", gap: 6 }}>
+          {row("Avg GPM", Math.round(st.gpm))}
+          {row("Avg XPM", Math.round(st.xpm))}
+          {row("Avg last hits", Math.round(st.lh))}
+          {row("KDA", st.kda.toFixed(2))}
+          {st.win != null && row("Win rate", st.win + "%")}
+          <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "4px 0" }} />
+          {row("Couriers killed", st.couriers)}
+          {row("Observer wards", st.wards)}
+          <span style={{ fontSize: 10.5, color: "rgba(200,215,255,0.35)", marginTop: 4 }}>Last {st.games} public matches · OpenDota</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatRadar({ player, size = 200, hue, compare = null, axes: axesIn = null }) {
   // Each axis is normalised against a community ceiling so shapes stay
   // comparable between players — which hides the real numbers. Hovering
   // surfaces the value at its own corner.
@@ -1017,7 +1123,7 @@ function StatRadar({ player, size = 200, hue, compare = null }) {
   // hit boxes. A dead zone in the middle means resting on the shape selects
   // nothing.
   const [hot, setHot] = useState(null);
-  const axes = [
+  const axes = axesIn || [
     { label: "KDA",  v: Math.min(player.kda / 4, 1),
       show: player.kda != null ? Number(player.kda).toFixed(2) : "—" },
     { label: "GPM",  v: Math.min(player.acs / 700, 1),
@@ -3246,7 +3352,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
           </div>
 
           {/* scouting stats — value-first, exactly the card's Stat treatment */}
-          {hasScout ? (
+          {false ? (
             <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: "auto" }}>
               {[["KDA", p.kda != null ? p.kda : null, "#00e5ff"], ["GPM", p.acs != null ? p.acs : null, "#ff4655"], ["XPM", p.hs != null ? p.hs : null, "#9d6bff"], ["WIN %", p.win != null ? p.win + "%" : null, "#3ddc84"]].map(([lb, v, c], i) => (
                 <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "12px 4px", borderRadius: 8, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -3256,7 +3362,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
               ))}
             </div>
           ) : (
-            <div style={{ position: "relative", fontSize: 12, color: "rgba(200,215,255,0.4)", marginTop: "auto" }}>No scouting profile set yet.</div>
+            null
           )}
         </div>
 
@@ -3264,9 +3370,7 @@ function PlayerProfile({ userId, onBack, footer, lead }) {
         <div style={{ clipPath: NOTCH, padding: "18px 18px 14px", minHeight: 300, background: "linear-gradient(160deg, rgba(18,24,40,0.85), rgba(10,13,22,0.92))", border: "1px solid rgba(61,123,255,0.28)", display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: 10.5, letterSpacing: "0.24em", textTransform: "uppercase", color: "rgba(200,215,255,0.6)", fontWeight: 700 }}>Performance profile</div>
           <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
-            {hasScout
-              ? <StatRadar player={radarPlayer} size={300} hue={hue} />
-              : <p style={{ fontSize: 12.5, color: "rgba(200,215,255,0.4)", textAlign: "center", padding: "40px 10px" }}>No scouting profile yet — the radar fills in once stats are set.</p>}
+            <DotaRadar steamId={p.steam_id} dotabuff={p.tracker_url} size={280} hue={hue} />
           </div>
         </div>
       </div>
@@ -7176,7 +7280,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
       {!editing && <>
         {has
           ? <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-              {[["RANK", rankLabel(prof.rank, prof.rank_div)], ["PEAK", prof.peak_rank ? rankLabel(prof.peak_rank, prof.peak_rank_div) : "—"], ["ROLE", prof.role || "—"], ["HEROES", prof.agent || "—"], ["KDA", prof.kda ?? "—"], ["GPM", prof.acs ?? "—"], ["XPM", prof.hs ?? "—"], ["WIN%", prof.win != null ? prof.win + "%" : "—"]].map(([k, v]) => (
+              {[["RANK", rankLabel(prof.rank, prof.rank_div)], ["PEAK", prof.peak_rank ? rankLabel(prof.peak_rank, prof.peak_rank_div) : "—"], ["ROLE", prof.role || "—"], ["HEROES", prof.agent || "—"]].map(([k, v]) => (
                 <div key={k} style={{ padding: "6px 11px", background: "rgba(61,123,255,0.06)", border: "1px solid rgba(61,123,255,0.22)", clipPath: SHELL_NOTCH(6) }}>
                   <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7da6ff" }}>{k}</div>
                   <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, color: "#ecf3ff", fontWeight: 700 }}>{v}</div>
@@ -7285,9 +7389,7 @@ function ScoutProfileCard({ userId, onSaved, embedded = false, resume = null }) 
             </select></label>
           <label style={{ gridColumn: "1 / -1" }}><span style={labS}>Main heroes</span>
             <input value={d.agent} placeholder="e.g. Invoker, Pudge" onChange={e => setD({ ...d, agent: e.target.value })} style={fieldS} /></label>
-          {[["kda", "KDA"], ["acs", "GPM"], ["hs", "XPM"], ["win", "Win %"]].map(([k, label]) => (
-            <label key={k}><span style={labS}>{label}</span>
-              <input value={d[k]} inputMode="decimal" onChange={e => setD({ ...d, [k]: e.target.value.replace(/[^0-9.]/g, "") })} style={fieldS} /></label>))}
+          {/* No typed-in KDA/GPM/XPM/Win%: the playstyle radar reads them from OpenDota. */}
         </div>
 
         {(() => {
@@ -7336,7 +7438,7 @@ export default function App() { return <><VoltGate /><VoltDialogHost /><VoltToas
 // Shared with tournament.jsx (the lazily loaded tournament shell).
 export {
   ART, AccountChip, AccountView, Bar, Cell, CountUp, DASH_CSS, DEMO,
-  DiscordLinkCard, DotaLinks, ROLE_LIST, dotaAccountId, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
+  DiscordLinkCard, DotaLinks, DotaRadar, ROLE_LIST, dotaAccountId, useDotaStats, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
   MOBILE_CSS, NAV, NotifBell, PANEL, PHASE_COLOR, PHASE_LABEL, Pip, PlayToggle,
   PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
   SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,

@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { apiUrl, haptic } from "./native.js";
 import {
   ART, AccountChip, AccountView, Bar, Cell, CountUp, DASH_CSS, DEMO,
-  DiscordLinkCard, DotaLinks, ROLE_LIST, dotaAccountId, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
+  DiscordLinkCard, DotaLinks, DotaRadar, ROLE_LIST, dotaAccountId, useDotaStats, Empty, FirstTimeOnboard, HAS_SUPABASE, Icon, KeyArt, LeagueLockup, LeagueSwitch,
   MOBILE_CSS, NAV, NotifBell, PANEL, PHASE_COLOR, PHASE_LABEL, Pip, PlayToggle,
   PlayerProfile, RANKS, RANK_LIST, READ_FONT, ROLE_GLYPH, RankCrest, SEC_LABEL, SEC_RULE,
   SHELL_NOTCH, SWEEP_CSS, ScoutProfileCard, SectionHead, ShellStyles, StatRadar, SubDesk, TABBAR,
@@ -2224,6 +2224,24 @@ function Stat({ label, value, hue }) {
   );
 }
 
+// The scout file's numbers come from OpenDota (same fetch and cache as the
+// radar). `mark` renders just the big background GPM figure.
+function DotaCardStats({ player, mark = false }) {
+  const st = useDotaStats(player.steam, player.tracker);
+  const ok = !!(st && st.ax);
+  if (mark) return ok ? <>{Math.round(st.gpm)}</> : null;
+  if (!ok) return (
+    <div className="px-5 pt-5 text-center text-xs" style={{ color: "rgba(200,215,255,0.35)" }}>
+      {st?.none ? "No Steam ID or Dotabuff link yet" : st === null ? "Loading Dota stats…" : "No public Dota matches"}</div>);
+  return (
+    <div className="grid gap-2 px-5 pt-5" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+      <Stat label="KDA" value={st.kda.toFixed(2)} hue="#00e5ff" />
+      <Stat label="GPM" value={Math.round(st.gpm)} hue="#ff4655" />
+      <Stat label="XPM" value={Math.round(st.xpm)} hue="#9d6bff" />
+    </div>
+  );
+}
+
 function PlayerCard({ player, lite = false }) {
   if (!player) return null;
   const r = RANKS[player.rank] || RANKS.Herald;
@@ -2248,7 +2266,7 @@ function PlayerCard({ player, lite = false }) {
         <div className="relative flex flex-col items-center pt-8 pb-5 mt-4 mx-3 rounded-xl overflow-hidden"
           style={{ background: `linear-gradient(115deg, rgba(255,70,85,0.34), rgba(157,107,255,0.22) 60%, rgba(0,229,255,0.10))`, border: "1px solid rgba(255,255,255,0.08)" }}>
           <span className="absolute pointer-events-none select-none font-bold leading-none"
-            style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 150, right: -10, top: -18, color: "rgba(255,255,255,0.07)", letterSpacing: "-0.04em" }}>{player.acs}</span>
+            style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: 150, right: -10, top: -18, color: "rgba(255,255,255,0.07)", letterSpacing: "-0.04em" }}><DotaCardStats player={player} mark /></span>
           <span className="absolute pointer-events-none select-none uppercase font-bold"
             style={{ fontFamily: "'Rajdhani',sans-serif", right: 14, top: 112, fontSize: 12, letterSpacing: 3, color: "rgba(255,255,255,0.18)" }}>GPM</span>
           <div className={lite ? "" : "float-soft"}><RankCrest rank={player.rank} div={player.rankDiv} /></div>
@@ -2268,14 +2286,7 @@ function PlayerCard({ player, lite = false }) {
             </div>
           )}
         </div>
-        {/* Only stats the player actually has — a tile of dashes reads as broken. */}
-        {(() => { const st = [
-            player.kda != null && <Stat key="k" label="KDA" value={Number(player.kda).toFixed(2)} hue="#00e5ff" />,
-            player.acs != null && <Stat key="a" label="GPM" value={player.acs} hue="#ff4655" />,
-            player.hs != null && <Stat key="h" label="HS %" value={player.hs + "%"} hue="#9d6bff" />,
-          ].filter(Boolean);
-          return st.length ? <div className="grid gap-2 px-5 pt-5" style={{ gridTemplateColumns: `repeat(${st.length}, minmax(0, 1fr))` }}>{st}</div>
-            : <div className="px-5 pt-5 text-center text-xs" style={{ color: "rgba(200,215,255,0.35)" }}>No tracker stats on file</div>; })()}
+        <DotaCardStats player={player} />
         <div className="px-5 pt-5 pb-7">
           <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "rgba(236,243,255,0.4)" }}>Trophy cabinet</p>
           <div className="flex flex-wrap items-center gap-2" style={{ minHeight: 40 }}>
@@ -2299,7 +2310,7 @@ function PlayerCardCompact({ player }) {
   const st = [
     player.kda != null && ["KDA", Number(player.kda).toFixed(2), "#00e5ff"],
     player.acs != null && ["GPM", player.acs, "#ff4655"],
-    player.hs != null && ["HS", player.hs + "%", "#9d6bff"],
+    player.hs != null && ["XPM", player.hs, "#9d6bff"],
   ].filter(Boolean);
   return (
     <div className="relative w-full overflow-hidden text-left" style={{ padding: "14px 16px 14px",
@@ -2353,7 +2364,7 @@ function ScoutModal({ player, onClose, isAdmin, onEdit, onDelete, onToggleCaptai
         <PlayerCard player={player} />
         <div className="p-5 flex flex-col" style={{ background: "linear-gradient(160deg, rgba(61,123,255,0.06), rgba(10,15,28,0.55))", border: `1px solid ${r.c}44`, backdropFilter: "blur(12px)", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}>
           <p className="text-xs uppercase tracking-widest mb-1" style={{ color: r.c }}>Performance profile</p>
-          <div className="grid place-items-center flex-1 pt-4"><StatRadar player={player} hue={r.c} size={300} /></div>
+          <div className="grid place-items-center flex-1 pt-4"><DotaRadar steamId={player.steam} dotabuff={player.tracker} hue={r.c} size={280} /></div>
           <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Role</span><span style={{ color: "#ecf3ff" }}>{player.role}</span></div>
             <div className="flex justify-between px-3 py-2 rounded" style={{ background: "rgba(61,123,255,0.06)" }}><span style={{ color: "rgba(200,215,255,0.5)" }}>Heroes</span><span style={{ color: "#ecf3ff" }}>{player.agent}</span></div>
@@ -3373,7 +3384,7 @@ function WarRoom({ teamId, teamHue, players: allPlayers }) {
 
         <div className="flex items-center gap-2 mb-3 p-2" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
           <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
-          <input value={wrQuery} onChange={(e) => setWrQuery(e.target.value)} placeholder="Search players or agents…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
+          <input value={wrQuery} onChange={(e) => setWrQuery(e.target.value)} placeholder="Search players or heroes…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
         </div>
         <div className="flex flex-wrap gap-2 mb-2">
           <button onClick={() => setWrRank("All")} className="px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={wrChip(wrRank === "All")}>All ranks</button>
@@ -6850,7 +6861,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
       <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,220,132,0.04)", border: "1px solid rgba(120,150,220,0.18)", clipPath: SHELL_NOTCH(8) }}>
         <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
-        <input value={rQuery} onChange={(e) => setRQuery(e.target.value)} placeholder="Search reserves or agents…" className="flex-1 bg-transparent outline-none" style={{ color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15 }} />
+        <input value={rQuery} onChange={(e) => setRQuery(e.target.value)} placeholder="Search reserves or heroes…" className="flex-1 bg-transparent outline-none" style={{ color: "#ecf3ff", fontFamily: "'Rajdhani',sans-serif", fontSize: 15 }} />
       </div>
       <div className="flex flex-wrap gap-2 mb-3">
         <button onClick={() => setRRank("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(rRank === "All", "#3ddc84")}>All ranks</button>
@@ -6890,11 +6901,11 @@ function DraftApp({ auth, browse, chrome, initialView }) {
                     <span className="text-xs font-bold uppercase tracking-widest" style={{ fontFamily: "'Rajdhani',sans-serif", color: r.c }}>{rankLabel(p.rank, p.rankDiv)}</span>
                   </div>
                 </div>
-                <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+                {(p.kda != null || p.acs != null || p.hs != null) && <div className="flex gap-3 mt-3 text-xs" style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
                   <span style={{ color: "#00e5ff" }}>KDA {p.kda == null ? "—" : Number(p.kda).toFixed(2)}</span>
                   <span style={{ color: "#ff4655" }}>GPM {p.acs == null ? "—" : p.acs}</span>
-                  <span style={{ color: "#9d6bff" }}>HS {p.hs == null ? "—" : p.hs + "%"}</span>
-                </div>
+                  <span style={{ color: "#9d6bff" }}>XPM {p.hs == null ? "—" : p.hs}</span>
+                </div>}
                 {missing && (
                   <p className="mt-2 text-xs uppercase tracking-widest font-bold" style={{ color: ok ? "#3ddc84" : "rgba(255,138,148,0.8)" }}>
                     {ok ? "✓ Eligible sub" : "✕ Outranks your player"}
@@ -6958,7 +6969,7 @@ function DraftApp({ auth, browse, chrome, initialView }) {
 
       <div className="flex items-center gap-2 mb-4 p-2" style={{ background: "rgba(61,123,255,0.05)", border: "1px solid rgba(120,150,220,0.18)", clipPath: "polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))" }}>
         <span style={{ color: "rgba(120,150,220,0.5)" }}>⌕</span>
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search players or agents…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search players or heroes…" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "#ecf3ff" }} />
       </div>
       <div className="volt-hscroll flex flex-nowrap sm:flex-wrap overflow-x-auto gap-2 mb-2.5 sm:mb-3 -mx-[18px] px-[18px] sm:mx-0 sm:px-0">
         <button onClick={() => setFilterRank("All")} className="shrink-0 whitespace-nowrap px-3 py-1 text-xs uppercase tracking-widest rounded-full" style={chip(filterRank === "All")}>All ranks</button>
@@ -8335,10 +8346,8 @@ function YourCard({ profile, viewerId, myTeam, onGo }) {
         {/* Radar | league rank + season points */}
         <div className="volt-yc-mid" style={{ flex: 1, display: "flex", alignItems: "center", gap: 26, flexWrap: "wrap", margin: "18px 0 10px" }}>
           <div className="volt-yc-radar" style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
-            <StatRadar player={{ kda: profile.kda, acs: profile.acs, hs: profile.hs,
-              win: profile.win, rank: profile.rank, rankDiv: profile.rank_div }}
-              compare={lg?.compare || null} size={300} hue={hue} />
-            {lg?.compare && (
+            <DotaRadar steamId={profile.steam_id} dotabuff={profile.tracker_url} size={280} hue={hue} showStats={false} />
+            {false && lg?.compare && (
               <div style={{ display: "flex", gap: 14, fontSize: 9.5, letterSpacing: "0.2em",
                 textTransform: "uppercase", color: "rgba(200,215,255,0.45)", marginTop: 2 }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
