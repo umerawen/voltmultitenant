@@ -179,7 +179,7 @@ async function onCommand(out, body, guild, discordId, origin) {
     if (m?.error === "link") return needsLink(out);
     return reply(out,
       `**${m.name}** · ${m.rank} · ${m.role}${m.agent && m.agent !== "—" ? ` (${m.agent})` : ""}\n` +
-      `KDA ${num(m.kda)} · tracker ACS ${num(m.acs, 0)} · HS ${num(m.hs, 0)}%\n` +
+      statLine(m, await isDota(guild)) + "\n" +
       `Season: **${num(m.points, 0)}** points from ${m.matches} match${m.matches === 1 ? "" : "es"}` +
       (m.streak > 0 ? ` · 🏆 ${m.streak} weekend streak` : ""));
   }
@@ -214,6 +214,24 @@ async function onCommand(out, body, guild, discordId, origin) {
     // (registered with the value "acs", from before Valorant's switch). The
     // printed number MUST be the one being ranked on — showing points while
     // ordering by score is what made this list look scrambled.
+    // A Dota league ranks on K/D/A instead: most kills a game, plus a support
+    // board on assists. Both in one reply, whatever `sort` says.
+    if (await isDota(guild)) {
+      const [byK, byA] = await Promise.all([
+        rpc("volt_dc_leaderboard", { p_guild: guild || null, p_sort: "kills" }),
+        rpc("volt_dc_leaderboard", { p_guild: guild || null, p_sort: "assists" }),
+      ]);
+      if (byK?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
+      if (!byK?.length) return reply(out, "No games recorded yet.");
+      const medal = ["🥇", "🥈", "🥉"];
+      const kda = (r) => `${num(r.avgK, 1)}/${num(r.avgD, 1)}/${num(r.avgA, 1)}`;
+      const list = (rows, key) => rows.slice(0, 10).map((r, i) =>
+        `${medal[i] || `${i + 1}.`} **${r.name}** — ${num(r[key], 1)} ${key === "avgK" ? "kills" : "assists"} a game · ${kda(r)}` +
+        ` (${r.played} game${r.played === 1 ? "" : "s"})`).join("\n");
+      return reply(out,
+        "**Top kills** · kills a game\n-# Fewer deaths breaks a tie. K/D/A are per-game averages.\n" + list(byK, "avgK") +
+        "\n\n**Support board** · assists a game\n" + list(byA, "avgA"));
+    }
     const sort = String(opt("sort") || "perf").toLowerCase() === "points" ? "pts" : "perf";
     const rows = await rpc("volt_dc_leaderboard", { p_guild: guild || null, p_sort: sort });
     if (rows?.error === "unlinked") return reply(out, "This server isn't linked to a VOLT league yet.");
@@ -269,7 +287,7 @@ async function onCommand(out, body, guild, discordId, origin) {
 
     const card =
       `**${p.name}** · ${p.rank} · ${p.role}${p.agent && p.agent !== "—" ? ` (${p.agent})` : ""}\n` +
-      `KDA ${num(p.kda)} · tracker ACS ${num(p.acs, 0)} · HS ${num(p.hs, 0)}%\n` +
+      statLine(p, await isDota(guild)) + "\n" +
       `Season: **${num(p.points, 0)}** points from ${p.matches} match${p.matches === 1 ? "" : "es"}` +
       (p.wins > 0 ? ` · ${p.wins} tournament${p.wins === 1 ? "" : "s"} won` : "") +
       (p.signedUp ? `\nThis weekend: ${p.signedUp}` : "\nNot signed up this weekend.") +
@@ -744,6 +762,27 @@ function verify(req, raw) {
     console.error("signature check threw", e);
     return false;
   }
+}
+
+// The profile stat line: Valorant's tracker numbers, or Dota's (the same
+// columns hold GPM and XPM in a Dota league).
+function statLine(p, dota) {
+  return dota
+    ? `KDA ${num(p.kda)} · GPM ${num(p.acs, 0)} · XPM ${num(p.hs, 0)}`
+    : `KDA ${num(p.kda)} · tracker ACS ${num(p.acs, 0)} · HS ${num(p.hs, 0)}%`;
+}
+
+// Whether the league on this server plays Dota (communities.game). Anything
+// unexpected reads as Valorant, so a lookup failure changes nothing.
+async function isDota(guild) {
+  if (!guild) return false;
+  try {
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/communities?discord_guild_id=eq.${encodeURIComponent(guild)}&select=game`, {
+      headers: { apikey: process.env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}` },
+    });
+    const rows = r.ok ? await r.json() : [];
+    return rows?.[0]?.game === "dota";
+  } catch { return false; }
 }
 
 async function rpc(fn, args) {

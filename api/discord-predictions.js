@@ -225,9 +225,9 @@ const played = (sp) => perfOf(sp) > 0 || Number(sp?.k || 0) > 0 || Number(sp?.a 
 // The cheapest-for-what-they-did player of the night: among everyone who played
 // and was bought in the auction, whose performance placed furthest above where
 // their price placed. Needs four priced players and a gap of two places.
-export function bargainOfNight(ranked, prices) {
+export function bargainOfNight(ranked, prices, pf = perfOf) {
   const list = ranked.filter((r) => Number(prices?.[r.user_id]) > 0)
-    .map((r) => ({ r, price: Number(prices[r.user_id]), perf: perfOf(r.stat_payload) }));
+    .map((r) => ({ r, price: Number(prices[r.user_id]), perf: pf(r.stat_payload) }));
   if (list.length < 4) return null;
   const place = (key) => {
     const sorted = [...list].sort((x, y) => y[key] - x[key]); const out = new Map();
@@ -244,26 +244,32 @@ export function bargainOfNight(ranked, prices) {
   return best && best.gap >= 2 ? best : null;
 }
 
-export function playerOfNightMessage(night, rows, names, reported, prices = null) {
+export function playerOfNightMessage(night, rows, names, reported, prices = null, game = "valorant") {
+  // Dota ranks the night on kills (assists, then fewer deaths, break ties).
+  const dota = game === "dota";
+  const pf = dota ? (sp) => Number(sp?.k || 0) : perfOf;
   // Each player's best game of the night, so one player can't fill the podium.
   const seen = new Set();
   const ranked = rows.filter((r) => played(r.stat_payload))
-    .sort((x, y) => perfOf(y.stat_payload) - perfOf(x.stat_payload) || Number(y.stat_payload?.k || 0) - Number(x.stat_payload?.k || 0))
+    .sort((x, y) => pf(y.stat_payload) - pf(x.stat_payload) || Number(y.stat_payload?.k || 0) - Number(x.stat_payload?.k || 0)
+      || (dota ? Number(y.stat_payload?.a || 0) - Number(x.stat_payload?.a || 0) || Number(x.stat_payload?.d || 0) - Number(y.stat_payload?.d || 0) : 0))
     .filter((r) => { const k = r.user_id || r.stat_payload?.name; if (seen.has(k)) return false; seen.add(k); return true; });
   if (!ranked.length) return null;
   const who = (r) => names[r.user_id] || r.stat_payload?.name || "Player";
   const unit = () => "ACS";
   const top = ranked[0], sp = top.stat_payload || {};
-  const next = ranked.slice(1, 3).map((r) => `**${who(r)}** ${perfOf(r.stat_payload)}`).join(" · ");
-  const steal = bargainOfNight(ranked, prices);
+  const next = ranked.slice(1, 3).map((r) => `**${who(r)}** ${pf(r.stat_payload)}`).join(" · ");
+  const steal = bargainOfNight(ranked, prices, pf);
   const of = reported < night.length ? `${reported} of ${night.length} reported matches` : `${night.length === 1 ? "the match" : `all ${night.length} matches`}`;
   return {
     content: [
       `## ⭐ Player of the night — <t:${night[0].at}:D>`,
       `**${who(top)}**${sp.team ? ` · ${sp.team}` : ""}`,
-      `**${perfOf(sp)}** ${unit(sp)} · ${Number(sp.k || 0)} kills · ${Number(sp.a || 0)} assists`,
-      `-# Best ACS across ${of}.${next ? ` Next best: ${next}` : ""}`,
-      ...(steal ? [`💰 **Bargain of the night:** **${who(steal.r)}**, bought for $${steal.price.toLocaleString("en-US")}, put up ${steal.perf}.`] : []),
+      dota
+        ? `**${Number(sp.k || 0)}** kills · ${Number(sp.d || 0)} deaths · ${Number(sp.a || 0)} assists${sp.hero ? ` on ${sp.hero}` : ""}`
+        : `**${perfOf(sp)}** ${unit(sp)} · ${Number(sp.k || 0)} kills · ${Number(sp.a || 0)} assists`,
+      `-# ${dota ? "Most kills" : "Best ACS"} across ${of}.${next ? ` Next best: ${next}` : ""}`,
+      ...(steal ? [`💰 **Bargain of the night:** **${who(steal.r)}**, bought for $${steal.price.toLocaleString("en-US")}, put up ${steal.perf}${dota ? " kills" : ""}.`] : []),
     ].join("\n"),
     allowed_mentions: { parse: [] },
   };
@@ -309,7 +315,9 @@ async function playerOfNight(token, errors) {
     const uids = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
     const us = uids.length ? await sb(`/rest/v1/users?id=in.(${uids.join(",")})&select=id,display_name`) : [];
     const names = Object.fromEntries((us || []).map((u) => [u.id, u.display_name]));
-    const msg = playerOfNightMessage(games, rows, names, reported, await soldPrices(eventId));
+    let game = "valorant";
+    try { game = (await sb(`/rest/v1/communities?id=eq.${night[0].communityId}&select=game`))?.[0]?.game || "valorant"; } catch { /* Valorant wording */ }
+    const msg = playerOfNightMessage(games, rows, names, reported, await soldPrices(eventId), game);
     if (!msg) { await stamp(); continue; }
     const ch = await channelFor(night[0].guild, night[0].communityId, "results");
     if (!ch) { errors.push("player of the night: no channel"); continue; }
