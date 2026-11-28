@@ -4318,7 +4318,7 @@ function buildJoinGuide({ community, current, connected, origin, pay = "" }) {
   add("Dota 2 auction tournament. Sign up solo, no team needed.", "");
 
   add("## Details");
-  add("**Entry fee:** Rs 1,000 per person · **Prize pool:** TBD");
+  add("**Entry fee:** Rs 500 per person · **Prize pool:** TBD");
   // Payment details live in the league's data (community_kv "guide-pay"),
   // not in this public code.
   if (pay) add(`**How to pay:** ${pay}`);
